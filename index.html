@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DCSPad — SharePoint Developer Workbench</title>
+<link rel="stylesheet" href="styles/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⌘</text></svg>">
+</head>
+<body>
+
+<!-- Boot splash (removed from DOM after reveal) -->
+<div id="splash" class="splash" hidden>
+  <pre class="splash-logo" id="splash-logo"></pre>
+  <div class="splash-tagline">SharePoint developer workbench</div>
+  <pre class="splash-boot" id="splash-boot"></pre>
+  <div class="splash-skip">click anywhere to skip</div>
+</div>
+
+<div id="app" class="app">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="logo" title="DCSPad">
+      <span class="logo-mark">▞</span><span class="logo-text">DCS<b>Pad</b></span><span class="logo-caret"></span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-run" class="btn btn-run" title="Run (Ctrl/Cmd+Enter)">
+        <span class="btn-run-icon">▶</span> Run
+      </button>
+      <label class="toggle" id="autorun-toggle" title="Re-run automatically ~800ms after you stop typing">
+        <input type="checkbox" id="chk-autorun">
+        <span class="toggle-pill"></span> Auto-run <span class="live-dot" id="live-dot"></span>
+      </label>
+      <div class="settings-wrap">
+        <button id="btn-settings" class="btn btn-ghost" title="Settings">⚙</button>
+        <div id="settings-menu" class="settings-menu" hidden>
+          <label><input type="checkbox" id="chk-module"> Run JS as <code>&lt;script type="module"&gt;</code> <span class="hint">enables top-level await; strict mode, <code>var</code> won't become window globals</span></label>
+          <label><input type="checkbox" id="chk-autoclear" checked> Clear console on each run</label>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div id="sp-chip" class="sp-chip sp-chip-mock" title="">
+        <span class="sp-chip-dot"></span><span id="sp-chip-text">SP: …</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main 3-zone work area -->
+  <main class="main" id="main">
+
+    <!-- Left: Resources -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-title">Resources</span>
+        <button id="btn-collapse-sidebar" class="btn btn-ghost btn-xs" title="Collapse sidebar">⟨</button>
+      </div>
+      <div class="sidebar-body">
+        <section class="side-section" id="libs-section">
+          <h3 class="side-section-title">Libraries</h3>
+          <div id="lib-pinned" class="lib-group"></div>
+          <div id="lib-list" class="lib-group"></div>
+          <div class="lib-custom">
+            <h4 class="side-section-sub">Custom URL</h4>
+            <form id="lib-custom-form">
+              <input type="url" id="lib-custom-url" placeholder="https://…/lib.js or .css" required>
+              <button class="btn btn-xs" type="submit">Add</button>
+            </form>
+            <div id="lib-custom-list" class="lib-group"></div>
+          </div>
+        </section>
+        <!-- future: Site Inspector, Projects, Templates sections mount here -->
+      </div>
+    </aside>
+    <button id="btn-expand-sidebar" class="sidebar-expand" title="Expand sidebar" hidden>⟩</button>
+
+    <div class="splitter splitter-v" id="split-sidebar" title="Drag to resize"></div>
+
+    <!-- Center: Editors -->
+    <section class="editors" id="editors">
+      <div class="tabs" id="editor-tabs" role="tablist">
+        <button class="tab active" data-editor="html" role="tab">HTML</button>
+        <button class="tab" data-editor="css" role="tab">CSS</button>
+        <button class="tab" data-editor="js" role="tab">JS</button>
+      </div>
+      <div class="editor-host">
+        <div class="editor-pane active" id="pane-html"></div>
+        <div class="editor-pane" id="pane-css"></div>
+        <div class="editor-pane" id="pane-js"></div>
+      </div>
+    </section>
+
+    <div class="splitter splitter-v" id="split-center" title="Drag to resize"></div>
+
+    <!-- Right: Runtime -->
+    <section class="runtime" id="runtime">
+      <div class="panel preview-panel" id="preview-panel">
+        <div class="panel-head">
+          <span class="panel-title">Preview</span>
+          <span class="panel-spacer"></span>
+          <button id="btn-rerun" class="btn btn-ghost btn-xs" title="Re-run">↻</button>
+          <button id="btn-max-preview" class="btn btn-ghost btn-xs" title="Maximize preview">⛶</button>
+        </div>
+        <div class="preview-host" id="preview-host">
+          <div class="preview-empty" id="preview-empty">Press <kbd>Run</kbd> (or <kbd>Ctrl/Cmd + Enter</kbd>) to execute</div>
+        </div>
+      </div>
+
+      <div class="splitter splitter-h" id="split-runtime" title="Drag to resize"></div>
+
+      <div class="panel diag-panel" id="diag-panel">
+        <div class="panel-head tabs-head">
+          <div class="tabs tabs-inline" id="diag-tabs">
+            <button class="tab active" data-diag="console" role="tab">Console <span class="badge" id="console-badge" hidden></span></button>
+            <button class="tab" data-diag="network" role="tab">Network <span class="badge" id="network-badge" hidden></span></button>
+          </div>
+          <span class="panel-spacer"></span>
+          <span id="console-tools" class="panel-tools">
+            <input type="search" id="console-filter-text" class="filter-input" placeholder="filter">
+            <button class="btn btn-ghost btn-xs lvl-filter active" data-lvl="log" title="Show logs">log</button>
+            <button class="btn btn-ghost btn-xs lvl-filter active" data-lvl="warn" title="Show warnings">warn</button>
+            <button class="btn btn-ghost btn-xs lvl-filter active" data-lvl="error" title="Show errors">err</button>
+            <button id="btn-clear-console" class="btn btn-ghost btn-xs" title="Clear console">⃠</button>
+          </span>
+          <span id="network-tools" class="panel-tools" hidden>
+            <label class="mini-toggle" title="Only show SharePoint _api requests"><input type="checkbox" id="chk-api-only"> _api only</label>
+            <button id="btn-clear-network" class="btn btn-ghost btn-xs" title="Clear network log">⃠</button>
+          </span>
+          <button id="btn-max-diag" class="btn btn-ghost btn-xs" title="Maximize panel">⛶</button>
+        </div>
+        <div class="diag-body">
+          <div class="diag-view active" id="view-console">
+            <div class="console-scroll" id="console-out"></div>
+            <div class="console-input-row">
+              <span class="console-input-chevron">›</span>
+              <input id="console-input" class="console-input" placeholder="Evaluate in preview (↑↓ history)" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+          <div class="diag-view" id="view-network">
+            <div class="network-split">
+              <div class="network-table-wrap" id="network-table-wrap">
+                <table class="network-table">
+                  <thead><tr><th>Method</th><th>URL</th><th>Status</th><th>Time</th><th>Size</th></tr></thead>
+                  <tbody id="network-rows"></tbody>
+                </table>
+              </div>
+              <div class="network-detail" id="network-detail" hidden></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Status bar -->
+  <footer class="statusbar">
+    <span id="status-run" class="status-item">idle</span>
+    <span id="status-context" class="status-item status-context">SP: detecting…</span>
+    <span class="status-spacer"></span>
+    <span id="status-save" class="status-item status-save"></span>
+    <span id="status-cursor" class="status-item">Ln 1, Col 1</span>
+  </footer>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
