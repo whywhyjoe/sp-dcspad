@@ -44,6 +44,15 @@ function assemble({ docs, libraries, spContext, settings, token }) {
     .map((l) => (Array.isArray(l.js) ? l.js : [l.js]).map((u) => `<script src="${u}"><\/script>`).join('\n'))
     .join('\n');
 
+  // Pad-only canvas color, injected BEFORE library/user CSS so anything
+  // the user styles wins by cascade — same layering a real page gives.
+  const chromeStyle = settings.previewDark
+    ? `<style data-dcspad-chrome>
+:root { color-scheme: dark; }
+html { background: #1d2026; color: #d6d9e0; }
+</style>\n`
+    : '';
+
   const contextScript = spContext
     ? `<script>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>\n` +
       (spContext.baseHref ? `<base href="${spContext.baseHref}">\n` : '')
@@ -54,7 +63,7 @@ function assemble({ docs, libraries, spContext, settings, token }) {
 <head>
 <meta charset="utf-8">
 <script>${escScript(harnessText.replaceAll('__DCSPAD_TOKEN__', token))}<\/script>
-${contextScript}${cssLinks}
+${contextScript}${chromeStyle}${cssLinks}
 <style>
 ${escStyle(docs.css)}
 </style>

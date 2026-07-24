@@ -10,7 +10,7 @@ const DEFAULTS = {
   css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
   js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
   libraries: { enabled: [], pinned: ['pnpjs2'], custom: [] },
-  settings: { autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false },
+  settings: { autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false, previewDark: true },
   layout: {
     sidebarW: 230, sidebarCollapsed: false,
     editorsFr: 1, runtimeFr: 1,

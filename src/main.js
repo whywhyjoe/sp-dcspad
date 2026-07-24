@@ -3,7 +3,7 @@
 import { getState, updateNested, onSaveStatus } from './state.js';
 import { initLayout } from './layout.js';
 import { initEditors } from './editors.js';
-import { initRunner, run as runnerRun, evalInFrame, mapSrcdocLineToUserJs } from './runner.js';
+import { initRunner, run as runnerRun, evalInFrame, mapSrcdocLineToUserJs, hasRun } from './runner.js';
 import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import { initLibraries, getEnabledLibraries } from './libraries.js';
@@ -112,6 +112,25 @@ async function run() {
 
 document.getElementById('btn-run').addEventListener('click', run);
 document.getElementById('btn-rerun').addEventListener('click', run);
+
+// ---------- preview theme toggle ----------
+const btnPreviewTheme = document.getElementById('btn-preview-theme');
+
+function applyPreviewTheme() {
+  const dark = getState().settings.previewDark;
+  btnPreviewTheme.textContent = dark ? '☀' : '🌙';
+  btnPreviewTheme.title = dark
+    ? 'Switch preview to light — pad-only canvas color; your CSS still wins, and SharePoint pages are typically light'
+    : 'Switch preview to dark — pad-only canvas color; your CSS still wins';
+  document.getElementById('preview-host').classList.toggle('dark', dark);
+}
+applyPreviewTheme();
+
+btnPreviewTheme.addEventListener('click', () => {
+  updateNested('settings', { previewDark: !getState().settings.previewDark });
+  applyPreviewTheme();
+  if (hasRun()) run();
+});
 
 // ---------- auto-run ----------
 const AUTORUN_DEBOUNCE_MS = 800;

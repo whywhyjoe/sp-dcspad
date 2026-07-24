@@ -61,6 +61,7 @@ Outside SharePoint you get a clearly-flagged **mock** `_spPageContextInfo` (corr
 | Libraries | Left sidebar; checkbox = include on next run, ★ = pin to top; custom URLs (`.js`/`.css`) at the bottom |
 | Network | `_api only` filter; click a row for the response body rendered through the SP inspector |
 | Maximize | ⛶ on the preview or console panel; `Esc` restores |
+| Preview dark mode | ☀/🌙 on the preview header (default dark). Pad-only canvas color injected *before* your CSS, so anything you style wins — flip to light to see how it renders on a typical SharePoint page |
 
 Work-in-progress (editors, libraries, settings, layout) autosaves to `localStorage` and restores on load.
 
