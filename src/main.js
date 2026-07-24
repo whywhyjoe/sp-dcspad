@@ -8,6 +8,7 @@ import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import { initLibraries, getEnabledLibraries } from './libraries.js';
 import { applyContextIndicators } from './bridge/sp-context.js';
+import { showSplash } from './splash.js';
 
 const state = getState();
 
@@ -44,6 +45,9 @@ initLibraries({ onChange: () => scheduleAutorun() });
 
 // ---------- SP context ----------
 const spContext = applyContextIndicators();
+
+// ---------- boot splash ----------
+showSplash({ spContext });
 
 // ---------- runner ----------
 const statusRun = document.getElementById('status-run');
