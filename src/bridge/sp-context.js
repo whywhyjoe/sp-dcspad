@@ -1,7 +1,7 @@
 // SharePoint context bridge.
 //
 // When DCSPad is hosted on a real SharePoint page, the host's
-// _spPageContextInfo is captured and injected into every preview run,
+// _spPageContextInfo is re-captured at every preview run and injected,
 // and <base href> is pointed at the web — so PnPjs v2 and raw REST
 // resolve URLs exactly as they would on a normal page in that web.
 // Outside SharePoint (local dev), a clearly-flagged mock keeps the same
@@ -9,8 +9,12 @@
 
 let cached = null;
 
-export function getSpContext() {
-  if (cached) return cached;
+// Pass { refresh: true } to re-capture from the host page — run() does this
+// on every run so the injected digest tracks the host's refresh timer
+// (classic pages rewrite the #__REQUESTDIGEST form field periodically;
+// a digest captured once at bootstrap expires after ~30 minutes).
+export function getSpContext({ refresh = false } = {}) {
+  if (cached && !refresh) return cached;
 
   const real = window._spPageContextInfo;
   if (real && real.webAbsoluteUrl) {

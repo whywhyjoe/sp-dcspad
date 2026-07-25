@@ -1,5 +1,6 @@
 // DCSPad smoke suite: execution model, console capture, SP inspector,
-// network monitor, REPL, run isolation, library injection, autosave.
+// network monitor, REPL, run isolation, rerun lifecycle (cross-run
+// network history, cancelled requests/evals), library injection, autosave.
 // Setup: see tests/README.md (app server on 8642, fixtures on 8643).
 
 import { launchBrowser, check, exitWithResult, APP_URL, FIXTURES_URL } from './lib.mjs';
@@ -103,6 +104,50 @@ await check('_spPageContextInfo injected into iframe', async () =>
     const f = document.querySelector('#preview-host iframe');
     return !!f.contentWindow._spPageContextInfo?.webAbsoluteUrl;
   }));
+
+// --- rerun lifecycle ---
+// Regressions covered: per-frame net ids reused across runs overwrote the
+// panel's cross-run history; requests still in flight when the frame was
+// replaced stayed "pending" forever; REPL evals awaiting a promise at
+// rerun never settled. Uses waitForFunction, not fixed sleeps.
+
+// Route a URL into limbo so its request is still pending at the next run.
+await page.route('**/hang-forever*', () => { /* never fulfil */ });
+
+const waitForNetRow = (marker) => page.waitForFunction((m) =>
+  [...document.querySelectorAll('#network-rows .network-row')].some((r) =>
+    r.textContent.includes(m) && !r.querySelector('.net-status-pending')), marker);
+
+await setJs('fetch("/run-a-marker.json").catch(()=>{}); fetch("/hang-forever").catch(()=>{});');
+await page.click('#btn-run');
+await waitForNetRow('run-a-marker');
+
+// A REPL eval that can never settle in this frame.
+await page.fill('#console-input', 'new Promise(() => {})');
+await page.press('#console-input', 'Enter');
+
+await setJs('fetch("/run-b-marker.json").catch(()=>{});');
+await page.click('#btn-run');
+await waitForNetRow('run-b-marker');
+
+await page.click('#diag-tabs .tab[data-diag="network"]');
+await check('network history keeps rows from both runs', async () => {
+  const t = await page.locator('#network-rows').textContent();
+  return t.includes('run-a-marker') && t.includes('run-b-marker');
+});
+await check('old row detail shows the old request (ids namespaced per run)', async () => {
+  await page.locator('#network-rows .network-row', { hasText: 'run-a-marker' }).click();
+  return (await page.locator('#network-detail').textContent()).includes('run-a-marker');
+});
+await check('exactly one row selected across runs', async () =>
+  (await page.locator('#network-rows .network-row.selected').count()) === 1);
+await check('request pending at rerun is marked cancelled', async () =>
+  (await page.locator('#network-rows .network-row', { hasText: 'hang-forever' }).textContent())
+    .includes('cancelled'));
+await check('abandoned REPL eval settles with a cancellation result', async () =>
+  (await page.locator('#console-out').textContent())
+    .includes('cancelled — a new run replaced the frame'));
+await page.click('#diag-tabs .tab[data-diag="console"]');
 
 // library injection via local fixture (sandbox blocks public CDNs;
 // the mechanism — ordered blocking <script src> — is identical)

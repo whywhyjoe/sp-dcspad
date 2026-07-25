@@ -17,6 +17,9 @@ let handlers = {};
 export async function initRunner(messageHandlers) {
   handlers = messageHandlers;
   const res = await fetch(new URL('./bridge/harness.js', import.meta.url));
+  if (!res.ok) {
+    throw new Error(`preview harness failed to load (HTTP ${res.status} for bridge/harness.js) — check the deployed folder structure`);
+  }
   harnessText = await res.text();
 
   window.addEventListener('message', (e) => {
@@ -91,6 +94,11 @@ export function run(opts) {
   const host = document.getElementById('preview-host');
   document.getElementById('preview-empty')?.remove();
   if (currentFrame) currentFrame.remove();
+  // The old frame can never answer now — settle its pending REPL evals
+  // instead of leaving their promises hanging forever.
+  for (const cb of evalCallbacks.values()) {
+    cb({ ok: false, cancelled: true, value: { t: 'str', v: '(cancelled — a new run replaced the frame before this settled)' } });
+  }
   evalCallbacks.clear();
 
   const frame = document.createElement('iframe');

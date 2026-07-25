@@ -14,7 +14,7 @@ This version:
 2. **Deterministic full-document assembly.** Every run builds one complete HTML document — harness → SP context + `<base>` → library CSS → user CSS → user HTML → ordered blocking library scripts → user JS last — and hands it to the browser's normal parser. Exactly how a real page loads; no injection races.
 3. **Fresh iframe per run.** The old iframe is destroyed; no leaked globals, no half-initialized state.
 4. **`postMessage`-only instrumentation.** The in-iframe harness never gets reached into from outside; all console/network/error/REPL traffic crosses the boundary as messages, tagged with a per-run token so stale frames are ignored.
-5. **SP context bridge.** The host page's real `_spPageContextInfo` (plus the freshest `__REQUESTDIGEST`) is injected into every run, and `<base href>` points at the web. PnPjs v2 auto-resolves its base URL from that — `pnp.sp.web.get()` works with zero pad-specific setup.
+5. **SP context bridge.** The host page's real `_spPageContextInfo` is re-captured at every run and injected, and `<base href>` points at the web. PnPjs v2 auto-resolves its base URL from that — `pnp.sp.web.get()` works with zero pad-specific setup. On classic pages the `__REQUESTDIGEST` form field is re-read each run, so the injected digest tracks the host's refresh timer; on modern pages the digest is whatever the host exposes — for raw REST writes in a long session, fetch a fresh one from `/_api/contextinfo` (PnPjs does this for you automatically).
 
 ## Local development
 

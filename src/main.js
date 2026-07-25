@@ -7,7 +7,7 @@ import { initRunner, run as runnerRun, evalInFrame, mapSrcdocLineToUserJs, hasRu
 import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import { initLibraries, getEnabledLibraries } from './libraries.js';
-import { applyContextIndicators } from './bridge/sp-context.js';
+import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import { showSplash } from './splash.js';
 
 const state = getState();
@@ -78,7 +78,13 @@ function stopSpinner() {
 }
 
 async function run() {
-  await runnerReady;
+  try {
+    await runnerReady;
+  } catch (e) {
+    statusRun.textContent = e.message;
+    statusRun.className = 'status-item error';
+    return;
+  }
   const settings = getState().settings;
   if (settings.autoClearConsole) consoleApi.clear();
   networkMarkRun();
@@ -95,7 +101,9 @@ async function run() {
   const { runNumber } = runnerRun({
     docs: editorsApi.getDocs(),
     libraries: getEnabledLibraries(),
-    spContext,
+    // Re-capture per run: on classic pages the host rewrites the
+    // #__REQUESTDIGEST form field, and a bootstrap-time digest expires.
+    spContext: getSpContext({ refresh: true }),
     settings,
   });
   if (!settings.autoClearConsole) consoleApi.runDivider(runNumber);

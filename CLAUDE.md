@@ -36,6 +36,7 @@ src/bridge/harness.js     iframe-side instrumentation; plain classic script, no 
                           __DCSPAD_TOKEN__ placeholder replaced per run
 src/bridge/sp-context.js  real _spPageContextInfo capture (live) or labeled mock
 tests/                    Playwright verification suites — see tests/README.md
+REVIEW-LOG.md             external-review triage record + accepted low-priority backlog
 ```
 
 ## Dev workflow
@@ -48,7 +49,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (24 checks: capture, isolation, inspector, network, REPL, libraries, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (29 checks: capture, isolation, rerun lifecycle, inspector, network, REPL, libraries, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 

@@ -189,12 +189,15 @@
   // ---------------------------------------------------------------
   // Network capture: fetch + XMLHttpRequest
   // ---------------------------------------------------------------
+  // Ids are namespaced by TOKEN: the parent panel keeps rows across runs,
+  // and every fresh iframe restarts netId at 0, so bare f1/x1 would
+  // collide with (and silently overwrite) a previous run's entries.
   var netId = 0;
 
   var nativeFetch = window.fetch ? window.fetch.bind(window) : null;
   if (nativeFetch) {
     window.fetch = function (input, init) {
-      var id = 'f' + (++netId);
+      var id = TOKEN + ':f' + (++netId);
       var method = (init && init.method) || (input && input.method) || 'GET';
       var url = '';
       try { url = typeof input === 'string' ? input : (input && input.url) || String(input); } catch (e) {}
@@ -239,7 +242,7 @@
     XHR.prototype.send = function () {
       var xhr = this;
       var meta = xhr.__dcspad || { method: 'GET', url: '' };
-      var id = 'x' + (++netId);
+      var id = TOKEN + ':x' + (++netId);
       var start = performance.now();
       post({ kind: 'net-start', id: id, method: meta.method, url: meta.url, api: 'xhr' });
       xhr.addEventListener('loadend', function () {

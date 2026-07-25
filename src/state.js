@@ -42,6 +42,7 @@ function load() {
 }
 
 function persist() {
+  saveTimer = null;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     for (const fn of listeners) fn('saved');
@@ -74,3 +75,10 @@ export function saveNow() {
 }
 
 export function onSaveStatus(fn) { listeners.add(fn); }
+
+// Flush a save still sitting in the debounce window when the tab is
+// closed, reloaded or backgrounded — otherwise the last ≤600 ms of edits
+// are silently lost.
+window.addEventListener('pagehide', () => {
+  if (saveTimer) saveNow();
+});

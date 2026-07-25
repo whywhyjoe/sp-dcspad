@@ -1,0 +1,65 @@
+# DCSPad review log
+
+Triage record for external code reviews: what was reported, what we agreed with,
+what we rejected (and why), and the accepted-but-deferred backlog. Append a new
+section per review round; move backlog items out when they land.
+
+---
+
+## 2026-07-25 — GHCP GPT 5.6 Sol review (devpad/ only, security excluded)
+
+Two inputs were triaged: the reviewer's **final review** and an earlier
+**chain-of-thought segment** from the same session. Every claim in both was
+verified against the code before acting — all were factually accurate; the
+disagreements below are about remedies and severity, not facts.
+
+### Landed (this round)
+
+| # | Issue | Fix |
+|---|-------|-----|
+| C1 | Network ids (`f1`, `x1`) restarted per iframe while the panel keeps cross-run history → new runs silently overwrote old `requests` map entries; old rows showed new data; multi-select glitch | Ids namespaced by run token in `harness.js`; `markRun()` now also settles still-pending rows as **cancelled** (they could never complete — the parent drops stale-token messages) |
+| C2 | SP context + `__REQUESTDIGEST` captured once at bootstrap and reused forever, contradicting the README's freshness claim; digests expire (~30 min) | `getSpContext({ refresh: true })` re-captures per run in `run()`; README reworded to state exactly what is guaranteed on classic vs modern pages |
+| S1 | Rerun called `evalCallbacks.clear()` without settling — a REPL command awaiting a slow promise hung forever after rerun | Abandoned callbacks are resolved with an explicit cancellation result before clearing |
+| S3 | Harness fetch ignored `res.ok` — a 404 injected an HTML error page as the preview's first `<script>` | `initRunner` throws an actionable error; `run()` surfaces it in the status bar |
+| S5 | Edits made inside the 600 ms autosave debounce window were lost on tab close/reload | `pagehide` listener flushes a pending save |
+| S8 | No coverage of the rerun boundary (exactly where C1/S1 lived) | 5 new smoke checks: cross-run network history, per-run id integrity via detail pane, single-selection, cancelled pending request, cancelled REPL eval — all using `waitForFunction`/`page.route`, no fixed sleeps |
+
+### Rejected (with justification)
+
+- **S1's added eval timeout.** Awaiting a slow `sp.web.get()` on a sluggish
+  tenant is the intended use case; DevTools doesn't time out evals either. The
+  only true leak path was rerun, which the cancellation fix closes.
+- **S4's streaming-prefix body read.** Accurate observation (`clone.text()`
+  materializes whole bodies), but a `getReader()` loop in a classic no-modules
+  script adds real complexity, loses accurate `size` reporting, and the target
+  workload is modest SP JSON. The cheap half (content-type gating) is kept in
+  the backlog below.
+- **CoT issue: `Map`-based key lookup in `sp-shapes.js` `entity()`.** The linear
+  search is real but bounded by construction: serialized nodes cap at
+  `MAX_KEYS = 100` and the largest `ENTITY_FIELDS` list is 5 → worst case ~500
+  string compares per entity, dwarfed by the DOM building around it. There is
+  no scaling regime where it matters; revisit only if the future Site Inspector
+  profiles hot here.
+
+### Accepted but deferred — low-priority backlog
+
+- [ ] **Run-scoped load timeout** (`main.js`): each run's 15 s "still loading…"
+  timeout checks the shared `spinnerTimer`, so run A's timer can stomp run B's
+  status if two slow loads overlap. Cosmetic; keep one `loadTimeout`, clear it
+  in `run()` and in the `loaded` handler.
+- [ ] **History caps**: console entries and network rows/`requests` map grow for
+  the whole session. Cap at ~500, dropping the oldest DOM row + map entry
+  together. Only matters for long autorun/polling sessions; both panels already
+  have clear buttons.
+- [ ] **Body-capture content-type gate** (`harness.js` fetch wrapper): skip
+  `clone.text()` for non-text/JSON/XML content types so binary downloads aren't
+  buffered just to measure their length. (Streaming prefix read: rejected above.)
+- [ ] **`tools/build-vendor.mjs` cleanup**: wrap the build in `try/finally` and
+  `unlinkSync('_entry.js')` so the temp entry file doesn't persist after
+  success *or* failure. (One-time manual script — cleanliness only.)
+- [ ] **`tests/README.md` env-var formats**: document that `DCSPAD_URL` is a
+  full URL including `/index.html` while `DCSPAD_FIXTURES` is a bare origin
+  (the suite appends `/fixtures/…`), with an example invocation.
+- [ ] **Opportunistic sleep→`waitForFunction` migration** in the pre-existing
+  smoke checks, as those sections get touched. New rerun-lifecycle checks
+  already follow this pattern.

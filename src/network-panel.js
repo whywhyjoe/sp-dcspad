@@ -92,6 +92,10 @@ function renderDetail(data) {
   detail.append(kv('Method', data.method), kv('URL', data.url), kv('Via', data.api === 'xhr' ? 'XMLHttpRequest' : 'fetch'));
 
   detail.append(el('h4', '', 'Response'));
+  if (data.cancelled) {
+    detail.append(el('div', 'net-status-err', 'cancelled — the frame was replaced by a new run before the response arrived'));
+    return;
+  }
   if (data.status === undefined) {
     detail.append(el('div', 'net-status-pending', 'pending…'));
     return;
@@ -161,6 +165,19 @@ function applyApiFilterTo(row) {
 }
 
 export function markRun() {
+  // The outgoing frame is about to be destroyed, so its in-flight
+  // requests can never complete — settle them as cancelled instead of
+  // leaving them pending forever.
+  for (const { row, data } of requests.values()) {
+    if (data.status !== undefined || data.cancelled) continue;
+    data.cancelled = true;
+    const tdStatus = row.children[2];
+    tdStatus.textContent = '✕ cancelled';
+    tdStatus.className = 'net-status net-status-err';
+    row.classList.remove('net-pending');
+    if (selectedId === data.id) renderDetail(data);
+  }
+
   // Keep requests from prior runs but visually separate them.
   const tbody = document.getElementById('network-rows');
   if (tbody.children.length) {
