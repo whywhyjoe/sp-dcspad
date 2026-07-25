@@ -3,6 +3,9 @@
 // network history, cancelled requests/evals), library injection, autosave.
 // Setup: see tests/README.md (app server on 8642, fixtures on 8643).
 
+import { readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { launchBrowser, check, exitWithResult, APP_URL, FIXTURES_URL } from './lib.mjs';
 
 const browser = await launchBrowser();
@@ -213,34 +216,123 @@ await check('text filter still matches logged content', async () =>
 await page.fill('#console-filter-text', '');
 await page.waitForTimeout(FILTER_SETTLE);
 
-// library injection via local fixture (sandbox blocks public CDNs;
-// the mechanism — ordered blocking <script src> — is identical)
-await page.fill('#lib-custom-url', `${FIXTURES_URL}/fixtures/testlib.js`);
-await page.click('#lib-custom-form button');
-await page.waitForTimeout(200);
+// --- framework catalog: add via form, injection, 404, reorder, delete ---
+// (local fixture: sandbox blocks public CDNs; the mechanism — ordered
+// blocking <script src> — is identical)
+const addFramework = async (name, url) => {
+  await page.fill('#lib-custom-name', name);
+  await page.fill('#lib-custom-url', url);
+  await page.click('#lib-custom-form button');
+};
+const libRow = (text) => page.locator('#lib-list .lib-item', { hasText: text });
+// The assertion IS the wait: poll until the iframe's <script src> order
+// matches (or time out and fail the check).
+const scriptOrderBecomes = (expected) => page.waitForFunction((exp) => {
+  const f = document.querySelector('#preview-host iframe');
+  if (!f || !f.contentDocument) return false;
+  const srcs = [...f.contentDocument.querySelectorAll('script[src]')].map((s) => s.getAttribute('src'));
+  return JSON.stringify(srcs) === JSON.stringify(exp);
+}, expected, { timeout: 8000 }).then(() => true, () => false);
+
+const LIB_A = `${FIXTURES_URL}/fixtures/testlib.js`;
+const LIB_B = `${FIXTURES_URL}/fixtures/testlib.js?b`;
+
+await addFramework('', LIB_A);   // no name — falls back to filename
 await setJs('console.log("testlib-type", typeof testlib, testlib && testlib.hello());');
 await page.click('#btn-run');
-await page.waitForTimeout(1500);
-await check('custom library loads before user JS', async () =>
+await page.waitForFunction(() =>
+  document.querySelector('#console-out')?.textContent.includes('testlib-type'));
+await check('added framework loads before user JS', async () =>
   (await page.locator('#console-out').textContent()).includes('testlib-type object hi'));
 
-await page.fill('#lib-custom-url', `${FIXTURES_URL}/fixtures/does-not-exist.js`);
-await page.click('#lib-custom-form button');
-await page.waitForTimeout(200);
+await addFramework('', `${FIXTURES_URL}/fixtures/does-not-exist.js`);
 await page.click('#btn-run');
-await page.waitForTimeout(1500);
-await check('library 404 surfaces as console error', async () =>
-  (await page.locator('#console-out').textContent()).includes('Failed to load resource'));
-await page.locator('#lib-custom-list .lib-del').nth(1).click();
-await page.waitForTimeout(300);
+await page.waitForFunction(() =>
+  document.querySelector('#console-out')?.textContent.includes('Failed to load resource'));
+await check('framework 404 surfaces as console error', true);
+page.once('dialog', (d) => d.accept());
+await libRow('does-not-exist.js').locator('.lib-del').click();
+await check('framework removed from catalog', async () =>
+  (await libRow('does-not-exist.js').count()) === 0);
 
-// autosave/restore
+await addFramework('testlib-b', LIB_B);
+await page.click('#btn-run');
+await check('enabled frameworks inject in catalog order', () =>
+  scriptOrderBecomes([LIB_A, LIB_B]));
+await libRow('testlib-b').locator('.lib-move').first().click();   // ↑
+await page.click('#btn-run');
+await check('reorder changes injection order', () =>
+  scriptOrderBecomes([LIB_B, LIB_A]));
+page.once('dialog', (d) => d.accept());
+await libRow('testlib-b').locator('.lib-del').click();
+
+// --- snippets: save from selection, insert at cursor ---
+await setJs('var SNIPPET_MARKER = 42;');
+await page.click('#pane-js .cm-content');
+await page.keyboard.press('Control+a');
+page.once('dialog', (d) => d.accept('my-snip'));
+await page.click('#btn-snippet-add');
+await check('snippet saved from selection', async () =>
+  (await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).count()) === 1);
+
+await setJs('// cleared\n');
+await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).click();
+await check('snippet inserts into the JS editor at the cursor', async () =>
+  (await page.locator('#pane-js .cm-content').textContent()).includes('SNIPPET_MARKER = 42'));
+
+// --- project file: save → modify → load round-trip ---
+await setJs('console.log("round-trip-original");');
+await page.click('#btn-file');
+const [projDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#mi-save-project'),
+]);
+const projPath = await projDownload.path();
+const projJson = JSON.parse(readFileSync(projPath, 'utf8'));
+await check('saved project file has the right shape', () =>
+  projJson.kind === 'project' && projJson.docs.js.includes('round-trip-original')
+  && Array.isArray(projJson.libraries.enabled));
+
+await setJs('console.log("changed after save");');
+await page.setInputFiles('#import-project-file', projPath);
+await page.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('project loaded'));
+await check('loading the project file restores the JS pane', async () =>
+  (await page.locator('#pane-js .cm-content').textContent()).includes('round-trip-original'));
+
+// A project referencing a framework missing from the catalog loads
+// tolerantly but warns by name.
+const ghostProject = join(tmpdir(), 'dcspad-ghost-project.json');
+writeFileSync(ghostProject, JSON.stringify({
+  app: 'dcspad', kind: 'project', v: 1,
+  docs: { html: '', css: '', js: '// ghost-lib project' },
+  libraries: { enabled: ['ghost-lib-id'] }, jsAsModule: false,
+}));
+await page.setInputFiles('#import-project-file', ghostProject);
+await page.waitForFunction(() =>
+  document.querySelector('#console-out')?.textContent.includes('not in your catalog'));
+await check('missing-framework project loads with a named warning', async () =>
+  (await page.locator('#console-out').textContent()).includes('ghost-lib-id'));
+
+// --- pane export ---
+await setJs('var EXPORT_MARKER = 1;\n');
+await page.click('#btn-file');
+const [jsDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#mi-export-js'),
+]);
+await check('export JS pane downloads the pane contents', async () =>
+  readFileSync(await jsDownload.path(), 'utf8').includes('EXPORT_MARKER'));
+
+// --- autosave/restore across reload (workspace, catalog, snippets) ---
 await page.reload();
 await page.waitForTimeout(1200);
 await check('JS doc restored after reload', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('testlib-type'));
-await check('custom library persisted after reload', async () =>
-  (await page.locator('#lib-custom-list').textContent()).includes('testlib.js'));
+  (await page.locator('#pane-js .cm-content').textContent()).includes('EXPORT_MARKER'));
+await check('catalog framework persisted after reload', async () =>
+  (await libRow('testlib.js').count()) === 1);
+await check('snippet library persisted after reload', async () =>
+  (await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).count()) === 1);
 
 await browser.close();
 exitWithResult();

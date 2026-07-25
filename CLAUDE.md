@@ -11,7 +11,7 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
 3. **`postMessage`-only across the frame boundary.** The harness (`src/bridge/harness.js`) pre-serializes everything and posts it with a per-run token; the app ignores messages whose token isn't current. Never reach into the iframe from app code (tests may read computed styles — that's it).
 4. **Pad chrome must lose to user code.** Anything the pad adds to the preview (e.g. the dark-mode canvas style) is injected *before* library/user CSS so the user's styling always wins. The pad must never misrepresent how code will render on a real page.
 5. **No framework, no user build.** Vanilla ES modules, plain DOM. CodeMirror is vendored as a single file (`vendor/codemirror.mjs`) because CM6 breaks subtly with duplicate `@codemirror/state` instances; regenerate only via `tools/build-vendor.mjs` (instructions at top of that file).
-6. **State is one serializable blob** (`src/state.js`): `{html, css, js, libraries, settings, layout}` in localStorage. The future SharePoint storage layer (`DevPadData/{user}.json`) replaces persistence wholesale — don't scatter state elsewhere.
+6. **`state.js` is the only module that touches localStorage.** It owns three documents: the workspace blob `{html, css, js, libraries, settings, layout}` (live, autosaved), the framework catalog, and the snippet library. The future SharePoint storage layer (`DevPadData/{user}.json`) replaces persistence wholesale by swapping this one seam — don't scatter storage elsewhere. Files on disk (project/catalog/snippet .json, pane exports) go through `src/io.js`, which moves bytes but stores nothing.
 
 ## File map
 
@@ -23,9 +23,13 @@ tools/build-vendor.mjs    esbuild one-liner for the vendor bundle
 src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
 src/editors.js            CM6 editors; Mod-Enter run; gotoJsLine() for stack links
-src/state.js              defaults + deep-merge load + debounced autosave
+src/state.js              defaults + deep-merge load + debounced autosave; loadDoc/saveDoc
+                          for the catalog + snippet documents (sole localStorage toucher)
+src/io.js                 file download + JSON file-picker helpers (no storage)
 src/runner.js             assemble() + iframe lifecycle + run tokens + evalInFrame()
-src/libraries.js          preset catalog (PRESETS), pins, custom URLs, getEnabledLibraries()
+src/libraries.js          framework catalog: single stored JSON (seeded once from PRESETS,
+                          then authoritative), add/remove/reorder, getEnabledLibraries()
+src/snippets.js           snippet library: save from selection, insert-at-cursor, file I/O
 src/console-panel.js      console rendering, filters, groups, REPL input, stack-frame links
 src/network-panel.js      request rows, _api filter, detail pane (JSON via inspector)
 src/splash.js             ASCII boot splash (short shimmer after first visit)
@@ -49,7 +53,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (34 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, libraries, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (44 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog, snippets, project files, exports, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 

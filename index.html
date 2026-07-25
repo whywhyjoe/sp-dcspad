@@ -33,6 +33,17 @@
         <span class="toggle-pill"></span> Auto-run <span class="live-dot" id="live-dot"></span>
       </label>
       <div class="settings-wrap">
+        <button id="btn-file" class="btn btn-ghost" title="Save / load project, export panes">🗎 File</button>
+        <div id="file-menu" class="settings-menu file-menu" hidden>
+          <button class="menu-item" id="mi-save-project">⤓ Save project (.json)</button>
+          <button class="menu-item" id="mi-load-project">⤒ Load project (.json)…</button>
+          <div class="menu-sep"></div>
+          <button class="menu-item" id="mi-export-html">Export HTML pane</button>
+          <button class="menu-item" id="mi-export-css">Export CSS pane</button>
+          <button class="menu-item" id="mi-export-js">Export JS pane</button>
+        </div>
+      </div>
+      <div class="settings-wrap">
         <button id="btn-settings" class="btn btn-ghost" title="Settings">⚙</button>
         <div id="settings-menu" class="settings-menu" hidden>
           <label><input type="checkbox" id="chk-module"> Run JS as <code>&lt;script type="module"&gt;</code> <span class="hint">enables top-level await; strict mode, <code>var</code> won't become window globals</span></label>
@@ -58,19 +69,35 @@
       </div>
       <div class="sidebar-body">
         <section class="side-section" id="libs-section">
-          <h3 class="side-section-title">Libraries</h3>
+          <h3 class="side-section-title">Frameworks
+            <span class="side-tools">
+              <button id="btn-catalog-export" class="btn btn-ghost btn-xs" title="Save catalog to a .json file">⤓</button>
+              <button id="btn-catalog-import" class="btn btn-ghost btn-xs" title="Load catalog from a .json file (replaces the current catalog)">⤒</button>
+            </span>
+          </h3>
           <div id="lib-pinned" class="lib-group"></div>
           <div id="lib-list" class="lib-group"></div>
           <div class="lib-custom">
-            <h4 class="side-section-sub">Custom URL</h4>
+            <h4 class="side-section-sub">Add framework</h4>
             <form id="lib-custom-form">
+              <input type="text" id="lib-custom-name" placeholder="Name (optional)">
               <input type="url" id="lib-custom-url" placeholder="https://…/lib.js or .css" required>
               <button class="btn btn-xs" type="submit">Add</button>
             </form>
-            <div id="lib-custom-list" class="lib-group"></div>
           </div>
         </section>
-        <!-- future: Site Inspector, Projects, Templates sections mount here -->
+        <section class="side-section" id="snippets-section">
+          <h3 class="side-section-title">Snippets
+            <span class="side-tools">
+              <button id="btn-snippet-add" class="btn btn-ghost btn-xs" title="Save the current selection (or whole pane) as a snippet">＋</button>
+              <button id="btn-snippets-export" class="btn btn-ghost btn-xs" title="Save snippet library to a .json file">⤓</button>
+              <button id="btn-snippets-import" class="btn btn-ghost btn-xs" title="Load snippet library from a .json file (replaces the current library)">⤒</button>
+            </span>
+          </h3>
+          <div id="snippet-list" class="lib-group"></div>
+          <div id="snippet-empty" class="side-hint">Select code in an editor, then ＋</div>
+        </section>
+        <!-- future: Site Inspector section mounts here -->
       </div>
     </aside>
     <button id="btn-expand-sidebar" class="sidebar-expand" title="Expand sidebar" hidden>⟩</button>
@@ -163,6 +190,11 @@
     <span id="status-cursor" class="status-item">Ln 1, Col 1</span>
   </footer>
 </div>
+
+<!-- Hidden pickers for file imports (one per purpose so tests can target them) -->
+<input type="file" id="import-project-file" accept=".json,application/json" hidden>
+<input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
+<input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
 <script type="module" src="src/main.js"></script>
 </body>

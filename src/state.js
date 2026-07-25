@@ -1,8 +1,12 @@
 // Central app state + debounced localStorage persistence.
-// Kept as one serializable blob so a future SharePoint-backed storage
-// layer (DevPadData/{user}.json) can replace localStorage wholesale.
+// This module is the ONLY code that touches localStorage. It owns three
+// documents — workspace (live, autosaved), snippets, catalog — so a
+// future SharePoint-backed storage layer (DevPadData/{user}.json) can
+// replace persistence wholesale by swapping just this seam.
 
 const STORAGE_KEY = 'dcspad.v2.workspace';
+export const CATALOG_KEY = 'dcspad.v2.catalog';
+export const SNIPPETS_KEY = 'dcspad.v2.snippets';
 const SAVE_DEBOUNCE_MS = 600;
 
 const DEFAULTS = {
@@ -75,6 +79,40 @@ export function saveNow() {
 }
 
 export function onSaveStatus(fn) { listeners.add(fn); }
+
+// ---------------------------------------------------------------
+// Named documents (catalog, snippets): small JSON collections beside
+// the workspace. Loaded eagerly, written synchronously — they change
+// on explicit user actions, not keystrokes, so no debounce.
+// ---------------------------------------------------------------
+
+// Returns the stored doc, or null when absent/corrupt (caller seeds).
+export function loadDoc(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && Array.isArray(parsed.items) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Returns false when the write failed (quota) so callers can surface it.
+export function saveDoc(key, doc) {
+  try {
+    localStorage.setItem(key, JSON.stringify(doc));
+    return true;
+  } catch (e) {
+    console.warn(`DCSPad: saving ${key} failed`, e);
+    return false;
+  }
+}
+
+let idCounter = 0;
+export function newId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}${(idCounter++).toString(36)}`;
+}
 
 // Flush a save still sitting in the debounce window when the tab is
 // closed, reloaded or backgrounded — otherwise the last ≤600 ms of edits

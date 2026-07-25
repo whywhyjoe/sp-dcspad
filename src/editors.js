@@ -56,6 +56,25 @@ export function initEditors({ onChange, onRunShortcut }) {
       js: views.js.state.doc.toString(),
     }),
     focus: (name) => views[name]?.focus(),
+    // Replace pane contents wholesale (project load). Goes through the
+    // normal dispatch path so autosave and autorun behave as if typed.
+    setDocs: (docs) => {
+      for (const name of ['html', 'css', 'js']) {
+        if (typeof docs[name] !== 'string') continue;
+        const view = views[name];
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: docs[name] } });
+      }
+    },
+    // Selected text in a pane ('' when the selection is empty).
+    getSelection: (name) => {
+      const sel = views[name].state.selection.main;
+      return views[name].state.sliceDoc(sel.from, sel.to);
+    },
+    insertAtCursor: (name, text) => {
+      const view = views[name];
+      view.dispatch(view.state.replaceSelection(text));
+      view.focus();
+    },
     // Jump the JS editor to a 1-based line (used by clickable stack frames).
     gotoJsLine: (lineNo) => {
       const view = views.js;

@@ -228,11 +228,43 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
 .lib-item .lib-del { color: var(--fg-faint); cursor: pointer; }
 .lib-item .lib-del:hover { color: var(--error); }
 .lib-item.needs-config .lib-name { color: var(--fg-faint); font-style: italic; }
-.lib-custom form { display: flex; gap: 6px; }
-.lib-custom input[type=url] {
-  flex: 1; min-width: 0; background: var(--bg-3); border: 1px solid var(--border-strong);
+.lib-custom form { display: flex; flex-wrap: wrap; gap: 6px; }
+.lib-custom input[type=url], .lib-custom input[type=text] {
+  flex: 1 1 100%; min-width: 0; background: var(--bg-3); border: 1px solid var(--border-strong);
   border-radius: 4px; color: var(--fg); padding: 3px 7px; font-size: 12px; font-family: var(--mono);
 }
+.lib-custom input[type=url] { flex: 1 1 auto; }
+
+/* Row tools (reorder / pin / delete) — quiet until the row is hovered.
+   opacity, not visibility: hidden elements can't be clicked in tests. */
+.lib-item .lib-tools { display: inline-flex; gap: 6px; align-items: center; opacity: 0.25; }
+.lib-item:hover .lib-tools { opacity: 1; }
+.lib-item .lib-move { color: var(--fg-faint); cursor: pointer; font-size: 11px; }
+.lib-item .lib-move:hover { color: var(--accent); }
+
+/* Section-title tools (export/import/add) */
+.side-section-title { display: flex; align-items: center; gap: 6px; }
+.side-section-title .side-tools { margin-left: auto; display: inline-flex; gap: 2px; }
+.side-hint { color: var(--fg-faint); font-size: 11px; font-style: italic; padding: 2px 6px; }
+
+/* Snippets */
+.snippet-item { cursor: pointer; }
+.snippet-lang {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  color: var(--accent); border: 1px solid var(--border-strong);
+  border-radius: 3px; padding: 0 4px; flex-shrink: 0;
+}
+
+/* File menu */
+.file-menu { width: 240px; gap: 2px; padding: 6px; }
+.file-menu .menu-item {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: none; color: var(--fg);
+  font-family: var(--sans); font-size: 12.5px; padding: 6px 8px;
+  border-radius: 4px; cursor: pointer;
+}
+.file-menu .menu-item:hover { background: var(--bg-3); }
+.file-menu .menu-sep { border-top: 1px solid var(--border-strong); margin: 4px 0; }
 
 /* ---------- Editors ---------- */
 .editors { display: flex; flex-direction: column; background: var(--bg-1); min-width: 0; overflow: hidden; }

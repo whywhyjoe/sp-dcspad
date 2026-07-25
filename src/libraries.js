@@ -1,10 +1,18 @@
-// Library manager: preset catalog, enable/pin toggles, custom URLs.
+// Library manager: the framework catalog — a single stored JSON document
+// listing every library the pad can inject, rendered as the checkbox list
+// in the sidebar. Seeded once from PRESETS, then the stored catalog is
+// authoritative: entries (including seeded ones) can be added, removed
+// and reordered. Enabled/pinned state stays in the workspace; the
+// catalog is global across projects.
+//
 // Enabled libraries are injected into the assembled document as ordered,
-// blocking tags (catalog order, then customs) — same as a real page.
+// blocking tags in catalog order — same as a real page. Reordering
+// matters: a plugin must sit below the library it extends.
 
-import { getState, updateNested } from './state.js';
+import { getState, updateNested, loadDoc, saveDoc, newId, CATALOG_KEY } from './state.js';
 import { el } from './inspect/tree-view.js';
 
+// Seed only — after first boot the stored catalog is the truth.
 export const PRESETS = [
   { id: 'dcs-standard', name: 'DCS Standard Include', needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
@@ -21,118 +29,197 @@ export const PRESETS = [
   { id: 'fabric', name: 'Fluent/Fabric Icons (CSS)', css: 'https://static2.sharepointonline.com/files/fabric/office-ui-fabric-core/11.0.0/css/fabric.min.css' },
 ];
 
+let catalog = null;
 let onChangeCb = null;
+
+const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
+const entryFromUrl = (url, name) => ({
+  id: newId('lib'),
+  name: name || url.split('/').pop() || url,
+  js: isCssUrl(url) ? undefined : url,
+  css: isCssUrl(url) ? url : undefined,
+});
 
 export function initLibraries({ onChange }) {
   onChangeCb = onChange;
+  catalog = loadDoc(CATALOG_KEY);
+
+  if (!catalog) {
+    // First boot on catalog-aware code: seed from PRESETS and migrate any
+    // legacy workspace-local custom URLs into real catalog entries. They
+    // were always-injected before, so they arrive enabled.
+    catalog = { v: 1, items: structuredClone(PRESETS) };
+    const libs = getState().libraries;
+    if (libs.custom?.length) {
+      const migratedIds = [];
+      for (const url of libs.custom) {
+        const entry = entryFromUrl(url);
+        catalog.items.push(entry);
+        migratedIds.push(entry.id);
+      }
+      updateNested('libraries', { custom: [], enabled: [...libs.enabled, ...migratedIds] });
+    }
+    persistCatalog();
+  }
+
   render();
   document.getElementById('lib-custom-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const input = document.getElementById('lib-custom-url');
-    const url = input.value.trim();
+    const urlInput = document.getElementById('lib-custom-url');
+    const nameInput = document.getElementById('lib-custom-name');
+    const url = urlInput.value.trim();
     if (!url) return;
-    const libs = getState().libraries;
-    libs.custom.push(url);
-    updateNested('libraries', { custom: libs.custom });
-    input.value = '';
+    const entry = entryFromUrl(url, nameInput.value.trim());
+    catalog.items.push(entry);
+    persistCatalog();
+    // Adding a framework means "I want to use it now" — enable immediately.
+    const enabled = new Set(getState().libraries.enabled);
+    enabled.add(entry.id);
+    updateNested('libraries', { enabled: [...enabled] });
+    urlInput.value = '';
+    nameInput.value = '';
     render();
     onChangeCb?.();
   });
   return { getEnabledLibraries };
 }
 
+function persistCatalog() {
+  if (!saveDoc(CATALOG_KEY, catalog)) {
+    document.getElementById('status-save').textContent = 'catalog save failed — storage full';
+  }
+}
+
 function render() {
   const libs = getState().libraries;
   const pinnedHost = document.getElementById('lib-pinned');
   const listHost = document.getElementById('lib-list');
-  const customHost = document.getElementById('lib-custom-list');
   pinnedHost.textContent = '';
   listHost.textContent = '';
-  customHost.textContent = '';
 
-  for (const preset of PRESETS) {
-    const pinned = libs.pinned.includes(preset.id);
-    (pinned ? pinnedHost : listHost).append(presetItem(preset, libs, pinned));
+  for (const entry of catalog.items) {
+    const pinned = libs.pinned.includes(entry.id);
+    (pinned ? pinnedHost : listHost).append(catalogItem(entry, libs, pinned));
   }
-
-  libs.custom.forEach((url, i) => {
-    const item = el('div', 'lib-item');
-    const mark = el('span', '', '✓');
-    mark.style.color = 'var(--accent)';
-    const name = el('span', 'lib-name', url.split('/').pop() || url);
-    name.title = url;
-    const del = el('span', 'lib-del', '✕');
-    del.title = 'Remove';
-    del.addEventListener('click', () => {
-      libs.custom.splice(i, 1);
-      updateNested('libraries', { custom: libs.custom });
-      render();
-      onChangeCb?.();
-    });
-    item.append(mark, name, del);
-    customHost.append(item);
-  });
 }
 
-function presetItem(preset, libs, pinned) {
+function catalogItem(entry, libs, pinned) {
   const item = el('label', 'lib-item');
   const chk = document.createElement('input');
   chk.type = 'checkbox';
-  chk.checked = libs.enabled.includes(preset.id);
+  chk.checked = libs.enabled.includes(entry.id);
 
-  const name = el('span', 'lib-name', preset.name);
-  if (preset.hint) name.title = preset.hint;
+  const name = el('span', 'lib-name', entry.name);
+  if (entry.hint) name.title = entry.hint;
+  else if (entry.js || entry.css) name.title = entry.js || entry.css;
 
-  if (preset.needsConfig && !libs.dcsUrl) {
+  if (entry.needsConfig && !libs.dcsUrl) {
     item.classList.add('needs-config');
-    name.title = preset.hint || 'Needs a URL';
+    name.title = entry.hint || 'Needs a URL';
   }
 
   chk.addEventListener('change', () => {
-    if (preset.needsConfig && !getState().libraries.dcsUrl && chk.checked) {
+    if (entry.needsConfig && !getState().libraries.dcsUrl && chk.checked) {
       const url = prompt('URL for the DCS Standard Include (your org’s script/CSS bundle):');
       if (!url) { chk.checked = false; return; }
       updateNested('libraries', { dcsUrl: url.trim() });
       item.classList.remove('needs-config');
     }
     const enabled = new Set(getState().libraries.enabled);
-    chk.checked ? enabled.add(preset.id) : enabled.delete(preset.id);
+    chk.checked ? enabled.add(entry.id) : enabled.delete(entry.id);
     updateNested('libraries', { enabled: [...enabled] });
     onChangeCb?.();
   });
 
-  const pin = el('span', 'lib-pin' + (pinned ? ' pinned' : ''), pinned ? '★' : '☆');
-  pin.title = pinned ? 'Unpin' : 'Pin to top';
-  pin.addEventListener('click', (e) => {
-    e.preventDefault();
-    const pins = new Set(getState().libraries.pinned);
-    pinned ? pins.delete(preset.id) : pins.add(preset.id);
-    updateNested('libraries', { pinned: [...pins] });
-    render();
-  });
+  // Row tools. All live inside the <label>, so each must preventDefault
+  // to stop the click from also toggling the checkbox.
+  const tools = el('span', 'lib-tools');
+  const tool = (cls, text, title, fn) => {
+    const s = el('span', cls, text);
+    s.title = title;
+    s.addEventListener('click', (e) => { e.preventDefault(); fn(); });
+    return s;
+  };
 
-  item.append(chk, name, pin);
+  const idx = catalog.items.indexOf(entry);
+  tools.append(
+    tool('lib-move', '↑', 'Move up (injection order)', () => moveEntry(idx, -1)),
+    tool('lib-move', '↓', 'Move down (injection order)', () => moveEntry(idx, +1)),
+    tool('lib-pin' + (pinned ? ' pinned' : ''), pinned ? '★' : '☆', pinned ? 'Unpin' : 'Pin to top', () => {
+      const pins = new Set(getState().libraries.pinned);
+      pinned ? pins.delete(entry.id) : pins.add(entry.id);
+      updateNested('libraries', { pinned: [...pins] });
+      render();
+    }),
+    tool('lib-del', '✕', 'Remove from catalog', () => {
+      if (!confirm(`Remove "${entry.name}" from the framework catalog?`)) return;
+      catalog.items.splice(idx, 1);
+      persistCatalog();
+      const cur = getState().libraries;
+      updateNested('libraries', {
+        enabled: cur.enabled.filter((id) => id !== entry.id),
+        pinned: cur.pinned.filter((id) => id !== entry.id),
+      });
+      render();
+      onChangeCb?.();
+    }),
+  );
+
+  item.append(chk, name, tools);
   return item;
 }
 
-// Ordered list for the runner: presets in catalog order, then custom URLs.
+function moveEntry(idx, delta) {
+  const to = idx + delta;
+  if (to < 0 || to >= catalog.items.length) return;
+  const [entry] = catalog.items.splice(idx, 1);
+  catalog.items.splice(to, 0, entry);
+  persistCatalog();
+  render();
+  onChangeCb?.();   // injection order changed — rerun matters
+}
+
+// Ordered list for the runner: enabled entries in catalog order.
 export function getEnabledLibraries() {
   const libs = getState().libraries;
   const result = [];
-  for (const preset of PRESETS) {
-    if (!libs.enabled.includes(preset.id)) continue;
-    if (preset.needsConfig) {
+  for (const entry of catalog.items) {
+    if (!libs.enabled.includes(entry.id)) continue;
+    if (entry.needsConfig) {
       if (libs.dcsUrl) {
-        const isCss = /\.css(\?|$)/i.test(libs.dcsUrl);
-        result.push({ name: preset.name, js: isCss ? undefined : libs.dcsUrl, css: isCss ? libs.dcsUrl : undefined });
+        result.push({ name: entry.name, js: isCssUrl(libs.dcsUrl) ? undefined : libs.dcsUrl, css: isCssUrl(libs.dcsUrl) ? libs.dcsUrl : undefined });
       }
       continue;
     }
-    result.push({ name: preset.name, js: preset.js, css: preset.css });
-  }
-  for (const url of libs.custom) {
-    const isCss = /\.css(\?|$)/i.test(url);
-    result.push({ name: url, js: isCss ? undefined : url, css: isCss ? url : undefined });
+    result.push({ name: entry.name, js: entry.js, css: entry.css });
   }
   return result;
 }
+
+// ---------------------------------------------------------------
+// For io.js (file export/import) and project-load warnings
+// ---------------------------------------------------------------
+
+export function getCatalogDoc() { return catalog; }
+
+// Replace the catalog wholesale from an imported file. Minimal shape
+// validation; returns false when the file isn't a catalog document.
+export function replaceCatalog(doc) {
+  if (!doc || !Array.isArray(doc.items)) return false;
+  const items = doc.items.filter((it) => it && typeof it.id === 'string' && typeof it.name === 'string');
+  catalog = { v: 1, items };
+  persistCatalog();
+  render();
+  onChangeCb?.();
+  return true;
+}
+
+// Ids referenced by a loaded project but missing from the catalog.
+export function unknownLibraryIds(ids) {
+  const known = new Set(catalog.items.map((it) => it.id));
+  return ids.filter((id) => !known.has(id));
+}
+
+// Re-render after workspace-level library state changed externally
+// (e.g. a project file was loaded).
+export function refreshLibraryUI() { render(); }

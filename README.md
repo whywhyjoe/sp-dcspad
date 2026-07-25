@@ -16,6 +16,15 @@ This version:
 4. **`postMessage`-only instrumentation.** The in-iframe harness never gets reached into from outside; all console/network/error/REPL traffic crosses the boundary as messages, tagged with a per-run token so stale frames are ignored.
 5. **SP context bridge.** The host page's real `_spPageContextInfo` is re-captured at every run and injected, and `<base href>` points at the web. PnPjs v2 auto-resolves its base URL from that — `pnp.sp.web.get()` works with zero pad-specific setup. On classic pages the `__REQUESTDIGEST` form field is re-read each run, so the injected digest tracks the host's refresh timer; on modern pages the digest is whatever the host exposes — for raw REST writes in a long session, fetch a fresh one from `/_api/contextinfo` (PnPjs does this for you automatically).
 
+## Saving, loading, exporting
+
+Everything lives in your browser's localStorage plus plain files you keep wherever you like — no backend.
+
+- **Current project** — autosaved continuously (the workspace you see is always persisted). **File ▸ Save project (.json)** downloads it as a single file; **File ▸ Load project (.json)** restores one. Project files record the panes, which frameworks were enabled, and the module setting.
+- **Pane exports** — **File ▸ Export HTML / CSS / JS** downloads one pane as a plain file.
+- **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and reorder with ↑/↓ — order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
+- **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file.
+
 ## Local development
 
 ```bash
