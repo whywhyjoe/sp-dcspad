@@ -19,12 +19,13 @@ await check('SP chip shows Mock', async () =>
 
 await page.evaluate(() => localStorage.clear());
 
-const setJs = async (code) => {
-  await page.click('#editor-tabs .tab[data-editor="js"]');
-  await page.click('#pane-js .cm-content');
+const setDoc = async (name, code) => {
+  await page.click(`#editor-tabs .tab[data-editor="${name}"]`);
+  await page.click(`#pane-${name} .cm-content`);
   await page.keyboard.press('Control+a');
   await page.keyboard.insertText(code);
 };
+const setJs = (code) => setDoc('js', code);
 
 await setJs(`
 window.counter = (window.counter || 0) + 1;
@@ -148,6 +149,69 @@ await check('abandoned REPL eval settles with a cancellation result', async () =
   (await page.locator('#console-out').textContent())
     .includes('cancelled — a new run replaced the frame'));
 await page.click('#diag-tabs .tab[data-diag="console"]');
+
+// --- fragment links + console text filter ---
+// The <base href> that makes "#foo" navigate away only exists on a live
+// tenant (the local mock deliberately sets baseHref: null), so these are
+// regression guards on the interceptor itself: an in-page link must
+// scroll and fire hashchange, and user preventDefault() must still win.
+const inFrame = (fn) => page.evaluate(fn);
+const frameScrollY = () => inFrame(() =>
+  document.querySelector('#preview-host iframe').contentWindow.scrollY);
+
+await setDoc('html', `<div id="head-marker">HEADMARKER</div>
+<a id="jump" href="#target">jump</a>
+<a id="noop" href="#">noop</a>
+<div style="height:1500px"></div>
+<div id="target">TARGETMARKER</div>`);
+await setJs(`
+window.addEventListener('hashchange', function () { console.log('hashchange-fired'); });
+document.getElementById('noop').addEventListener('click', function (e) {
+  e.preventDefault();
+  console.log('noop-handler-ran');
+});
+`);
+await page.click('#btn-run');
+await page.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('ran in'));
+
+await inFrame(() =>
+  document.querySelector('#preview-host iframe').contentDocument.getElementById('jump').click());
+await page.waitForFunction(() =>
+  document.querySelector('#console-out').textContent.includes('hashchange-fired'));
+
+await check('fragment link scrolls the preview instead of leaving it', async () => {
+  const still = await inFrame(() => {
+    const w = document.querySelector('#preview-host iframe').contentWindow;
+    return !!w.document.getElementById('target') && !!w.document.getElementById('head-marker');
+  });
+  return still && (await frameScrollY()) > 100;
+});
+await check('fragment navigation still fires hashchange', async () =>
+  (await page.locator('#console-out').textContent()).includes('hashchange-fired'));
+
+const scrollBefore = await frameScrollY();
+await inFrame(() =>
+  document.querySelector('#preview-host iframe').contentDocument.getElementById('noop').click());
+await page.waitForFunction(() =>
+  document.querySelector('#console-out').textContent.includes('noop-handler-ran'));
+await check('user preventDefault beats the interceptor (no scroll-to-top)', async () =>
+  scrollBefore > 100 && (await frameScrollY()) === scrollBefore);
+
+// Text filter: the injected timestamp must not be searchable.
+const FILTER_SETTLE = 300;    // filter input is debounced at 150 ms
+const stamp = await page.locator('#console-out .entry-ts').first().textContent();
+await page.fill('#console-filter-text', stamp);
+await page.waitForTimeout(FILTER_SETTLE);
+await check('text filter ignores entry timestamps', async () =>
+  (await page.locator('#console-out .console-entry:not(.hidden-txt)').count()) === 0);
+
+await page.fill('#console-filter-text', 'noop-handler');
+await page.waitForTimeout(FILTER_SETTLE);
+await check('text filter still matches logged content', async () =>
+  (await page.locator('#console-out .console-entry:not(.hidden-txt)').count()) === 1);
+await page.fill('#console-filter-text', '');
+await page.waitForTimeout(FILTER_SETTLE);
 
 // library injection via local fixture (sandbox blocks public CDNs;
 // the mechanism — ordered blocking <script src> — is identical)

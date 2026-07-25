@@ -23,7 +23,7 @@ cd devpad/tests && python3 -m http.server 8643
 
 # terminal 3
 cd devpad/tests
-node smoke.mjs      # 29 checks: capture, isolation, rerun lifecycle, inspector, network, REPL, libraries, autosave
+node smoke.mjs      # 34 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, libraries, autosave
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle
 ```

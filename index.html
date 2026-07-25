@@ -135,7 +135,7 @@
             <div class="console-scroll" id="console-out"></div>
             <div class="console-input-row">
               <span class="console-input-chevron">›</span>
-              <input id="console-input" class="console-input" placeholder="Evaluate in preview (↑↓ history)" autocomplete="off" spellcheck="false">
+              <input id="console-input" class="console-input" placeholder="Evaluate in preview (↑↓ history · use var, not let/const · no top-level await)" title="Runs through eval() in the preview frame, so let/const bindings vanish after each entry — use var to keep something around. Top-level await is a syntax error here, but promises are settled for you: just enter sp.web.get() and the result is awaited automatically." autocomplete="off" spellcheck="false">
             </div>
           </div>
           <div class="diag-view" id="view-network">

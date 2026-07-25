@@ -49,7 +49,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (29 checks: capture, isolation, rerun lifecycle, inspector, network, REPL, libraries, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (34 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, libraries, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 
@@ -57,6 +57,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 - `app.css` has a global `[hidden] { display: none !important; }` guard: any element with a `display` rule plus the `hidden` attribute silently ignores `hidden` without it (an invisible splash overlay once ate every click).
 - Don't put interactive controls inside a `<label>` containing a disabled input — the browser treats the whole label as disabled (custom-library ✕ button bug).
 - User code is embedded raw into the assembled document: keep the `</script>` / `</style>` escaping (`escScript`/`escStyle` in runner.js) intact.
+- An `about:srcdoc` document resolves relative and **fragment** URLs against the *parent's* base URL, not itself. A plain `<a href="#foo">` therefore counts as a cross-document navigation and loads the pad (or, with `<base href>`, the SP web) *inside its own preview pane*. `harness.js` intercepts fragment clicks and re-creates the same-document jump; it deliberately listens in bubble phase and honours `defaultPrevented` so user `<a href="#">` handlers still win.
 - CDN egress: the Claude sandbox proxy blocks public CDNs, so library-loading tests use the local fixture; real CDN presets can only be exercised in a browser with normal egress.
 
 ## Roadmap (seams already reserved — don't build without being asked)

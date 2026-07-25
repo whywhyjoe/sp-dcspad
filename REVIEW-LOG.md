@@ -63,3 +63,77 @@ disagreements below are about remedies and severity, not facts.
 - [ ] **Opportunistic sleep→`waitForFunction` migration** in the pre-existing
   smoke checks, as those sections get touched. New rerun-lifecycle checks
   already follow this pattern.
+
+---
+
+## 2026-07-25 — Gemini Pro 3.1 Extended review (post-fix pass)
+
+Reviewed the code *after* the round-1 fixes landed and did not re-report any of
+them — a useful independent signal that those closed cleanly. All four findings
+verified accurate; none rejected, a first across these rounds. The disagreements
+were about severity and about the shape of one fix.
+
+### Landed (this round)
+
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | **In-page anchors destroyed the preview.** A plain `<a href="#foo">` navigated the iframe away, replacing the run | `harness.js` intercepts fragment clicks and re-creates the same-document jump (`location.hash` assignment so `hashchange` fires, then explicit `scrollIntoView`) |
+| 2 | Console text filter matched the injected timestamp, so searching `10` hit every line logged at `:10` seconds | Filter now reads `.entry-body` rather than the whole entry |
+| 3 | Filtering re-queried `.lvl-filter.active` and the filter input **per entry**, and ran synchronously on every keystroke | Filter state cached and refreshed once per change; input debounced at 150 ms |
+| 4 | REPL's `eval()` semantics (`let`/`const` vanish, no top-level `await`) were undocumented and surprising vs DevTools | Placeholder + `title` hint on the REPL input |
+
+Five new smoke checks (34 total): fragment link scrolls rather than leaves,
+`hashchange` still fires, user `preventDefault()` still wins, filter ignores
+timestamps, filter still matches real content.
+
+### Where the review was wrong — the anchor bug is worse than diagnosed
+
+The review attributed the navigation to the injected `<base href>` and filed it
+as a 🟡 suggestion. Both parts are off, and it matters:
+
+- **Cause.** An `about:srcdoc` document resolves relative *and fragment* URLs
+  against the **parent document's** base URL. `<base href>` changes the
+  destination but is not the cause — the bug reproduces with no `<base>` at all,
+  i.e. in the local mock, where `baseHref` is deliberately `null`.
+- **Severity.** Measured directly: pre-fix, clicking `<a href="#target">` in the
+  preview navigated the iframe to `http://localhost:8642/index.html#target` —
+  **DCSPad recursively loaded inside its own preview pane**, run state gone. On a
+  tenant it lands on the SP web instead. The trigger is also far more common than
+  the review implied: `<a href="#">` as a JS-hook button is idiomatic in
+  SharePoint code, and any such link whose handler omits `preventDefault()` hits
+  it on the first click.
+
+This was the most consequential finding in the review and was ranked below two
+issues that are cosmetic and minor-correctness respectively.
+
+### Where the proposed fixes were changed
+
+- **Fix 1** as written (`preventDefault()` + "optionally scroll") would have
+  silently dropped `hashchange`, trading one fidelity break for a subtler one
+  that breaks hash-routing user code. We assign `location.hash` so the browser
+  performs a real same-document navigation, then scroll explicitly as a fallback
+  in case a future engine declines fragment nav on `about:srcdoc`. The listener
+  is deliberately **bubble phase** and honours `defaultPrevented`: capture phase
+  would have overridden the very common `<a href="#">` + `preventDefault()`
+  button pattern and scrolled the preview to the top against the user's code —
+  a direct violation of "pad chrome must lose to user code".
+- **Fix 3's debounce treats the symptom.** The larger cost was the per-entry
+  document queries inside `applyFilterTo`, which also runs on the hot path in
+  `addEntry` — a run logging 1,000 lines paid 1,000 redundant `querySelectorAll`
+  calls *during the run*. Hoisting the state fixes both paths; the debounce is
+  kept as well.
+
+### Severity disagreement (no items rejected)
+
+Neither 🔴 was critical: one is a responsiveness nit already bounded by the
+history-cap backlog item, the other a minor correctness bug in a convenience
+filter. Ranked here as: anchors (medium) > timestamp match (medium) > filter
+perf (low-medium) > REPL hint (low).
+
+### Test limitation, recorded honestly
+
+The three fragment checks are regression guards on the interceptor, run against
+the local mock. The `<base href>` variant of the destination can only be
+exercised on a real tenant — same class of local limitation as the CDN-egress
+note in `tests/README.md`. The underlying navigation *is* reproduced locally,
+which is what makes the guards meaningful.

@@ -8,6 +8,8 @@ import { enhance } from './inspect/sp-shapes.js';
 let out, groupStack, replHistory, replIndex;
 let deps = {};
 
+const FILTER_DEBOUNCE_MS = 150;
+
 export function initConsolePanel({ evalInFrame, mapSrcdocLine, gotoJsLine, isConsoleVisible }) {
   deps = { evalInFrame, mapSrcdocLine, gotoJsLine, isConsoleVisible };
   out = document.getElementById('console-out');
@@ -24,7 +26,14 @@ export function initConsolePanel({ evalInFrame, mapSrcdocLine, gotoJsLine, isCon
       applyFilters();
     });
   }
-  document.getElementById('console-filter-text').addEventListener('input', applyFilters);
+  // Debounced: each keystroke otherwise re-filtered every entry in the
+  // panel synchronously, which stutters once a session has logged a lot.
+  let filterTimer = null;
+  document.getElementById('console-filter-text').addEventListener('input', () => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(applyFilters, FILTER_DEBOUNCE_MS);
+  });
+  refreshFilterState();
 
   // REPL input.
   const input = document.getElementById('console-input');
@@ -165,19 +174,35 @@ function clear() {
   b.hidden = true; b.textContent = '';
 }
 
+// The active levels and the filter text are read once per filter change
+// and cached: applyFilterTo() runs for every entry in the panel *and*
+// on the hot path in addEntry(), so querying them per entry made a
+// chatty run pay a document query per logged line.
+let filterState = { lvls: new Set(), text: '' };
+
+function refreshFilterState() {
+  filterState = {
+    lvls: new Set([...document.querySelectorAll('.lvl-filter.active')].map((b) => b.dataset.lvl)),
+    text: document.getElementById('console-filter-text').value.trim().toLowerCase(),
+  };
+}
+
 function applyFilters() {
+  refreshFilterState();
   for (const entry of out.querySelectorAll('.console-entry')) applyFilterTo(entry);
 }
 
 function applyFilterTo(entry) {
   if (!entry.dataset.lvl) return;
-  const activeLvls = new Set(
-    [...document.querySelectorAll('.lvl-filter.active')].map((b) => b.dataset.lvl));
   // err button governs 'error'; warn → 'warn'; log → everything else.
   const lvl = entry.dataset.lvl === 'error' ? 'error' : entry.dataset.lvl === 'warn' ? 'warn' : 'log';
-  entry.classList.toggle('hidden-lvl', !activeLvls.has(lvl));
-  const text = document.getElementById('console-filter-text').value.trim().toLowerCase();
-  entry.classList.toggle('hidden-txt', !!text && !entry.textContent.toLowerCase().includes(text));
+  entry.classList.toggle('hidden-lvl', !filterState.lvls.has(lvl));
+  // Match the logged payload only — entry.textContent would also cover
+  // the injected timestamp, so filtering for "10" hit every line logged
+  // at :10 seconds.
+  const body = entry.querySelector('.entry-body');
+  const bodyText = body ? body.textContent.toLowerCase() : '';
+  entry.classList.toggle('hidden-txt', !!filterState.text && !bodyText.includes(filterState.text));
 }
 
 function scrollIfPinned(force) {
