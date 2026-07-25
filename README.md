@@ -100,6 +100,10 @@ src/
 
 CodeMirror is vendored as one ESM file to avoid CM6's duplicate-`@codemirror/state` pitfall and any CDN dependency; regenerate with the commands at the top of `tools/build-vendor.mjs`.
 
+## Tests
+
+Playwright browser suites live in `tests/` — see `tests/README.md` for the two-server setup. Run them after touching the runner, harness, console/network panels, or inspector.
+
 ## Roadmap (deliberately not built yet)
 
 - **Site Inspector** — sidebar panel for the discovery every SP build starts with: lists/libraries with GUIDs + internal names, fields with display/internal names + types, security groups & members, content types — rendered through `src/inspect/` with "copy as PnPjs call" so discovery flows into code.
