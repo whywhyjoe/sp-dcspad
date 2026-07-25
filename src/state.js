@@ -51,7 +51,10 @@ function persist() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     for (const fn of listeners) fn('saved');
   } catch (e) {
+    // Surface it: without the 'error' event the status bar sticks at
+    // "saving…" and the user closes the tab over unsaved work.
     console.warn('DCSPad: autosave failed', e);
+    for (const fn of listeners) fn('error');
   }
 }
 
@@ -109,9 +112,12 @@ export function saveDoc(key, doc) {
   }
 }
 
+// Session-random seed closes the (theoretical) cross-session collision
+// window when two page loads mint their first id in the same millisecond.
+const idSeed = Math.random().toString(36).slice(2, 6);
 let idCounter = 0;
 export function newId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}${(idCounter++).toString(36)}`;
+  return `${prefix}_${Date.now().toString(36)}${idSeed}${(idCounter++).toString(36)}`;
 }
 
 // Flush a save still sitting in the debounce window when the tab is

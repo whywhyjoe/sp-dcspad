@@ -266,6 +266,41 @@ await check('reorder changes injection order', () =>
 page.once('dialog', (d) => d.accept());
 await libRow('testlib-b').locator('.lib-del').click();
 
+// --- catalog file: export → import-without-entry (prunes) → restore ---
+const [catDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#btn-catalog-export'),
+]);
+const catPath = await catDownload.path();
+const catJson = JSON.parse(readFileSync(catPath, 'utf8'));
+const testlibEntry = catJson.items.find((i) => i.name === 'testlib.js');
+await check('exported catalog file has the right shape', () =>
+  Array.isArray(catJson.items) && !!testlibEntry);
+
+// Import a copy with testlib removed while testlib is still enabled:
+// the row must disappear AND its dead id must be pruned from the
+// workspace's enabled list (regression: ids accumulated forever).
+const prunedCatalogPath = join(tmpdir(), 'dcspad-catalog-without-testlib.json');
+writeFileSync(prunedCatalogPath, JSON.stringify(
+  { v: 1, items: catJson.items.filter((i) => i !== testlibEntry) }));
+page.once('dialog', (d) => d.accept());
+await page.setInputFiles('#import-catalog-file', prunedCatalogPath);
+await check('catalog import replaces the catalog', () =>
+  page.waitForFunction(() =>
+    !document.querySelector('#lib-list').textContent.includes('testlib.js'))
+    .then(() => true, () => false));
+await check('catalog import prunes dead enabled ids from the workspace', () =>
+  page.waitForFunction((id) =>
+    !JSON.parse(localStorage.getItem('dcspad.v2.workspace')).libraries.enabled.includes(id),
+    testlibEntry.id).then(() => true, () => false));
+
+page.once('dialog', (d) => d.accept());
+await page.setInputFiles('#import-catalog-file', catPath);
+await check('catalog file round-trip restores entries', () =>
+  page.waitForFunction(() =>
+    document.querySelector('#lib-list').textContent.includes('testlib.js'))
+    .then(() => true, () => false));
+
 // --- snippets: save from selection, insert at cursor ---
 await setJs('var SNIPPET_MARKER = 42;');
 await page.click('#pane-js .cm-content');
@@ -323,6 +358,24 @@ const [jsDownload] = await Promise.all([
 ]);
 await check('export JS pane downloads the pane contents', async () =>
   readFileSync(await jsDownload.path(), 'utf8').includes('EXPORT_MARKER'));
+
+// --- storage failure is surfaced, not silent ---
+// Stub setItem to throw (the only way to hit quota deterministically);
+// the status bar must show an error instead of sitting on "saving…".
+await page.evaluate(() => {
+  window.__origSetItem = Storage.prototype.setItem;
+  Storage.prototype.setItem = function () { throw new DOMException('quota', 'QuotaExceededError'); };
+});
+await setJs('var QUOTA_PROBE = 1;');
+await check('failed autosave surfaces an error in the status bar', () =>
+  page.waitForFunction(() =>
+    document.querySelector('#status-save').textContent.includes('save failed'))
+    .then(() => true, () => false));
+await page.evaluate(() => { Storage.prototype.setItem = window.__origSetItem; });
+// Re-establish a known, successfully-saved doc for the reload checks.
+await setJs('var EXPORT_MARKER = 1;\n');
+await page.waitForFunction(() =>
+  document.querySelector('#status-save').textContent.includes('✓ saved'));
 
 // --- autosave/restore across reload (workspace, catalog, snippets) ---
 await page.reload();

@@ -494,6 +494,7 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
 #status-run.error { color: var(--error); }
 .status-save { color: var(--fg-faint); transition: color .3s; }
 .status-save.saved { color: var(--ok); }
+.status-save.error { color: var(--error); }
 
 /* ---------- Boot splash ---------- */
 .splash {

@@ -137,3 +137,62 @@ the local mock. The `<base href>` variant of the destination can only be
 exercised on a real tenant — same class of local limitation as the CDN-egress
 note in `tests/README.md`. The underlying navigation *is* reproduced locally,
 which is what makes the guards meaningful.
+
+---
+
+## 2026-07-25 — Round 3: GHCP Sonnet re-review + Gemini Pro 3.1 review (save/load build)
+
+Two independent reviews of the same commit (`b000a9c`). All findings verified
+against the code; every accepted fix landed together. Notably, the two reviews
+**converged from different angles on the same real gap** — storage failures not
+surfacing reliably (Sonnet S3, Gemini C1) — which earned that item the most
+thorough treatment.
+
+### Landed
+
+| Source | Issue | Fix |
+|---|---|---|
+| Sonnet S2 | `replaceCatalog` left dead ids in workspace `enabled`/`pinned` forever | Prune to the new catalog's ids inside `replaceCatalog`; regression-tested via the catalog-file round-trip |
+| Sonnet S3 + Gemini C1 | Storage failures surfaced unreliably: workspace quota failure emitted no event (status stuck at "saving…"), catalog/snippet errors wrote directly to `#status-save` where the next autosave tick overwrote them | Unified: `persist()` emits `'error'`; status bar renders a three-state (`saving…` / `✓ saved` / `save failed`, styled); catalog + snippets report through an `onStorageError` callback that also writes a persistent console-panel warning |
+| Sonnet S1 | `chkModule` referenced before declaration (TDZ trap, not a runtime bug) | Element resolved at call time inside the import handler |
+| Sonnet S4 | `newId` counter resets per page load — theoretical same-millisecond cross-session collision | Session-random seed in the id |
+| Sonnet S5 | ↑/↓/✕ closures captured `idx` at render time | `liveIdx()` lookup at event time for move **and** delete (the reviewer flagged only move; delete had the identical pattern) |
+| Sonnet S6 | No catalog file export/import coverage | Round-trip test through a real download, including the S2 prune assertion |
+| Gemini S1 | Synchronous `revokeObjectURL` can abort downloads (Safari-family) | Revocation deferred 1 s |
+| Gemini S2 | No size bound on imports — a huge mis-picked file locks the main thread in `JSON.parse` | 5 MB cap (principled: a legitimate DCSPad file can't exceed the localStorage quota it came from) |
+| Gemini S3 | Parse errors indistinguishable from wrong-schema files | `wireJsonImport` rejects invalid JSON with its own message; handlers keep shape alerts |
+
+Smoke suite 44 → 49: catalog export shape, import-replaces, import-prunes-dead-ids,
+round-trip restore, and quota-failure surfacing (deterministic via a stubbed
+`Storage.prototype.setItem` — the only way to hit quota on demand).
+
+### Declined
+
+- **Sonnet S2's second half** (warn "re-enable your frameworks" after catalog
+  import). The framing conflates layers: the catalog is *global* ("what's
+  installable"), enablement is *per-project* ("what this project uses").
+  Everything-unchecked after importing someone else's catalog is the designed
+  semantics, not a bug to apologize for; after the prune, state is consistent.
+
+### Corrections to reviewer reasoning (fixes taken anyway)
+
+- **Sonnet S3 / Gemini C1 mechanism.** Sonnet's "the next autosave tick
+  overwrites the error with `✓ saved` — a lie" and Gemini's "listener defaults
+  to `✓ saved`" are both slightly wrong: on a truly full store the workspace
+  write *also* fails, no `'saved'` event fires, and the status sticks at
+  "saving…". The lying-checkmark only occurs in the mixed case (small workspace
+  write fits, large catalog write doesn't). The fix is the same either way.
+- **Sonnet S5 mechanism.** A second physical click is hit-tested against the
+  re-rendered DOM at dispatch time, so real users get a *fresh* closure on
+  whatever row now sits under the cursor — the stale-closure path is
+  essentially automation-only. Taken regardless: the live lookup costs nothing
+  and is strictly more correct.
+- **Gemini C1 severity.** "Critical — must fix before merge" overstates a
+  quota-exhaustion path that leaves a visible (if weak) "saving…" signal;
+  ranked here as medium. Best finding in that review all the same.
+
+### Still open (unchanged low-priority backlog from round 1)
+
+Run-scoped load timeout · console/network history caps · fetch body
+content-type gate · build-vendor `try/finally` cleanup · `tests/README.md`
+env-var format docs · opportunistic sleep→`waitForFunction` migration.

@@ -10,8 +10,8 @@ import { el } from './inspect/tree-view.js';
 let doc = null;
 let deps = {};
 
-export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab }) {
-  deps = { getSelection, getDocs, insertAtCursor, selectEditorTab };
+export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
+  deps = { getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError };
   doc = loadDoc(SNIPPETS_KEY) || { v: 1, items: [] };
   render();
 
@@ -47,7 +47,7 @@ export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEdit
 
 function persist() {
   if (!saveDoc(SNIPPETS_KEY, doc)) {
-    document.getElementById('status-save').textContent = 'snippet save failed — storage full';
+    deps.onStorageError?.('snippet library save failed (storage full?)');
   }
 }
 

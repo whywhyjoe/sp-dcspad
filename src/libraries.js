@@ -31,6 +31,7 @@ export const PRESETS = [
 
 let catalog = null;
 let onChangeCb = null;
+let onStorageErrorCb = null;
 
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 const entryFromUrl = (url, name) => ({
@@ -40,8 +41,9 @@ const entryFromUrl = (url, name) => ({
   css: isCssUrl(url) ? url : undefined,
 });
 
-export function initLibraries({ onChange }) {
+export function initLibraries({ onChange, onStorageError }) {
   onChangeCb = onChange;
+  onStorageErrorCb = onStorageError;
   catalog = loadDoc(CATALOG_KEY);
 
   if (!catalog) {
@@ -86,7 +88,7 @@ export function initLibraries({ onChange }) {
 
 function persistCatalog() {
   if (!saveDoc(CATALOG_KEY, catalog)) {
-    document.getElementById('status-save').textContent = 'catalog save failed — storage full';
+    onStorageErrorCb?.('framework catalog save failed (storage full?)');
   }
 }
 
@@ -141,10 +143,13 @@ function catalogItem(entry, libs, pinned) {
     return s;
   };
 
-  const idx = catalog.items.indexOf(entry);
+  // Index is looked up at event time, not captured at render time: a
+  // click that lands on a detached row (or any future re-entrancy)
+  // must never splice by a stale position.
+  const liveIdx = () => catalog.items.indexOf(entry);
   tools.append(
-    tool('lib-move', '↑', 'Move up (injection order)', () => moveEntry(idx, -1)),
-    tool('lib-move', '↓', 'Move down (injection order)', () => moveEntry(idx, +1)),
+    tool('lib-move', '↑', 'Move up (injection order)', () => moveEntry(liveIdx(), -1)),
+    tool('lib-move', '↓', 'Move down (injection order)', () => moveEntry(liveIdx(), +1)),
     tool('lib-pin' + (pinned ? ' pinned' : ''), pinned ? '★' : '☆', pinned ? 'Unpin' : 'Pin to top', () => {
       const pins = new Set(getState().libraries.pinned);
       pinned ? pins.delete(entry.id) : pins.add(entry.id);
@@ -152,6 +157,8 @@ function catalogItem(entry, libs, pinned) {
       render();
     }),
     tool('lib-del', '✕', 'Remove from catalog', () => {
+      const idx = liveIdx();
+      if (idx === -1) return;
       if (!confirm(`Remove "${entry.name}" from the framework catalog?`)) return;
       catalog.items.splice(idx, 1);
       persistCatalog();
@@ -171,7 +178,7 @@ function catalogItem(entry, libs, pinned) {
 
 function moveEntry(idx, delta) {
   const to = idx + delta;
-  if (to < 0 || to >= catalog.items.length) return;
+  if (idx < 0 || to < 0 || to >= catalog.items.length) return;
   const [entry] = catalog.items.splice(idx, 1);
   catalog.items.splice(to, 0, entry);
   persistCatalog();
@@ -209,6 +216,14 @@ export function replaceCatalog(doc) {
   const items = doc.items.filter((it) => it && typeof it.id === 'string' && typeof it.name === 'string');
   catalog = { v: 1, items };
   persistCatalog();
+  // Prune workspace ids that no longer resolve — otherwise dead
+  // references accumulate in enabled/pinned across import cycles.
+  const known = new Set(items.map((it) => it.id));
+  const cur = getState().libraries;
+  updateNested('libraries', {
+    enabled: cur.enabled.filter((id) => known.has(id)),
+    pinned: cur.pinned.filter((id) => known.has(id)),
+  });
   render();
   onChangeCb?.();
   return true;

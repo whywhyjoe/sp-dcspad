@@ -46,7 +46,10 @@ const networkApi = initNetworkPanel({
 });
 
 // ---------- libraries ----------
-initLibraries({ onChange: () => scheduleAutorun() });
+initLibraries({
+  onChange: () => scheduleAutorun(),
+  onStorageError: (msg) => reportStorageError(msg),
+});
 
 // ---------- snippets ----------
 initSnippets({
@@ -54,6 +57,7 @@ initSnippets({
   getDocs: () => editorsApi.getDocs(),
   insertAtCursor: (name, text) => editorsApi.insertAtCursor(name, text),
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
+  onStorageError: (msg) => reportStorageError(msg),
 });
 
 // ---------- SP context ----------
@@ -232,7 +236,10 @@ wireJsonImport('import-project-file', (doc) => {
   });
   if (typeof doc.jsAsModule === 'boolean') {
     updateNested('settings', { jsAsModule: doc.jsAsModule });
-    chkModule.checked = doc.jsAsModule;
+    // Resolved here, not via the chkModule const declared further down —
+    // referencing it would work (the callback fires post-init) but is a
+    // TDZ trap for anyone who reorders this file.
+    document.getElementById('chk-module').checked = doc.jsAsModule;
   }
   refreshLibraryUI();
 
@@ -283,14 +290,27 @@ chkAutoclear.checked = state.settings.autoClearConsole;
 chkAutoclear.addEventListener('change', () =>
   updateNested('settings', { autoClearConsole: chkAutoclear.checked }));
 
-// ---------- autosave tick ----------
+// ---------- autosave tick + storage errors ----------
 const saveEl = document.getElementById('status-save');
 onSaveStatus((status) => {
+  saveEl.classList.remove('saved', 'error');
   if (status === 'dirty') {
     saveEl.textContent = 'saving…';
-    saveEl.classList.remove('saved');
+  } else if (status === 'error') {
+    saveEl.textContent = 'save failed — use File ▸ Save project';
+    saveEl.classList.add('error');
   } else {
     saveEl.textContent = '✓ saved';
     saveEl.classList.add('saved');
   }
 });
+
+// Catalog/snippet write failures: the console entry persists even when
+// a later (smaller) workspace autosave succeeds and retakes the status
+// text, so the failure can't be silently papered over.
+function reportStorageError(msg) {
+  padWarn(`${msg} — use the ⤓ export buttons or File ▸ Save project to keep your work`);
+  saveEl.textContent = 'save failed';
+  saveEl.classList.add('error');
+  saveEl.classList.remove('saved');
+}
