@@ -101,6 +101,42 @@ inspector, REPL and network capture all work inside the web part; a live
   both `index.html` and Monaco to verify the earliest splash stages and that
   the app is fully painted over the dark underlay before the curtain fades.
 
+### Runtime URL configuration (2026-07-26)
+
+- `dcspad.config.json` is a separately versioned, editable runtime document.
+  Framework entries can specify local and CDN URLs, source preference, a
+  global probe, and intelligence-pack IDs without rewriting the persisted
+  framework catalog.
+- If a preferred JavaScript runtime does not expose its configured global,
+  the backup is inserted parser-blocking at the same catalog position. This
+  preserves dependency order and avoids CSP-blocked inline event handlers.
+- The PnPjs 2.15.0 type pack can now follow a custom rollup through explicit
+  metadata even when its URL is opaque.
+- The imported BMO SharePoint design-system and Fluent-icon repositories are
+  reviewed but not copied by `Sync-Live.ps1`. Their local and eventual hosted
+  base folders live under `assets` in the config. The generation/integration
+  design is in `plans/design-system-intellisense.md`.
+- `tests/config.mjs` covers URL resolution, explicit PnP intelligence, and
+  ordered primary/fallback loading.
+
+### Alpine intelligence (2026-07-26)
+
+- Enabling the Alpine runtime now activates a composable `alpine-3` pack.
+  JavaScript completion/hover/signatures cover the public browser API including
+  `Alpine.data/store/bind/plugin`, reactivity hooks, and tree lifecycle.
+- HTML completion and hover cover all core `x-*` directives, common `@event`
+  and `:attribute` shorthands, editable attribute snippets, and the core magic
+  properties (`$dispatch`, `$refs`, `$store`, `$watch`, `$nextTick`, `$root`,
+  `$data`, `$id`, `$el`, `$event`).
+- PnPjs and Alpine declarations live in separate registry entries. Disabling
+  one no longer clears the other through `setExtraLibs([])`.
+- The HTML provider is context-aware enough to offer magic properties only
+  inside Alpine attribute expressions. Inferring arbitrary members from the
+  nearest `x-data` object remains the later deep-expression phase.
+- `tests/monaco.mjs` now verifies Alpine JS, HTML directives, magics, pack
+  coexistence, unloading, legacy-catalog detection, and false diagnostics. The
+  complete browser suite is 98 checks.
+
 ## Open items
 
 - **CSS bleed, both directions**: `app.css` still styles `html`/`body`

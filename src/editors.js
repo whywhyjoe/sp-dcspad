@@ -4,6 +4,12 @@
 
 import { getState, update } from './state.js';
 import { fetchPnpTypeLibraries, loadMonacoRuntime } from './monaco-runtime.js';
+import {
+  ALPINE_HTML_DATA,
+  ALPINE_JS_LIBRARIES,
+  ALPINE_PACK_ID,
+  createAlpineHtmlCompletionProvider,
+} from './intelligence/alpine.js';
 
 const NAMES = ['html', 'css', 'js'];
 const LANGUAGES = { html: 'html', css: 'css', js: 'javascript' };
@@ -24,6 +30,9 @@ export async function initEditors({ onChange, onRunShortcut }) {
   let active = NAMES.includes(state.layout.editorTab) ? state.layout.editorTab : 'js';
   let desiredPnpTypes = false;
   let pnpTypesGeneration = 0;
+  const jsLibraryPacks = new Map();
+  const htmlDataPacks = new Map();
+  const enabledIntelligence = new Set();
 
   monaco.editor.defineTheme('dcspad-dark', {
     base: 'vs-dark',
@@ -85,6 +94,46 @@ export async function initEditors({ onChange, onRunShortcut }) {
     noSuggestionDiagnostics: false,
   });
   jsDefaults.setEagerModelSync(true);
+  const htmlDefaults = monaco.html.htmlDefaults;
+  const baseHtmlOptions = htmlDefaults.options;
+
+  function applyJsLibraries() {
+    jsDefaults.setExtraLibs([...jsLibraryPacks.values()].flat());
+  }
+
+  function applyHtmlData() {
+    htmlDefaults.setOptions({
+      ...baseHtmlOptions,
+      data: {
+        useDefaultDataProvider: true,
+        dataProviders: Object.fromEntries(htmlDataPacks),
+      },
+    });
+  }
+
+  function setAlpineIntelligenceEnabled(enabled) {
+    if (enabled) {
+      jsLibraryPacks.set(ALPINE_PACK_ID, ALPINE_JS_LIBRARIES);
+      htmlDataPacks.set(ALPINE_PACK_ID, ALPINE_HTML_DATA);
+      enabledIntelligence.add(ALPINE_PACK_ID);
+      document.documentElement.dataset.alpineIntelligence = 'ready';
+    } else {
+      jsLibraryPacks.delete(ALPINE_PACK_ID);
+      htmlDataPacks.delete(ALPINE_PACK_ID);
+      enabledIntelligence.delete(ALPINE_PACK_ID);
+      document.documentElement.dataset.alpineIntelligence = 'disabled';
+    }
+    applyJsLibraries();
+    applyHtmlData();
+  }
+
+  const alpineCompletionRegistration = monaco.languages.registerCompletionItemProvider(
+    'html',
+    createAlpineHtmlCompletionProvider(
+      monaco,
+      () => enabledIntelligence.has(ALPINE_PACK_ID),
+    ),
+  );
 
   for (const name of NAMES) {
     models[name] = monaco.editor.createModel(
@@ -167,7 +216,8 @@ export async function initEditors({ onChange, onRunShortcut }) {
     desiredPnpTypes = !!enabled;
     const generation = ++pnpTypesGeneration;
     if (!desiredPnpTypes) {
-      jsDefaults.setExtraLibs([]);
+      jsLibraryPacks.delete('pnpjs-2.15.0');
+      applyJsLibraries();
       document.documentElement.dataset.pnpTypes = 'disabled';
       return;
     }
@@ -175,13 +225,20 @@ export async function initEditors({ onChange, onRunShortcut }) {
     try {
       const libs = await fetchPnpTypeLibraries();
       if (!desiredPnpTypes || generation !== pnpTypesGeneration) return;
-      jsDefaults.setExtraLibs(libs);
+      jsLibraryPacks.set('pnpjs-2.15.0', libs);
+      applyJsLibraries();
       document.documentElement.dataset.pnpTypes = 'ready';
     } catch (error) {
       if (generation !== pnpTypesGeneration) return;
       document.documentElement.dataset.pnpTypes = 'error';
       console.warn('DCSPad: PnPjs IntelliSense could not be loaded', error);
     }
+  }
+
+  function setIntelligencePacks(packIds) {
+    const requested = new Set(packIds || []);
+    setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
+    setPnpTypesEnabled(requested.has('pnpjs-2.15.0'));
   }
 
   reportCursor();
@@ -234,9 +291,11 @@ export async function initEditors({ onChange, onRunShortcut }) {
       editor.focus();
     },
     setJsAsModule,
+    setIntelligencePacks,
     setPnpTypesEnabled,
     dispose: () => {
       resizeObserver.disconnect();
+      alpineCompletionRegistration.dispose();
       editor.dispose();
       for (const model of Object.values(models)) model.dispose();
     },

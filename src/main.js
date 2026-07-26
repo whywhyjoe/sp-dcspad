@@ -8,15 +8,17 @@ import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import {
   initLibraries, getEnabledLibraries, getCatalogDoc, replaceCatalog,
-  unknownLibraryIds, refreshLibraryUI, hasEnabledPnpjs215Runtime,
+  unknownLibraryIds, refreshLibraryUI, getEnabledIntelligence,
 } from './libraries.js';
 import { initSnippets } from './snippets.js';
 import { downloadText, wireJsonImport } from './io.js';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import { showSplash } from './splash.js';
+import { loadAppConfig } from './config.js';
 
 const splashApi = showSplash();
 splashApi.status('Restoring workspace…');
+const configReady = loadAppConfig();
 const state = getState();
 applyContextIndicators();
 
@@ -56,14 +58,16 @@ const networkApi = initNetworkPanel({
 });
 
 // ---------- libraries ----------
+const configResult = await configReady;
 initLibraries({
+  config: configResult.config,
   onChange: () => {
     scheduleAutorun();
-    editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+    editorsApi.setIntelligencePacks(getEnabledIntelligence());
   },
   onStorageError: (msg) => reportStorageError(msg),
 });
-editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+editorsApi.setIntelligencePacks(getEnabledIntelligence());
 
 // ---------- snippets ----------
 initSnippets({
@@ -211,6 +215,8 @@ function padWarn(msg) {
   consoleApi.handlers.console({ level: 'warn', args: [{ t: 'str', v: `DCSPad: ${msg}` }] });
 }
 
+for (const warning of configResult.warnings) padWarn(warning);
+
 document.getElementById('mi-save-project').addEventListener('click', () => {
   closeFileMenu();
   const s = getState();
@@ -251,7 +257,7 @@ wireJsonImport('import-project-file', (doc) => {
     editorsApi.setJsAsModule(doc.jsAsModule);
   }
   refreshLibraryUI();
-  editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+  editorsApi.setIntelligencePacks(getEnabledIntelligence());
 
   // Deliberately tolerant: a project may reference catalog entries that
   // were removed since it was saved. The run will fail visibly with

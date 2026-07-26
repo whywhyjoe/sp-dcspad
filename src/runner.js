@@ -44,6 +44,33 @@ export async function initRunner(messageHandlers) {
 
 const escScript = (s) => s.replace(/<\/script/gi, '<\\/script');
 const escStyle = (s) => s.replace(/<\/style/gi, '<\\/style');
+const escAttr = (s) => String(s)
+  .replaceAll('&', '&amp;')
+  .replaceAll('"', '&quot;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;');
+
+function externalScript(url, nonceAttr) {
+  return `<script src="${escAttr(url)}"${nonceAttr}><\/script>`;
+}
+
+// A fallback is inserted with document.write while the srcdoc parser is still
+// at the failed library's position. That makes the fallback parser-blocking,
+// preserving the catalog's dependency order before later libraries/user JS.
+// The global probe avoids inline event handlers, which SharePoint's CSP blocks.
+function libraryScript(entry, nonceAttr) {
+  const primary = externalScript(entry.js, nonceAttr);
+  if (!entry.fallbackJs || !entry.probeGlobal) return primary;
+
+  const path = entry.probeGlobal.split('.').filter(Boolean);
+  const fallbackTag = externalScript(entry.fallbackJs, nonceAttr);
+  const message = `DCSPad: ${entry.name || entry.probeGlobal} did not expose ${entry.probeGlobal}; loading configured fallback`;
+  const probe = `(function(){var value=window;var path=${JSON.stringify(path)};`
+    + `for(var i=0;i<path.length&&value!=null;i+=1)value=value[path[i]];`
+    + `if(value==null){console.warn(${JSON.stringify(message)});`
+    + `document.write(${JSON.stringify(fallbackTag)});}})();`;
+  return `${primary}\n<script${nonceAttr}>${escScript(probe)}<\/script>`;
+}
 
 // Host-page CSP nonce. Modern SharePoint pages ship a nonce-based
 // script-src (no 'unsafe-inline'), and about:srcdoc documents inherit the
@@ -61,11 +88,16 @@ function assemble({ docs, libraries, spContext, settings, token }) {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : '';
   const cssLinks = libraries
     .filter((l) => l.css)
-    .map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${u}">`).join('\n'))
+    .map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${escAttr(u)}">`).join('\n'))
     .join('\n');
   const jsTags = libraries
     .filter((l) => l.js)
-    .map((l) => (Array.isArray(l.js) ? l.js : [l.js]).map((u) => `<script src="${u}"${nonceAttr}><\/script>`).join('\n'))
+    .map((l) => {
+      if (Array.isArray(l.js)) {
+        return l.js.map((u) => externalScript(u, nonceAttr)).join('\n');
+      }
+      return libraryScript(l, nonceAttr);
+    })
     .join('\n');
 
   // Pad-only canvas color, injected BEFORE library/user CSS so anything
@@ -79,7 +111,7 @@ html { background: #1d2026; color: #d6d9e0; }
 
   const contextScript = spContext
     ? `<script${nonceAttr}>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>\n` +
-      (spContext.baseHref ? `<base href="${spContext.baseHref}">\n` : '')
+      (spContext.baseHref ? `<base href="${escAttr(spContext.baseHref)}">\n` : '')
     : '';
 
   const head = `<!DOCTYPE html>

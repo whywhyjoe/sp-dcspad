@@ -68,6 +68,7 @@ Copy-Item (Join-Path $repo 'index.html')          $LivePath -Force
 Copy-Item (Join-Path $repo 'boot.js')             $LivePath -Force
 Copy-Item (Join-Path $repo 'dcspad.webpart.html') $LivePath -Force
 Copy-Item (Join-Path $repo 'dcspad.app.js')       $LivePath -Force
+Copy-Item (Join-Path $repo 'dcspad.config.json')  $LivePath -Force
 Copy-DirectoryContents (Join-Path $repo 'src')    (Join-Path $LivePath 'src')
 Copy-DirectoryContents (Join-Path $repo 'styles') (Join-Path $LivePath 'styles')
 Copy-DirectoryContents (Join-Path $repo 'vendor') (Join-Path $LivePath 'vendor')

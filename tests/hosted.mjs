@@ -75,11 +75,13 @@ await check('hosted runtime uses the boot script folder as its asset base', () =
   page.evaluate((expected) => window.__DCSPAD_ASSET_BASE__ === expected, `${origin}/`));
 
 await page.waitForFunction(() => document.documentElement.dataset.monacoReady === 'true');
-await check('hosted app and Monaco runtime URLs are versioned', () => {
+await check('hosted app, config, and Monaco runtime URLs are versioned', () => {
   const app = requests.find((url) => url.includes('/dcspad.app.js?'));
+  const config = requests.find((url) => url.includes('/dcspad.config.json?'));
   const monaco = requests.find((url) => url.includes('/vendor/monaco/monaco.js?'));
-  return !!app && !!monaco
+  return !!app && !!config && !!monaco
     && new URL(app).searchParams.has('v')
+    && new URL(config).searchParams.has('v')
     && new URL(monaco).searchParams.has('v');
 });
 

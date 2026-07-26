@@ -25,6 +25,30 @@ Everything lives in your browser's localStorage plus plain files you keep wherev
 - **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and reorder with ↑/↓ — order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
 - **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file.
 
+## Runtime configuration
+
+Edit [`dcspad.config.json`](dcspad.config.json) to change environment-specific
+URLs without editing or rebuilding the application.
+
+- `frameworks.items.<catalog-id>.localUrl` is the preferred self-hosted or
+  organization-hosted script.
+- `cdnUrl` is its backup. Set `frameworks.prefer` to `"cdn"` to reverse the
+  order, or `fallbackToCdn` to `false` to disable automatic fallback.
+- `probeGlobal` is the global the primary script must expose. When it is absent,
+  DCSPad inserts the backup as a parser-blocking script at the same catalog
+  position, so plugins and user JavaScript still run in the expected order.
+- `intelligence` explicitly associates editor metadata with the runtime. The
+  custom PnPjs rollup can therefore keep `["pnpjs-2.15.0"]` even when its URL
+  does not contain a recognizable package/version path.
+- `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
+  hosted base folders plus the files DCSPad's generated autocomplete will
+  consume. Relative local paths resolve from `dcspad.config.json`; hosted
+  locations may be absolute SharePoint URLs.
+
+Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
+their existing CDN URLs until local copies are filled in. Hosted mode versions
+the JSON independently, and `deploy/Sync-Live.ps1` copies it automatically.
+
 ## Local development
 
 ```bash
@@ -72,7 +96,7 @@ Or by hand:
 |---|---|
 | Run | `Run` button or `Ctrl/Cmd+Enter` anywhere in an editor |
 | Auto-run | Toggle in the toolbar; re-runs ~800 ms after you stop typing |
-| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types |
+| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types; enabling Alpine adds v3 JavaScript API, HTML directive, shorthand, magic-property, hover and snippet intelligence |
 | Editor status | The status bar shows `Monaco ✓`; `Monaco ⚠` remains visible if a worker is blocked, even after running code |
 | Top-level `await` | Settings ⚙ → "Run JS as module" (strict mode; `var` won't become window globals) |
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
@@ -83,6 +107,26 @@ Or by hand:
 | Preview dark mode | ☀/🌙 on the preview header (default dark). Pad-only canvas color injected *before* your CSS, so anything you style wins — flip to light to see how it renders on a typical SharePoint page |
 
 Work-in-progress (editors, libraries, settings, layout) autosaves to `localStorage` and restores on load.
+
+### Testing framework intelligence
+
+Framework intelligence follows the enabled runtime checkbox.
+
+- **PnPjs:** enable **PnPjs v2**, type `pnp.sp.w` in JavaScript, then press
+  `Ctrl+Space`; `web` should be offered.
+- **Alpine JavaScript:** enable **Alpine.js**, type `Alpine.d`, then press
+  `Ctrl+Space`; `data` should be offered. `Alpine.s` and `Alpine.p` offer
+  `store` and `plugin`.
+- **Alpine HTML directives:** type `<div x-d`, then press `Ctrl+Space`;
+  `x-data` should be offered with documentation and an editable state snippet.
+- **Alpine HTML magics:** type `<button x-data @click="$d`, then press
+  `Ctrl+Space`; `$dispatch` should be offered. `$refs`, `$store`, `$watch`,
+  `$nextTick`, `$root`, `$data`, `$id`, `$el`, and `$event` are also included.
+
+The first Alpine pack understands the stable core API and whether the cursor is
+inside an Alpine attribute. It does not yet infer arbitrary properties declared
+inside the surrounding `x-data` object. Plugin-only features such as `$persist`,
+`x-collapse`, and `x-trap` require their own enabled runtime/intelligence packs.
 
 ## The SP-aware inspector
 

@@ -204,7 +204,12 @@
   // versions its runtime, CSS/font, workers and PnPjs declarations together.
   // index.html is always fetched no-store. The harness is fetched as text
   // with no-cache by the runner, so it stays fresh on its own.
-  var VERSIONED = ['styles/app.css', 'dcspad.app.js', 'vendor/monaco/version.json'];
+  var VERSIONED = [
+    'styles/app.css',
+    'dcspad.app.js',
+    'dcspad.config.json',
+    'vendor/monaco/version.json',
+  ];
 
   var versions = {};
   var revalidated = Promise.all(VERSIONED.map(function (f) {
@@ -236,6 +241,7 @@
     .then(function (html) {
       return revalidated.then(function () {
         window.__DCSPAD_MONACO_VERSION__ = versions['vendor/monaco/version.json'];
+        window.__DCSPAD_CONFIG_URL__ = versioned('dcspad.config.json');
         bootSplash.status('Starting application…');
         return html;
       });

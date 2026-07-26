@@ -10,14 +10,23 @@ const pageErrors = [];
 page.on('request', (request) => {
   if (request.url().includes('/vendor/monaco/')) assetRequests.push(request.url());
 });
-page.on('pageerror', (error) => pageErrors.push(error.message));
+page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
 
 await page.goto(APP_URL);
 await page.context().grantPermissions(
   ['clipboard-read', 'clipboard-write'],
   { origin: new URL(APP_URL).origin },
 );
-await page.waitForSelector('.monaco-editor');
+try {
+  await page.waitForSelector('.monaco-editor');
+} catch (error) {
+  console.log(`      startup page errors: ${pageErrors.join(' | ') || '(none)'}`);
+  console.log('      Alpine module import:', await page.evaluate(() =>
+    import('/src/intelligence/alpine.js')
+      .then(() => 'ok', (failure) => `${failure.message}\n${failure.stack || ''}`)));
+  console.log(`      startup body: ${(await page.locator('body').innerText()).slice(0, 1200)}`);
+  throw error;
+}
 
 const focusEditor = () =>
   page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
@@ -65,6 +74,24 @@ await check('PnPjs 2.15 runtime detection survives custom catalog names', () =>
     });
   }));
 
+await check('Alpine v3 intelligence survives catalogs saved before pack metadata', () =>
+  page.evaluate(async () => {
+    const { isAlpine3Runtime } = await import('/src/libraries.js');
+    return isAlpine3Runtime({
+      id: 'alpine',
+      name: 'Alpine.js',
+      js: 'https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js',
+    }) && isAlpine3Runtime({
+      id: 'custom-alpine',
+      name: 'Alpine local copy',
+      js: 'https://cdn.example.test/alpinejs/3.14.9/cdn.min.js',
+    }) && !isAlpine3Runtime({
+      id: 'alpine2',
+      name: 'Alpine.js v2',
+      js: 'https://cdn.jsdelivr.net/npm/alpinejs@2/dist/alpine.min.js',
+    });
+  }));
+
 await setDoc('html', '<main>HTML_MODEL_MARKER</main>');
 await setDoc('css', 'body { color: papayawhip; } /* CSS_MODEL_MARKER */');
 await setDoc('js', 'console.log("JS_MODEL_MARKER");');
@@ -97,6 +124,37 @@ await check('JavaScript semantic diagnostics render', () =>
   page.waitForFunction(() => document.querySelectorAll('.squiggly-error').length > 0)
     .then(() => true, () => false));
 
+const alpineRow = page.locator('.lib-item', { hasText: 'Alpine.js' });
+await alpineRow.locator('input[type="checkbox"]').check();
+await page.waitForFunction(() =>
+  document.documentElement.dataset.alpineIntelligence === 'ready');
+await setDoc('js', 'Alpine.data\nconsole.log(Alpine.data);');
+await page.waitForTimeout(750);
+await check('Alpine global has no false JavaScript diagnostics', async () => {
+  const markers = await page.evaluate(async () => {
+    const monaco = await import('/vendor/monaco/monaco.js');
+    const resource = monaco.Uri.parse('file:///dcspad/script.js');
+    return monaco.editor.getModelMarkers({ resource });
+  });
+  if (markers.length) {
+    console.log(`      Alpine markers: ${markers.map((marker) => marker.message).join(' | ')}`);
+  }
+  return markers.length === 0;
+});
+await check('Alpine JavaScript completion includes data/store/plugin', async () => {
+  for (const [prefix, name] of [['d', 'data'], ['s', 'store'], ['p', 'plugin']]) {
+    await setDoc('js', `Alpine.${prefix}`);
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Control+Space');
+    await page.waitForSelector('.suggest-widget.visible');
+    const suggestions = await page.locator('.suggest-widget .monaco-list-row').allTextContents();
+    await page.keyboard.press('Escape');
+    if (!suggestions.some((text) =>
+      new RegExp(`^${name}(?:\\b|\\s|\\()`).test(text))) return false;
+  }
+  return true;
+});
+
 const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs v2 (classic)' });
 await pnpRow.locator('input[type="checkbox"]').check();
 await page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'ready');
@@ -112,6 +170,47 @@ await pnpRow.locator('input[type="checkbox"]').uncheck();
 await check('PnPjs declarations unload with the runtime library', () =>
   page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'disabled')
     .then(() => true, () => false));
+
+await check('disabling PnPjs does not erase Alpine declarations', () =>
+  page.evaluate(async () => {
+    const monaco = await import('/vendor/monaco/monaco.js');
+    const libs = monaco.typescript.javascriptDefaults.getExtraLibs();
+    const paths = Object.keys(libs);
+    return paths.some((path) => path.includes('@types/dcspad-alpine'))
+      && !paths.some((path) => path.includes('@pnp/'));
+  }));
+
+await setDoc('html', '<div x-d');
+await page.waitForTimeout(500);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('Alpine HTML completion includes core directives', async () =>
+  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
+    .some((text) => /^x-data(?:\b|\s|=)/.test(text)));
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<button x-data @click="$');
+await page.waitForTimeout(250);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('Alpine HTML expressions include magic properties', async () => {
+  const suggestions = await page.locator('.suggest-widget .monaco-list-row').allTextContents();
+  return ['$dispatch', '$refs', '$store'].every((name) =>
+    suggestions.some((text) => text.startsWith(name)));
+});
+await page.keyboard.press('Escape');
+
+await alpineRow.locator('input[type="checkbox"]').uncheck();
+await page.waitForFunction(() =>
+  document.documentElement.dataset.alpineIntelligence === 'disabled');
+await check('Alpine declarations unload with the runtime library', () =>
+  page.evaluate(async () => {
+    const monaco = await import('/vendor/monaco/monaco.js');
+    const paths = Object.keys(
+      monaco.typescript.javascriptDefaults.getExtraLibs(),
+    );
+    return !paths.some((path) => path.includes('@types/dcspad-alpine'));
+  }));
 
 await setDoc('js', 'SNIPPET_UNDO_MARKER();');
 page.once('dialog', (dialog) => dialog.accept('undo-boundary'));
@@ -156,7 +255,7 @@ await check('Monaco assets are same-origin .js/CSS/font files', () => {
 await check('Monaco integration produces no uncaught page errors', () => {
   // Monaco restarts language workers when extra libraries change and reports
   // the deliberately-abandoned requests as "Canceled" promises.
-  const unexpected = pageErrors.filter((message) => message !== 'Canceled');
+  const unexpected = pageErrors.filter((message) => !message.startsWith('Canceled'));
   if (unexpected.length) console.log(`      page errors: ${unexpected.join(' | ')}`);
   return unexpected.length === 0;
 });

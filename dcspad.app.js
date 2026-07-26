@@ -306,6 +306,288 @@ async function fetchPnpTypeLibraries() {
   return payload.libs;
 }
 
+// ../src/intelligence/alpine.js
+var ALPINE_PACK_ID = "alpine-3";
+var ALPINE_JS_LIBRARIES = [{
+  filePath: "file:///node_modules/@types/dcspad-alpine/index.d.ts",
+  content: `/**
+ * Alpine.js v3 public browser API.
+ * @see https://alpinejs.dev/globals/
+ */
+interface AlpineMagicProperties {
+  /** The current DOM element. */
+  readonly $el: HTMLElement;
+  /** Elements marked with x-ref in the current component. */
+  readonly $refs: Record<string, HTMLElement>;
+  /** Global stores registered with Alpine.store(). */
+  readonly $store: Record<string, any>;
+  /** The nearest Alpine component root. */
+  readonly $root: HTMLElement;
+  /** The current merged Alpine data scope. */
+  readonly $data: Record<string, any>;
+  /** Watch a dot-notated component property for changes. */
+  $watch<T = any>(property: string, callback: (value: T, oldValue: T) => void): () => void;
+  /** Dispatch a bubbling CustomEvent from the current element. */
+  $dispatch(name: string, detail?: any): boolean;
+  /** Run work after Alpine has flushed reactive DOM updates. */
+  $nextTick(callback?: () => void): Promise<void>;
+  /** Generate a component-scoped element id. */
+  $id(name: string, key?: string | number): string;
+}
+
+type AlpinePlugin = (alpine: AlpineStatic) => void;
+type AlpineDataProvider<T extends object = Record<string, any>> =
+  (...parameters: any[]) => T & ThisType<T & AlpineMagicProperties>;
+type AlpineBindProvider =
+  () => Record<string, any> & ThisType<Record<string, any> & AlpineMagicProperties>;
+
+interface AlpineStatic {
+  /** The loaded Alpine runtime version. */
+  readonly version: string;
+  /** Start Alpine and initialize the current document. */
+  start(): void;
+
+  /**
+   * Register a reusable x-data provider.
+   * @see https://alpinejs.dev/globals/alpine-data
+   */
+  data<T extends object>(name: string, provider: AlpineDataProvider<T>): void;
+
+  /**
+   * Read a global store.
+   * @see https://alpinejs.dev/globals/alpine-store
+   */
+  store<T = any>(name: string): T;
+  /** Register or replace a global store. */
+  store<T extends object>(name: string, value: T & ThisType<T & AlpineMagicProperties>): T;
+
+  /**
+   * Register a reusable x-bind object.
+   * @see https://alpinejs.dev/globals/alpine-bind
+   */
+  bind(name: string, provider: AlpineBindProvider): void;
+
+  /** Install one or more Alpine plugins before Alpine.start(). */
+  plugin(plugin: AlpinePlugin | AlpinePlugin[]): void;
+  /** Register a custom magic property. */
+  magic(name: string, callback: (element: HTMLElement, utilities: Record<string, any>) => any): void;
+  /** Register a custom x-* directive. */
+  directive(name: string, callback: (...args: any[]) => void): { before(other: string): void };
+  /** Change or return Alpine's directive prefix. */
+  prefix(prefix: string): void;
+  prefixed(subject?: string): string;
+
+  /** Create a deeply reactive proxy. */
+  reactive<T extends object>(target: T): T;
+  /** Return the original object behind a reactive proxy. */
+  raw<T>(value: T): T;
+  /** Run and track a reactive effect. */
+  effect(callback: () => void): any;
+  /** Stop a reactive effect. */
+  release(effect: any): void;
+  /** Watch a reactive getter. */
+  watch<T>(getter: () => T, callback: (value: T, oldValue: T) => void): () => void;
+  /** Schedule work after Alpine's next DOM update. */
+  nextTick(callback?: () => void): Promise<void>;
+
+  /** Return the merged Alpine data scope for an element. */
+  $data<T extends object = Record<string, any>>(element: Element): T;
+  /** Initialize Alpine behavior under an element added dynamically. */
+  initTree(element: Element): void;
+  /** Tear down Alpine behavior under an element. */
+  destroyTree(element: Element): void;
+}
+
+declare const Alpine: AlpineStatic;
+
+interface Window {
+  Alpine: AlpineStatic;
+}
+`
+}];
+var directive = (name, description, {
+  insertText = `${name}="\${1:expression}"`,
+  url = `https://alpinejs.dev/directives/${name.slice(2).split(":")[0]}`
+} = {}) => ({ name, description, insertText, url });
+var ALPINE_DIRECTIVES = [
+  directive("x-data", "Declares a new Alpine component and its reactive state.", {
+    insertText: `x-data="{ \${1:open}: \${2:false} }"`
+  }),
+  directive("x-init", "Runs an expression while Alpine initializes the element."),
+  directive("x-show", "Toggles element visibility from a truthy expression."),
+  directive("x-bind", "Binds an object of attributes, or a reusable Alpine.bind() provider."),
+  directive("x-bind:class", "Reactively binds the element class attribute."),
+  directive("x-bind:aria-expanded", "Reactively binds aria-expanded.", {
+    insertText: `x-bind:aria-expanded="\${1:open}"`,
+    url: "https://alpinejs.dev/directives/bind"
+  }),
+  directive("x-bind:aria-selected", "Reactively binds aria-selected.", {
+    insertText: `x-bind:aria-selected="\${1:selected}"`,
+    url: "https://alpinejs.dev/directives/bind"
+  }),
+  directive("x-bind:aria-pressed", "Reactively binds aria-pressed.", {
+    insertText: `x-bind:aria-pressed="\${1:pressed}"`,
+    url: "https://alpinejs.dev/directives/bind"
+  }),
+  directive("x-on", "Attaches an event listener. Add an event name, such as x-on:click."),
+  directive("x-on:click", "Runs an expression when the element is clicked."),
+  directive("x-on:submit.prevent", "Prevents form submission and runs an expression.", {
+    url: "https://alpinejs.dev/directives/on"
+  }),
+  directive("x-on:click.outside", "Runs when a click occurs outside the element.", {
+    url: "https://alpinejs.dev/directives/on"
+  }),
+  directive("x-on:keydown.escape.window", "Runs on Escape keydown from window.", {
+    url: "https://alpinejs.dev/directives/on"
+  }),
+  directive("x-text", "Sets textContent from an expression."),
+  directive("x-html", "Sets innerHTML from an expression. Only use trusted content."),
+  directive("x-model", "Creates two-way binding between form state and component data."),
+  directive("x-modelable", "Exposes an internal property to an outer x-model binding."),
+  directive("x-for", "Repeats a template for each item in an iterable.", {
+    insertText: `x-for="(\${1:item}, \${2:index}) in \${3:items}"`
+  }),
+  directive("x-transition", "Adds Alpine transition classes around x-show changes.", {
+    insertText: "x-transition"
+  }),
+  directive("x-effect", "Re-runs an expression whenever its reactive dependencies change."),
+  directive("x-ignore", "Prevents Alpine from initializing this element subtree.", {
+    insertText: "x-ignore"
+  }),
+  directive("x-ref", "Names an element for access through $refs.", {
+    insertText: `x-ref="\${1:name}"`
+  }),
+  directive("x-cloak", "Keeps an element hidden until Alpine initializes it.", {
+    insertText: "x-cloak"
+  }),
+  directive("x-teleport", "Moves a template to another DOM location.", {
+    insertText: `x-teleport="\${1:body}"`
+  }),
+  directive("x-if", "Conditionally adds or removes a template from the DOM."),
+  directive("x-id", "Declares names used by the component-scoped $id() helper.", {
+    insertText: `x-id="['\${1:control}']"`
+  })
+];
+var shorthand = (name, insertText, description, url) => ({
+  name,
+  insertText,
+  description,
+  url
+});
+var ALPINE_SHORTHANDS = [
+  shorthand("@click", `@click="\${1:expression}"`, "Shorthand for x-on:click.", "https://alpinejs.dev/directives/on"),
+  shorthand("@click.outside", `@click.outside="\${1:open = false}"`, "Runs when clicking outside the element.", "https://alpinejs.dev/directives/on"),
+  shorthand("@submit.prevent", `@submit.prevent="\${1:submit()}"`, "Prevents submission and runs an expression.", "https://alpinejs.dev/directives/on"),
+  shorthand("@keydown.escape.window", `@keydown.escape.window="\${1:open = false}"`, "Runs on Escape from window.", "https://alpinejs.dev/directives/on"),
+  shorthand(":class", `:class="{ '\${1:is-active}': \${2:active} }"`, "Shorthand for x-bind:class.", "https://alpinejs.dev/directives/bind"),
+  shorthand(":disabled", `:disabled="\${1:disabled}"`, "Shorthand for x-bind:disabled.", "https://alpinejs.dev/directives/bind"),
+  shorthand(":aria-expanded", `:aria-expanded="\${1:open}"`, "Shorthand for x-bind:aria-expanded.", "https://alpinejs.dev/directives/bind"),
+  shorthand(":aria-selected", `:aria-selected="\${1:selected}"`, "Shorthand for x-bind:aria-selected.", "https://alpinejs.dev/directives/bind"),
+  shorthand(":aria-pressed", `:aria-pressed="\${1:pressed}"`, "Shorthand for x-bind:aria-pressed.", "https://alpinejs.dev/directives/bind")
+];
+var magic = (name, description, insertText = name) => ({
+  name,
+  description,
+  insertText,
+  url: name === "$event" ? "https://alpinejs.dev/directives/on" : `https://alpinejs.dev/magics/${name.slice(1).toLowerCase()}`
+});
+var ALPINE_MAGICS = [
+  magic("$el", "The current DOM element."),
+  magic("$refs", "Elements marked with x-ref in the current component.", `$refs.\${1:name}`),
+  magic("$store", "Global stores registered with Alpine.store().", `$store.\${1:name}`),
+  magic("$watch", "Watches a component property for changes.", `$watch('\${1:property}', (\${2:value}, \${3:oldValue}) => { \${0} })`),
+  magic("$dispatch", "Dispatches a bubbling CustomEvent from the current element.", `$dispatch('\${1:event}', { \${0} })`),
+  magic("$nextTick", "Runs work after Alpine flushes reactive DOM updates.", `$nextTick(() => { \${0} })`),
+  magic("$root", "The nearest Alpine component root element."),
+  magic("$data", "The current merged Alpine data scope."),
+  magic("$id", "Generates a component-scoped element id.", `$id('\${1:name}')`),
+  magic("$event", "The native event available inside x-on expressions.")
+];
+var htmlAttribute = (item) => ({
+  name: item.name,
+  description: item.description,
+  references: [{ name: "Alpine.js documentation", url: item.url }]
+});
+var ALPINE_HTML_DATA = {
+  version: 1.1,
+  globalAttributes: [
+    ...ALPINE_DIRECTIVES.map(htmlAttribute),
+    ...ALPINE_SHORTHANDS.map(htmlAttribute)
+  ]
+};
+function completionRange(monaco, model, position, prefix) {
+  const end = model.getOffsetAt(position);
+  const start = Math.max(0, end - prefix.length);
+  return new monaco.Range(
+    model.getPositionAt(start).lineNumber,
+    model.getPositionAt(start).column,
+    position.lineNumber,
+    position.column
+  );
+}
+function alpineAttributeValue(fragment) {
+  const match = fragment.match(
+    /(?:^|\s)(x-[\w:.-]+|@[\w:.-]+|:[\w:.-]+)\s*=\s*(["'])([\s\S]*)$/
+  );
+  if (!match || match[3].includes(match[2])) return null;
+  return match[3];
+}
+function createAlpineHtmlCompletionProvider(monaco, isEnabled) {
+  return {
+    triggerCharacters: ["x", "-", "@", ":", "$", "."],
+    provideCompletionItems(model, position) {
+      if (!isEnabled()) return { suggestions: [] };
+      const offset = model.getOffsetAt(position);
+      const before = model.getValue().slice(Math.max(0, offset - 6e3), offset);
+      const lastOpen = before.lastIndexOf("<");
+      const lastClose = before.lastIndexOf(">");
+      if (lastOpen <= lastClose) return { suggestions: [] };
+      const fragment = before.slice(lastOpen + 1);
+      const value = alpineAttributeValue(fragment);
+      if (value !== null) {
+        const magicPrefix = value.match(/\$[A-Za-z]*$/)?.[0];
+        if (!magicPrefix) return { suggestions: [] };
+        const range2 = completionRange(monaco, model, position, magicPrefix);
+        return {
+          suggestions: ALPINE_MAGICS.map((item) => ({
+            label: item.name,
+            kind: monaco.languages.CompletionItemKind.Variable,
+            detail: "Alpine magic property",
+            documentation: {
+              value: `${item.description}
+
+[Alpine.js documentation](${item.url})`
+            },
+            insertText: item.insertText,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            range: range2
+          }))
+        };
+      }
+      const prefix = fragment.match(/(?:^|\s)(x-[^\s"'=<>]*|@[^\s"'=<>]*|:[^\s"'=<>]*)$/)?.[1];
+      if (!prefix) return { suggestions: [] };
+      const source = prefix.startsWith("x-") ? ALPINE_DIRECTIVES : ALPINE_SHORTHANDS;
+      const range = completionRange(monaco, model, position, prefix);
+      return {
+        suggestions: source.map((item) => ({
+          label: item.name,
+          kind: monaco.languages.CompletionItemKind.Property,
+          detail: prefix.startsWith("x-") ? "Alpine directive" : "Alpine shorthand",
+          documentation: {
+            value: `${item.description}
+
+[Alpine.js documentation](${item.url})`
+          },
+          insertText: item.insertText,
+          filterText: item.name,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range
+        }))
+      };
+    }
+  };
+}
+
 // ../src/editors.js
 var NAMES = ["html", "css", "js"];
 var LANGUAGES = { html: "html", css: "css", js: "javascript" };
@@ -325,6 +607,9 @@ async function initEditors({ onChange, onRunShortcut }) {
   let active = NAMES.includes(state3.layout.editorTab) ? state3.layout.editorTab : "js";
   let desiredPnpTypes = false;
   let pnpTypesGeneration = 0;
+  const jsLibraryPacks = /* @__PURE__ */ new Map();
+  const htmlDataPacks = /* @__PURE__ */ new Map();
+  const enabledIntelligence = /* @__PURE__ */ new Set();
   monaco.editor.defineTheme("dcspad-dark", {
     base: "vs-dark",
     inherit: true,
@@ -384,6 +669,42 @@ async function initEditors({ onChange, onRunShortcut }) {
     noSuggestionDiagnostics: false
   });
   jsDefaults.setEagerModelSync(true);
+  const htmlDefaults = monaco.html.htmlDefaults;
+  const baseHtmlOptions = htmlDefaults.options;
+  function applyJsLibraries() {
+    jsDefaults.setExtraLibs([...jsLibraryPacks.values()].flat());
+  }
+  function applyHtmlData() {
+    htmlDefaults.setOptions({
+      ...baseHtmlOptions,
+      data: {
+        useDefaultDataProvider: true,
+        dataProviders: Object.fromEntries(htmlDataPacks)
+      }
+    });
+  }
+  function setAlpineIntelligenceEnabled(enabled) {
+    if (enabled) {
+      jsLibraryPacks.set(ALPINE_PACK_ID, ALPINE_JS_LIBRARIES);
+      htmlDataPacks.set(ALPINE_PACK_ID, ALPINE_HTML_DATA);
+      enabledIntelligence.add(ALPINE_PACK_ID);
+      document.documentElement.dataset.alpineIntelligence = "ready";
+    } else {
+      jsLibraryPacks.delete(ALPINE_PACK_ID);
+      htmlDataPacks.delete(ALPINE_PACK_ID);
+      enabledIntelligence.delete(ALPINE_PACK_ID);
+      document.documentElement.dataset.alpineIntelligence = "disabled";
+    }
+    applyJsLibraries();
+    applyHtmlData();
+  }
+  const alpineCompletionRegistration = monaco.languages.registerCompletionItemProvider(
+    "html",
+    createAlpineHtmlCompletionProvider(
+      monaco,
+      () => enabledIntelligence.has(ALPINE_PACK_ID)
+    )
+  );
   for (const name of NAMES) {
     models[name] = monaco.editor.createModel(
       state3[name],
@@ -458,7 +779,8 @@ async function initEditors({ onChange, onRunShortcut }) {
     desiredPnpTypes = !!enabled;
     const generation = ++pnpTypesGeneration;
     if (!desiredPnpTypes) {
-      jsDefaults.setExtraLibs([]);
+      jsLibraryPacks.delete("pnpjs-2.15.0");
+      applyJsLibraries();
       document.documentElement.dataset.pnpTypes = "disabled";
       return;
     }
@@ -466,13 +788,19 @@ async function initEditors({ onChange, onRunShortcut }) {
     try {
       const libs = await fetchPnpTypeLibraries();
       if (!desiredPnpTypes || generation !== pnpTypesGeneration) return;
-      jsDefaults.setExtraLibs(libs);
+      jsLibraryPacks.set("pnpjs-2.15.0", libs);
+      applyJsLibraries();
       document.documentElement.dataset.pnpTypes = "ready";
     } catch (error) {
       if (generation !== pnpTypesGeneration) return;
       document.documentElement.dataset.pnpTypes = "error";
       console.warn("DCSPad: PnPjs IntelliSense could not be loaded", error);
     }
+  }
+  function setIntelligencePacks(packIds) {
+    const requested = new Set(packIds || []);
+    setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
+    setPnpTypesEnabled(requested.has("pnpjs-2.15.0"));
   }
   reportCursor();
   return {
@@ -521,9 +849,11 @@ async function initEditors({ onChange, onRunShortcut }) {
       editor.focus();
     },
     setJsAsModule,
+    setIntelligencePacks,
     setPnpTypesEnabled,
     dispose: () => {
       resizeObserver.disconnect();
+      alpineCompletionRegistration.dispose();
       editor.dispose();
       for (const model of Object.values(models)) model.dispose();
     }
@@ -563,6 +893,20 @@ async function initRunner(messageHandlers) {
 }
 var escScript = (s) => s.replace(/<\/script/gi, "<\\/script");
 var escStyle = (s) => s.replace(/<\/style/gi, "<\\/style");
+var escAttr = (s) => String(s).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+function externalScript(url, nonceAttr) {
+  return `<script src="${escAttr(url)}"${nonceAttr}><\/script>`;
+}
+function libraryScript(entry, nonceAttr) {
+  const primary = externalScript(entry.js, nonceAttr);
+  if (!entry.fallbackJs || !entry.probeGlobal) return primary;
+  const path = entry.probeGlobal.split(".").filter(Boolean);
+  const fallbackTag = externalScript(entry.fallbackJs, nonceAttr);
+  const message = `DCSPad: ${entry.name || entry.probeGlobal} did not expose ${entry.probeGlobal}; loading configured fallback`;
+  const probe = `(function(){var value=window;var path=${JSON.stringify(path)};for(var i=0;i<path.length&&value!=null;i+=1)value=value[path[i]];if(value==null){console.warn(${JSON.stringify(message)});document.write(${JSON.stringify(fallbackTag)});}})();`;
+  return `${primary}
+<script${nonceAttr}>${escScript(probe)}<\/script>`;
+}
 function hostNonce() {
   for (const s of document.scripts) if (s.nonce) return s.nonce;
   return "";
@@ -570,15 +914,20 @@ function hostNonce() {
 function assemble({ docs, libraries, spContext, settings, token }) {
   const nonce = hostNonce();
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-  const cssLinks = libraries.filter((l) => l.css).map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${u}">`).join("\n")).join("\n");
-  const jsTags = libraries.filter((l) => l.js).map((l) => (Array.isArray(l.js) ? l.js : [l.js]).map((u) => `<script src="${u}"${nonceAttr}><\/script>`).join("\n")).join("\n");
+  const cssLinks = libraries.filter((l) => l.css).map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${escAttr(u)}">`).join("\n")).join("\n");
+  const jsTags = libraries.filter((l) => l.js).map((l) => {
+    if (Array.isArray(l.js)) {
+      return l.js.map((u) => externalScript(u, nonceAttr)).join("\n");
+    }
+    return libraryScript(l, nonceAttr);
+  }).join("\n");
   const chromeStyle = settings.previewDark ? `<style data-dcspad-chrome>
 :root { color-scheme: dark; }
 html { background: #1d2026; color: #d6d9e0; }
 </style>
 ` : "";
   const contextScript = spContext ? `<script${nonceAttr}>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>
-` + (spContext.baseHref ? `<base href="${spContext.baseHref}">
+` + (spContext.baseHref ? `<base href="${escAttr(spContext.baseHref)}">
 ` : "") : "";
   const head = `<!DOCTYPE html>
 <html>
@@ -1347,6 +1696,145 @@ function markRun() {
   }
 }
 
+// ../src/config.js
+var EMPTY_CONFIG = Object.freeze({
+  version: 1,
+  frameworks: Object.freeze({
+    prefer: "local",
+    fallbackToCdn: true,
+    items: Object.freeze({})
+  }),
+  assets: Object.freeze({})
+});
+var activeConfig = EMPTY_CONFIG;
+var isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var cleanString = (value) => typeof value === "string" ? value.trim() : "";
+var sourcePreference = (value, fallback = "local") => value === "cdn" || value === "hosted" || value === "local" ? value : fallback;
+function resolveUrl(value, configUrl2, { folder = false } = {}) {
+  const source = cleanString(value);
+  if (!source) return "";
+  const resolved = new URL(source, configUrl2).href;
+  return folder && !resolved.endsWith("/") ? `${resolved}/` : resolved;
+}
+function normalizeFrameworks(value, configUrl2, warnings) {
+  const source = isRecord(value) ? value : {};
+  const prefer = sourcePreference(source.prefer);
+  const fallbackToCdn = source.fallbackToCdn !== false;
+  const items = {};
+  for (const [id, raw] of Object.entries(isRecord(source.items) ? source.items : {})) {
+    if (!isRecord(raw)) {
+      warnings.push(`framework config "${id}" was ignored because it is not an object`);
+      continue;
+    }
+    const probeGlobal = cleanString(raw.probeGlobal).replace(/^window\./, "");
+    if (probeGlobal && !/^[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*$/.test(probeGlobal)) {
+      warnings.push(`framework config "${id}" has an invalid probeGlobal path`);
+    }
+    items[id] = {
+      localUrl: resolveUrl(raw.localUrl, configUrl2),
+      cdnUrl: resolveUrl(raw.cdnUrl, configUrl2),
+      prefer: sourcePreference(raw.prefer, prefer),
+      fallbackToCdn: typeof raw.fallbackToCdn === "boolean" ? raw.fallbackToCdn : fallbackToCdn,
+      probeGlobal: /^[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*$/.test(probeGlobal) ? probeGlobal : "",
+      intelligence: Array.isArray(raw.intelligence) ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))] : []
+    };
+  }
+  return { prefer, fallbackToCdn, items };
+}
+function normalizeAssetGroup(raw, configUrl2, defaultPreference) {
+  if (!isRecord(raw)) return null;
+  const files = {};
+  for (const [name, path] of Object.entries(isRecord(raw.files) ? raw.files : {})) {
+    const clean = cleanString(path);
+    if (clean) files[name] = clean;
+  }
+  return {
+    prefer: sourcePreference(raw.prefer, defaultPreference),
+    localBaseUrl: resolveUrl(raw.localBaseUrl, configUrl2, { folder: true }),
+    hostedBaseUrl: resolveUrl(raw.hostedBaseUrl, configUrl2, { folder: true }),
+    files
+  };
+}
+function normalizeConfig(raw, configUrl2) {
+  const warnings = [];
+  if (!isRecord(raw)) {
+    return { config: EMPTY_CONFIG, warnings: ["configuration root must be an object"] };
+  }
+  if (raw.version !== 1) {
+    warnings.push(`configuration version ${JSON.stringify(raw.version)} is not supported; expected 1`);
+  }
+  const assets = {};
+  for (const [name, value] of Object.entries(isRecord(raw.assets) ? raw.assets : {})) {
+    const group = normalizeAssetGroup(value, configUrl2, "local");
+    if (group) assets[name] = group;
+  }
+  return {
+    config: {
+      version: 1,
+      frameworks: normalizeFrameworks(raw.frameworks, configUrl2, warnings),
+      assets
+    },
+    warnings
+  };
+}
+function configUrl() {
+  return window.__DCSPAD_CONFIG_URL__ || new URL("../dcspad.config.json", import.meta.url).href;
+}
+async function loadAppConfig() {
+  const url = configUrl();
+  try {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      cache: "no-cache"
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const normalized = normalizeConfig(await response.json(), url);
+    activeConfig = normalized.config;
+    return { ...normalized, url };
+  } catch (error) {
+    activeConfig = EMPTY_CONFIG;
+    return {
+      config: activeConfig,
+      url,
+      warnings: [`dcspad.config.json could not be loaded (${error.message || error}); built-in framework URLs remain active`]
+    };
+  }
+}
+function applyFrameworkConfig(entry, config = activeConfig) {
+  const override = config?.frameworks?.items?.[entry?.id];
+  if (!override) return { ...entry };
+  const local = override.localUrl;
+  const cdn = override.cdnUrl;
+  const preferred = override.prefer === "cdn" ? cdn : local;
+  const alternate = override.prefer === "cdn" ? local : cdn;
+  const primary = preferred || alternate;
+  const fallback = preferred && alternate && override.fallbackToCdn ? alternate : "";
+  const effective = {
+    ...entry,
+    intelligence: [
+      .../* @__PURE__ */ new Set([
+        ...Array.isArray(entry.intelligence) ? entry.intelligence : [],
+        ...override.intelligence
+      ])
+    ],
+    configuredSources: { local, cdn },
+    probeGlobal: override.probeGlobal
+  };
+  if (!primary) return effective;
+  const primaryIsCss = /\.css(?:[?#]|$)/i.test(primary);
+  if (primaryIsCss) {
+    effective.css = primary;
+    delete effective.js;
+    return effective;
+  }
+  effective.js = primary;
+  delete effective.css;
+  if (fallback && !/\.css(?:[?#]|$)/i.test(fallback) && override.probeGlobal) {
+    effective.fallbackJs = fallback;
+  }
+  return effective;
+}
+
 // ../src/libraries.js
 var PRESETS = [
   {
@@ -1359,9 +1847,15 @@ var PRESETS = [
     id: "pnpjs2",
     name: "PnPjs v2 (classic)",
     js: "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnpjs.es5.umd.bundle.min.js",
+    intelligence: ["pnpjs-2.15.0"],
     hint: "Exposes global pnp \u2014 use const { sp } = pnp;"
   },
-  { id: "alpine", name: "Alpine.js", js: "https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" },
+  {
+    id: "alpine",
+    name: "Alpine.js",
+    js: "https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js",
+    intelligence: ["alpine-3"]
+  },
   { id: "chartjs", name: "Chart.js", js: "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" },
   { id: "lodash", name: "Lodash", js: "https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js" },
   { id: "exceljs", name: "ExcelJS", js: "https://cdn.jsdelivr.net/npm/exceljs@4/dist/exceljs.min.js" },
@@ -1372,6 +1866,7 @@ var PRESETS = [
   { id: "fabric", name: "Fluent/Fabric Icons (CSS)", css: "https://static2.sharepointonline.com/files/fabric/office-ui-fabric-core/11.0.0/css/fabric.min.css" }
 ];
 var catalog = null;
+var appConfig = null;
 var onChangeCb = null;
 var onStorageErrorCb = null;
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
@@ -1381,7 +1876,8 @@ var entryFromUrl = (url, name) => ({
   js: isCssUrl(url) ? void 0 : url,
   css: isCssUrl(url) ? url : void 0
 });
-function initLibraries({ onChange, onStorageError }) {
+function initLibraries({ config, onChange, onStorageError }) {
+  appConfig = config;
   onChangeCb = onChange;
   onStorageErrorCb = onStorageError;
   catalog = loadDoc(CATALOG_KEY);
@@ -1436,13 +1932,18 @@ function render() {
   }
 }
 function catalogItem(entry, libs, pinned) {
+  const effective = applyFrameworkConfig(entry, appConfig);
   const item = el("label", "lib-item");
   const chk = document.createElement("input");
   chk.type = "checkbox";
   chk.checked = libs.enabled.includes(entry.id);
-  const name = el("span", "lib-name", entry.name);
-  if (entry.hint) name.title = entry.hint;
-  else if (entry.js || entry.css) name.title = entry.js || entry.css;
+  const name = el("span", "lib-name", effective.name);
+  if (effective.hint) name.title = effective.hint;
+  else if (effective.js || effective.css) {
+    name.title = effective.js || effective.css;
+    if (effective.fallbackJs) name.title += `
+Fallback: ${effective.fallbackJs}`;
+  }
   if (entry.needsConfig && !libs.dcsUrl) {
     item.classList.add("needs-config");
     name.title = entry.hint || "Needs a URL";
@@ -1520,17 +2021,49 @@ function getEnabledLibraries() {
       }
       continue;
     }
-    result.push({ name: entry.name, js: entry.js, css: entry.css });
+    const effective = applyFrameworkConfig(entry, appConfig);
+    result.push({
+      name: effective.name,
+      js: effective.js,
+      css: effective.css,
+      fallbackJs: effective.fallbackJs,
+      probeGlobal: effective.probeGlobal
+    });
   }
   return result;
 }
 function isPnpjs215Runtime(entry) {
-  const url = String(entry?.js || "").toLowerCase();
-  return url.includes("@pnp/pnpjs@2.15.0/") || url.includes("/pnp-pnpjs/2.15.0/") || url.includes("/pnpjs/2.15.0/");
+  if (entry?.intelligence?.includes("pnpjs-2.15.0")) return true;
+  const urls = [
+    entry?.js,
+    entry?.fallbackJs,
+    entry?.configuredSources?.local,
+    entry?.configuredSources?.cdn
+  ].map((url) => String(url || "").toLowerCase());
+  return urls.some((url) => url.includes("@pnp/pnpjs@2.15.0/") || url.includes("/pnp-pnpjs/2.15.0/") || url.includes("/pnpjs/2.15.0/"));
 }
-function hasEnabledPnpjs215Runtime() {
+function isAlpine3Runtime(entry) {
+  if (entry?.intelligence?.includes("alpine-3")) return true;
+  if (entry?.id === "alpine") return true;
+  const urls = [
+    entry?.js,
+    entry?.fallbackJs,
+    entry?.configuredSources?.local,
+    entry?.configuredSources?.cdn
+  ].map((url) => String(url || "").toLowerCase());
+  return urls.some((url) => url.includes("/alpinejs@3") || url.includes("/alpinejs/3."));
+}
+function getEnabledIntelligence() {
   const enabled = new Set(getState().libraries.enabled);
-  return catalog.items.some((entry) => enabled.has(entry.id) && isPnpjs215Runtime(entry));
+  const packs = /* @__PURE__ */ new Set();
+  for (const entry of catalog.items) {
+    if (!enabled.has(entry.id)) continue;
+    const effective = applyFrameworkConfig(entry, appConfig);
+    for (const pack of effective.intelligence || []) packs.add(pack);
+    if (isPnpjs215Runtime(effective)) packs.add("pnpjs-2.15.0");
+    if (isAlpine3Runtime(effective)) packs.add("alpine-3");
+  }
+  return [...packs];
 }
 function getCatalogDoc() {
   return catalog;
@@ -1819,6 +2352,7 @@ function showSplash() {
 // ../src/main.js
 var splashApi = showSplash();
 splashApi.status("Restoring workspace\u2026");
+var configReady = loadAppConfig();
 var state2 = getState();
 applyContextIndicators();
 var editorsApi = null;
@@ -1848,14 +2382,16 @@ var consoleApi = initConsolePanel({
 var networkApi = initNetworkPanel({
   isNetworkVisible: () => isDiagVisible("network")
 });
+var configResult = await configReady;
 initLibraries({
+  config: configResult.config,
   onChange: () => {
     scheduleAutorun();
-    editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+    editorsApi.setIntelligencePacks(getEnabledIntelligence());
   },
   onStorageError: (msg) => reportStorageError(msg)
 });
-editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+editorsApi.setIntelligencePacks(getEnabledIntelligence());
 initSnippets({
   getSelection: (name) => editorsApi.getSelection(name),
   getDocs: () => editorsApi.getDocs(),
@@ -1976,6 +2512,7 @@ var closeFileMenu = () => {
 function padWarn(msg) {
   consoleApi.handlers.console({ level: "warn", args: [{ t: "str", v: `DCSPad: ${msg}` }] });
 }
+for (const warning of configResult.warnings) padWarn(warning);
 document.getElementById("mi-save-project").addEventListener("click", () => {
   closeFileMenu();
   const s = getState();
@@ -2013,7 +2550,7 @@ wireJsonImport("import-project-file", (doc2) => {
     editorsApi.setJsAsModule(doc2.jsAsModule);
   }
   refreshLibraryUI();
-  editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+  editorsApi.setIntelligencePacks(getEnabledIntelligence());
   const missing = unknownLibraryIds(enabled);
   if (missing.length) {
     padWarn(`this project references framework(s) not in your catalog: ${missing.join(", ")} \u2014 re-add them under Frameworks, or the run will fail where they're used`);

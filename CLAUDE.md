@@ -50,6 +50,8 @@ src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
 src/editors.js            Monaco adapter; 3 models, Mod-Enter, PnPjs types, stack jumps
 src/monaco-runtime.js     hosted/standalone asset URLs + same-origin worker wiring
+src/config.js             loads/normalizes editable dcspad.config.json runtime URLs
+src/intelligence/alpine.js Alpine v3 JS declarations + HTML data/completion provider
 src/state.js              defaults + deep-merge load + debounced autosave; loadDoc/saveDoc
                           for the catalog + snippet documents (sole localStorage toucher)
 src/io.js                 file download + JSON file-picker helpers (no storage)
@@ -80,7 +82,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (15: typed models, editor integration, PnPjs runtime detection/completion, isolated snippet undo/redo, declarations, persistent worker failure behavior), `hosted.mjs` (10: early/delayed splash, exact boot/bundle path, versioned hosted assets and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 85 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (22: typed models, editor integration, PnPjs and Alpine JS/HTML completion, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (6: runtime URL config, explicit intelligence, ordered fallback), `hosted.mjs` (10: early/delayed splash, exact boot/bundle/config path, versioned hosted assets and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 98 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 

@@ -11,14 +11,17 @@
 
 import { getState, updateNested, loadDoc, saveDoc, newId, CATALOG_KEY } from './state.js';
 import { el } from './inspect/tree-view.js';
+import { applyFrameworkConfig } from './config.js';
 
 // Seed only — after first boot the stored catalog is the truth.
 export const PRESETS = [
   { id: 'dcs-standard', name: 'DCS Standard Include', needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
   { id: 'pnpjs2', name: 'PnPjs v2 (classic)', js: 'https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnpjs.es5.umd.bundle.min.js',
+    intelligence: ['pnpjs-2.15.0'],
     hint: 'Exposes global pnp — use const { sp } = pnp;' },
-  { id: 'alpine', name: 'Alpine.js', js: 'https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js' },
+  { id: 'alpine', name: 'Alpine.js', js: 'https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js',
+    intelligence: ['alpine-3'] },
   { id: 'chartjs', name: 'Chart.js', js: 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js' },
   { id: 'lodash', name: 'Lodash', js: 'https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js' },
   { id: 'exceljs', name: 'ExcelJS', js: 'https://cdn.jsdelivr.net/npm/exceljs@4/dist/exceljs.min.js' },
@@ -30,6 +33,7 @@ export const PRESETS = [
 ];
 
 let catalog = null;
+let appConfig = null;
 let onChangeCb = null;
 let onStorageErrorCb = null;
 
@@ -41,7 +45,8 @@ const entryFromUrl = (url, name) => ({
   css: isCssUrl(url) ? url : undefined,
 });
 
-export function initLibraries({ onChange, onStorageError }) {
+export function initLibraries({ config, onChange, onStorageError }) {
+  appConfig = config;
   onChangeCb = onChange;
   onStorageErrorCb = onStorageError;
   catalog = loadDoc(CATALOG_KEY);
@@ -106,14 +111,18 @@ function render() {
 }
 
 function catalogItem(entry, libs, pinned) {
+  const effective = applyFrameworkConfig(entry, appConfig);
   const item = el('label', 'lib-item');
   const chk = document.createElement('input');
   chk.type = 'checkbox';
   chk.checked = libs.enabled.includes(entry.id);
 
-  const name = el('span', 'lib-name', entry.name);
-  if (entry.hint) name.title = entry.hint;
-  else if (entry.js || entry.css) name.title = entry.js || entry.css;
+  const name = el('span', 'lib-name', effective.name);
+  if (effective.hint) name.title = effective.hint;
+  else if (effective.js || effective.css) {
+    name.title = effective.js || effective.css;
+    if (effective.fallbackJs) name.title += `\nFallback: ${effective.fallbackJs}`;
+  }
 
   if (entry.needsConfig && !libs.dcsUrl) {
     item.classList.add('needs-config');
@@ -198,7 +207,14 @@ export function getEnabledLibraries() {
       }
       continue;
     }
-    result.push({ name: entry.name, js: entry.js, css: entry.css });
+    const effective = applyFrameworkConfig(entry, appConfig);
+    result.push({
+      name: effective.name,
+      js: effective.js,
+      css: effective.css,
+      fallbackJs: effective.fallbackJs,
+      probeGlobal: effective.probeGlobal,
+    });
   }
   return result;
 }
@@ -207,16 +223,57 @@ export function getEnabledLibraries() {
 // catalog is user-editable and the same 2.15.0 UMD bundle is commonly added
 // from jsDelivr under a custom name.
 export function isPnpjs215Runtime(entry) {
-  const url = String(entry?.js || '').toLowerCase();
-  return url.includes('@pnp/pnpjs@2.15.0/')
+  if (entry?.intelligence?.includes('pnpjs-2.15.0')) return true;
+  const urls = [
+    entry?.js,
+    entry?.fallbackJs,
+    entry?.configuredSources?.local,
+    entry?.configuredSources?.cdn,
+  ].map((url) => String(url || '').toLowerCase());
+  return urls.some((url) =>
+    url.includes('@pnp/pnpjs@2.15.0/')
     || url.includes('/pnp-pnpjs/2.15.0/')
-    || url.includes('/pnpjs/2.15.0/');
+    || url.includes('/pnpjs/2.15.0/'));
+}
+
+// Stored catalogs created before Alpine intelligence existed do not contain
+// the pack metadata now present on PRESETS. Recognize the seeded entry and
+// common Alpine v3 URLs so those existing workspaces gain intelligence
+// without requiring a catalog reset or dcspad.config.json.
+export function isAlpine3Runtime(entry) {
+  if (entry?.intelligence?.includes('alpine-3')) return true;
+  if (entry?.id === 'alpine') return true;
+  const urls = [
+    entry?.js,
+    entry?.fallbackJs,
+    entry?.configuredSources?.local,
+    entry?.configuredSources?.cdn,
+  ].map((url) => String(url || '').toLowerCase());
+  return urls.some((url) =>
+    url.includes('/alpinejs@3')
+    || url.includes('/alpinejs/3.'));
 }
 
 export function hasEnabledPnpjs215Runtime() {
   const enabled = new Set(getState().libraries.enabled);
   return catalog.items.some((entry) =>
-    enabled.has(entry.id) && isPnpjs215Runtime(entry));
+    enabled.has(entry.id)
+    && isPnpjs215Runtime(applyFrameworkConfig(entry, appConfig)));
+}
+
+export function getEnabledIntelligence() {
+  const enabled = new Set(getState().libraries.enabled);
+  const packs = new Set();
+  for (const entry of catalog.items) {
+    if (!enabled.has(entry.id)) continue;
+    const effective = applyFrameworkConfig(entry, appConfig);
+    for (const pack of effective.intelligence || []) packs.add(pack);
+    // Preserve compatibility for imported/custom catalogs created before
+    // explicit intelligence metadata existed.
+    if (isPnpjs215Runtime(effective)) packs.add('pnpjs-2.15.0');
+    if (isAlpine3Runtime(effective)) packs.add('alpine-3');
+  }
+  return [...packs];
 }
 
 // ---------------------------------------------------------------
