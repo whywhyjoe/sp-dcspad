@@ -574,8 +574,24 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
    theme it bright blue). */
 html.dcspad-hosted { background: #101216; }
 html.dcspad-hosted body,
-html.dcspad-hosted #SPPageChrome { background: #101216 !important; }
+html.dcspad-hosted #SPPageChrome { background: #101216; }
 html.dcspad-hosted #SuiteNavWrapper { filter: grayscale(1) brightness(0.6); }
+
+/* Fade the takeover in. SharePoint's page is white and the pad flipping it
+   dark in one frame is a jarring flash — so every dark layer animates in
+   together over ~half a second: the background layers via background-color
+   (no !important above, or the animation would lose the cascade), the app
+   (whose box-shadow paints the surround) and the splash via opacity. The
+   splash's animation starts when splash.js unhides it — animations don't
+   run under [hidden] — and uses `backwards` fill only, so it can't pin
+   opacity and break the splash's transition-based fade-out. */
+html.dcspad-hosted,
+html.dcspad-hosted body,
+html.dcspad-hosted #SPPageChrome { animation: dcspad-bg-fade .45s ease backwards; }
+@keyframes dcspad-bg-fade { from { background-color: transparent; } }
+html.dcspad-hosted .app,
+html.dcspad-hosted .splash { animation: dcspad-fade-in .45s ease backwards; }
+@keyframes dcspad-fade-in { from { opacity: 0; } }
 
 /* Suspension: the host page switched to edit mode via SPA navigation after
    the pad booted (boot.js toggles this). Hide the pad and hand the page
