@@ -85,6 +85,13 @@ inspector, REPL and network capture all work inside the web part; a live
 
 ## Feature backlog (Joe, 2026-07-25)
 
+- **UI design pass** — handoff package ready in `design/DESIGN-BRIEF.md` +
+  `design/screenshots/` (captured via `tests/capture-design-shots.mjs`).
+  Joe attaches his old-DCSPad reference screenshot as
+  `design/reference-old-dcspad.png` when submitting. Claude Design returns
+  a comp + token sheet; we implement (tokens are plain CSS vars + a CM6
+  HighlightStyle, so implementation is mechanical).
+
 - **Per-pane import/export (file system + SharePoint)** — plan written, not
   started: `plans/file-sp-import-export.md` (REST `$value`/`Files/add` +
   contextinfo digest; new `src/sp-files.js` seam).
