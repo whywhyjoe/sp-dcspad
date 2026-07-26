@@ -30,13 +30,25 @@ that, and none of it has been tested yet.
    `src/main.js` relatively. Injected into a page at
    `…/SitePages/Dev.aspx`, those resolve against *the page*, not the library
    folder — 404. Both entry points need absolute (or server-relative) URLs.
-2. **Full-viewport layout.** `.app` is `height: 100vh` (app.css:54) and
-   `html, body { height: 100% }` (app.css:34). Inside a web part container the
-   pad must size to its box, not the viewport.
-3. **Global CSS leaking onto the host page.** `app.css` sets rules on `html`,
+2. **Full-viewport layout** — *largely solved by the hosting plan, see below.*
+   `.app` is `height: 100vh` (app.css:54) and `html, body { height: 100% }`
+   (app.css:34). The plan is to render the host page chrome-less via
+   SharePoint's `?env=WebView`, which gets the pad most of a viewport. Residual
+   risk is the modern-page canvas: the web part still sits inside SharePoint's
+   `CanvasZone` wrappers, which carry their own max-width, padding and
+   overflow. Expect to either put the web part in a full-width section or pin
+   the app with `position: fixed; inset: 0` (the splash already does exactly
+   this at app.css:501). Watch for double scrollbars — the host document
+   scrolling behind the app is the tell.
+3. **Global CSS collides in both directions.** `app.css` sets rules on `html`,
    `body`, `:root` and a global `[hidden] { display: none !important }`
-   (app.css:33). Injected as-is, those restyle the SharePoint page itself.
-   Everything needs scoping under the app root.
+   (app.css:33), which restyle the SharePoint page itself — `env=WebView`
+   shrinks the blast radius but doesn't remove it. The *reverse* is the more
+   likely source of visual bugs and was missed in the first pass: SharePoint
+   ships a large global stylesheet (resets, box-sizing, font stacks, line
+   heights) that will bleed **into** the pad, which was written assuming a
+   clean document. Budget time for both: scope the pad's rules under the app
+   root, and defend its own layout against inherited styles.
 4. **`<script>` tags in injected HTML do not execute.** Content set via
    `innerHTML` never runs its scripts. Script-editor web parts work around this
    by re-creating the script elements — whether the one in use does that *for
@@ -57,6 +69,37 @@ that, and none of it has been tested yet.
   `_spPageContextInfo`, so the chip may read **SP: Live** without the
   custom-script site setting the standalone deployment needs. Verify rather
   than assume.
+
+### The hosting plan: chrome-less via `?env=WebView`
+
+The decided approach for making the pad usable on a modern page: render the
+host page with SharePoint's `?env=WebView`, which drops the site header,
+navigation and suite bar, and have the injected HTML bounce the page to that
+URL when it wasn't loaded that way.
+
+Two things that redirect must get right:
+
+```js
+(function () {
+  var params = new URLSearchParams(location.search);
+  if (params.get('env') === 'WebView') return;
+  // Never hijack page editing — without this you cannot edit the page the
+  // pad is embedded on, because every load bounces to the chrome-less view.
+  if (params.has('Mode') || location.pathname.indexOf('/_layouts/') > -1) return;
+  // Loop guard: if SharePoint strips or rewrites the param, one attempt per
+  // tab is all we get. Without this a rejected param reloads forever.
+  if (sessionStorage.getItem('dcspad.webview.tried')) return;
+  sessionStorage.setItem('dcspad.webview.tried', '1');
+  params.set('env', 'WebView');
+  // replace(), not href: otherwise Back bounces the user straight forward again.
+  location.replace(location.pathname + '?' + params + location.hash);
+})();
+```
+
+Note this redirect is itself script running in injected HTML — it only works if
+spike test 1 passes. And confirm `_spPageContextInfo` is still exposed under
+`env=WebView` (spike test 4, re-run with the param) rather than assuming the
+chrome-less render carries the same page context.
 
 ### Do this first: a 20-minute spike
 
