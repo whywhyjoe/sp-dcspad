@@ -1,5 +1,9 @@
 # DCSPad — Claude Code guide
 
+> **Start here if you're new to this repo:** `HANDOFF.md` — current state plus
+> the open problem (hosting inside a modern-page custom-script web part, which
+> the standalone-page assumptions below do not yet account for).
+>
 > History note: this repo was split out of `whywhyjoe/todo`, where the app lived
 > in a `devpad/` subfolder. Commit history is preserved; paths are now at the
 > repo root. Older entries in `REVIEW-LOG.md` refer to `devpad/…` paths — read

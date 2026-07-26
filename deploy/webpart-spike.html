@@ -1,0 +1,61 @@
+<!-- DCSPad web-part spike -------------------------------------------------
+     Deploy this next to index.html and point the custom-script web part at
+     it. It reports, on the page, whether this hosting model can run DCSPad
+     as-is. No dependencies, no styling that could leak.
+
+     Before deploying: set BASE below to the absolute URL of the folder this
+     file lives in, with a trailing slash. Example:
+     https://contoso.sharepoint.com/sites/dev/SiteAssets/dcspad/
+------------------------------------------------------------------------- -->
+
+<div id="dcspad-spike" style="font:13px/1.5 Consolas,monospace;padding:12px;border:1px solid #888;max-width:900px">
+  <b>DCSPad web-part spike</b>
+  <div id="spike-out">…waiting. If nothing appears below, <b>no scripts ran at all</b> — test 1 failed.</div>
+</div>
+
+<script>
+  // Test 1: does a classic injected script execute?
+  window.DCSPAD_SPIKE_BASE = 'REPLACE_WITH_ABSOLUTE_FOLDER_URL/';
+
+  (function () {
+    var out = document.getElementById('spike-out');
+    var rows = [];
+    function report(name, ok, detail) {
+      rows.push('<div>' + (ok ? '✅' : '❌') + ' <b>' + name + '</b>' +
+                (detail ? ' — <span style="color:#555">' + detail + '</span>' : '') + '</div>');
+      out.innerHTML = rows.join('');
+    }
+    window.__spikeReport = report;
+
+    report('1. classic script executes', true, 'this line is proof');
+
+    // Test 4: SP context visible from inside the web part?
+    var ctx = window._spPageContextInfo;
+    report('4. _spPageContextInfo present', !!(ctx && ctx.webAbsoluteUrl),
+      ctx && ctx.webAbsoluteUrl ? ctx.webAbsoluteUrl : 'absent — the SP chip would read Mock');
+
+    // Test 2 + 3: module execution and relative-import resolution.
+    // Written as a re-created element because that is how a script web part
+    // injects it; if the web part already re-creates scripts, this is
+    // equivalent to it doing so itself.
+    var base = window.DCSPAD_SPIKE_BASE;
+    if (base.indexOf('REPLACE_WITH') === 0 || base.indexOf('REPLACE_WITH') > -1) {
+      report('2. module script executes', false, 'set DCSPAD_SPIKE_BASE at the top of this file first');
+      return;
+    }
+    var s = document.createElement('script');
+    s.type = 'module';
+    s.src = base + 'deploy/spike-module.js';
+    s.onerror = function () {
+      report('2. module script executes', false, 'network/MIME error loading ' + s.src);
+    };
+    document.head.appendChild(s);
+
+    setTimeout(function () {
+      if (!window.__spikeModuleRan) {
+        report('2. module script executes', false,
+          'module never ran — bundle to a classic IIFE (see HANDOFF.md)');
+      }
+    }, 4000);
+  })();
+</script>

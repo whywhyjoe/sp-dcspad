@@ -61,6 +61,26 @@ and redeploy. (`.js` is always served as JavaScript; `.mjs` is not universally
 mapped.) Worth checking first — if the pad loads and you can type in the editors,
 this isn't an issue on your tenant.
 
+## Web-part hosting spike
+
+If the target is a modern page with a custom-script web part rather than a
+standalone `.html`, run the spike in this folder **before** deploying the app —
+it answers whether ES modules survive that hosting model. See `HANDOFF.md` for
+what each answer implies.
+
+`deploy/` is excluded from normal deploys, so upload these three by hand
+(same folder as `index.html`, keeping them under `deploy/`):
+
+```powershell
+Add-PnPFile -Path webpart-spike.html -Folder "SiteAssets/dcspad/deploy"
+Add-PnPFile -Path spike-module.js    -Folder "SiteAssets/dcspad/deploy"
+Add-PnPFile -Path spike-import.js    -Folder "SiteAssets/dcspad/deploy"
+```
+
+Edit `DCSPAD_SPIKE_BASE` at the top of `webpart-spike.html` first — it needs the
+absolute URL of the `dcspad/` folder, with a trailing slash. Then point the web
+part at `webpart-spike.html` and read the four results it prints.
+
 ## Verifying the deployment
 
 The tenant checklist in the root `README.md` is the full version. The short one:
