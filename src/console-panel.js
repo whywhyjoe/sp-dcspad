@@ -100,7 +100,7 @@ function makeHandlers() {
       }
       const stackEl = renderStack(d);
       if (stackEl) parts.push(stackEl);
-      addEntry('error', parts, { badge: true });
+      addEntry('error', parts);
     },
   };
 }
@@ -138,7 +138,7 @@ function currentContainer() {
   return groupStack.length ? groupStack[groupStack.length - 1] : out;
 }
 
-function addEntry(level, parts, { cls, badge } = {}) {
+function addEntry(level, parts, { cls } = {}) {
   const entry = el('div', `console-entry lvl-${level} new-entry${cls ? ' ' + cls : ''}`);
   entry.dataset.lvl = level === 'info' || level === 'debug' ? 'log' : level;
   const ts = new Date();
@@ -151,11 +151,9 @@ function addEntry(level, parts, { cls, badge } = {}) {
   currentContainer().append(entry);
   scrollIfPinned();
 
-  if (badge && !deps.isConsoleVisible()) {
-    const b = document.getElementById('console-badge');
-    b.hidden = false;
-    b.textContent = String(Number(b.textContent || 0) + 1);
-  }
+  // Error dot on the Console tab: an error indicator, not an unread
+  // counter — visible whatever tab/collapse state, cleared with the output.
+  if (level === 'error') document.getElementById('console-badge').hidden = false;
 }
 
 function runDivider(runNumber) {
@@ -170,8 +168,7 @@ function runDivider(runNumber) {
 function clear() {
   out.textContent = '';
   groupStack = [];
-  const b = document.getElementById('console-badge');
-  b.hidden = true; b.textContent = '';
+  document.getElementById('console-badge').hidden = true;
 }
 
 // The active levels and the filter text are read once per filter change

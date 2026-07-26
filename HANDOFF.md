@@ -28,6 +28,15 @@ inspector, REPL and network capture all work inside the web part; a live
   `…/SiteAssets/Code/dcspad-live/` is OneDrive-synced to
   `C:\Users\other\NERVE\NewNerve - Code\dcspad-live`; copying files there goes
   live in seconds. `deploy/Deploy-DcsPad.ps1` exists but is unused.
+  **Deploy with `deploy/Sync-Live.ps1`** — it rebuilds `dcspad.app.js` (the
+  single-file bundle the web part actually runs) and copies everything.
+  ⚠ Never hand-copy `src/` changes without rebuilding the bundle: hosted
+  mode won't see them. Why a bundle: SPO's `max-age=86400`, Chrome's
+  separate module-request cache, and the host page ignoring late import
+  maps make a multi-file graph un-bustable (full story: cache gotcha in
+  CLAUDE.md). Bump `?v=` in `dcspad.webpart.html` when boot.js itself
+  changes. SPO can also serve a just-uploaded file stale for ~15–30s —
+  verify with a cache-busted fetch before debugging "my change didn't work".
 - Visual seating (deliberate, Joe's call): the SharePoint **suite bar stays
   visible** (desaturated while the pad runs); hosted mode pins `.app` at
   `inset: 53px 5px 5px`, borderless over a darker surround so it reads as
@@ -76,6 +85,9 @@ inspector, REPL and network capture all work inside the web part; a live
 
 ## Feature backlog (Joe, 2026-07-25)
 
+- **Per-pane import/export (file system + SharePoint)** — plan written, not
+  started: `plans/file-sp-import-export.md` (REST `$value`/`Files/add` +
+  contextinfo digest; new `src/sp-files.js` seam).
 - **PnPjs autocomplete/IntelliSense** — plan written, not started:
   `plans/pnpjs-intellisense.md` (CM6 + TS worker recommended; CSP `worker-src`
   check gates it).

@@ -17,6 +17,7 @@ export function initLayout({ onEditorTabChange } = {}) {
   root.style.setProperty('--preview-h', `${layout.previewFr}fr`);
   root.style.setProperty('--diag-h', px(layout.diagH));
   if (layout.sidebarCollapsed) collapseSidebar(true);
+  if (layout.diagCollapsed) collapseDiag(true);
   selectEditorTab(layout.editorTab, { silent: true });
   selectDiagTab(layout.diagTab);
 
@@ -59,6 +60,14 @@ export function initLayout({ onEditorTabChange } = {}) {
     updateNested('layout', { sidebarCollapsed: collapsed });
   }
 
+  // ----- diagnostics collapse (tabs bar stays; clicking a tab reopens) -----
+  document.getElementById('btn-collapse-diag').addEventListener('click', () => collapseDiag(true));
+
+  function collapseDiag(collapsed) {
+    main.classList.toggle('diag-collapsed', collapsed);
+    updateNested('layout', { diagCollapsed: collapsed });
+  }
+
   // ----- editor tabs -----
   document.getElementById('editor-tabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.tab');
@@ -77,9 +86,14 @@ export function initLayout({ onEditorTabChange } = {}) {
   // ----- diagnostics tabs -----
   document.getElementById('diag-tabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.tab');
-    if (tab) selectDiagTab(tab.dataset.diag);
+    if (!tab) return;
+    if (main.classList.contains('diag-collapsed')) collapseDiag(false);
+    selectDiagTab(tab.dataset.diag);
   });
 
+  // Note: the tab dots (#console-badge / #network-badge) are error
+  // indicators owned by the panels — they clear with the output, not on
+  // tab focus.
   function selectDiagTab(name) {
     for (const t of document.querySelectorAll('#diag-tabs .tab'))
       t.classList.toggle('active', t.dataset.diag === name);
@@ -87,8 +101,6 @@ export function initLayout({ onEditorTabChange } = {}) {
       v.classList.toggle('active', v.id === `view-${name}`);
     document.getElementById('console-tools').hidden = name !== 'console';
     document.getElementById('network-tools').hidden = name !== 'network';
-    const badge = document.getElementById(`${name}-badge`);
-    if (badge) { badge.hidden = true; badge.textContent = ''; }
     updateNested('layout', { diagTab: name });
   }
 
@@ -98,6 +110,7 @@ export function initLayout({ onEditorTabChange } = {}) {
     main.classList.toggle('max-preview');
   });
   document.getElementById('btn-max-diag').addEventListener('click', () => {
+    if (main.classList.contains('diag-collapsed')) collapseDiag(false);
     main.classList.remove('max-preview');
     main.classList.toggle('max-diag');
   });

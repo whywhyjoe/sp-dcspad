@@ -44,12 +44,6 @@ function onStart(d) {
 
   const wrap = document.getElementById('network-table-wrap');
   wrap.scrollTop = wrap.scrollHeight;
-
-  if (!deps.isNetworkVisible()) {
-    const b = document.getElementById('network-badge');
-    b.hidden = false;
-    b.textContent = String(Number(b.textContent || 0) + 1);
-  }
 }
 
 function onEnd(d) {
@@ -62,6 +56,9 @@ function onEnd(d) {
   tdTime.textContent = `${d.ms} ms`;
   tdSize.textContent = d.size != null ? fmtSize(d.size) : '—';
   if (selectedId === d.id) renderDetail(entry.data);
+  // Error dot on the Network tab: any failed request or 4xx/5xx status.
+  // Cleared with the request log, not on tab focus.
+  if (!d.ok) document.getElementById('network-badge').hidden = false;
 }
 
 function select(id) {
@@ -152,8 +149,7 @@ function clear() {
   selectedId = null;
   document.getElementById('network-rows').textContent = '';
   document.getElementById('network-detail').hidden = true;
-  const b = document.getElementById('network-badge');
-  b.hidden = true; b.textContent = '';
+  document.getElementById('network-badge').hidden = true;
 }
 
 function applyApiFilter() {

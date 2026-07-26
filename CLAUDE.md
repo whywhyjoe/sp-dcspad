@@ -19,7 +19,19 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
 2. **Deterministic assembly** in `src/runner.js` `assemble()`. Fixed order: harness script → SP context + `<base>` → preview-chrome style → library CSS → user CSS → user HTML → library JS as ordered blocking `<script src>` → **user JS last**. The browser's parser handles ordering exactly like a real page. Never inject scripts into a live preview document.
 3. **`postMessage`-only across the frame boundary.** The harness (`src/bridge/harness.js`) pre-serializes everything and posts it with a per-run token; the app ignores messages whose token isn't current. Never reach into the iframe from app code (tests may read computed styles — that's it).
 4. **Pad chrome must lose to user code.** Anything the pad adds to the preview (e.g. the dark-mode canvas style) is injected *before* library/user CSS so the user's styling always wins. The pad must never misrepresent how code will render on a real page.
-5. **No framework, no user build.** Vanilla ES modules, plain DOM. CodeMirror is vendored as a single file (`vendor/codemirror.js` — `.js` not `.mjs`, because SharePoint serves `.mjs` as `application/octet-stream` which browsers refuse for modules) because CM6 breaks subtly with duplicate `@codemirror/state` instances; regenerate only via `tools/build-vendor.mjs` (instructions at top of that file).
+5. **No framework, no user build — but the hosted artifact is bundled.**
+   Vanilla ES modules, plain DOM; standalone `index.html` and the test suites
+   load `src/` unbundled. The web-part hosting, however, loads
+   `dcspad.app.js` — a single-file esbuild bundle of the same source
+   (`tools/build-app.mjs`, run by `deploy/Sync-Live.ps1`) — because
+   SharePoint's caching makes a multi-file module graph un-bustable (see
+   Gotchas). **Rebuild the bundle on every deploy after touching `src/` or
+   `vendor/`.** CodeMirror is vendored as a single file
+   (`vendor/codemirror.js` — `.js` not `.mjs`, because SharePoint serves
+   `.mjs` as `application/octet-stream` which browsers refuse for modules)
+   because CM6 breaks subtly with duplicate `@codemirror/state` instances;
+   regenerate only via `tools/build-vendor.mjs` (instructions at top of that
+   file).
 6. **`state.js` is the only module that touches localStorage.** It owns three documents: the workspace blob `{html, css, js, libraries, settings, layout}` (live, autosaved), the framework catalog, and the snippet library. The future SharePoint storage layer (`DevPadData/{user}.json`) replaces persistence wholesale by swapping this one seam — don't scatter storage elsewhere. Files on disk (project/catalog/snippet .json, pane exports) go through `src/io.js`, which moves bytes but stores nothing.
 
 ## File map
@@ -27,8 +39,10 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
 ```
 index.html                app shell (single source of truth; standalone + fetched by boot.js)
 dcspad.webpart.html       2-line web-part entry: anchor + absolute <script src=boot.js>
-boot.js                   web-part bootstrap: fetches index.html, injects shell, imports main.js;
-                          adds .dcspad-hosted to <html> (hosted-mode CSS in app.css)
+boot.js                   web-part bootstrap: fetches index.html no-store, injects shell,
+                          imports the versioned bundle; adds .dcspad-hosted to <html>
+dcspad.app.js             generated single-file ESM bundle of src/ (tools/build-app.mjs);
+                          what the web part actually runs — rebuild on every deploy
 styles/app.css            all styling; layout via CSS grid + JS-set vars (--sidebar-w etc.)
 vendor/codemirror.js      vendored CM6 bundle — regenerate via tools/, never hand-edit
 tools/build-vendor.mjs    esbuild one-liner for the vendor bundle
@@ -69,6 +83,19 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Gotchas already paid for
 
+- SharePoint hosting makes a multi-file module graph un-bustable — three
+  stacked facts, each proven empirically on this tenant: SPO serves library
+  files with `cache-control: public, max-age=86400`; Chrome caches
+  module-script requests separately from fetch() (so fetch-side
+  revalidation never refreshes what `import` uses); and the modern page
+  freezes import-map registration (late maps are silently ignored). Hence
+  hosted mode loads ONE bundled ESM file behind a Last-Modified-versioned
+  URL (boot.js `VERSIONED` list: app.css + dcspad.app.js; index.html is
+  no-store; the harness is runtime-fetched with no-cache). Consequences:
+  **rebuild `dcspad.app.js` on every deploy** (`deploy/Sync-Live.ps1` does
+  it), and **a boot.js change needs the `?v=` bump in dcspad.webpart.html**
+  (boot sits below the versioning layer; the web part busts its own HTML
+  fetch with a `?pnp=` timestamp).
 - Modern SharePoint pages ship a nonce-based `script-src` CSP (no
   `unsafe-inline`) **that `about:srcdoc` documents inherit**. Every script tag
   the runner assembles must carry the host page's nonce (`hostNonce()` in

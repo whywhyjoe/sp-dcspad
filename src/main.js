@@ -64,7 +64,7 @@ initSnippets({
 const spContext = applyContextIndicators();
 
 // ---------- boot splash ----------
-showSplash({ spContext });
+showSplash();
 
 // ---------- runner ----------
 const statusRun = document.getElementById('status-run');
@@ -289,6 +289,23 @@ const chkAutoclear = document.getElementById('chk-autoclear');
 chkAutoclear.checked = state.settings.autoClearConsole;
 chkAutoclear.addEventListener('change', () =>
   updateNested('settings', { autoClearConsole: chkAutoclear.checked }));
+
+// Console/network text size stepper (10–18px, drives --diag-fs).
+const DIAG_FS_MIN = 10, DIAG_FS_MAX = 18;
+function applyDiagFontSize(px) {
+  document.documentElement.style.setProperty('--diag-fs', `${px}px`);
+  document.getElementById('diag-font-val').textContent = String(px);
+}
+applyDiagFontSize(state.settings.diagFontSize);
+function stepDiagFontSize(delta) {
+  const cur = getState().settings.diagFontSize;
+  const next = Math.min(DIAG_FS_MAX, Math.max(DIAG_FS_MIN, cur + delta));
+  if (next === cur) return;
+  updateNested('settings', { diagFontSize: next });
+  applyDiagFontSize(next);
+}
+document.getElementById('btn-diag-font-dec').addEventListener('click', () => stepDiagFontSize(-1));
+document.getElementById('btn-diag-font-inc').addEventListener('click', () => stepDiagFontSize(+1));
 
 // ---------- autosave tick + storage errors ----------
 const saveEl = document.getElementById('status-save');

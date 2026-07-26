@@ -84,10 +84,44 @@
   window.addEventListener('popstate', syncEditSuspension);
   syncEditSuspension();
 
-  fetch(base + 'index.html', { credentials: 'same-origin' })
+  // ---- cache discipline -------------------------------------------------
+  // SharePoint serves library files with `cache-control: public,
+  // max-age=86400`, Chrome caches module-script requests separately from
+  // fetch(), and this host page freezes import-map registration — all
+  // proven empirically on this tenant. So hosted mode loads the app as ONE
+  // bundled ESM file (dcspad.app.js, built by tools/build-app.mjs) behind a
+  // versioned URL: a conditional GET reads its Last-Modified, that stamps
+  // the import URL, and a deploy busts exactly one entry. Same for the
+  // stylesheet. index.html is always fetched no-store. The harness is
+  // fetched as text with no-cache by the runner, so it stays fresh on its
+  // own. There is no mixed-version graph because there is no graph.
+  var VERSIONED = ['styles/app.css', 'dcspad.app.js'];
+
+  var versions = {};
+  var revalidated = Promise.all(VERSIONED.map(function (f) {
+    return fetch(base + f, { credentials: 'same-origin', cache: 'no-cache' })
+      .then(function (r) {
+        var lm = r.headers.get('Last-Modified');
+        versions[f] = lm && !isNaN(new Date(lm)) ? String(new Date(lm).getTime()) : String(Date.now());
+      })
+      .catch(function () { versions[f] = String(Date.now()); });
+  }));
+
+  function versioned(f) {
+    return base + f + '?v=' + versions[f];
+  }
+
+  // The runner fetches src/bridge/harness.js relative to this base (the
+  // bundle's import.meta.url would point at the bundle itself).
+  window.__DCSPAD_SRC_BASE__ = base + 'src/';
+
+  fetch(base + 'index.html', { credentials: 'same-origin', cache: 'no-store' })
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' loading index.html');
       return r.text();
+    })
+    .then(function (html) {
+      return revalidated.then(function () { return html; });
     })
     .then(function (html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -97,21 +131,19 @@
         var link = document.createElement('link');
         link.id = 'dcspad-style';
         link.rel = 'stylesheet';
-        link.href = base + 'styles/app.css';
+        link.href = versioned('styles/app.css');
         document.head.appendChild(link);
       }
 
-      // App shell: everything in <body> except scripts (main.js is loaded
-      // below as a module; anything else script-shaped doesn't belong here).
+      // App shell: everything in <body> except scripts (the app itself is
+      // imported below; anything else script-shaped doesn't belong here).
       var frag = document.createDocumentFragment();
       Array.prototype.slice.call(doc.body.children).forEach(function (el) {
         if (el.tagName !== 'SCRIPT') frag.appendChild(el);
       });
       mount.appendChild(frag);
 
-      // Entry module from an absolute URL; its own imports resolve against
-      // module URLs, not the page, so nothing below it needs rewriting.
-      return import(base + 'src/main.js');
+      return import(versioned('dcspad.app.js'));
     })
     .catch(function (err) { fail('load', err); });
 })();

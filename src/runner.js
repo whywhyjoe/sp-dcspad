@@ -16,7 +16,15 @@ let handlers = {};
 
 export async function initRunner(messageHandlers) {
   handlers = messageHandlers;
-  const res = await fetch(new URL('./bridge/harness.js', import.meta.url));
+  // no-cache: SharePoint serves library files with max-age=86400; a
+  // revalidation (304 when unchanged) keeps the harness in step with the
+  // rest of the graph after a deploy. Hosted mode runs from the bundled
+  // artifact, where import.meta.url points at the bundle — boot.js provides
+  // the real src/ base; standalone (unbundled) resolves relatively.
+  const harnessUrl = window.__DCSPAD_SRC_BASE__
+    ? window.__DCSPAD_SRC_BASE__ + 'bridge/harness.js'
+    : new URL('./bridge/harness.js', import.meta.url);
+  const res = await fetch(harnessUrl, { cache: 'no-cache' });
   if (!res.ok) {
     throw new Error(`preview harness failed to load (HTTP ${res.status} for bridge/harness.js) — check the deployed folder structure`);
   }

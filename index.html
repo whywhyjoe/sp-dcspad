@@ -9,12 +9,9 @@
 </head>
 <body>
 
-<!-- Boot splash (removed from DOM after reveal) -->
+<!-- Boot splash (removed from DOM after reveal; click to skip) -->
 <div id="splash" class="splash" hidden>
   <pre class="splash-logo" id="splash-logo"></pre>
-  <div class="splash-tagline">SharePoint developer workbench</div>
-  <pre class="splash-boot" id="splash-boot"></pre>
-  <div class="splash-skip">click anywhere to skip</div>
 </div>
 
 <div id="app" class="app">
@@ -25,13 +22,6 @@
       <span class="logo-mark">▞</span><span class="logo-text">DCS<b>Pad</b></span><span class="logo-caret"></span>
     </div>
     <div class="topbar-actions">
-      <button id="btn-run" class="btn btn-run" title="Run (Ctrl/Cmd+Enter)">
-        <span class="btn-run-icon">▶</span> Run
-      </button>
-      <label class="toggle" id="autorun-toggle" title="Re-run automatically ~800ms after you stop typing">
-        <input type="checkbox" id="chk-autorun">
-        <span class="toggle-pill"></span> Auto-run <span class="live-dot" id="live-dot"></span>
-      </label>
       <div class="settings-wrap">
         <button id="btn-file" class="btn btn-ghost btn-icon" title="Save / load project, export panes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> File</button>
         <div id="file-menu" class="settings-menu file-menu" hidden>
@@ -48,10 +38,24 @@
         <div id="settings-menu" class="settings-menu" hidden>
           <label><input type="checkbox" id="chk-module"> Run JS as <code>&lt;script type="module"&gt;</code> <span class="hint">enables top-level await; strict mode, <code>var</code> won't become window globals</span></label>
           <label><input type="checkbox" id="chk-autoclear" checked> Clear console on each run</label>
+          <div class="menu-row">Console text size
+            <span class="size-stepper">
+              <button class="btn btn-ghost btn-xs" id="btn-diag-font-dec" title="Smaller">−</button>
+              <span class="size-val" id="diag-font-val">12</span>
+              <button class="btn btn-ghost btn-xs" id="btn-diag-font-inc" title="Larger">＋</button>
+            </span>
+          </div>
         </div>
       </div>
     </div>
     <div class="topbar-right">
+      <label class="toggle" id="autorun-toggle" title="Re-run automatically ~800ms after you stop typing">
+        <input type="checkbox" id="chk-autorun">
+        <span class="toggle-pill"></span> Auto-run <span class="live-dot" id="live-dot"></span>
+      </label>
+      <button id="btn-run" class="btn btn-run" title="Run (Ctrl/Cmd+Enter)">
+        <span class="btn-run-icon">▶</span> Run
+      </button>
       <div id="sp-chip" class="sp-chip sp-chip-mock" title="">
         <span class="sp-chip-dot"></span><span id="sp-chip-text">SP: …</span>
       </div>
@@ -140,8 +144,8 @@
       <div class="panel diag-panel" id="diag-panel">
         <div class="panel-head tabs-head">
           <div class="tabs tabs-inline" id="diag-tabs">
-            <button class="tab active" data-diag="console" role="tab">Console <span class="badge" id="console-badge" hidden></span></button>
-            <button class="tab" data-diag="network" role="tab">Network <span class="badge" id="network-badge" hidden></span></button>
+            <button class="tab active" data-diag="console" role="tab">Console <span class="tab-dot" id="console-badge" hidden></span></button>
+            <button class="tab" data-diag="network" role="tab">Network <span class="tab-dot" id="network-badge" hidden></span></button>
           </div>
           <span class="panel-spacer"></span>
           <span id="console-tools" class="panel-tools">
@@ -156,6 +160,7 @@
             <button id="btn-clear-network" class="btn btn-ghost btn-xs" title="Clear network log">⃠</button>
           </span>
           <button id="btn-max-diag" class="btn btn-ghost btn-xs" title="Maximize panel">⛶</button>
+          <button id="btn-collapse-diag" class="btn btn-ghost btn-xs" title="Collapse panel (click a tab to reopen)">▾</button>
         </div>
         <div class="diag-body">
           <div class="diag-view active" id="view-console">
