@@ -36,7 +36,16 @@ Outside SharePoint you get a clearly-flagged **mock** `_spPageContextInfo` (corr
 
 ## Deploying to SharePoint
 
-1. Upload the whole repository folder to a document library on your site — e.g. **Site Assets** → `SiteAssets/dcspad/`. Keep the folder structure (`src/`, `styles/`, `vendor/`).
+Scripted (PnP.PowerShell) — see [`deploy/README.md`](deploy/README.md) for the runbook and the three things that commonly bite on a first deploy:
+
+```powershell
+cd deploy
+./Deploy-DcsPad.ps1 -SiteUrl https://contoso.sharepoint.com/sites/dev -ClientId <app-id> -WhatIf
+```
+
+Or by hand:
+
+1. Upload the whole repository folder to a document library on your site — e.g. **Site Assets** → `SiteAssets/dcspad/`. Keep the folder structure (`src/`, `styles/`, `vendor/`). Skip `tests/`, `tools/` and `deploy/` — they're development-only.
 2. Open `…/SiteAssets/dcspad/index.html` in the browser.
    - If your tenant blocks rendering `.html` files (they download instead), rename `index.html` → `dcspad.aspx` and open that. No other changes needed.
 3. Confirm the top-right chip reads **SP: Live** with your web URL in the status bar.
