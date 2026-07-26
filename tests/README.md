@@ -15,14 +15,14 @@ Chromium is resolved in this order: `CHROMIUM_PATH` env var → `/opt/pw-browser
 Two static servers, then the suites:
 
 ```bash
-# terminal 1 — the app
-cd devpad && python3 -m http.server 8642
+# terminal 1 — the app (from the repo root)
+python3 -m http.server 8642
 
 # terminal 2 — test fixtures (serves tests/fixtures/ for library-injection checks)
-cd devpad/tests && python3 -m http.server 8643
+cd tests && python3 -m http.server 8643
 
 # terminal 3
-cd devpad/tests
+cd tests
 node smoke.mjs      # 49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle

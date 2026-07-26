@@ -3,7 +3,7 @@
 // duplicate-@codemirror/state pitfall.
 //
 // Regenerate with:
-//   cd devpad/tools && npm init -y && npm i esbuild codemirror @codemirror/lang-html @codemirror/lang-css @codemirror/lang-javascript @codemirror/theme-one-dark
+//   cd tools && npm init -y && npm i esbuild codemirror @codemirror/lang-html @codemirror/lang-css @codemirror/lang-javascript @codemirror/theme-one-dark
 //   node build-vendor.mjs
 
 import { build } from 'esbuild';

@@ -28,8 +28,7 @@ Everything lives in your browser's localStorage plus plain files you keep wherev
 ## Local development
 
 ```bash
-cd devpad
-python3 -m http.server 8642
+python3 -m http.server 8642      # from the repo root
 # open http://localhost:8642/index.html
 ```
 
@@ -37,9 +36,9 @@ Outside SharePoint you get a clearly-flagged **mock** `_spPageContextInfo` (corr
 
 ## Deploying to SharePoint
 
-1. Upload the whole `devpad/` folder to a document library on your site — e.g. **Site Assets** → `SiteAssets/devpad/`. Keep the folder structure (`src/`, `styles/`, `vendor/`).
-2. Open `…/SiteAssets/devpad/index.html` in the browser.
-   - If your tenant blocks rendering `.html` files (they download instead), rename `index.html` → `devpad.aspx` and open that. No other changes needed.
+1. Upload the whole repository folder to a document library on your site — e.g. **Site Assets** → `SiteAssets/dcspad/`. Keep the folder structure (`src/`, `styles/`, `vendor/`).
+2. Open `…/SiteAssets/dcspad/index.html` in the browser.
+   - If your tenant blocks rendering `.html` files (they download instead), rename `index.html` → `dcspad.aspx` and open that. No other changes needed.
 3. Confirm the top-right chip reads **SP: Live** with your web URL in the status bar.
 
 > The page must be opened where `_spPageContextInfo` exists (any classic page context, or a page on a custom-script-enabled site). If the chip says Mock while on SharePoint, the host page didn't expose `_spPageContextInfo` — host the file on a site with custom script enabled.

@@ -1,5 +1,10 @@
 # DCSPad — Claude Code guide
 
+> History note: this repo was split out of `whywhyjoe/todo`, where the app lived
+> in a `devpad/` subfolder. Commit history is preserved; paths are now at the
+> repo root. Older entries in `REVIEW-LOG.md` refer to `devpad/…` paths — read
+> those as repo-root-relative.
+
 SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CSS/JS editors (CodeMirror 6), live preview iframe, console + network panels with an SP-aware object inspector, library manager, REPL. No backend, no framework, no build step — deploy by uploading this folder to a SharePoint library.
 
 **The mission, one sentence:** code written in the pad runs **unmodified** on a real SharePoint page. Every design decision below serves that.
@@ -46,7 +51,7 @@ REVIEW-LOG.md             external-review triage record + accepted low-priority 
 ## Dev workflow
 
 ```bash
-cd devpad && python3 -m http.server 8642     # app at http://localhost:8642/index.html
+python3 -m http.server 8642     # from the repo root; app at http://localhost:8642/index.html
 ```
 
 Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected. Live PnPjs/REST behavior can only be validated in a tenant (deployment + validation checklist in README.md). Run the test suites (below) after any change to runner/harness/console/inspector — they exist because this project's failure modes are timing- and boundary-shaped, not type-shaped.
