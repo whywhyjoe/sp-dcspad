@@ -37,14 +37,27 @@ export async function initRunner(messageHandlers) {
 const escScript = (s) => s.replace(/<\/script/gi, '<\\/script');
 const escStyle = (s) => s.replace(/<\/style/gi, '<\\/style');
 
+// Host-page CSP nonce. Modern SharePoint pages ship a nonce-based
+// script-src (no 'unsafe-inline'), and about:srcdoc documents inherit the
+// parent's CSP — so every script the runner assembles must carry the host
+// nonce or the preview frame silently runs nothing. The nonce property is
+// readable same-origin; on a standalone page there is none and this stays
+// '' (attribute omitted, behavior unchanged).
+function hostNonce() {
+  for (const s of document.scripts) if (s.nonce) return s.nonce;
+  return '';
+}
+
 function assemble({ docs, libraries, spContext, settings, token }) {
+  const nonce = hostNonce();
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : '';
   const cssLinks = libraries
     .filter((l) => l.css)
     .map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${u}">`).join('\n'))
     .join('\n');
   const jsTags = libraries
     .filter((l) => l.js)
-    .map((l) => (Array.isArray(l.js) ? l.js : [l.js]).map((u) => `<script src="${u}"><\/script>`).join('\n'))
+    .map((l) => (Array.isArray(l.js) ? l.js : [l.js]).map((u) => `<script src="${u}"${nonceAttr}><\/script>`).join('\n'))
     .join('\n');
 
   // Pad-only canvas color, injected BEFORE library/user CSS so anything
@@ -57,7 +70,7 @@ html { background: #1d2026; color: #d6d9e0; }
     : '';
 
   const contextScript = spContext
-    ? `<script>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>\n` +
+    ? `<script${nonceAttr}>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>\n` +
       (spContext.baseHref ? `<base href="${spContext.baseHref}">\n` : '')
     : '';
 
@@ -65,7 +78,7 @@ html { background: #1d2026; color: #d6d9e0; }
 <html>
 <head>
 <meta charset="utf-8">
-<script>${escScript(harnessText.replaceAll('__DCSPAD_TOKEN__', token))}<\/script>
+<script${nonceAttr}>${escScript(harnessText.replaceAll('__DCSPAD_TOKEN__', token))}<\/script>
 ${contextScript}${chromeStyle}${cssLinks}
 <style>
 ${escStyle(docs.css)}
@@ -75,7 +88,7 @@ ${escStyle(docs.css)}
 ${docs.html}
 ${jsTags}
 `;
-  const scriptOpen = settings.jsAsModule ? '<script type="module">' : '<script>';
+  const scriptOpen = settings.jsAsModule ? `<script type="module"${nonceAttr}>` : `<script${nonceAttr}>`;
   // User JS begins on the line right after the opening script tag.
   userJsLine = head.split('\n').length + 1;
   return `${head}${scriptOpen}

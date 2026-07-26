@@ -4,7 +4,7 @@
 import {
   EditorView, EditorState, basicSetup, keymap, indentWithTab,
   html, css, javascript, oneDark,
-} from '../vendor/codemirror.mjs';
+} from '../vendor/codemirror.js';
 import { getState, updateNested, update } from './state.js';
 
 const LANGS = { html: html, css: css, js: javascript };

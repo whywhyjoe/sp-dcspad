@@ -97,7 +97,7 @@ Console output and network response bodies are rendered by an inspector that und
 ```
 index.html            app shell
 styles/app.css        theme + layout
-vendor/codemirror.mjs vendored CodeMirror 6 bundle (single file — see tools/)
+vendor/codemirror.js  vendored CodeMirror 6 bundle (single file — see tools/)
 tools/build-vendor.mjs one-liner to regenerate the vendor bundle (esbuild)
 src/
   main.js             bootstrap/wiring

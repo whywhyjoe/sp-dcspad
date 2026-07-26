@@ -19,15 +19,18 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
 2. **Deterministic assembly** in `src/runner.js` `assemble()`. Fixed order: harness script → SP context + `<base>` → preview-chrome style → library CSS → user CSS → user HTML → library JS as ordered blocking `<script src>` → **user JS last**. The browser's parser handles ordering exactly like a real page. Never inject scripts into a live preview document.
 3. **`postMessage`-only across the frame boundary.** The harness (`src/bridge/harness.js`) pre-serializes everything and posts it with a per-run token; the app ignores messages whose token isn't current. Never reach into the iframe from app code (tests may read computed styles — that's it).
 4. **Pad chrome must lose to user code.** Anything the pad adds to the preview (e.g. the dark-mode canvas style) is injected *before* library/user CSS so the user's styling always wins. The pad must never misrepresent how code will render on a real page.
-5. **No framework, no user build.** Vanilla ES modules, plain DOM. CodeMirror is vendored as a single file (`vendor/codemirror.mjs`) because CM6 breaks subtly with duplicate `@codemirror/state` instances; regenerate only via `tools/build-vendor.mjs` (instructions at top of that file).
+5. **No framework, no user build.** Vanilla ES modules, plain DOM. CodeMirror is vendored as a single file (`vendor/codemirror.js` — `.js` not `.mjs`, because SharePoint serves `.mjs` as `application/octet-stream` which browsers refuse for modules) because CM6 breaks subtly with duplicate `@codemirror/state` instances; regenerate only via `tools/build-vendor.mjs` (instructions at top of that file).
 6. **`state.js` is the only module that touches localStorage.** It owns three documents: the workspace blob `{html, css, js, libraries, settings, layout}` (live, autosaved), the framework catalog, and the snippet library. The future SharePoint storage layer (`DevPadData/{user}.json`) replaces persistence wholesale by swapping this one seam — don't scatter storage elsewhere. Files on disk (project/catalog/snippet .json, pane exports) go through `src/io.js`, which moves bytes but stores nothing.
 
 ## File map
 
 ```
-index.html                app shell (rename to devpad.aspx if a tenant blocks .html rendering)
+index.html                app shell (single source of truth; standalone + fetched by boot.js)
+dcspad.webpart.html       2-line web-part entry: anchor + absolute <script src=boot.js>
+boot.js                   web-part bootstrap: fetches index.html, injects shell, imports main.js;
+                          adds .dcspad-hosted to <html> (hosted-mode CSS in app.css)
 styles/app.css            all styling; layout via CSS grid + JS-set vars (--sidebar-w etc.)
-vendor/codemirror.mjs     vendored CM6 bundle — regenerate via tools/, never hand-edit
+vendor/codemirror.js      vendored CM6 bundle — regenerate via tools/, never hand-edit
 tools/build-vendor.mjs    esbuild one-liner for the vendor bundle
 src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
@@ -65,6 +68,13 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 `tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
+
+- Modern SharePoint pages ship a nonce-based `script-src` CSP (no
+  `unsafe-inline`) **that `about:srcdoc` documents inherit**. Every script tag
+  the runner assembles must carry the host page's nonce (`hostNonce()` in
+  runner.js) or the preview frame silently runs nothing — no errors, no
+  messages, markup renders fine. Standalone pages have no nonce and the
+  attribute is omitted.
 
 - `harness.js` token substitution must be `replaceAll` — the placeholder also appears in a comment, and `replace` once shipped a broken token check.
 - `app.css` has a global `[hidden] { display: none !important; }` guard: any element with a `display` rule plus the `hidden` attribute silently ignores `hidden` without it (an invisible splash overlay once ate every click).

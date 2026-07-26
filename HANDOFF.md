@@ -1,138 +1,94 @@
 # Handoff — DCSPad
 
-Written at the end of the session that split this repo out of `whywhyjoe/todo`.
 Read `CLAUDE.md` first for architecture invariants; this file covers **state**
-and **the next problem**.
+and **what's next**. Last updated: 2026-07-25, the session that got the pad
+running live inside the SharePoint web part.
 
 ## Where things stand
 
-- Repo: `whywhyjoe/sp-dcspad`, single branch `main`. The old `whywhyjoe/todo`
-  copy under `devpad/` is frozen — do not develop there.
-- App works fully as a standalone page. Test suites: `smoke.mjs` 49 checks,
-  `darkmode.mjs` 8, `splash.mjs` 3 — all passing. Two-server setup in
-  `tests/README.md`.
-- Three external code-review rounds triaged and landed; decisions, declines and
-  corrections in `REVIEW-LOG.md`, which also carries an open low-priority
-  backlog (history caps, run-scoped load timeout, build-vendor cleanup, etc.).
-- `deploy/Deploy-DcsPad.ps1` exists but is **unexecuted and not syntax-checked**
-  (no PowerShell in the authoring container). Run with `-WhatIf` first.
+**The pad runs on the real SharePoint page.** Editors, run pipeline, console,
+inspector, REPL and network capture all work inside the web part; a live
+`_api/web` call from the REPL returns real site data. The standalone
+`index.html` still works and remains what the test suites drive.
 
-## The next problem: hosting inside a custom-script web part
+### Hosting model (decided and working)
 
-The deployment target is **not** a standalone `.html` page. It is a modern
-SharePoint page with a custom-script web part that fetches an HTML file and
-injects it into a container div on that page. Everything below follows from
-that, and none of it has been tested yet.
+- Host page: `https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/DCSpad.aspx`
+  (⚠ the published copy currently lives at `DCSpad(1).aspx` — a duplicate got
+  created when the original page wouldn't save without a title; reconcile).
+- Web part: PnP **Modern Script Editor** (Mikael Svenson), in
+  "Use script from an external URL" mode. Despite the field name "Script URL",
+  it fetches an **HTML file** and injects it with script re-creation.
+- The URL points at `dcspad.webpart.html` (repo root): a 2-line anchor +
+  absolute `<script src=…/boot.js>`. `boot.js` fetches `index.html`, injects
+  the app shell, loads `styles/app.css`, and `import()`s `src/main.js` from an
+  absolute URL — after which the whole module tree resolves itself. Entry URLs
+  are the only absolute URLs; `index.html` stays the single source of truth.
+- **Deployment = file copy.** The doc library folder
+  `…/SiteAssets/Code/dcspad-live/` is OneDrive-synced to
+  `C:\Users\other\NERVE\NewNerve - Code\dcspad-live`; copying files there goes
+  live in seconds. `deploy/Deploy-DcsPad.ps1` exists but is unused.
+- Visual seating (deliberate, Joe's call): the SharePoint **suite bar stays
+  visible** (desaturated while the pad runs); hosted mode pins `.app` at
+  `inset: 53px 5px 5px`, borderless over a darker surround so it reads as
+  part of the page (see "Web-part hosting" in `app.css`, activated by
+  `boot.js` adding `.dcspad-hosted` to `<html>`). The earlier `env=WebView`
+  chrome-less plan is abandoned — the suite bar is wanted context.
+- **Page-edit safety**: boot.js refuses to boot when the URL carries
+  `Mode=Edit` (or under `/_layouts/`), and also watches SPA navigation
+  (pushState/replaceState/popstate) to *suspend* an already-booted pad —
+  `.dcspad-suspended` hides the mount and reverts the html/body overrides so
+  the edit canvas looks and scrolls normally. Leaving edit mode restores it.
 
-### What almost certainly breaks
+### The two web-part-hosting bugs that were found and fixed
 
-1. **Relative asset URLs.** `index.html` references `styles/app.css` and
-   `src/main.js` relatively. Injected into a page at
-   `…/SitePages/Dev.aspx`, those resolve against *the page*, not the library
-   folder — 404. Both entry points need absolute (or server-relative) URLs.
-2. **Full-viewport layout** — *largely solved by the hosting plan, see below.*
-   `.app` is `height: 100vh` (app.css:54) and `html, body { height: 100% }`
-   (app.css:34). The plan is to render the host page chrome-less via
-   SharePoint's `?env=WebView`, which gets the pad most of a viewport. Residual
-   risk is the modern-page canvas: the web part still sits inside SharePoint's
-   `CanvasZone` wrappers, which carry their own max-width, padding and
-   overflow. Expect to either put the web part in a full-width section or pin
-   the app with `position: fixed; inset: 0` (the splash already does exactly
-   this at app.css:501). Watch for double scrollbars — the host document
-   scrolling behind the app is the tell.
-3. **Global CSS collides in both directions.** `app.css` sets rules on `html`,
-   `body`, `:root` and a global `[hidden] { display: none !important }`
-   (app.css:33), which restyle the SharePoint page itself — `env=WebView`
-   shrinks the blast radius but doesn't remove it. The *reverse* is the more
-   likely source of visual bugs and was missed in the first pass: SharePoint
-   ships a large global stylesheet (resets, box-sizing, font stacks, line
-   heights) that will bleed **into** the pad, which was written assuming a
-   clean document. Budget time for both: scope the pad's rules under the app
-   root, and defend its own layout against inherited styles.
-4. **`<script>` tags in injected HTML do not execute.** Content set via
-   `innerHTML` never runs its scripts. Script-editor web parts work around this
-   by re-creating the script elements — whether the one in use does that *for
-   `type="module"`* is the open question.
+1. **SharePoint serves `.mjs` as `application/octet-stream`** — browsers
+   refuse ES modules with that MIME. `vendor/codemirror.mjs` is now
+   `vendor/codemirror.js` (import updated in `src/editors.js`, build output in
+   `tools/build-vendor.mjs`). This is permanent: never ship `.mjs` to SP.
+2. **Modern pages ship a nonce-based `script-src` CSP that `about:srcdoc`
+   inherits.** Preview frames rendered markup but silently executed nothing.
+   `runner.js` now stamps the host page's nonce on every assembled script tag
+   (`hostNonce()`); standalone pages have no nonce → no-op. If preview
+   execution ever "silently dies" on SP again, look here first.
 
-### What survives (don't panic-rewrite)
+### Spike results (deploy/webpart-spike.html, kept for re-verification)
 
-- **The whole execution core is unaffected.** The `srcdoc` iframe, per-run
-  tokens, harness instrumentation, console/network panels and the inspector
-  don't care where the pad's chrome lives. The iframe is still same-origin
-  because the hosting page is on the SharePoint origin.
-- **ES module imports resolve against the importing module's URL, not the
-  page.** So if `src/main.js` is loaded from an absolute URL, every
-  `./state.js` and `../vendor/codemirror.mjs` beneath it resolves correctly
-  with no further changes. Only the two *entry* URLs need fixing — this is why
-  the module question is narrower than it looks.
-- **SP context may well be better here.** Modern pages generally expose
-  `_spPageContextInfo`, so the chip may read **SP: Live** without the
-  custom-script site setting the standalone deployment needs. Verify rather
-  than assume.
+1. classic injected script executes ✅
+2. `type="module"` script executes ✅
+3. relative import from an absolute module URL resolves ✅
+4. `_spPageContextInfo` present ❌ — absent on the modern page by default
 
-### The hosting plan: chrome-less via `?env=WebView`
+## Open items
 
-The decided approach for making the pad usable on a modern page: render the
-host page with SharePoint's `?env=WebView`, which drops the site header,
-navigation and suite bar, and have the injected HTML bounce the page to that
-URL when it wasn't loaded that way.
+- **SP chip reads Mock.** The web part has an "Enable classic
+  _spPageContextInfo" toggle, still Disabled. Flipping it should make the chip
+  read Live and give `sp-context.js` a real context (needed for request-digest
+  POSTs; GET `_api` calls already work via session cookies). Verify after
+  flipping — if the toggle injects context *after* boot captures it, capture
+  timing in `sp-context.js` may need a retry.
+- **Page naming**: reconcile `DCSpad.aspx` vs `DCSpad(1).aspx`, keep one.
+- **CSS bleed, both directions**: `app.css` still styles `html`/`body`
+  (darkens the host page behind the pad — currently invisible and arguably
+  nice; the gap around the seated app shows it). SP styles also bleed into the
+  pad; nothing visibly broken, but scope properly if oddities appear.
+- Low-priority backlog lives in `REVIEW-LOG.md`.
 
-Two things that redirect must get right:
+## Feature backlog (Joe, 2026-07-25)
 
-```js
-(function () {
-  var params = new URLSearchParams(location.search);
-  if (params.get('env') === 'WebView') return;
-  // Never hijack page editing — without this you cannot edit the page the
-  // pad is embedded on, because every load bounces to the chrome-less view.
-  if (params.has('Mode') || location.pathname.indexOf('/_layouts/') > -1) return;
-  // Loop guard: if SharePoint strips or rewrites the param, one attempt per
-  // tab is all we get. Without this a rejected param reloads forever.
-  if (sessionStorage.getItem('dcspad.webview.tried')) return;
-  sessionStorage.setItem('dcspad.webview.tried', '1');
-  params.set('env', 'WebView');
-  // replace(), not href: otherwise Back bounces the user straight forward again.
-  location.replace(location.pathname + '?' + params + location.hash);
-})();
-```
+- **PnPjs autocomplete/IntelliSense** — plan written, not started:
+  `plans/pnpjs-intellisense.md` (CM6 + TS worker recommended; CSP `worker-src`
+  check gates it).
+- **"VS Code editor" investigation** — i.e. Monaco (the pad currently uses
+  CodeMirror 6). If a swap is decided, fold the IntelliSense plan into it.
+- **Drag-and-drop reordering** for the frameworks list (replaces/augments ↑↓).
+- **Framework/snippet row action icons only on hover** (currently always
+  visible at 60% opacity).
+- **Site Inspector / SP diagnostics tools** — already in the roadmap below;
+  explicitly wanted.
 
-Note this redirect is itself script running in injected HTML — it only works if
-spike test 1 passes. And confirm `_spPageContextInfo` is still exposed under
-`env=WebView` (spike test 4, re-run with the param) rather than assuming the
-chrome-less render carries the same page context.
+## Roadmap (unchanged, seams reserved)
 
-### Do this first: a 20-minute spike
-
-`deploy/webpart-spike.html` is a self-reporting probe. Deploy it to the library,
-point the web part at it, and read the results on the page. It answers, in order:
-
-1. Does a **classic** `<script>` run when injected?
-2. Does a **`type="module"`** script run?
-3. Does a module loaded from an **absolute URL** resolve its own relative
-   imports correctly?
-4. Is `_spPageContextInfo` visible from inside the web part?
-
-The answers pick the path:
-
-- **Modules run (likely with a decent script web part):** the work is
-  URL rewriting + CSS scoping + container sizing. A day, not a rewrite. Best
-  shape is a generated `dcspad.webpart.html` produced at deploy time, with the
-  site/folder baked into absolute URLs — `Deploy-DcsPad.ps1` already knows both.
-- **Modules do not run:** bundle `src/` into one classic IIFE with esbuild
-  (`tools/build-vendor.mjs` is the existing precedent) and ship
-  `dcspad.bundle.js`. This costs the "no build step" invariant in CLAUDE.md —
-  update invariant 5 deliberately rather than letting it rot. Source stays
-  modular; only the artifact changes.
-
-Either way, **keep `index.html` working standalone.** It's what the test suites
-drive, and losing it means losing the 49 checks.
-
-### Open questions for the new session
-
-- Which web part exactly? (Modern Script Editor, a custom SPFx one, something
-  else.) Its script-handling implementation decides everything above.
-- Fixed height, or should the pad offer a maximize-to-viewport mode? A
-  workbench in a 400px web part box is unpleasant.
-- Does the tenant block `.mjs`, or serve it with a non-JavaScript MIME type?
-  See the third gotcha in `deploy/README.md` — it's the same risk in a new
-  guise, and the fix is renaming to `.js` plus one import line.
+- **Site Inspector** sidebar section (renders through `src/inspect/`).
+- **SharePoint JSON storage** replacing localStorage via the `state.js` seam.
+- **Console remote handles** — lazy live-object expansion.

@@ -178,6 +178,11 @@ await page.click('#btn-run');
 await page.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('ran in'));
 
+// The status flips to "ran in" when the harness posts back, which can beat
+// the outside world's view of the srcdoc document swap (seen on Edge on
+// Windows) — wait until the new document is actually reachable.
+await page.waitForFunction(() =>
+  document.querySelector('#preview-host iframe')?.contentDocument?.getElementById('jump'));
 await inFrame(() =>
   document.querySelector('#preview-host iframe').contentDocument.getElementById('jump').click());
 await page.waitForFunction(() =>

@@ -1,4 +1,6 @@
-// One-time (re)build of vendor/codemirror.mjs — a single ESM bundle of
+// One-time (re)build of vendor/codemirror.js — a single ESM bundle of
+// (.js, not .mjs: SharePoint serves .mjs as application/octet-stream, which
+// browsers refuse for ES modules — deploy/README.md gotcha 3)
 // CodeMirror 6 so the app has no CDN dependency and cannot hit CM6's
 // duplicate-@codemirror/state pitfall.
 //
@@ -25,7 +27,7 @@ await build({
   bundle: true,
   format: 'esm',
   minify: true,
-  outfile: '../vendor/codemirror.mjs',
+  outfile: '../vendor/codemirror.js',
   logLevel: 'info',
 });
-console.log('vendor/codemirror.mjs rebuilt');
+console.log('vendor/codemirror.js rebuilt');
