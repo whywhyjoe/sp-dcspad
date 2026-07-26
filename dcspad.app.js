@@ -214,6 +214,13 @@ function dragSplitter(el2, axis, onMove, getStart) {
 
 // ../src/monaco-runtime.js
 var runtimePromise = null;
+function setEditorStatus(text, state3 = "", title = "") {
+  const status = document.getElementById("status-editor");
+  if (!status) return;
+  status.textContent = text;
+  status.className = `status-item status-editor${state3 ? ` ${state3}` : ""}`;
+  status.title = title;
+}
 function runtimeBase() {
   if (window.__DCSPAD_ASSET_BASE__) {
     return new URL("vendor/monaco/", window.__DCSPAD_ASSET_BASE__);
@@ -260,11 +267,11 @@ function configureWorkers() {
       });
       worker.addEventListener("error", () => {
         document.documentElement.dataset.monacoWorkerError = label || "editor";
-        const status = document.getElementById("status-run");
-        if (status) {
-          status.textContent = "editor worker unavailable \u2014 language tools limited";
-          status.className = "status-item error";
-        }
+        setEditorStatus(
+          "Monaco \u26A0",
+          "warning",
+          `${label || "editor"} worker unavailable \u2014 language tools limited`
+        );
       }, { once: true });
       return worker;
     }
@@ -273,12 +280,17 @@ function configureWorkers() {
 function loadMonacoRuntime() {
   if (runtimePromise) return runtimePromise;
   runtimePromise = (async () => {
+    setEditorStatus("Monaco \u2026", "", "Loading Monaco editor");
     configureWorkers();
     await ensureStylesheet();
     const monaco = await import(assetUrl("monaco.js"));
     document.documentElement.dataset.monacoReady = "true";
+    setEditorStatus("Monaco \u2713", "ok", "Monaco editor ready");
     return monaco;
-  })();
+  })().catch((error) => {
+    setEditorStatus("Monaco \u2715", "warning", error.message || "Monaco failed to load");
+    throw error;
+  });
   return runtimePromise;
 }
 async function fetchPnpTypeLibraries() {
@@ -490,12 +502,15 @@ async function initEditors({ onChange, onRunShortcut }) {
     },
     insertAtCursor: (name, text) => {
       activate(name, { focus: false });
+      const model = models[name];
       const selection = editor.getSelection() || selections[name];
+      model.pushStackElement();
       editor.executeEdits("dcspad-snippet", [{
         range: selection,
         text,
         forceMoveMarkers: true
       }]);
+      model.pushStackElement();
       editor.focus();
     },
     gotoJsLine: (lineNo) => {
@@ -552,7 +567,7 @@ function hostNonce() {
   for (const s of document.scripts) if (s.nonce) return s.nonce;
   return "";
 }
-function assemble({ docs, libraries, spContext: spContext2, settings, token }) {
+function assemble({ docs, libraries, spContext, settings, token }) {
   const nonce = hostNonce();
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   const cssLinks = libraries.filter((l) => l.css).map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${u}">`).join("\n")).join("\n");
@@ -562,8 +577,8 @@ function assemble({ docs, libraries, spContext: spContext2, settings, token }) {
 html { background: #1d2026; color: #d6d9e0; }
 </style>
 ` : "";
-  const contextScript = spContext2 ? `<script${nonceAttr}>window._spPageContextInfo = ${JSON.stringify(spContext2.pageContext)};<\/script>
-` + (spContext2.baseHref ? `<base href="${spContext2.baseHref}">
+  const contextScript = spContext ? `<script${nonceAttr}>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>
+` + (spContext.baseHref ? `<base href="${spContext.baseHref}">
 ` : "") : "";
   const head = `<!DOCTYPE html>
 <html>
@@ -1719,36 +1734,108 @@ var LOGO = String.raw`
  ██║  ██║██║      ╚════██║ ██╔═══╝ ██╔══██║ ██║  ██║
  ██████╔╝╚██████╗ ███████║ ██║     ██║  ██║ ██████╔╝
  ╚═════╝  ╚═════╝ ╚══════╝ ╚═╝     ╚═╝  ╚═╝ ╚═════╝`.slice(1);
+function standaloneController(splash) {
+  const statusEl = document.getElementById("splash-status");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const seen = getState().settings.seenSplash;
+  const minimumMs = reduced ? 0 : seen ? 150 : 700;
+  const startedAt = performance.now();
+  let settled = false;
+  let finishTimer = null;
+  let removing = false;
+  const remove = () => {
+    if (removing) return;
+    removing = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.documentElement.classList.add("dcspad-crossfading");
+      splash.classList.add("fading");
+      setTimeout(() => {
+        splash.remove();
+        document.documentElement.classList.remove("dcspad-crossfading");
+      }, reduced ? 0 : 800);
+    }));
+    if (!seen) updateNested("settings", { seenSplash: true });
+  };
+  const controller = {
+    status(message) {
+      if (!settled && statusEl) statusEl.textContent = message;
+    },
+    finish() {
+      if (settled) return;
+      settled = true;
+      if (statusEl) statusEl.textContent = "Editor ready";
+      const remaining = Math.max(0, minimumMs - (performance.now() - startedAt));
+      finishTimer = setTimeout(remove, remaining);
+    },
+    fail(message) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(finishTimer);
+      splash.classList.add("failed");
+      if (statusEl) statusEl.textContent = message;
+    },
+    skip() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(finishTimer);
+      remove();
+    }
+  };
+  splash.addEventListener("click", () => controller.skip());
+  return controller;
+}
 function showSplash() {
+  if (window.__DCSPAD_BOOT_SPLASH__) {
+    const hosted = window.__DCSPAD_BOOT_SPLASH__;
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const seen = getState().settings.seenSplash;
+    hosted.minimum?.(reduced ? 0 : seen ? 150 : 700);
+    hosted.status("Restoring workspace\u2026");
+    if (!seen) updateNested("settings", { seenSplash: true });
+    return hosted;
+  }
   const splash = document.getElementById("splash");
   const logoEl = document.getElementById("splash-logo");
-  if (!splash) return;
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!splash) {
+    return { status() {
+    }, finish() {
+    }, fail() {
+    }, skip() {
+    } };
+  }
   logoEl.textContent = LOGO;
   splash.hidden = false;
-  let done = false;
-  const finish = () => {
-    if (done) return;
-    done = true;
-    splash.classList.add("fading");
-    setTimeout(() => splash.remove(), reduced ? 0 : 400);
-    if (!getState().settings.seenSplash) updateNested("settings", { seenSplash: true });
-  };
-  splash.addEventListener("click", finish);
-  setTimeout(finish, reduced ? 150 : 700);
+  splash.getBoundingClientRect();
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    splash.classList.add("visible");
+  } else {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      splash.classList.add("visible");
+    }));
+  }
+  return standaloneController(splash);
 }
 
 // ../src/main.js
+var splashApi = showSplash();
+splashApi.status("Restoring workspace\u2026");
 var state2 = getState();
+applyContextIndicators();
 var editorsApi = null;
 var layoutApi = initLayout({
   onEditorTabChange: (name) => editorsApi?.activate(name)
 });
 var isDiagVisible = (name) => document.querySelector(`#diag-tabs .tab[data-diag="${name}"]`).classList.contains("active");
-editorsApi = await initEditors({
-  onChange: () => scheduleAutorun(),
-  onRunShortcut: () => run2()
-});
+splashApi.status("Starting Monaco editor\u2026");
+try {
+  editorsApi = await initEditors({
+    onChange: () => scheduleAutorun(),
+    onRunShortcut: () => run2()
+  });
+} catch (error) {
+  splashApi.fail(`Monaco failed to start \u2014 ${error.message || error}`);
+  throw error;
+}
 var consoleApi = initConsolePanel({
   evalInFrame,
   mapSrcdocLine: mapSrcdocLineToUserJs,
@@ -1776,8 +1863,6 @@ initSnippets({
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
   onStorageError: (msg) => reportStorageError(msg)
 });
-var spContext = applyContextIndicators();
-showSplash();
 var statusRun = document.getElementById("status-run");
 var SPINNER = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
 var spinnerTimer = null;
@@ -2006,3 +2091,5 @@ function reportStorageError(msg) {
   saveEl.classList.add("error");
   saveEl.classList.remove("saved");
 }
+splashApi.status("Editor ready");
+splashApi.finish();

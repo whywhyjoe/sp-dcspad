@@ -23,15 +23,16 @@ the application still talks through the editor adapter in `src/editors.js`.
   same-origin workers. It uses no CDN, blob worker, or `.mjs` file.
 - `src/editors.js` loads the declaration graph only while the PnPjs v2 runtime
   library is enabled, and disposes it when disabled.
-- If a language worker is blocked, the editor remains usable and the status
-  bar reports that language tools are limited.
+- If a language worker is blocked, the editor remains usable and a dedicated
+  Monaco status item reports that language tools are limited; running user
+  code cannot overwrite that infrastructure warning.
 
 ## Verification
 
 `tests/monaco.mjs` exercises typed models, tab/model persistence, the run
 shortcut, JavaScript diagnostics, chaining-aware `pnp.sp.web` completion,
-declaration unloading, asset policy, clean page execution and blocked-worker
-degradation.
+declaration unloading, isolated snippet undo/redo, asset policy, clean page
+execution and persistent blocked-worker degradation.
 
 The remaining environment-specific gate is the live SharePoint page's
 `worker-src` policy. `deploy/webpart-spike.html` includes a same-origin classic

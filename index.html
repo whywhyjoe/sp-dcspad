@@ -12,6 +12,7 @@
 <!-- Boot splash (removed from DOM after reveal; click to skip) -->
 <div id="splash" class="splash" hidden>
   <pre class="splash-logo" id="splash-logo"></pre>
+  <div class="splash-status" id="splash-status" role="status" aria-live="polite">Loading workbench…</div>
 </div>
 
 <div id="app" class="app">
@@ -187,6 +188,7 @@
   <!-- Status bar -->
   <footer class="statusbar">
     <span id="status-run" class="status-item">idle</span>
+    <span id="status-editor" class="status-item status-editor">Monaco …</span>
     <span id="status-context" class="status-item status-context">SP: detecting…</span>
     <span class="status-spacer"></span>
     <span id="status-save" class="status-item status-save"></span>

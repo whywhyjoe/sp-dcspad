@@ -215,12 +215,15 @@ export async function initEditors({ onChange, onRunShortcut }) {
     },
     insertAtCursor: (name, text) => {
       activate(name, { focus: false });
+      const model = models[name];
       const selection = editor.getSelection() || selections[name];
+      model.pushStackElement();
       editor.executeEdits('dcspad-snippet', [{
         range: selection,
         text,
         forceMoveMarkers: true,
       }]);
+      model.pushStackElement();
       editor.focus();
     },
     gotoJsLine: (lineNo) => {

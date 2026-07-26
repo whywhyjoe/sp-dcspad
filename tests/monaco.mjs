@@ -32,6 +32,11 @@ const setDoc = async (name, code) => {
 
 const visibleEditorText = async () =>
   (await page.locator('#pane-editor .view-lines').textContent()).replaceAll('\u00a0', ' ');
+const jsModelText = () =>
+  page.evaluate(async () => {
+    const monaco = await import('/vendor/monaco/monaco.js');
+    return monaco.editor.getModel(monaco.Uri.parse('file:///dcspad/script.js')).getValue();
+  });
 
 await check('one Monaco editor owns three typed models', async () => {
   const result = await page.evaluate(async () => {
@@ -108,6 +113,32 @@ await check('PnPjs declarations unload with the runtime library', () =>
   page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'disabled')
     .then(() => true, () => false));
 
+await setDoc('js', 'SNIPPET_UNDO_MARKER();');
+page.once('dialog', (dialog) => dialog.accept('undo-boundary'));
+await page.click('#btn-snippet-add');
+await setDoc('js', 'const KEEP_BEFORE_SNIPPET = true;');
+await focusEditor();
+await page.keyboard.press('Control+End');
+await page.keyboard.type('\nconst TYPED_BEFORE_SNIPPET = true;');
+await page.locator('#snippet-list .snippet-item', { hasText: 'undo-boundary' }).click();
+await page.waitForFunction(() =>
+  document.querySelector('#pane-editor .view-lines')?.textContent.includes('SNIPPET_UNDO_MARKER'));
+await focusEditor();
+await page.keyboard.press('Control+z');
+await check('snippet insertion is one isolated undo action', async () => {
+  const text = await jsModelText();
+  const ok = text.includes('KEEP_BEFORE_SNIPPET')
+    && text.includes('TYPED_BEFORE_SNIPPET')
+    && !text.includes('SNIPPET_UNDO_MARKER');
+  if (!ok) console.log(`      JS after undo: ${JSON.stringify(text)}`);
+  return ok;
+});
+await page.keyboard.press('Control+y');
+await check('isolated snippet insertion can be redone', () =>
+  page.waitForFunction(() =>
+    document.querySelector('#pane-editor .view-lines')?.textContent.includes('SNIPPET_UNDO_MARKER'))
+    .then(() => true, () => false));
+
 await page.click('#editor-tabs .tab[data-editor="html"]');
 await page.waitForTimeout(300);
 await page.click('#editor-tabs .tab[data-editor="css"]');
@@ -134,12 +165,19 @@ const blocked = await browser.newPage({ viewport: { width: 1200, height: 760 } }
 await blocked.route('**/ts.worker.js*', (route) => route.abort());
 await blocked.goto(APP_URL);
 await blocked.waitForSelector('.monaco-editor');
-await check('blocked language worker is surfaced without losing the editor', () =>
-  blocked.waitForFunction(() =>
+await blocked.waitForFunction(() =>
     (document.documentElement.dataset.monacoWorkerError === 'javascript'
     || document.documentElement.dataset.monacoWorkerError === 'typescript')
-    && document.querySelector('#status-run')?.textContent.includes('worker unavailable'))
-    .then(() => true, () => false));
+    && document.querySelector('#status-editor')?.textContent.includes('Monaco ⚠'));
+await blocked.click('#btn-run');
+await blocked.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('ran in'));
+await check('worker warning persists after Run without losing the editor', () =>
+  blocked.evaluate(() =>
+    document.querySelectorAll('.monaco-editor').length === 1
+    && document.querySelector('#status-editor')?.textContent.includes('Monaco ⚠')
+    && document.querySelector('#status-editor')?.title.includes('language tools limited')
+    && document.querySelector('#status-run')?.textContent.includes('ran in')));
 await blocked.close();
 
 await browser.close();

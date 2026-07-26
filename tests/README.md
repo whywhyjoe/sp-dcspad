@@ -24,13 +24,13 @@ cd tests && python3 -m http.server 8643
 # terminal 3
 cd tests
 node smoke.mjs      # 49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave
-node monaco.mjs     # 13 checks: models, tab state, run shortcut, diagnostics, PnPjs runtime detection/completion/type lifecycle, assets and worker degradation
-node hosted.mjs     #  7 checks: exact boot/bundle path, hosted flag/base, versioned runtime/types and same-origin worker
+node monaco.mjs     # 15 checks: models, tabs, run shortcut, diagnostics, PnPjs, isolated snippet undo/redo, assets and persistent worker degradation
+node hosted.mjs     # 10 checks: early/delayed splash, exact boot/bundle path, hosted flag/base, versioned runtime/types and same-origin worker
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle
 ```
 
-`npm test` runs all 80 checks in that order. Exit code is non-zero on any
+`npm test` runs all 85 checks in that order. Exit code is non-zero on any
 failure. Override endpoints with `DCSPAD_URL` / `DCSPAD_FIXTURES` if you serve
 on different ports.
 

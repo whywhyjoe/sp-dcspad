@@ -79,6 +79,14 @@ inspector, REPL and network capture all work inside the web part; a live
   snippets, console stack jumps, autosave and autorun remain unchanged.
 - `vendor/monaco/` contains Monaco 0.55.1, classic `.js` workers, CSS/font,
   and 254 declaration files for the exact PnPjs 2.15.0 dependency graph.
+- `boot.js` paints the hosted splash immediately after its mount exists,
+  before fetching the shell or probing assets. Its live status survives
+  delayed Monaco loading and fades only after the editor and app wiring are
+  usable. Its hidden state is committed for two paint frames before the
+  entrance class is added, preventing SharePoint from batching away the
+  fade-in. The fully painted app and a permanent dark hosted underlay sit
+  beneath the curtain, so its fade-out cannot expose white SharePoint
+  wrappers. Standalone mode follows the same readiness-gated lifecycle.
 - Enabling the PnPjs v2 runtime library loads the declarations and global
   `pnp` bridge; disabling it unloads them. Fluent completions, hover,
   signatures and JS diagnostics use Monaco's TypeScript worker.
@@ -88,7 +96,10 @@ inspector, REPL and network capture all work inside the web part; a live
 - `tools/build-monaco.mjs` is the only way to regenerate vendor assets.
   `vendor/monaco/version.json` versions the set as a unit in hosted mode.
 - `tests/monaco.mjs` covers the editor contract, completions, diagnostics,
-  declaration lifecycle, asset policy and worker failure behavior.
+  declaration lifecycle, isolated snippet undo/redo, asset policy and
+  persistent worker failure behavior. `tests/hosted.mjs` deliberately delays
+  both `index.html` and Monaco to verify the earliest splash stages and that
+  the app is fully painted over the dark underlay before the curtain fades.
 
 ## Open items
 

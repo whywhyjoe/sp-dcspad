@@ -536,6 +536,9 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
 #status-run.running { color: var(--accent); }
 #status-run.ok { color: var(--ok); }
 #status-run.error { color: var(--error); }
+.status-editor { color: var(--fg-faint); }
+.status-editor.ok { color: var(--ok); }
+.status-editor.warning { color: var(--warn); }
 .status-save { color: var(--fg-faint); transition: color .3s; }
 .status-save.saved { color: var(--ok); }
 .status-save.error { color: var(--error); }
@@ -546,8 +549,11 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
   background: var(--bg-0);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; cursor: pointer;
-  transition: opacity .35s ease;
+  opacity: 0;
+  transition: opacity .75s ease;
+  will-change: opacity;
 }
+.splash.visible { opacity: 1; }
 .splash.fading { opacity: 0; pointer-events: none; }
 .splash[hidden] { display: none; }
 .splash-logo {
@@ -557,6 +563,11 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
   white-space: pre;
 }
 .splash-logo .dim { color: #2a7a68; }
+.splash-status {
+  min-height: 1.4em; color: var(--fg-dim); font: 12px/1.4 var(--mono);
+  letter-spacing: .04em;
+}
+.splash.failed .splash-status { color: var(--error); }
 
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
@@ -586,21 +597,17 @@ html.dcspad-hosted body,
 html.dcspad-hosted #SPPageChrome { background: #101216; }
 html.dcspad-hosted #SuiteNavWrapper { filter: grayscale(1) brightness(0.6); }
 
-/* Fade the takeover in. SharePoint's page is white and the pad flipping it
-   dark in one frame is a jarring flash — so every dark layer animates in
-   together over ~half a second: the background layers via background-color
-   (no !important above, or the animation would lose the cascade), the app
-   (whose box-shadow paints the surround) and the splash via opacity. The
-   splash's animation starts when splash.js unhides it — animations don't
-   run under [hidden] — and uses `backwards` fill only, so it can't pin
-   opacity and break the splash's transition-based fade-out. */
-html.dcspad-hosted,
-html.dcspad-hosted body,
-html.dcspad-hosted #SPPageChrome { animation: dcspad-bg-fade .45s ease backwards; }
-@keyframes dcspad-bg-fade { from { background-color: transparent; } }
-html.dcspad-hosted .app,
-html.dcspad-hosted .splash { animation: dcspad-fade-in .45s ease backwards; }
-@keyframes dcspad-fade-in { from { opacity: 0; } }
+/* Keep a solid dark layer below both the curtain and the workbench. The app
+   is fully painted beneath the opaque splash; readiness then fades only the
+   curtain. Competing app/background opacity animations can expose white SP
+   wrappers at their midpoint, so the single curtain transition is the
+   crossfade and this underlay makes every intermediate frame dark. */
+html.dcspad-hosted #dcspad-mount::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 998;
+  background: #101216;
+  pointer-events: none;
+}
 
 /* Suspension: the host page switched to edit mode via SPA navigation after
    the pad booted (boot.js toggles this). Hide the pad and hand the page

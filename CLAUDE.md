@@ -59,7 +59,7 @@ src/libraries.js          framework catalog: single stored JSON (seeded once fro
 src/snippets.js           snippet library: save from selection, insert-at-cursor, file I/O
 src/console-panel.js      console rendering, filters, groups, REPL input, stack-frame links
 src/network-panel.js      request rows, _api filter, detail pane (JSON via inspector)
-src/splash.js             ASCII boot splash (short shimmer after first visit)
+src/splash.js             readiness-gated splash controller; boot.js starts it earliest when hosted
 src/inspect/tree-view.js  generic expandable trees + table renderer (serialized-node format)
 src/inspect/sp-shapes.js  SP/OData/PnPjs shape detection + smart views (standalone by design —
                           the future Site Inspector reuses it)
@@ -80,7 +80,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (13: typed models, editor integration, PnPjs runtime detection/completion, declarations, asset/worker failure behavior), `hosted.mjs` (7: exact boot/bundle path, versioned hosted assets and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 80 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (15: typed models, editor integration, PnPjs runtime detection/completion, isolated snippet undo/redo, declarations, persistent worker failure behavior), `hosted.mjs` (10: early/delayed splash, exact boot/bundle path, versioned hosted assets and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 85 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 

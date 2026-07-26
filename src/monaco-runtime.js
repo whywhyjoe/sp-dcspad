@@ -6,6 +6,14 @@
 
 let runtimePromise = null;
 
+function setEditorStatus(text, state = '', title = '') {
+  const status = document.getElementById('status-editor');
+  if (!status) return;
+  status.textContent = text;
+  status.className = `status-item status-editor${state ? ` ${state}` : ''}`;
+  status.title = title;
+}
+
 function runtimeBase() {
   if (window.__DCSPAD_ASSET_BASE__) {
     return new URL('vendor/monaco/', window.__DCSPAD_ASSET_BASE__);
@@ -57,11 +65,11 @@ function configureWorkers() {
       });
       worker.addEventListener('error', () => {
         document.documentElement.dataset.monacoWorkerError = label || 'editor';
-        const status = document.getElementById('status-run');
-        if (status) {
-          status.textContent = 'editor worker unavailable — language tools limited';
-          status.className = 'status-item error';
-        }
+        setEditorStatus(
+          'Monaco ⚠',
+          'warning',
+          `${label || 'editor'} worker unavailable — language tools limited`,
+        );
       }, { once: true });
       return worker;
     },
@@ -71,12 +79,17 @@ function configureWorkers() {
 export function loadMonacoRuntime() {
   if (runtimePromise) return runtimePromise;
   runtimePromise = (async () => {
+    setEditorStatus('Monaco …', '', 'Loading Monaco editor');
     configureWorkers();
     await ensureStylesheet();
     const monaco = await import(assetUrl('monaco.js'));
     document.documentElement.dataset.monacoReady = 'true';
+    setEditorStatus('Monaco ✓', 'ok', 'Monaco editor ready');
     return monaco;
-  })();
+  })().catch((error) => {
+    setEditorStatus('Monaco ✕', 'warning', error.message || 'Monaco failed to load');
+    throw error;
+  });
   return runtimePromise;
 }
 

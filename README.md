@@ -73,6 +73,7 @@ Or by hand:
 | Run | `Run` button or `Ctrl/Cmd+Enter` anywhere in an editor |
 | Auto-run | Toggle in the toolbar; re-runs ~800 ms after you stop typing |
 | Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types |
+| Editor status | The status bar shows `Monaco ✓`; `Monaco ⚠` remains visible if a worker is blocked, even after running code |
 | Top-level `await` | Settings ⚙ → "Run JS as module" (strict mode; `var` won't become window globals) |
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
 | Stack traces | Frames pointing into your JS are clickable → jumps the editor to that line |
@@ -110,7 +111,7 @@ src/
   libraries.js        preset catalog + custom URLs
   console-panel.js    console UI + REPL
   network-panel.js    network UI
-  splash.js           boot splash
+  splash.js           readiness-gated boot splash controller
   inspect/tree-view.js   generic expandable trees + tables
   inspect/sp-shapes.js   SP/OData/PnPjs smart views
   bridge/harness.js   iframe-side instrumentation (injected per run)

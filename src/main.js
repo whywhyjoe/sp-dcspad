@@ -15,7 +15,10 @@ import { downloadText, wireJsonImport } from './io.js';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import { showSplash } from './splash.js';
 
+const splashApi = showSplash();
+splashApi.status('Restoring workspace…');
 const state = getState();
+applyContextIndicators();
 
 // ---------- layout ----------
 let editorsApi = null;
@@ -27,10 +30,16 @@ const isDiagVisible = (name) =>
   document.querySelector(`#diag-tabs .tab[data-diag="${name}"]`).classList.contains('active');
 
 // ---------- editors ----------
-editorsApi = await initEditors({
-  onChange: () => scheduleAutorun(),
-  onRunShortcut: () => run(),
-});
+splashApi.status('Starting Monaco editor…');
+try {
+  editorsApi = await initEditors({
+    onChange: () => scheduleAutorun(),
+    onRunShortcut: () => run(),
+  });
+} catch (error) {
+  splashApi.fail(`Monaco failed to start — ${error.message || error}`);
+  throw error;
+}
 
 // ---------- console + network ----------
 const consoleApi = initConsolePanel({
@@ -64,12 +73,6 @@ initSnippets({
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
   onStorageError: (msg) => reportStorageError(msg),
 });
-
-// ---------- SP context ----------
-const spContext = applyContextIndicators();
-
-// ---------- boot splash ----------
-showSplash();
 
 // ---------- runner ----------
 const statusRun = document.getElementById('status-run');
@@ -340,3 +343,6 @@ function reportStorageError(msg) {
   saveEl.classList.add('error');
   saveEl.classList.remove('saved');
 }
+
+splashApi.status('Editor ready');
+splashApi.finish();
