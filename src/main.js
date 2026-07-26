@@ -8,7 +8,7 @@ import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import {
   initLibraries, getEnabledLibraries, getCatalogDoc, replaceCatalog,
-  unknownLibraryIds, refreshLibraryUI,
+  unknownLibraryIds, refreshLibraryUI, hasEnabledPnpjs215Runtime,
 } from './libraries.js';
 import { initSnippets } from './snippets.js';
 import { downloadText, wireJsonImport } from './io.js';
@@ -18,15 +18,16 @@ import { showSplash } from './splash.js';
 const state = getState();
 
 // ---------- layout ----------
+let editorsApi = null;
 const layoutApi = initLayout({
-  onEditorTabChange: (name) => editorsApi.focus(name),
+  onEditorTabChange: (name) => editorsApi?.activate(name),
 });
 
 const isDiagVisible = (name) =>
   document.querySelector(`#diag-tabs .tab[data-diag="${name}"]`).classList.contains('active');
 
 // ---------- editors ----------
-const editorsApi = initEditors({
+editorsApi = await initEditors({
   onChange: () => scheduleAutorun(),
   onRunShortcut: () => run(),
 });
@@ -47,9 +48,13 @@ const networkApi = initNetworkPanel({
 
 // ---------- libraries ----------
 initLibraries({
-  onChange: () => scheduleAutorun(),
+  onChange: () => {
+    scheduleAutorun();
+    editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
+  },
   onStorageError: (msg) => reportStorageError(msg),
 });
+editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
 
 // ---------- snippets ----------
 initSnippets({
@@ -240,8 +245,10 @@ wireJsonImport('import-project-file', (doc) => {
     // referencing it would work (the callback fires post-init) but is a
     // TDZ trap for anyone who reorders this file.
     document.getElementById('chk-module').checked = doc.jsAsModule;
+    editorsApi.setJsAsModule(doc.jsAsModule);
   }
   refreshLibraryUI();
+  editorsApi.setPnpTypesEnabled(hasEnabledPnpjs215Runtime());
 
   // Deliberately tolerant: a project may reference catalog entries that
   // were removed since it was saved. The run will fail visibly with
@@ -282,8 +289,10 @@ wireJsonImport('import-catalog-file', (doc) => {
 
 const chkModule = document.getElementById('chk-module');
 chkModule.checked = state.settings.jsAsModule;
-chkModule.addEventListener('change', () =>
-  updateNested('settings', { jsAsModule: chkModule.checked }));
+chkModule.addEventListener('change', () => {
+  updateNested('settings', { jsAsModule: chkModule.checked });
+  editorsApi.setJsAsModule(chkModule.checked);
+});
 
 const chkAutoclear = document.getElementById('chk-autoclear');
 chkAutoclear.checked = state.settings.autoClearConsole;

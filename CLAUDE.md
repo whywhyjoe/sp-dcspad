@@ -9,7 +9,7 @@
 > repo root. Older entries in `REVIEW-LOG.md` refer to `devpad/…` paths — read
 > those as repo-root-relative.
 
-SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CSS/JS editors (CodeMirror 6), live preview iframe, console + network panels with an SP-aware object inspector, library manager, REPL. No backend, no framework, no build step — deploy by uploading this folder to a SharePoint library.
+SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CSS/JS editors (Monaco), live preview iframe, console + network panels with an SP-aware object inspector, library manager, REPL. No backend, no framework, no user build step — deploy by uploading this folder to a SharePoint library.
 
 **The mission, one sentence:** code written in the pad runs **unmodified** on a real SharePoint page. Every design decision below serves that.
 
@@ -25,13 +25,13 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
    `dcspad.app.js` — a single-file esbuild bundle of the same source
    (`tools/build-app.mjs`, run by `deploy/Sync-Live.ps1`) — because
    SharePoint's caching makes a multi-file module graph un-bustable (see
-   Gotchas). **Rebuild the bundle on every deploy after touching `src/` or
-   `vendor/`.** CodeMirror is vendored as a single file
-   (`vendor/codemirror.js` — `.js` not `.mjs`, because SharePoint serves
-   `.mjs` as `application/octet-stream` which browsers refuse for modules)
-   because CM6 breaks subtly with duplicate `@codemirror/state` instances;
-   regenerate only via `tools/build-vendor.mjs` (instructions at top of that
-   file).
+   Gotchas). **Rebuild the app bundle after touching `src/`; rebuild the
+   Monaco vendor set after changing Monaco, PnPjs types, or
+   `tools/build-monaco.mjs`.** Monaco lives under `vendor/monaco/` as one
+   ESM entry, CSS/font assets, same-origin classic `.js` workers, and the
+   exact PnPjs 2.15.0 declaration graph. There are no CDN, blob-worker, or
+   `.mjs` dependencies. `boot.js` versions the complete set through
+   `vendor/monaco/version.json`.
 6. **`state.js` is the only module that touches localStorage.** It owns three documents: the workspace blob `{html, css, js, libraries, settings, layout}` (live, autosaved), the framework catalog, and the snippet library. The future SharePoint storage layer (`DevPadData/{user}.json`) replaces persistence wholesale by swapping this one seam — don't scatter storage elsewhere. Files on disk (project/catalog/snippet .json, pane exports) go through `src/io.js`, which moves bytes but stores nothing.
 
 ## File map
@@ -44,11 +44,12 @@ boot.js                   web-part bootstrap: fetches index.html no-store, injec
 dcspad.app.js             generated single-file ESM bundle of src/ (tools/build-app.mjs);
                           what the web part actually runs — rebuild on every deploy
 styles/app.css            all styling; layout via CSS grid + JS-set vars (--sidebar-w etc.)
-vendor/codemirror.js      vendored CM6 bundle — regenerate via tools/, never hand-edit
-tools/build-vendor.mjs    esbuild one-liner for the vendor bundle
+vendor/monaco/            generated Monaco runtime, workers, CSS/font + PnPjs type graph
+tools/build-monaco.mjs    reproducible Monaco/PnPjs vendor build; never hand-edit its output
 src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
-src/editors.js            CM6 editors; Mod-Enter run; gotoJsLine() for stack links
+src/editors.js            Monaco adapter; 3 models, Mod-Enter, PnPjs types, stack jumps
+src/monaco-runtime.js     hosted/standalone asset URLs + same-origin worker wiring
 src/state.js              defaults + deep-merge load + debounced autosave; loadDoc/saveDoc
                           for the catalog + snippet documents (sole localStorage toucher)
 src/io.js                 file download + JSON file-picker helpers (no storage)
@@ -79,7 +80,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `darkmode.mjs` (8), `splash.mjs` (3). All should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (13: typed models, editor integration, PnPjs runtime detection/completion, declarations, asset/worker failure behavior), `hosted.mjs` (7: exact boot/bundle path, versioned hosted assets and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 80 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 
@@ -90,7 +91,8 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
   revalidation never refreshes what `import` uses); and the modern page
   freezes import-map registration (late maps are silently ignored). Hence
   hosted mode loads ONE bundled ESM file behind a Last-Modified-versioned
-  URL (boot.js `VERSIONED` list: app.css + dcspad.app.js; index.html is
+  URL (boot.js `VERSIONED` list: app.css + dcspad.app.js + the Monaco
+  runtime manifest; index.html is
   no-store; the harness is runtime-fetched with no-cache). Consequences:
   **rebuild `dcspad.app.js` on every deploy** (`deploy/Sync-Live.ps1` does
   it), and **a boot.js change needs the `?v=` bump in dcspad.webpart.html**

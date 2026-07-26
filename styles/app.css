@@ -308,10 +308,12 @@ code { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
   height: 2px; background: var(--accent); border-radius: 2px;
 }
 .editor-host { flex: 1; position: relative; min-height: 0; }
-.editor-pane { position: absolute; inset: 0; display: none; }
-.editor-pane.active { display: block; }
-.editor-pane .cm-editor { height: 100%; font-size: 13px; }
-.editor-pane .cm-scroller { font-family: var(--mono); }
+.editor-pane { position: absolute; inset: 0; }
+.editor-pane .monaco-editor { height: 100%; }
+.editor-pane .monaco-editor,
+.editor-pane .monaco-editor .overflow-guard {
+  border-radius: 0;
+}
 
 /* ---------- Runtime column ---------- */
 .runtime {

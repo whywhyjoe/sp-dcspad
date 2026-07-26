@@ -13,9 +13,14 @@ const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
 
 await page.goto(APP_URL);
 await page.waitForTimeout(1200);
+await page.context().grantPermissions(
+  ['clipboard-read', 'clipboard-write'],
+  { origin: new URL(APP_URL).origin },
+);
 
-await check('editors render (3 CM instances)', async () =>
-  (await page.locator('.cm-editor').count()) === 3);
+await check('Monaco editor renders', async () =>
+  (await page.locator('.monaco-editor').count()) === 1
+  && await page.evaluate(() => document.documentElement.dataset.monacoReady === 'true'));
 
 await check('SP chip shows Mock', async () =>
   (await page.locator('#sp-chip-text').textContent()) === 'SP: Mock');
@@ -24,9 +29,10 @@ await page.evaluate(() => localStorage.clear());
 
 const setDoc = async (name, code) => {
   await page.click(`#editor-tabs .tab[data-editor="${name}"]`);
-  await page.click(`#pane-${name} .cm-content`);
+  await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
   await page.keyboard.press('Control+a');
-  await page.keyboard.insertText(code);
+  await page.evaluate((text) => navigator.clipboard.writeText(text), code);
+  await page.keyboard.press('Control+v');
 };
 const setJs = (code) => setDoc('js', code);
 
@@ -308,7 +314,7 @@ await check('catalog file round-trip restores entries', () =>
 
 // --- snippets: save from selection, insert at cursor ---
 await setJs('var SNIPPET_MARKER = 42;');
-await page.click('#pane-js .cm-content');
+await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
 await page.keyboard.press('Control+a');
 page.once('dialog', (d) => d.accept('my-snip'));
 await page.click('#btn-snippet-add');
@@ -317,8 +323,17 @@ await check('snippet saved from selection', async () =>
 
 await setJs('// cleared\n');
 await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).click();
+await page.waitForFunction(
+  () => document.querySelector('#pane-editor .view-lines')?.textContent
+    .replaceAll('\u00a0', ' ')
+    .includes('SNIPPET_MARKER = 42'),
+  null,
+  { timeout: 2000 },
+).catch(() => {});
 await check('snippet inserts into the JS editor at the cursor', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('SNIPPET_MARKER = 42'));
+  (await page.locator('#pane-editor .view-lines').textContent())
+    .replaceAll('\u00a0', ' ')
+    .includes('SNIPPET_MARKER = 42'));
 
 // --- project file: save → modify → load round-trip ---
 await setJs('console.log("round-trip-original");');
@@ -338,7 +353,7 @@ await page.setInputFiles('#import-project-file', projPath);
 await page.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('project loaded'));
 await check('loading the project file restores the JS pane', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('round-trip-original'));
+  (await page.locator('#pane-editor .view-lines').textContent()).includes('round-trip-original'));
 
 // A project referencing a framework missing from the catalog loads
 // tolerantly but warns by name.
@@ -386,7 +401,7 @@ await page.waitForFunction(() =>
 await page.reload();
 await page.waitForTimeout(1200);
 await check('JS doc restored after reload', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('EXPORT_MARKER'));
+  (await page.locator('#pane-editor .view-lines').textContent()).includes('EXPORT_MARKER'));
 await check('catalog framework persisted after reload', async () =>
   (await libRow('testlib.js').count()) === 1);
 await check('snippet library persisted after reload', async () =>

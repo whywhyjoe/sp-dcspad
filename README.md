@@ -1,6 +1,6 @@
 # DCSPad — SharePoint Developer Workbench
 
-A JSFiddle-style workbench for SharePoint development that runs entirely in the browser: HTML/CSS/JS editors, live preview, built-in console + network monitor, an SP-aware object inspector, and a library manager. No backend, no build step, no SPFx — deploy by uploading this folder to a SharePoint library.
+A JSFiddle-style workbench for SharePoint development that runs entirely in the browser: Monaco HTML/CSS/JS editors, live preview, built-in console + network monitor, an SP-aware object inspector, and a library manager. No backend, no user build step, no SPFx — deploy by uploading this folder to a SharePoint library.
 
 This is a from-scratch rebuild focused on the **execution environment**. The core guarantee: **code written in the pad runs unmodified on a real SharePoint page.**
 
@@ -72,6 +72,7 @@ Or by hand:
 |---|---|
 | Run | `Run` button or `Ctrl/Cmd+Enter` anywhere in an editor |
 | Auto-run | Toggle in the toolbar; re-runs ~800 ms after you stop typing |
+| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types |
 | Top-level `await` | Settings ⚙ → "Run JS as module" (strict mode; `var` won't become window globals) |
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
 | Stack traces | Frames pointing into your JS are clickable → jumps the editor to that line |
@@ -97,12 +98,13 @@ Console output and network response bodies are rendered by an inspector that und
 ```
 index.html            app shell
 styles/app.css        theme + layout
-vendor/codemirror.js  vendored CodeMirror 6 bundle (single file — see tools/)
-tools/build-vendor.mjs one-liner to regenerate the vendor bundle (esbuild)
+vendor/monaco/        generated Monaco runtime, workers, CSS/font + PnPjs 2.15 types
+tools/build-monaco.mjs reproducible Monaco/PnPjs vendor build (esbuild)
 src/
   main.js             bootstrap/wiring
   layout.js           splitters, tabs, collapse/maximize (persisted)
-  editors.js          CodeMirror 6 editors
+  editors.js          Monaco adapter: three models, language tools, editor API
+  monaco-runtime.js   standalone/hosted asset and same-origin worker loading
   state.js            workspace state + debounced autosave
   runner.js           document assembly + iframe lifecycle
   libraries.js        preset catalog + custom URLs
@@ -115,7 +117,10 @@ src/
   bridge/sp-context.js   real/mock _spPageContextInfo capture
 ```
 
-CodeMirror is vendored as one ESM file to avoid CM6's duplicate-`@codemirror/state` pitfall and any CDN dependency; regenerate with the commands at the top of `tools/build-vendor.mjs`.
+Monaco is fully vendored: the ESM runtime, CSS/font, classic same-origin `.js`
+workers, and exact PnPjs 2.15.0 declaration graph. There is no runtime CDN,
+blob worker, or `.mjs` dependency. From `tools/`, run `npm run build:monaco`
+after changing the pinned editor/type versions or the vendor builder.
 
 ## Tests
 

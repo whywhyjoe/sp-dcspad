@@ -4,9 +4,8 @@
 // part on the hosting page. It is a classic script (the web part injects it
 // as <script src>), and it exists so the web part configuration never has to
 // change again: it fetches index.html from its own folder, injects the app
-// shell into the page, and loads src/main.js as a module from an absolute
-// URL — after which every relative import below main.js resolves on its own
-// (spike tests 2 + 3, deploy/webpart-spike.html).
+// shell into the page, and loads the versioned hosted app bundle from an
+// absolute URL (spike tests 2 + 3, deploy/webpart-spike.html).
 //
 // index.html stays the single source of truth for the app shell, and keeps
 // working standalone — the test suites depend on that.
@@ -92,10 +91,11 @@
   // bundled ESM file (dcspad.app.js, built by tools/build-app.mjs) behind a
   // versioned URL: a conditional GET reads its Last-Modified, that stamps
   // the import URL, and a deploy busts exactly one entry. Same for the
-  // stylesheet. index.html is always fetched no-store. The harness is
-  // fetched as text with no-cache by the runner, so it stays fresh on its
-  // own. There is no mixed-version graph because there is no graph.
-  var VERSIONED = ['styles/app.css', 'dcspad.app.js'];
+  // stylesheet. Monaco is a separately generated vendor set whose manifest
+  // versions its runtime, CSS/font, workers and PnPjs declarations together.
+  // index.html is always fetched no-store. The harness is fetched as text
+  // with no-cache by the runner, so it stays fresh on its own.
+  var VERSIONED = ['styles/app.css', 'dcspad.app.js', 'vendor/monaco/version.json'];
 
   var versions = {};
   var revalidated = Promise.all(VERSIONED.map(function (f) {
@@ -114,6 +114,10 @@
   // The runner fetches src/bridge/harness.js relative to this base (the
   // bundle's import.meta.url would point at the bundle itself).
   window.__DCSPAD_SRC_BASE__ = base + 'src/';
+  // Monaco is one separately-versioned ESM bundle plus same-origin worker,
+  // CSS, font, and type assets. Every file in that vendor set shares the
+  // version stamp below, so workers never resolve relative to the SP page.
+  window.__DCSPAD_ASSET_BASE__ = base;
 
   fetch(base + 'index.html', { credentials: 'same-origin', cache: 'no-store' })
     .then(function (r) {
@@ -121,7 +125,10 @@
       return r.text();
     })
     .then(function (html) {
-      return revalidated.then(function () { return html; });
+      return revalidated.then(function () {
+        window.__DCSPAD_MONACO_VERSION__ = versions['vendor/monaco/version.json'];
+        return html;
+      });
     })
     .then(function (html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');

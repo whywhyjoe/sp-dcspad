@@ -54,9 +54,8 @@ disagreements below are about remedies and severity, not facts.
 - [ ] **Body-capture content-type gate** (`harness.js` fetch wrapper): skip
   `clone.text()` for non-text/JSON/XML content types so binary downloads aren't
   buffered just to measure their length. (Streaming prefix read: rejected above.)
-- [ ] **`tools/build-vendor.mjs` cleanup**: wrap the build in `try/finally` and
-  `unlinkSync('_entry.js')` so the temp entry file doesn't persist after
-  success *or* failure. (One-time manual script — cleanliness only.)
+- [x] **Old vendor-builder cleanup**: resolved by the 2026-07-26 Monaco
+  migration; `tools/build-vendor.mjs` and its temporary entry were removed.
 - [ ] **`tests/README.md` env-var formats**: document that `DCSPAD_URL` is a
   full URL including `/index.html` while `DCSPAD_FIXTURES` is a bare origin
   (the suite appends `/fixtures/…`), with an example invocation.
@@ -194,5 +193,5 @@ round-trip restore, and quota-failure surfacing (deterministic via a stubbed
 ### Still open (unchanged low-priority backlog from round 1)
 
 Run-scoped load timeout · console/network history caps · fetch body
-content-type gate · build-vendor `try/finally` cleanup · `tests/README.md`
-env-var format docs · opportunistic sleep→`waitForFunction` migration.
+content-type gate · `tests/README.md` env-var format docs · opportunistic
+sleep→`waitForFunction` migration.

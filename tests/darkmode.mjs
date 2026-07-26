@@ -7,6 +7,10 @@ const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
 await page.goto(APP_URL);
 await page.waitForTimeout(400);
+await page.context().grantPermissions(
+  ['clipboard-read', 'clipboard-write'],
+  { origin: new URL(APP_URL).origin },
+);
 await page.evaluate(() => localStorage.clear());
 await page.reload();
 await page.waitForTimeout(3200);   // splash
@@ -39,9 +43,10 @@ await check('toggle shows moon in light mode',
 await page.click('#btn-preview-theme');
 await page.waitForTimeout(800);
 await page.click('#editor-tabs .tab[data-editor="css"]');
-await page.click('#pane-css .cm-content');
+await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
 await page.keyboard.press('Control+a');
-await page.keyboard.insertText('body { background: papayawhip; }');
+await page.evaluate((text) => navigator.clipboard.writeText(text), 'body { background: papayawhip; }');
+await page.keyboard.press('Control+v');
 await page.click('#btn-run');
 await page.waitForTimeout(800);
 await check('user CSS beats dark chrome style', (await bodyBg()) === 'rgb(255, 239, 213)');

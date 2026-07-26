@@ -77,8 +77,6 @@ export function initLayout({ onEditorTabChange } = {}) {
   function selectEditorTab(name, { silent } = {}) {
     for (const t of document.querySelectorAll('#editor-tabs .tab'))
       t.classList.toggle('active', t.dataset.editor === name);
-    for (const p of document.querySelectorAll('.editor-pane'))
-      p.classList.toggle('active', p.id === `pane-${name}`);
     updateNested('layout', { editorTab: name });
     if (!silent) onEditorTabChange?.(name);
   }

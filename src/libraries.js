@@ -203,6 +203,22 @@ export function getEnabledLibraries() {
   return result;
 }
 
+// PnPjs types must follow the actual enabled runtime, not a catalog id: the
+// catalog is user-editable and the same 2.15.0 UMD bundle is commonly added
+// from jsDelivr under a custom name.
+export function isPnpjs215Runtime(entry) {
+  const url = String(entry?.js || '').toLowerCase();
+  return url.includes('@pnp/pnpjs@2.15.0/')
+    || url.includes('/pnp-pnpjs/2.15.0/')
+    || url.includes('/pnpjs/2.15.0/');
+}
+
+export function hasEnabledPnpjs215Runtime() {
+  const enabled = new Set(getState().libraries.enabled);
+  return catalog.items.some((entry) =>
+    enabled.has(entry.id) && isPnpjs215Runtime(entry));
+}
+
 // ---------------------------------------------------------------
 // For io.js (file export/import) and project-load warnings
 // ---------------------------------------------------------------

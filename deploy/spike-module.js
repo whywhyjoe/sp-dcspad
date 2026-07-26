@@ -1,6 +1,6 @@
 // Loaded by webpart-spike.html as type="module" from an absolute URL.
 // Its own import is RELATIVE — the point of the test. If this resolves,
-// every ./x.js and ../vendor/y.mjs under src/ resolves too, because module
+// every relative module specifier resolves too, because module
 // specifiers resolve against the importing module's URL, not the page's.
 import { SPIKE_IMPORT_OK } from './spike-import.js';
 

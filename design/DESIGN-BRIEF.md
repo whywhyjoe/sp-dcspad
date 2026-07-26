@@ -15,7 +15,7 @@
 > properties, a syntax-highlighting palette for the code editors, a
 > typography scale, and spacing/border/radius rules. Stay within the
 > technical constraints below — everything you specify must be expressible
-> as plain CSS custom properties + a CodeMirror highlight style.
+> as plain CSS custom properties + a Monaco theme.
 >
 > Priorities, in order:
 > 1. **Contrast and readability.** The attached older-generation screenshot
@@ -48,7 +48,7 @@
 ## What DCSPad is (context for the comp)
 
 Left sidebar (Resources: frameworks catalog + snippets), center editor
-column (HTML/CSS/JS tabs, CodeMirror 6), right runtime column (Preview panel
+column (HTML/CSS/JS tabs, Monaco), right runtime column (Preview panel
 over Console/Network panel), 40px topbar (logo · File · settings ……
 Auto-run · Run · SP status chip), 24px status bar. Panels resize via
 splitters; sidebar and the console panel collapse. On SharePoint it sits at
@@ -77,7 +77,7 @@ crossfades into the app.
 
 - Deliverables must compile to: CSS custom properties + plain CSS rules (no
   frameworks, no images/asset pipeline; inline SVG icons are fine), plus a
-  **CodeMirror 6 HighlightStyle** for the editor (token→color list is
+  **Monaco theme** for the editor (token→color list is
   enough: keywords, strings, numbers, comments, tags, attributes,
   properties, functions, operators, punctuation, plus editor ground:
   background, gutter, active line, selection, cursor, matching bracket).
