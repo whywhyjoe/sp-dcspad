@@ -52,9 +52,9 @@ await page.press('#console-input', 'Enter');
 await page.waitForTimeout(600);
 await shot('04-error-state-dots');
 
-// 4. collapsed diagnostics + collapsed sidebar
-await page.click('#btn-collapse-diag');
-await page.click('#btn-collapse-sidebar');
+// 4. hidden console + hidden resources (topbar pane toggles)
+await page.click('#seg-console');
+await page.click('#seg-resources');
 await page.waitForTimeout(300);
 await shot('05-collapsed-panels');
 

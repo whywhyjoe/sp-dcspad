@@ -6,6 +6,7 @@ import { renderValue, renderTable, el } from './inspect/tree-view.js';
 import { enhance } from './inspect/sp-shapes.js';
 
 let out, groupStack, replHistory, replIndex;
+let errorCount = 0;
 let deps = {};
 
 const FILTER_DEBOUNCE_MS = 150;
@@ -35,23 +36,28 @@ export function initConsolePanel({ evalInFrame, mapSrcdocLine, gotoJsLine, isCon
   });
   refreshFilterState();
 
-  // REPL input.
+  // REPL input. Enter and the Eval button share one submit path.
   const input = document.getElementById('console-input');
+  async function submitRepl() {
+    if (!input.value.trim()) return;
+    const code = input.value;
+    input.value = '';
+    replHistory.push(code);
+    replIndex = replHistory.length;
+    addEntry('log', [el('span', '', code)], { cls: 'repl-echo' });
+    const res = await deps.evalInFrame(code);
+    const body = renderNodeSmart(res.value);
+    if (res.awaited) {
+      const tag = el('span', 'sp-badge', 'awaited');
+      addEntry(res.ok ? 'log' : 'error', [tag, body], { cls: 'repl-result' });
+    } else {
+      addEntry(res.ok ? 'log' : 'error', [body], { cls: 'repl-result' });
+    }
+  }
+  document.getElementById('btn-repl-eval').addEventListener('click', submitRepl);
   input.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && input.value.trim()) {
-      const code = input.value;
-      input.value = '';
-      replHistory.push(code);
-      replIndex = replHistory.length;
-      addEntry('log', [el('span', '', code)], { cls: 'repl-echo' });
-      const res = await deps.evalInFrame(code);
-      const body = renderNodeSmart(res.value);
-      if (res.awaited) {
-        const tag = el('span', 'sp-badge', 'awaited');
-        addEntry(res.ok ? 'log' : 'error', [tag, body], { cls: 'repl-result' });
-      } else {
-        addEntry(res.ok ? 'log' : 'error', [body], { cls: 'repl-result' });
-      }
+      await submitRepl();
     } else if (e.key === 'ArrowUp') {
       if (replIndex > 0) { replIndex--; input.value = replHistory[replIndex]; e.preventDefault(); }
     } else if (e.key === 'ArrowDown') {
@@ -150,10 +156,16 @@ function addEntry(level, parts, { cls } = {}) {
   applyFilterTo(entry);
   currentContainer().append(entry);
   scrollIfPinned();
+  updateConsoleEmpty();
 
-  // Error dot on the Console tab: an error indicator, not an unread
-  // counter — visible whatever tab/collapse state, cleared with the output.
-  if (level === 'error') document.getElementById('console-badge').hidden = false;
+  // Error count on the Console tab: zero = no badge, capped at 99+.
+  // Cleared with the output, never by focusing the tab.
+  if (level === 'error') {
+    errorCount++;
+    const badge = document.getElementById('console-badge');
+    badge.textContent = errorCount > 99 ? '99+' : String(errorCount);
+    badge.hidden = false;
+  }
 }
 
 function runDivider(runNumber) {
@@ -162,13 +174,21 @@ function runDivider(runNumber) {
   const ts = new Date().toLocaleTimeString();
   div.append(el('span', 'rd-mark', '▞ ▶'), el('span', '', `run #${runNumber} · ${ts}`));
   out.append(div);
+  updateConsoleEmpty();
   scrollIfPinned(true);
 }
 
 function clear() {
   out.textContent = '';
   groupStack = [];
+  errorCount = 0;
   document.getElementById('console-badge').hidden = true;
+  updateConsoleEmpty();
+}
+
+function updateConsoleEmpty() {
+  const emptyEl = document.getElementById('console-empty');
+  if (emptyEl) emptyEl.hidden = out.children.length > 0;
 }
 
 // The active levels and the filter text are read once per filter change

@@ -3,13 +3,20 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build:app": "node build-app.mjs",
+    "build:monaco": "node build-monaco.mjs",
+    "build:intelligence": "node build-design-intelligence.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "esbuild": "^0.28.1"
+    "@pnp/pnpjs": "2.15.0",
+    "esbuild": "0.28.1",
+    "monaco-editor": "0.55.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
   }
 }

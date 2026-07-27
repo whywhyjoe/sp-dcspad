@@ -13,9 +13,14 @@ const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
 
 await page.goto(APP_URL);
 await page.waitForTimeout(1200);
+await page.context().grantPermissions(
+  ['clipboard-read', 'clipboard-write'],
+  { origin: new URL(APP_URL).origin },
+);
 
-await check('editors render (3 CM instances)', async () =>
-  (await page.locator('.cm-editor').count()) === 3);
+await check('Monaco editor renders', async () =>
+  (await page.locator('.monaco-editor').count()) === 1
+  && await page.evaluate(() => document.documentElement.dataset.monacoReady === 'true'));
 
 await check('SP chip shows Mock', async () =>
   (await page.locator('#sp-chip-text').textContent()) === 'SP: Mock');
@@ -24,11 +29,46 @@ await page.evaluate(() => localStorage.clear());
 
 const setDoc = async (name, code) => {
   await page.click(`#editor-tabs .tab[data-editor="${name}"]`);
-  await page.click(`#pane-${name} .cm-content`);
+  await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
   await page.keyboard.press('Control+a');
-  await page.keyboard.insertText(code);
+  await page.evaluate((text) => navigator.clipboard.writeText(text), code);
+  await page.keyboard.press('Control+v');
 };
 const setJs = (code) => setDoc('js', code);
+
+await setDoc('html', `
+<button id="fluent-button" aria-label="Home">
+  <fluent-icon name="home-24-regular"></fluent-icon>
+</button>
+<i id="fluent-filled" class="icon-ic_fluent_home_24_filled" aria-hidden="true"></i>
+`);
+await setJs('');
+await page.click('#btn-run');
+await page.waitForFunction(() => {
+  const frame = document.querySelector('#preview-host iframe');
+  const icon = frame?.contentDocument?.querySelector('fluent-icon');
+  return icon?.firstElementChild?.classList.contains('icon-ic_fluent_home_24_regular');
+});
+await check('configured Fluent runtime injects font CSS and upgrades <fluent-icon>', () =>
+  page.evaluate(() => {
+    const frame = document.querySelector('#preview-host iframe');
+    const previewDocument = frame.contentDocument;
+    const links = [...previewDocument.querySelectorAll('link[rel="stylesheet"]')]
+      .map((link) => new URL(link.href).pathname);
+    const icon = previewDocument.querySelector('fluent-icon');
+    const regular = icon.firstElementChild;
+    const filled = previewDocument.querySelector('#fluent-filled');
+    const regularStyle = frame.contentWindow.getComputedStyle(regular, '::before');
+    const filledStyle = frame.contentWindow.getComputedStyle(filled, '::before');
+    return links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Regular.css')
+      && links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Filled.css')
+      && links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Light.css')
+      && regular.className === 'icon-ic_fluent_home_24_regular'
+      && regular.style.fontSize === '24px'
+      && regularStyle.fontFamily.includes('FluentSystemIcons-Regular')
+      && filledStyle.fontFamily.includes('FluentSystemIcons-Filled')
+      && regularStyle.content !== 'none';
+  }));
 
 await setJs(`
 window.counter = (window.counter || 0) + 1;
@@ -225,9 +265,11 @@ await page.waitForTimeout(FILTER_SETTLE);
 // (local fixture: sandbox blocks public CDNs; the mechanism — ordered
 // blocking <script src> — is identical)
 const addFramework = async (name, url) => {
+  // The add form is a collapsed pinned footer by default.
+  if (await page.locator('#lib-custom-form').isHidden()) await page.click('#btn-add-framework');
   await page.fill('#lib-custom-name', name);
   await page.fill('#lib-custom-url', url);
-  await page.click('#lib-custom-form button');
+  await page.click('#lib-add-submit');
 };
 const libRow = (text) => page.locator('#lib-list .lib-item', { hasText: text });
 // The assertion IS the wait: poll until the iframe's <script src> order
@@ -236,7 +278,8 @@ const scriptOrderBecomes = (expected) => page.waitForFunction((exp) => {
   const f = document.querySelector('#preview-host iframe');
   if (!f || !f.contentDocument) return false;
   const srcs = [...f.contentDocument.querySelectorAll('script[src]')].map((s) => s.getAttribute('src'));
-  return JSON.stringify(srcs) === JSON.stringify(exp);
+  const catalogScripts = srcs.filter((src) => exp.includes(src));
+  return JSON.stringify(catalogScripts) === JSON.stringify(exp);
 }, expected, { timeout: 8000 }).then(() => true, () => false);
 
 const LIB_A = `${FIXTURES_URL}/fixtures/testlib.js`;
@@ -308,17 +351,29 @@ await check('catalog file round-trip restores entries', () =>
 
 // --- snippets: save from selection, insert at cursor ---
 await setJs('var SNIPPET_MARKER = 42;');
-await page.click('#pane-js .cm-content');
+await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
 await page.keyboard.press('Control+a');
-page.once('dialog', (d) => d.accept('my-snip'));
 await page.click('#btn-snippet-add');
+await check('snippet naming dialog opens', () =>
+  page.locator('#snippet-name-dialog').evaluate((dialog) => dialog.open));
+await page.fill('#snippet-name-input', 'my-snip');
+await page.click('#snippet-name-save');
 await check('snippet saved from selection', async () =>
   (await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).count()) === 1);
 
 await setJs('// cleared\n');
 await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).click();
+await page.waitForFunction(
+  () => document.querySelector('#pane-editor .view-lines')?.textContent
+    .replaceAll('\u00a0', ' ')
+    .includes('SNIPPET_MARKER = 42'),
+  null,
+  { timeout: 2000 },
+).catch(() => {});
 await check('snippet inserts into the JS editor at the cursor', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('SNIPPET_MARKER = 42'));
+  (await page.locator('#pane-editor .view-lines').textContent())
+    .replaceAll('\u00a0', ' ')
+    .includes('SNIPPET_MARKER = 42'));
 
 // --- project file: save → modify → load round-trip ---
 await setJs('console.log("round-trip-original");');
@@ -338,7 +393,7 @@ await page.setInputFiles('#import-project-file', projPath);
 await page.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('project loaded'));
 await check('loading the project file restores the JS pane', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('round-trip-original'));
+  (await page.locator('#pane-editor .view-lines').textContent()).includes('round-trip-original'));
 
 // A project referencing a framework missing from the catalog loads
 // tolerantly but warns by name.
@@ -386,7 +441,7 @@ await page.waitForFunction(() =>
 await page.reload();
 await page.waitForTimeout(1200);
 await check('JS doc restored after reload', async () =>
-  (await page.locator('#pane-js .cm-content').textContent()).includes('EXPORT_MARKER'));
+  (await page.locator('#pane-editor .view-lines').textContent()).includes('EXPORT_MARKER'));
 await check('catalog framework persisted after reload', async () =>
   (await libRow('testlib.js').count()) === 1);
 await check('snippet library persisted after reload', async () =>

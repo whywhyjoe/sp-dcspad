@@ -41,8 +41,35 @@
     var base = window.DCSPAD_SPIKE_BASE;
     if (base.indexOf('REPLACE_WITH') === 0 || base.indexOf('REPLACE_WITH') > -1) {
       report('2. module script executes', false, 'set DCSPAD_SPIKE_BASE at the top of this file first');
+      report('5. same-origin classic worker runs', false, 'set DCSPAD_SPIKE_BASE first');
       return;
     }
+
+    // Test 5: Monaco's language services use this exact worker shape:
+    // a classic worker loaded by same-origin URL (never blob:).
+    try {
+      var worker = new Worker(base + 'deploy/spike-worker.js');
+      var workerTimer = setTimeout(function () {
+        worker.terminate();
+        report('5. same-origin classic worker runs', false,
+          'no response — inspect the host page worker-src CSP');
+      }, 4000);
+      worker.onmessage = function (event) {
+        clearTimeout(workerTimer);
+        worker.terminate();
+        report('5. same-origin classic worker runs', !!(event.data && event.data.ok),
+          event.data && event.data.url ? event.data.url : 'worker responded');
+      };
+      worker.onerror = function (event) {
+        clearTimeout(workerTimer);
+        worker.terminate();
+        report('5. same-origin classic worker runs', false,
+          event.message || 'blocked by network or worker-src CSP');
+      };
+    } catch (err) {
+      report('5. same-origin classic worker runs', false, err.message);
+    }
+
     var s = document.createElement('script');
     s.type = 'module';
     s.src = base + 'deploy/spike-module.js';

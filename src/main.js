@@ -8,28 +8,66 @@ import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import {
   initLibraries, getEnabledLibraries, getCatalogDoc, replaceCatalog,
-  unknownLibraryIds, refreshLibraryUI,
+  unknownLibraryIds, refreshLibraryUI, getEnabledIntelligence,
 } from './libraries.js';
-import { initSnippets } from './snippets.js';
+import { initSnippets } from './snippets.js?v=2';
 import { downloadText, wireJsonImport } from './io.js';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import { showSplash } from './splash.js';
+import { loadAppConfig } from './config.js';
 
+const splashApi = showSplash();
+splashApi.status('Restoring workspace…');
+const configReady = loadAppConfig();
 const state = getState();
+applyContextIndicators();
 
 // ---------- layout ----------
+let editorsApi = null;
 const layoutApi = initLayout({
-  onEditorTabChange: (name) => editorsApi.focus(name),
+  onEditorTabChange: (name) => {
+    editorsApi?.activate(name);
+    updateStatusLang(name);
+  },
 });
+
+// Active-pane type badge in the status bar (reuses the snippet badge).
+function updateStatusLang(name) {
+  const badge = document.getElementById('status-lang');
+  badge.textContent = name;
+  badge.dataset.lang = name;
+}
+updateStatusLang(state.layout.editorTab);
+
+// Unsaved marks: a 5px dot on a tab whose buffer changed since the last
+// run — the preview is stale for that pane. Cleared by Run.
+function markUnsaved(name) {
+  const dot = document.getElementById(`unsaved-${name}`);
+  if (dot) dot.hidden = false;
+}
+function clearUnsaved() {
+  for (const name of ['html', 'css', 'js']) {
+    const dot = document.getElementById(`unsaved-${name}`);
+    if (dot) dot.hidden = true;
+  }
+}
 
 const isDiagVisible = (name) =>
   document.querySelector(`#diag-tabs .tab[data-diag="${name}"]`).classList.contains('active');
 
 // ---------- editors ----------
-const editorsApi = initEditors({
-  onChange: () => scheduleAutorun(),
-  onRunShortcut: () => run(),
-});
+splashApi.status('Starting Monaco editor…');
+try {
+  editorsApi = await initEditors({
+    onChange: (name) => { markUnsaved(name); scheduleAutorun(); },
+    onRunShortcut: () => run(),
+    onTogglePane: (name) => layoutApi.togglePane?.(name),
+    onFontStep: (delta) => stepEditorFontSize(delta),
+  });
+} catch (error) {
+  splashApi.fail(`Monaco failed to start — ${error.message || error}`);
+  throw error;
+}
 
 // ---------- console + network ----------
 const consoleApi = initConsolePanel({
@@ -46,10 +84,16 @@ const networkApi = initNetworkPanel({
 });
 
 // ---------- libraries ----------
+const configResult = await configReady;
 initLibraries({
-  onChange: () => scheduleAutorun(),
+  config: configResult.config,
+  onChange: () => {
+    scheduleAutorun();
+    editorsApi.setIntelligencePacks(getEnabledIntelligence());
+  },
   onStorageError: (msg) => reportStorageError(msg),
 });
+editorsApi.setIntelligencePacks(getEnabledIntelligence());
 
 // ---------- snippets ----------
 initSnippets({
@@ -59,12 +103,6 @@ initSnippets({
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
   onStorageError: (msg) => reportStorageError(msg),
 });
-
-// ---------- SP context ----------
-const spContext = applyContextIndicators();
-
-// ---------- boot splash ----------
-showSplash();
 
 // ---------- runner ----------
 const statusRun = document.getElementById('status-run');
@@ -78,8 +116,26 @@ const runnerReady = initRunner({
     stopSpinner();
     statusRun.textContent = `ran in ${d.ms} ms`;
     statusRun.className = 'status-item ok';
+    settleRunFeedback();
   },
 });
+
+// Run-feedback beats 2–4: the header sweep is CSS (.sweeping); a run that
+// outlives ~1.2s loops the sweep until the frame reports; the resolved
+// beat pops the ✓ timestamp chip (the ms figure lives in the status bar).
+let longRunTimer = null;
+function settleRunFeedback() {
+  clearTimeout(longRunTimer);
+  longRunTimer = null;
+  const panel = document.getElementById('preview-panel');
+  panel.classList.remove('running-long');
+  const chip = document.getElementById('preview-run-chip');
+  document.getElementById('preview-run-time').textContent = new Date().toTimeString().slice(0, 8);
+  chip.hidden = false;
+  chip.classList.remove('pop');
+  void chip.offsetWidth;
+  chip.classList.add('pop');
+}
 
 function startSpinner() {
   let i = 0;
@@ -111,9 +167,12 @@ async function run() {
   void document.getElementById('btn-run').offsetWidth;   // restart animation
   document.getElementById('btn-run').classList.add('running');
   const panel = document.getElementById('preview-panel');
-  panel.classList.remove('sweeping');
+  panel.classList.remove('sweeping', 'running-long');
   void panel.offsetWidth;
   panel.classList.add('sweeping');
+  clearUnsaved();
+  clearTimeout(longRunTimer);
+  longRunTimer = setTimeout(() => panel.classList.add('running-long'), 1200);
 
   const { runNumber } = runnerRun({
     docs: editorsApi.getDocs(),
@@ -131,6 +190,8 @@ async function run() {
       stopSpinner();
       statusRun.textContent = 'still loading…';
       statusRun.className = 'status-item';
+      clearTimeout(longRunTimer);
+      document.getElementById('preview-panel').classList.remove('running-long');
     }
   }, 15000);
 }
@@ -143,7 +204,8 @@ const btnPreviewTheme = document.getElementById('btn-preview-theme');
 
 function applyPreviewTheme() {
   const dark = getState().settings.previewDark;
-  btnPreviewTheme.textContent = dark ? '☀' : '🌙';
+  // The button carries both sun/moon SVGs; CSS shows one per data-mode.
+  btnPreviewTheme.dataset.mode = dark ? 'dark' : 'light';
   btnPreviewTheme.title = dark
     ? 'Switch preview to light — pad-only canvas color; your CSS still wins, and SharePoint pages are typically light'
     : 'Switch preview to dark — pad-only canvas color; your CSS still wins';
@@ -203,6 +265,8 @@ function padWarn(msg) {
   consoleApi.handlers.console({ level: 'warn', args: [{ t: 'str', v: `DCSPad: ${msg}` }] });
 }
 
+for (const warning of configResult.warnings) padWarn(warning);
+
 document.getElementById('mi-save-project').addEventListener('click', () => {
   closeFileMenu();
   const s = getState();
@@ -240,8 +304,10 @@ wireJsonImport('import-project-file', (doc) => {
     // referencing it would work (the callback fires post-init) but is a
     // TDZ trap for anyone who reorders this file.
     document.getElementById('chk-module').checked = doc.jsAsModule;
+    editorsApi.setJsAsModule(doc.jsAsModule);
   }
   refreshLibraryUI();
+  editorsApi.setIntelligencePacks(getEnabledIntelligence());
 
   // Deliberately tolerant: a project may reference catalog entries that
   // were removed since it was saved. The run will fail visibly with
@@ -282,8 +348,10 @@ wireJsonImport('import-catalog-file', (doc) => {
 
 const chkModule = document.getElementById('chk-module');
 chkModule.checked = state.settings.jsAsModule;
-chkModule.addEventListener('change', () =>
-  updateNested('settings', { jsAsModule: chkModule.checked }));
+chkModule.addEventListener('change', () => {
+  updateNested('settings', { jsAsModule: chkModule.checked });
+  editorsApi.setJsAsModule(chkModule.checked);
+});
 
 const chkAutoclear = document.getElementById('chk-autoclear');
 chkAutoclear.checked = state.settings.autoClearConsole;
@@ -291,10 +359,12 @@ chkAutoclear.addEventListener('change', () =>
   updateNested('settings', { autoClearConsole: chkAutoclear.checked }));
 
 // Console/network text size stepper (10–18px, drives --diag-fs).
+// Lives at the right end of the Console/Network strip; the old settings-menu
+// row is retired.
 const DIAG_FS_MIN = 10, DIAG_FS_MAX = 18;
 function applyDiagFontSize(px) {
   document.documentElement.style.setProperty('--diag-fs', `${px}px`);
-  document.getElementById('diag-font-val').textContent = String(px);
+  refreshStepperDisabled('btn-diag-font-dec', 'btn-diag-font-inc', px, DIAG_FS_MIN, DIAG_FS_MAX);
 }
 applyDiagFontSize(state.settings.diagFontSize);
 function stepDiagFontSize(delta) {
@@ -306,6 +376,50 @@ function stepDiagFontSize(delta) {
 }
 document.getElementById('btn-diag-font-dec').addEventListener('click', () => stepDiagFontSize(-1));
 document.getElementById('btn-diag-font-inc').addEventListener('click', () => stepDiagFontSize(+1));
+
+// Editor text size stepper (11–18px; line height locks to 1.7× inside the
+// Monaco adapter). Ctrl/Cmd+= / − step whichever pane has focus: Monaco
+// actions cover the editor, the listener below covers the console.
+const EDITOR_FS_MIN = 11, EDITOR_FS_MAX = 18;
+function refreshStepperDisabled(decId, incId, val, min, max) {
+  document.getElementById(decId).disabled = val <= min;
+  document.getElementById(incId).disabled = val >= max;
+}
+function applyEditorFontSize(px) {
+  editorsApi.setFontSize(px);
+  refreshStepperDisabled('btn-editor-font-dec', 'btn-editor-font-inc', px, EDITOR_FS_MIN, EDITOR_FS_MAX);
+}
+function stepEditorFontSize(delta) {
+  const cur = getState().settings.editorFontSize;
+  const next = Math.min(EDITOR_FS_MAX, Math.max(EDITOR_FS_MIN, cur + delta));
+  if (next === cur) return;
+  updateNested('settings', { editorFontSize: next });
+  applyEditorFontSize(next);
+}
+refreshStepperDisabled('btn-editor-font-dec', 'btn-editor-font-inc',
+  state.settings.editorFontSize, EDITOR_FS_MIN, EDITOR_FS_MAX);
+document.getElementById('btn-editor-font-dec').addEventListener('click', () => stepEditorFontSize(-1));
+document.getElementById('btn-editor-font-inc').addEventListener('click', () => stepEditorFontSize(+1));
+document.getElementById('diag-panel').addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key === '=' || e.key === '+') { e.preventDefault(); stepDiagFontSize(+1); }
+  else if (e.key === '-') { e.preventDefault(); stepDiagFontSize(-1); }
+});
+
+// Word wrap (persisted; applied at editor creation and on toggle).
+const btnWordWrap = document.getElementById('btn-word-wrap');
+function reflectWordWrap() {
+  const on = getState().settings.wordWrap;
+  btnWordWrap.classList.toggle('active', on);
+  btnWordWrap.setAttribute('aria-pressed', String(on));
+}
+reflectWordWrap();
+btnWordWrap.addEventListener('click', () => {
+  const on = !getState().settings.wordWrap;
+  updateNested('settings', { wordWrap: on });
+  editorsApi.setWordWrap(on);
+  reflectWordWrap();
+});
 
 // ---------- autosave tick + storage errors ----------
 const saveEl = document.getElementById('status-save');
@@ -331,3 +445,6 @@ function reportStorageError(msg) {
   saveEl.classList.add('error');
   saveEl.classList.remove('saved');
 }
+
+splashApi.status('Editor ready');
+splashApi.finish();

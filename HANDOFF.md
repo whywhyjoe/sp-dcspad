@@ -1,8 +1,13 @@
 # Handoff — DCSPad
 
 Read `CLAUDE.md` first for architecture invariants; this file covers **state**
-and **what's next**. Last updated: 2026-07-25, the session that got the pad
-running live inside the SharePoint web part.
+and **what's next**. Last updated: 2026-07-27, Monaco plus generated BMO and
+Fluent design-system intelligence.
+
+For the UI redesign handoff, also read
+`design/POST-MONACO-UI-INTEGRATION.md`. It documents the exact pre-Monaco
+baseline, all post-baseline changes, every setting and persistence boundary,
+and the functional DOM/CSS hooks the workbench design system must preserve.
 
 ## Where things stand
 
@@ -14,16 +19,15 @@ inspector, REPL and network capture all work inside the web part; a live
 ### Hosting model (decided and working)
 
 - Host page: `https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/DCSpad.aspx`
-  (⚠ the published copy currently lives at `DCSpad(1).aspx` — a duplicate got
-  created when the original page wouldn't save without a title; reconcile).
+  (confirmed live on 2026-07-26; the former `DCSpad(1).aspx` duplicate now
+  returns 404).
 - Web part: PnP **Modern Script Editor** (Mikael Svenson), in
   "Use script from an external URL" mode. Despite the field name "Script URL",
   it fetches an **HTML file** and injects it with script re-creation.
 - The URL points at `dcspad.webpart.html` (repo root): a 2-line anchor +
   absolute `<script src=…/boot.js>`. `boot.js` fetches `index.html`, injects
-  the app shell, loads `styles/app.css`, and `import()`s `src/main.js` from an
-  absolute URL — after which the whole module tree resolves itself. Entry URLs
-  are the only absolute URLs; `index.html` stays the single source of truth.
+  the app shell, loads `styles/app.css`, and imports the versioned hosted app
+  bundle. `index.html` stays the single source of truth.
 - **Deployment = file copy.** The doc library folder
   `…/SiteAssets/Code/dcspad-live/` is OneDrive-synced to
   `C:\Users\other\NERVE\NewNerve - Code\dcspad-live`; copying files there goes
@@ -49,17 +53,21 @@ inspector, REPL and network capture all work inside the web part; a live
   `.dcspad-suspended` hides the mount and reverts the html/body overrides so
   the edit canvas looks and scrolls normally. Leaving edit mode restores it.
 
-### The two web-part-hosting bugs that were found and fixed
+### Web-part-hosting constraints that were found and fixed
 
 1. **SharePoint serves `.mjs` as `application/octet-stream`** — browsers
-   refuse ES modules with that MIME. `vendor/codemirror.mjs` is now
-   `vendor/codemirror.js` (import updated in `src/editors.js`, build output in
-   `tools/build-vendor.mjs`). This is permanent: never ship `.mjs` to SP.
+   refuse ES modules with that MIME. This is permanent: Monaco's runtime and
+   all same-origin workers ship as `.js`.
 2. **Modern pages ship a nonce-based `script-src` CSP that `about:srcdoc`
    inherits.** Preview frames rendered markup but silently executed nothing.
    `runner.js` now stamps the host page's nonce on every assembled script tag
    (`hostNonce()`); standalone pages have no nonce → no-op. If preview
    execution ever "silently dies" on SP again, look here first.
+
+3. **Monaco language tooling needs workers.** The editor uses same-origin
+   classic worker files, never `blob:` URLs. `deploy/webpart-spike.html`
+   includes a worker/CSP check, and the live app surfaces a blocked worker in
+   the status bar without losing the editor.
 
 ### Spike results (deploy/webpart-spike.html, kept for re-verification)
 
@@ -67,16 +75,110 @@ inspector, REPL and network capture all work inside the web part; a live
 2. `type="module"` script executes ✅
 3. relative import from an absolute module URL resolves ✅
 4. `_spPageContextInfo` present ❌ — absent on the modern page by default
+5. same-origin classic worker allowed ✅ — proven by the live Monaco
+   TypeScript worker; no `worker-src` error
+
+### Monaco migration (2026-07-26)
+
+- One Monaco editor swaps three typed models (`index.html`, `styles.css`,
+  `script.js`) behind the previous editor adapter, so the runner, persistence,
+  snippets, console stack jumps, autosave and autorun remain unchanged.
+- `vendor/monaco/` contains Monaco 0.55.1, classic `.js` workers, CSS/font,
+  and 254 declaration files for the exact PnPjs 2.15.0 dependency graph.
+- `boot.js` paints the hosted splash immediately after its mount exists,
+  before fetching the shell or probing assets. Its live status survives
+  delayed Monaco loading and fades only after the editor and app wiring are
+  usable. Its hidden state is committed for two paint frames before the
+  entrance class is added, preventing SharePoint from batching away the
+  fade-in. The fully painted app and a permanent dark hosted underlay sit
+  beneath the curtain, so its fade-out cannot expose white SharePoint
+  wrappers. Standalone mode follows the same readiness-gated lifecycle.
+- Enabling the PnPjs v2 runtime library loads the declarations and global
+  `pnp` bridge; disabling it unloads them. Fluent completions, hover,
+  signatures and JS diagnostics use Monaco's TypeScript worker.
+- Runtime detection follows the enabled 2.15.0 script URL rather than a fixed
+  catalog id, so the live custom `Pnpjs JSD` jsDelivr entry receives the same
+  matching types.
+- `tools/build-monaco.mjs` is the only way to regenerate vendor assets.
+  `vendor/monaco/version.json` versions the set as a unit in hosted mode.
+- `tests/monaco.mjs` covers the editor contract, completions, diagnostics,
+  declaration lifecycle, isolated snippet undo/redo, asset policy and
+  persistent worker failure behavior. `tests/hosted.mjs` deliberately delays
+  both `index.html` and Monaco to verify the earliest splash stages and that
+  the app is fully painted over the dark underlay before the curtain fades.
+
+### Runtime URL configuration (2026-07-26)
+
+- `dcspad.config.json` is a separately versioned, editable runtime document.
+  Framework entries can specify local and CDN URLs, source preference, a
+  global probe, and intelligence-pack IDs without rewriting the persisted
+  framework catalog.
+- If a preferred JavaScript runtime does not expose its configured global,
+  the backup is inserted parser-blocking at the same catalog position. This
+  preserves dependency order and avoids CSP-blocked inline event handlers.
+- The PnPjs 2.15.0 type pack can now follow a custom rollup through explicit
+  metadata even when its URL is opaque.
+- The imported BMO SharePoint design-system and Fluent-icon repositories are
+  source inputs and are not copied by `Sync-Live.ps1`. Their local and eventual
+  hosted base folders live under `assets` in the config. The generated compact
+  runtime data is copied under `vendor/intelligence/`.
+- `tests/config.mjs` covers URL resolution, config-enabled asset intelligence,
+  explicit PnP intelligence, and ordered primary/fallback loading.
+
+### Alpine intelligence (2026-07-26)
+
+- Enabling the Alpine runtime now activates a composable `alpine-3` pack.
+  JavaScript completion/hover/signatures cover the public browser API including
+  `Alpine.data/store/bind/plugin`, reactivity hooks, and tree lifecycle.
+- HTML completion and hover cover all core `x-*` directives, common `@event`
+  and `:attribute` shorthands, editable attribute snippets, and the core magic
+  properties (`$dispatch`, `$refs`, `$store`, `$watch`, `$nextTick`, `$root`,
+  `$data`, `$id`, `$el`, `$event`).
+- PnPjs and Alpine declarations live in separate registry entries. Disabling
+  one no longer clears the other through `setExtraLibs([])`.
+- The HTML provider is context-aware enough to offer magic properties only
+  inside Alpine attribute expressions. Inferring arbitrary members from the
+  nearest `x-data` object remains the later deep-expression phase.
+- `tests/monaco.mjs` now verifies Alpine JS, HTML directives, magics, pack
+  coexistence, unloading, legacy-catalog detection, and false diagnostics. The
+  complete browser suite is 113 checks.
+
+### BMO design-system intelligence (2026-07-26)
+
+- `tools/build-design-intelligence.mjs` reads the configured local
+  `colors_and_type.css`, `components.css`, and `editorial.css` files and emits
+  deterministic `vendor/intelligence/bsp-design.json` plus `manifest.json`.
+- The current artifact contains 164 CSS custom properties and 375 canonical
+  classes. Records include values, categories, nearby source documentation,
+  source line numbers, BEM kind/base relationships, and Editorial-mode scope.
+- `assets.designSystem.intelligence: ["bsp-design"]` enables the pack
+  independently of framework checkboxes. CSS completion/hover works inside
+  `var(--...)`; HTML completion/hover works inside `class=""`.
+- Hosted mode versions the intelligence manifest as a unit. Because `boot.js`
+  changed for that version seam, `dcspad.webpart.html` is now at `boot.js?v=11`.
+- `Sync-Live.ps1` regenerates intelligence before rebuilding/copying the app.
+  The design-system source folder remains a development input, not a runtime
+  dependency.
+
+### Fluent icon intelligence and preview runtime (2026-07-27)
+
+- `tools/build-design-intelligence.mjs` also projects the complete Fluent
+  catalog into `vendor/intelligence/fluent-icons.json`: 2,655 normalized icon
+  groups and all 18,681 real SVG variants, with font availability preserved.
+- Monaco completes and explains `<fluent-icon name="">`, Fluent
+  `<use href="...#symbol">` IDs, and generated `icon-ic_fluent_*` font classes.
+  Unknown and SVG-only/font mismatches receive focused warnings.
+- The configured runtime loads the vendored Regular, Filled, and Light font
+  CSS plus `src/bridge/fluent-icon-font.js`, a preview-only adapter for
+  `<fluent-icon>`. Generated suffix-specific CSS keeps all three font families
+  working together.
+- The imported Fluent package contains individual SVG files, not a combined
+  symbol sprite. `<use>` intelligence is retained for consuming projects that
+  provide a Fluent sprite. No new BMO sprite integration was added because
+  that UI icon path is being deprecated.
 
 ## Open items
 
-- **SP chip reads Mock.** The web part has an "Enable classic
-  _spPageContextInfo" toggle, still Disabled. Flipping it should make the chip
-  read Live and give `sp-context.js` a real context (needed for request-digest
-  POSTs; GET `_api` calls already work via session cookies). Verify after
-  flipping — if the toggle injects context *after* boot captures it, capture
-  timing in `sp-context.js` may need a retry.
-- **Page naming**: reconcile `DCSpad.aspx` vs `DCSpad(1).aspx`, keep one.
 - **CSS bleed, both directions**: `app.css` still styles `html`/`body`
   (darkens the host page behind the pad — currently invisible and arguably
   nice; the gap around the seated app shows it). SP styles also bleed into the
@@ -89,17 +191,12 @@ inspector, REPL and network capture all work inside the web part; a live
   `design/screenshots/` (captured via `tests/capture-design-shots.mjs`).
   Joe attaches his old-DCSPad reference screenshot as
   `design/reference-old-dcspad.png` when submitting. Claude Design returns
-  a comp + token sheet; we implement (tokens are plain CSS vars + a CM6
-  HighlightStyle, so implementation is mechanical).
+  a comp + token sheet; we implement (tokens are plain CSS vars + a Monaco
+  theme, so implementation is mechanical).
 
 - **Per-pane import/export (file system + SharePoint)** — plan written, not
   started: `plans/file-sp-import-export.md` (REST `$value`/`Files/add` +
   contextinfo digest; new `src/sp-files.js` seam).
-- **PnPjs autocomplete/IntelliSense** — plan written, not started:
-  `plans/pnpjs-intellisense.md` (CM6 + TS worker recommended; CSP `worker-src`
-  check gates it).
-- **"VS Code editor" investigation** — i.e. Monaco (the pad currently uses
-  CodeMirror 6). If a swap is decided, fold the IntelliSense plan into it.
 - **Drag-and-drop reordering** for the frameworks list (replaces/augments ↑↓).
 - **Framework/snippet row action icons only on hover** (currently always
   visible at 60% opacity).

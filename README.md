@@ -1,6 +1,6 @@
 # DCSPad — SharePoint Developer Workbench
 
-A JSFiddle-style workbench for SharePoint development that runs entirely in the browser: HTML/CSS/JS editors, live preview, built-in console + network monitor, an SP-aware object inspector, and a library manager. No backend, no build step, no SPFx — deploy by uploading this folder to a SharePoint library.
+A JSFiddle-style workbench for SharePoint development that runs entirely in the browser: Monaco HTML/CSS/JS editors, live preview, built-in console + network monitor, an SP-aware object inspector, and a library manager. No backend, no user build step, no SPFx — deploy by uploading this folder to a SharePoint library.
 
 This is a from-scratch rebuild focused on the **execution environment**. The core guarantee: **code written in the pad runs unmodified on a real SharePoint page.**
 
@@ -24,6 +24,38 @@ Everything lives in your browser's localStorage plus plain files you keep wherev
 - **Pane exports** — **File ▸ Export HTML / CSS / JS** downloads one pane as a plain file.
 - **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and reorder with ↑/↓ — order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
 - **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file.
+
+## Runtime configuration
+
+Edit [`dcspad.config.json`](dcspad.config.json) to change environment-specific
+URLs without editing or rebuilding the application.
+
+- `frameworks.items.<catalog-id>.localUrl` is the preferred self-hosted or
+  organization-hosted script.
+- `cdnUrl` is its backup. Set `frameworks.prefer` to `"cdn"` to reverse the
+  order, or `fallbackToCdn` to `false` to disable automatic fallback.
+- `probeGlobal` is the global the primary script must expose. When it is absent,
+  DCSPad inserts the backup as a parser-blocking script at the same catalog
+  position, so plugins and user JavaScript still run in the expected order.
+- `intelligence` explicitly associates editor metadata with the runtime. The
+  custom PnPjs rollup can therefore keep `["pnpjs-2.15.0"]` even when its URL
+  does not contain a recognizable package/version path.
+- `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
+  hosted base folders. Relative local paths resolve from `dcspad.config.json`;
+  hosted locations may be absolute SharePoint URLs.
+- `assets.designSystem.intelligence: ["bsp-design"]` enables the generated BMO
+  design-system pack independently of framework checkboxes. Remove that ID to
+  disable it. The browser loads the compact versioned artifact under
+  `vendor/intelligence/`, never the source CSS repository.
+- `assets.fluentIcons.intelligence: ["fluent-icons"]` enables completions,
+  hover, and diagnostics for real Fluent tokens, symbol IDs, and font classes.
+  Its `runtime` block controls which configured font CSS files and the
+  preview-only `<fluent-icon>` adapter are injected on Run. Set
+  `runtime.enabled` to `false` if the consuming page supplies those assets.
+
+Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
+their existing CDN URLs until local copies are filled in. Hosted mode versions
+the JSON independently, and `deploy/Sync-Live.ps1` copies it automatically.
 
 ## Local development
 
@@ -72,6 +104,8 @@ Or by hand:
 |---|---|
 | Run | `Run` button or `Ctrl/Cmd+Enter` anywhere in an editor |
 | Auto-run | Toggle in the toolbar; re-runs ~800 ms after you stop typing |
+| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types; enabling Alpine adds v3 JavaScript API and HTML intelligence; the configured design packs add documented BMO CSS/classes plus exact Fluent icon tokens, symbol IDs, and font classes |
+| Editor status | The status bar shows `Monaco ✓`; `Monaco ⚠` remains visible if a worker is blocked, even after running code |
 | Top-level `await` | Settings ⚙ → "Run JS as module" (strict mode; `var` won't become window globals) |
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
 | Stack traces | Frames pointing into your JS are clickable → jumps the editor to that line |
@@ -81,6 +115,41 @@ Or by hand:
 | Preview dark mode | ☀/🌙 on the preview header (default dark). Pad-only canvas color injected *before* your CSS, so anything you style wins — flip to light to see how it renders on a typical SharePoint page |
 
 Work-in-progress (editors, libraries, settings, layout) autosaves to `localStorage` and restores on load.
+
+### Testing framework intelligence
+
+Framework intelligence follows the enabled runtime checkbox.
+
+- **PnPjs:** enable **PnPjs v2**, type `pnp.sp.w` in JavaScript, then press
+  `Ctrl+Space`; `web` should be offered.
+- **Alpine JavaScript:** enable **Alpine.js**, type `Alpine.d`, then press
+  `Ctrl+Space`; `data` should be offered. `Alpine.s` and `Alpine.p` offer
+  `store` and `plugin`.
+- **Alpine HTML directives:** type `<div x-d`, then press `Ctrl+Space`;
+  `x-data` should be offered with documentation and an editable state snippet.
+- **Alpine HTML magics:** type `<button x-data @click="$d`, then press
+  `Ctrl+Space`; `$dispatch` should be offered. `$refs`, `$store`, `$watch`,
+  `$nextTick`, `$root`, `$data`, `$id`, `$el`, and `$event` are also included.
+- **BMO CSS tokens:** type `color: var(--fg-p`, then press `Ctrl+Space`;
+  `--fg-primary` should be offered with its resolved design-system value,
+  category, source line, and hover documentation.
+- **BMO HTML classes:** type `<button class="btn btn--p`, then press
+  `Ctrl+Space`; `btn--primary` should be offered as a BEM modifier with
+  `.btn` composition guidance and source documentation.
+- **Fluent custom element:** type `<fluent-icon name="home-24-r`, then press
+  `Ctrl+Space`; `home-24-regular` should be offered. Run it to verify the
+  configured icon font renders in the preview.
+- **Fluent sprite:** inside a project that supplies a symbol sprite, type
+  `<svg><use href="#ic_fluent_home_24_r`, then press `Ctrl+Space`; the exact
+  `ic_fluent_home_24_regular` symbol ID should be offered.
+- **Fluent font class:** type
+  `<i class="icon-ic_fluent_home_24_r`, then press `Ctrl+Space`; the generated
+  `icon-ic_fluent_home_24_regular` class should be offered.
+
+The first Alpine pack understands the stable core API and whether the cursor is
+inside an Alpine attribute. It does not yet infer arbitrary properties declared
+inside the surrounding `x-data` object. Plugin-only features such as `$persist`,
+`x-collapse`, and `x-trap` require their own enabled runtime/intelligence packs.
 
 ## The SP-aware inspector
 
@@ -97,25 +166,45 @@ Console output and network response bodies are rendered by an inspector that und
 ```
 index.html            app shell
 styles/app.css        theme + layout
-vendor/codemirror.js  vendored CodeMirror 6 bundle (single file — see tools/)
-tools/build-vendor.mjs one-liner to regenerate the vendor bundle (esbuild)
+vendor/monaco/        generated Monaco runtime, workers, CSS/font + PnPjs 2.15 types
+vendor/intelligence/  generated compact BMO token/class + Fluent icon data
+tools/build-monaco.mjs reproducible Monaco/PnPjs vendor build (esbuild)
+tools/build-design-intelligence.mjs deterministic BMO CSS/class + Fluent icon generator
 src/
   main.js             bootstrap/wiring
   layout.js           splitters, tabs, collapse/maximize (persisted)
-  editors.js          CodeMirror 6 editors
+  editors.js          Monaco adapter: three models, language tools, editor API
+  monaco-runtime.js   standalone/hosted asset and same-origin worker loading
+  intelligence/bsp.js BMO CSS-token and HTML-class completion/hover providers
+  intelligence/fluent-icons.js Fluent element/sprite/font completion, hover, diagnostics
   state.js            workspace state + debounced autosave
   runner.js           document assembly + iframe lifecycle
   libraries.js        preset catalog + custom URLs
   console-panel.js    console UI + REPL
   network-panel.js    network UI
-  splash.js           boot splash
+  splash.js           readiness-gated boot splash controller
   inspect/tree-view.js   generic expandable trees + tables
   inspect/sp-shapes.js   SP/OData/PnPjs smart views
   bridge/harness.js   iframe-side instrumentation (injected per run)
+  bridge/fluent-icon-font.js preview-only font-backed <fluent-icon> adapter
   bridge/sp-context.js   real/mock _spPageContextInfo capture
 ```
 
-CodeMirror is vendored as one ESM file to avoid CM6's duplicate-`@codemirror/state` pitfall and any CDN dependency; regenerate with the commands at the top of `tools/build-vendor.mjs`.
+For UI/design-system work based on the pre-Monaco shell, read
+[`design/POST-MONACO-UI-INTEGRATION.md`](design/POST-MONACO-UI-INTEGRATION.md).
+It is the authoritative migration and UI contract: exact baseline, changed DOM
+hooks, complete settings/persistence reference, Monaco theme/widget rules,
+splash/dialog states, runtime configuration, and code ownership.
+
+Monaco is fully vendored: the ESM runtime, CSS/font, classic same-origin `.js`
+workers, and exact PnPjs 2.15.0 declaration graph. There is no runtime CDN,
+blob worker, or `.mjs` dependency. From `tools/`, run `npm run build:monaco`
+after changing the pinned editor/type versions or the vendor builder.
+
+Design-system intelligence is generated rather than scraped in the browser.
+From `tools/`, run `npm run build:intelligence` after changing the configured
+local design-system CSS or Fluent icon catalog. `deploy/Sync-Live.ps1` runs
+that generator and the app bundle build automatically.
 
 ## Tests
 

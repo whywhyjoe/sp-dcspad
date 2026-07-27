@@ -1,5 +1,14 @@
 # DCSPad — visual design brief (for Claude Design)
 
+> **Post-brief implementation note:** this brief was originally prepared
+> against the pre-Monaco workbench. Before applying its UI system, read
+> [`POST-MONACO-UI-INTEGRATION.md`](POST-MONACO-UI-INTEGRATION.md). It records
+> the exact `3414854` baseline, the current DOM contract, every settings and
+> persistence behavior, Monaco theming/widget requirements, the splash and
+> snippet-dialog states, and the preview/runtime configuration boundary.
+> The overall layout remains valid; the integration note is authoritative
+> wherever the two documents differ.
+
 ## The prompt
 
 > You are redesigning the visual layer of **DCSPad**, a SharePoint-native
@@ -15,7 +24,7 @@
 > properties, a syntax-highlighting palette for the code editors, a
 > typography scale, and spacing/border/radius rules. Stay within the
 > technical constraints below — everything you specify must be expressible
-> as plain CSS custom properties + a CodeMirror highlight style.
+> as plain CSS custom properties + a Monaco theme.
 >
 > Priorities, in order:
 > 1. **Contrast and readability.** The attached older-generation screenshot
@@ -48,7 +57,7 @@
 ## What DCSPad is (context for the comp)
 
 Left sidebar (Resources: frameworks catalog + snippets), center editor
-column (HTML/CSS/JS tabs, CodeMirror 6), right runtime column (Preview panel
+column (HTML/CSS/JS tabs, Monaco), right runtime column (Preview panel
 over Console/Network panel), 40px topbar (logo · File · settings ……
 Auto-run · Run · SP status chip), 24px status bar. Panels resize via
 splitters; sidebar and the console panel collapse. On SharePoint it sits at
@@ -77,7 +86,7 @@ crossfades into the app.
 
 - Deliverables must compile to: CSS custom properties + plain CSS rules (no
   frameworks, no images/asset pipeline; inline SVG icons are fine), plus a
-  **CodeMirror 6 HighlightStyle** for the editor (token→color list is
+  **Monaco theme** for the editor (token→color list is
   enough: keywords, strings, numbers, comments, tags, attributes,
   properties, functions, operators, punctuation, plus editor ground:
   background, gutter, active line, selection, cursor, matching bracket).

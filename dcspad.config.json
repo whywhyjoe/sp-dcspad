@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "frameworks": {
+    "prefer": "local",
+    "fallbackToCdn": true,
+    "items": {
+      "pnpjs2": {
+        "localUrl": "",
+        "cdnUrl": "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js",
+        "probeGlobal": "pnp",
+        "intelligence": [
+          "pnpjs-2.15.0"
+        ]
+      },
+      "alpine": {
+        "localUrl": "",
+        "cdnUrl": "https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js",
+        "probeGlobal": "Alpine",
+        "intelligence": [
+          "alpine-3"
+        ]
+      }
+    }
+  },
+  "assets": {
+    "designSystem": {
+      "prefer": "local",
+      "localBaseUrl": "./bsp-design-system/",
+      "hostedBaseUrl": "",
+      "intelligence": [
+        "bsp-design"
+      ],
+      "files": {
+        "tokens": "colors_and_type.css",
+        "components": "components.css",
+        "bundle": "styles.css",
+        "editorial": "editorial.css",
+        "iconSprite": "bmo-icons.svg",
+        "iconElement": "fluent-icon.js",
+        "componentExamples": "examples/components.html",
+        "editorialExamples": "examples/editorial-components.html"
+      }
+    },
+    "fluentIcons": {
+      "prefer": "local",
+      "localBaseUrl": "./bsp-fluent-icon-lib/",
+      "hostedBaseUrl": "",
+      "intelligence": [
+        "fluent-icons"
+      ],
+      "files": {
+        "catalog": "fluent-font-library.json",
+        "svgFolder": "svg/",
+        "fontFolder": "fonts/",
+        "regularCss": "fonts/FluentSystemIcons-Regular.css",
+        "filledCss": "fonts/FluentSystemIcons-Filled.css",
+        "lightCss": "fonts/FluentSystemIcons-Light.css"
+      },
+      "runtime": {
+        "enabled": true,
+        "cssFiles": [
+          "regularCss",
+          "filledCss",
+          "lightCss"
+        ],
+        "fluentIconElement": true
+      }
+    }
+  }
+}

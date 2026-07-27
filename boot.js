@@ -4,9 +4,8 @@
 // part on the hosting page. It is a classic script (the web part injects it
 // as <script src>), and it exists so the web part configuration never has to
 // change again: it fetches index.html from its own folder, injects the app
-// shell into the page, and loads src/main.js as a module from an absolute
-// URL — after which every relative import below main.js resolves on its own
-// (spike tests 2 + 3, deploy/webpart-spike.html).
+// shell into the page, and loads the versioned hosted app bundle from an
+// absolute URL (spike tests 2 + 3, deploy/webpart-spike.html).
 //
 // index.html stays the single source of truth for the app shell, and keeps
 // working standalone — the test suites depend on that.
@@ -50,20 +49,133 @@
     document.body.appendChild(mount);
   }
 
+  // Mark hosted mode before the first curtain frame so the critical dark
+  // underlay below can cover SharePoint's white canvas immediately.
+  document.documentElement.classList.add('dcspad-hosted');
+
+  // Paint a dependency-free curtain immediately. This is deliberately
+  // before index.html, cache probes, app.css, the app bundle, and Monaco:
+  // on a cold SharePoint load it explains every otherwise-blank wait.
+  var BOOT_LOGO = [
+    ' ██████╗  ██████╗ ███████╗ ██████╗  █████╗  ██████╗',
+    ' ██╔══██╗██╔════╝ ██╔════╝ ██╔══██╗██╔══██╗ ██╔══██╗',
+    ' ██║  ██║██║      ███████╗ ██████╔╝███████║ ██║  ██║',
+    ' ██║  ██║██║      ╚════██║ ██╔═══╝ ██╔══██║ ██║  ██║',
+    ' ██████╔╝╚██████╗ ███████║ ██║     ██║  ██║ ██████╔╝',
+    ' ╚═════╝  ╚═════╝ ╚══════╝ ╚═╝     ╚═╝  ╚═╝ ╚═════╝',
+  ].join('\n');
+  var bootStyle = document.createElement('style');
+  bootStyle.id = 'dcspad-boot-style';
+  var hostNonce = (self && self.nonce) ||
+    (document.querySelector('script[nonce]') && document.querySelector('script[nonce]').nonce);
+  if (hostNonce) bootStyle.setAttribute('nonce', hostNonce);
+  bootStyle.textContent =
+    'html.dcspad-hosted,html.dcspad-hosted body{background:#101216}' +
+    'html.dcspad-hosted #dcspad-mount:before{content:"";position:fixed;inset:0;' +
+    'z-index:998;background:#101216;pointer-events:none}' +
+    '#splash.dcspad-boot-splash{position:fixed;inset:0;z-index:1000;background:#14161b;' +
+    'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;' +
+    'opacity:0;transition:opacity .75s ease;color:#3fd8b4;cursor:pointer}' +
+    '#splash.dcspad-boot-splash.visible{opacity:1}' +
+    '#splash.dcspad-boot-splash.fading{opacity:0;pointer-events:none}' +
+    '#splash.dcspad-boot-splash pre{font:clamp(8px,1.6vw,14px)/1.15 Consolas,monospace;' +
+    'white-space:pre;margin:0}' +
+    '#splash.dcspad-boot-splash pre .dim{color:#2c6a5c}' +
+    '#splash.dcspad-boot-splash .splash-status{min-height:1.4em;color:#a2a9b8;' +
+    'font:12px/1.4 Consolas,monospace;letter-spacing:.04em}' +
+    '#splash.dcspad-boot-splash.failed .splash-status{color:#ff6b62}' +
+    '@media(prefers-reduced-motion:reduce){#splash.dcspad-boot-splash{transition:none}}';
+  document.head.appendChild(bootStyle);
+
+  var bootSplashEl = document.createElement('div');
+  bootSplashEl.id = 'splash';
+  bootSplashEl.className = 'splash dcspad-boot-splash';
+  var bootLogo = document.createElement('pre');
+  bootLogo.id = 'splash-logo';
+  bootLogo.className = 'splash-logo';
+  // Two flat layers, matched in splash.js: the block mass stays accent, the
+  // box-drawing outline drops to the accent-line tone. BOOT_LOGO contains no
+  // HTML-significant characters, so the wrap is injection-safe.
+  bootLogo.innerHTML = BOOT_LOGO.replace(/([═-╬]+)/g, '<span class="dim">$1</span>');
+  var bootStatus = document.createElement('div');
+  bootStatus.id = 'splash-status';
+  bootStatus.className = 'splash-status';
+  bootStatus.setAttribute('role', 'status');
+  bootStatus.setAttribute('aria-live', 'polite');
+  bootStatus.textContent = 'Loading workbench shell…';
+  bootSplashEl.appendChild(bootLogo);
+  bootSplashEl.appendChild(bootStatus);
+  mount.appendChild(bootSplashEl);
+  // Commit the opacity:0 state before adding .visible. A single rAF can be
+  // batched into SharePoint's current render and skip the transition.
+  bootSplashEl.getBoundingClientRect();
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      bootSplashEl.classList.add('visible');
+    });
+  });
+
+  var splashStartedAt = Date.now();
+  var splashMinimumMs = 700;
+  var splashSettled = false;
+  var splashRemoved = false;
+  function removeBootSplash() {
+    if (splashRemoved) return;
+    splashRemoved = true;
+    // Monaco readiness can resolve in the same frame as its final paint.
+    // Give the completed app two frames underneath the opaque curtain, then
+    // fade only the curtain. The app and its dark surround stay fully opaque,
+    // so SharePoint's white wrappers can never show through the midpoint.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        document.documentElement.classList.add('dcspad-crossfading');
+        bootSplashEl.classList.add('fading');
+        setTimeout(function () {
+          if (bootSplashEl.parentNode) bootSplashEl.parentNode.removeChild(bootSplashEl);
+          if (bootStyle.parentNode) bootStyle.parentNode.removeChild(bootStyle);
+          document.documentElement.classList.remove('dcspad-crossfading');
+        }, 800);
+      });
+    });
+  }
+  var bootSplash = {
+    minimum: function (ms) { splashMinimumMs = Math.max(0, Number(ms) || 0); },
+    status: function (message) {
+      if (!splashSettled) bootStatus.textContent = message;
+    },
+    finish: function () {
+      if (splashSettled) return;
+      splashSettled = true;
+      bootStatus.textContent = 'Editor ready';
+      setTimeout(removeBootSplash, Math.max(0, splashMinimumMs - (Date.now() - splashStartedAt)));
+    },
+    fail: function (message) {
+      if (splashRemoved) return false;
+      splashSettled = true;
+      bootSplashEl.classList.remove('fading');
+      bootSplashEl.classList.add('failed', 'visible');
+      bootStatus.textContent = message;
+      return true;
+    },
+    skip: function () {
+      if (splashSettled) return;
+      splashSettled = true;
+      removeBootSplash();
+    },
+  };
+  bootSplashEl.addEventListener('click', bootSplash.skip);
+  window.__DCSPAD_BOOT_SPLASH__ = bootSplash;
+
   function fail(stage, err) {
-    mount.innerHTML = '';
+    var message = 'DCSPad failed to boot at "' + stage + '": ' +
+      (err && err.message ? err.message : String(err));
+    if (bootSplash.fail(message)) return;
     var box = document.createElement('div');
     box.style.cssText =
       'font:13px/1.5 Consolas,monospace;padding:12px;border:1px solid #b00;color:#b00';
-    box.textContent = 'DCSPad failed to boot at "' + stage + '": ' +
-      (err && err.message ? err.message : String(err));
+    box.textContent = message;
     mount.appendChild(box);
   }
-
-  // Hosted-mode flag: app.css pins .app over the viewport when this class
-  // is present (see "Web-part hosting" section there). Standalone
-  // index.html never sets it.
-  document.documentElement.classList.add('dcspad-hosted');
 
   // SharePoint enters page-edit mode via SPA navigation (no reload), so the
   // boot-time guard above never sees it. Watch the URL and suspend the pad
@@ -92,10 +204,17 @@
   // bundled ESM file (dcspad.app.js, built by tools/build-app.mjs) behind a
   // versioned URL: a conditional GET reads its Last-Modified, that stamps
   // the import URL, and a deploy busts exactly one entry. Same for the
-  // stylesheet. index.html is always fetched no-store. The harness is
-  // fetched as text with no-cache by the runner, so it stays fresh on its
-  // own. There is no mixed-version graph because there is no graph.
-  var VERSIONED = ['styles/app.css', 'dcspad.app.js'];
+  // stylesheet. Monaco is a separately generated vendor set whose manifest
+  // versions its runtime, CSS/font, workers and PnPjs declarations together.
+  // index.html is always fetched no-store. The harness is fetched as text
+  // with no-cache by the runner, so it stays fresh on its own.
+  var VERSIONED = [
+    'styles/app.css',
+    'dcspad.app.js',
+    'dcspad.config.json',
+    'vendor/intelligence/manifest.json',
+    'vendor/monaco/version.json',
+  ];
 
   var versions = {};
   var revalidated = Promise.all(VERSIONED.map(function (f) {
@@ -114,6 +233,10 @@
   // The runner fetches src/bridge/harness.js relative to this base (the
   // bundle's import.meta.url would point at the bundle itself).
   window.__DCSPAD_SRC_BASE__ = base + 'src/';
+  // Monaco is one separately-versioned ESM bundle plus same-origin worker,
+  // CSS, font, and type assets. Every file in that vendor set shares the
+  // version stamp below, so workers never resolve relative to the SP page.
+  window.__DCSPAD_ASSET_BASE__ = base;
 
   fetch(base + 'index.html', { credentials: 'same-origin', cache: 'no-store' })
     .then(function (r) {
@@ -121,7 +244,13 @@
       return r.text();
     })
     .then(function (html) {
-      return revalidated.then(function () { return html; });
+      return revalidated.then(function () {
+        window.__DCSPAD_MONACO_VERSION__ = versions['vendor/monaco/version.json'];
+        window.__DCSPAD_INTELLIGENCE_VERSION__ = versions['vendor/intelligence/manifest.json'];
+        window.__DCSPAD_CONFIG_URL__ = versioned('dcspad.config.json');
+        bootSplash.status('Starting application…');
+        return html;
+      });
     })
     .then(function (html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -139,10 +268,11 @@
       // imported below; anything else script-shaped doesn't belong here).
       var frag = document.createDocumentFragment();
       Array.prototype.slice.call(doc.body.children).forEach(function (el) {
-        if (el.tagName !== 'SCRIPT') frag.appendChild(el);
+        if (el.tagName !== 'SCRIPT' && el.id !== 'splash') frag.appendChild(el);
       });
       mount.appendChild(frag);
 
+      bootSplash.status('Starting Monaco editor…');
       return import(versioned('dcspad.app.js'));
     })
     .catch(function (err) { fail('load', err); });
