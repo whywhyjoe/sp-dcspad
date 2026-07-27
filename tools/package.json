@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "build:app": "node build-app.mjs",
-    "build:monaco": "node build-monaco.mjs"
+    "build:monaco": "node build-monaco.mjs",
+    "build:intelligence": "node build-design-intelligence.mjs"
   },
   "keywords": [],
   "author": "",

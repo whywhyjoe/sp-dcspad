@@ -1,7 +1,7 @@
 # Design-system and Alpine intelligence plan
 
-Status: composable registry and Alpine core pack complete; design-system
-generation not started.
+Status: composable registry, Alpine core pack, generated CSS tokens, and
+generated HTML class intelligence complete. Component snippets and icons remain.
 
 ## Inputs now available
 
@@ -26,9 +26,11 @@ eventual SharePoint folder URLs can be placed in `hostedBaseUrl`.
 
 ## Generated artifact
 
-Add a development-only generator under `tools/` which reads the configured
-local sources and emits a small, versioned set under
-`vendor/intelligence/`:
+The development-only generator under `tools/` reads the configured local
+sources and emits a small, versioned set under `vendor/intelligence/`. The
+current token/class phase uses one compact `bsp-design.json` payload plus
+`manifest.json`; later phases can split independently if their payload size or
+release cadence warrants it:
 
 1. `bsp-html-data.json`
    - `<fluent-icon>` attributes and values.
@@ -93,7 +95,8 @@ Provider responsibilities:
    metadata.
 2. **Complete:** Alpine global declarations, HTML directive data, contextual
    shorthand/magic completion, hovers, and editable snippets.
-3. Generated design tokens, classes, and `<fluent-icon>` metadata.
+3. **Complete for requested scope:** generated design tokens and canonical
+   class completion/hover. `<fluent-icon>` metadata moves with the icon phase.
 4. Component/state snippets from the canonical specimens.
 5. Compact icon index with contextual token/markup completion.
 6. Optional deeper Alpine expression analysis (`x-data` members, `$refs`,

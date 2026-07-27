@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DCSPad — SharePoint Developer Workbench</title>
-<link rel="stylesheet" href="styles/app.css">
+<link rel="stylesheet" href="styles/app.css?v=12">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⌘</text></svg>">
 </head>
 <body>
@@ -196,11 +196,31 @@
   </footer>
 </div>
 
+<!-- In-app naming avoids native prompt(), which may be suppressed by
+     SharePoint hosts and browser-controlled/embedded environments. -->
+<dialog id="snippet-name-dialog" class="app-dialog" aria-labelledby="snippet-name-title" aria-describedby="snippet-name-context">
+  <form id="snippet-name-form" class="app-dialog__panel">
+    <div class="app-dialog__head">
+      <h2 id="snippet-name-title">Save snippet</h2>
+      <button id="snippet-name-close" class="btn btn-ghost btn-xs" type="button" aria-label="Close">✕</button>
+    </div>
+    <p id="snippet-name-context" class="app-dialog__context"></p>
+    <label class="app-dialog__field" for="snippet-name-input">
+      <span>Snippet name</span>
+      <input id="snippet-name-input" type="text" maxlength="80" autocomplete="off" required>
+    </label>
+    <div class="app-dialog__actions">
+      <button id="snippet-name-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="snippet-name-save" class="btn btn-run" type="submit">Save snippet</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Hidden pickers for file imports (one per purpose so tests can target them) -->
 <input type="file" id="import-project-file" accept=".json,application/json" hidden>
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js"></script>
+<script type="module" src="src/main.js?v=12"></script>
 </body>
 </html>

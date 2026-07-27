@@ -17,7 +17,7 @@ import { applyFrameworkConfig } from './config.js';
 export const PRESETS = [
   { id: 'dcs-standard', name: 'DCS Standard Include', needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
-  { id: 'pnpjs2', name: 'PnPjs v2 (classic)', js: 'https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnpjs.es5.umd.bundle.min.js',
+  { id: 'pnpjs2', name: 'PnPjs v2 (classic)', js: 'https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js',
     intelligence: ['pnpjs-2.15.0'],
     hint: 'Exposes global pnp — use const { sp } = pnp;' },
   { id: 'alpine', name: 'Alpine.js', js: 'https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js',
@@ -264,6 +264,9 @@ export function hasEnabledPnpjs215Runtime() {
 export function getEnabledIntelligence() {
   const enabled = new Set(getState().libraries.enabled);
   const packs = new Set();
+  for (const group of Object.values(appConfig?.assets || {})) {
+    for (const pack of group.intelligence || []) packs.add(pack);
+  }
   for (const entry of catalog.items) {
     if (!enabled.has(entry.id)) continue;
     const effective = applyFrameworkConfig(entry, appConfig);

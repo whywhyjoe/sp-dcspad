@@ -27,7 +27,8 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
    SharePoint's caching makes a multi-file module graph un-bustable (see
    Gotchas). **Rebuild the app bundle after touching `src/`; rebuild the
    Monaco vendor set after changing Monaco, PnPjs types, or
-   `tools/build-monaco.mjs`.** Monaco lives under `vendor/monaco/` as one
+   `tools/build-monaco.mjs`; regenerate `vendor/intelligence/` after changing
+   configured BMO design-system CSS.** Monaco lives under `vendor/monaco/` as one
    ESM entry, CSS/font assets, same-origin classic `.js` workers, and the
    exact PnPjs 2.15.0 declaration graph. There are no CDN, blob-worker, or
    `.mjs` dependencies. `boot.js` versions the complete set through
@@ -45,13 +46,16 @@ dcspad.app.js             generated single-file ESM bundle of src/ (tools/build-
                           what the web part actually runs — rebuild on every deploy
 styles/app.css            all styling; layout via CSS grid + JS-set vars (--sidebar-w etc.)
 vendor/monaco/            generated Monaco runtime, workers, CSS/font + PnPjs type graph
+vendor/intelligence/      generated BMO design-token/class data + version manifest
 tools/build-monaco.mjs    reproducible Monaco/PnPjs vendor build; never hand-edit its output
+tools/build-design-intelligence.mjs deterministic BMO CSS/class intelligence generator
 src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
 src/editors.js            Monaco adapter; 3 models, Mod-Enter, PnPjs types, stack jumps
 src/monaco-runtime.js     hosted/standalone asset URLs + same-origin worker wiring
 src/config.js             loads/normalizes editable dcspad.config.json runtime URLs
 src/intelligence/alpine.js Alpine v3 JS declarations + HTML data/completion provider
+src/intelligence/bsp.js   BMO CSS-token + HTML-class completion/hover providers
 src/state.js              defaults + deep-merge load + debounced autosave; loadDoc/saveDoc
                           for the catalog + snippet documents (sole localStorage toucher)
 src/io.js                 file download + JSON file-picker helpers (no storage)
@@ -76,13 +80,14 @@ REVIEW-LOG.md             external-review triage record + accepted low-priority 
 
 ```bash
 python3 -m http.server 8642     # from the repo root; app at http://localhost:8642/index.html
+cd tools && npm run build:intelligence  # after configured design-system CSS changes
 ```
 
 Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected. Live PnPjs/REST behavior can only be validated in a tenant (deployment + validation checklist in README.md). Run the test suites (below) after any change to runner/harness/console/inspector — they exist because this project's failure modes are timing- and boundary-shaped, not type-shaped.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (22: typed models, editor integration, PnPjs and Alpine JS/HTML completion, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (6: runtime URL config, explicit intelligence, ordered fallback), `hosted.mjs` (10: early/delayed splash, exact boot/bundle/config path, versioned hosted assets and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 98 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (26: typed models, editor integration, PnPjs/Alpine/BMO completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (7: runtime URL config, framework and asset intelligence, ordered fallback), `hosted.mjs` (10: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 103 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 
@@ -93,8 +98,8 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
   revalidation never refreshes what `import` uses); and the modern page
   freezes import-map registration (late maps are silently ignored). Hence
   hosted mode loads ONE bundled ESM file behind a Last-Modified-versioned
-  URL (boot.js `VERSIONED` list: app.css + dcspad.app.js + the Monaco
-  runtime manifest; index.html is
+  URL (boot.js `VERSIONED` list: app.css + dcspad.app.js + config + the Monaco
+  and design-intelligence manifests; index.html is
   no-store; the harness is runtime-fetched with no-cache). Consequences:
   **rebuild `dcspad.app.js` on every deploy** (`deploy/Sync-Live.ps1` does
   it), and **a boot.js change needs the `?v=` bump in dcspad.webpart.html**

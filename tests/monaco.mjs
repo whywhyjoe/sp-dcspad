@@ -124,6 +124,57 @@ await check('JavaScript semantic diagnostics render', () =>
   page.waitForFunction(() => document.querySelectorAll('.squiggly-error').length > 0)
     .then(() => true, () => false));
 
+await page.waitForFunction(() =>
+  document.documentElement.dataset.bspIntelligence === 'ready');
+await check('generated BMO design intelligence includes documented tokens and classes', () =>
+  page.evaluate(async () => {
+    const response = await fetch('/vendor/intelligence/bsp-design.json');
+    const data = await response.json();
+    const token = data.tokens.find((item) => item.name === '--fg-primary');
+    const classItem = data.classes.find((item) => item.name === 'btn--primary');
+    return data.pack === 'bsp-design'
+      && data.tokens.length > 150
+      && data.classes.length > 350
+      && token?.value === 'var(--bmo-slate)'
+      && token.description
+      && classItem?.base === 'btn'
+      && classItem.description;
+  }));
+
+await setDoc('css', 'main { color: var(--fg-p');
+await page.waitForTimeout(300);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('BMO CSS completion includes documented custom properties', async () =>
+  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
+    .some((text) => text.startsWith('--fg-primary')));
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<button class="btn btn--p');
+await page.waitForTimeout(300);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('BMO HTML class completion includes canonical BEM modifiers', async () =>
+  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
+    .some((text) => text.startsWith('btn--primary')));
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<button class="btn btn--primary">Save</button>');
+await page.evaluate(async () => {
+  const monaco = await import('/vendor/monaco/monaco.js');
+  const editor = monaco.editor.getEditors()[0];
+  editor.setPosition({ lineNumber: 1, column: 24 });
+  editor.trigger('dcspad-test', 'editor.action.showHover', {});
+});
+await page.waitForSelector('.monaco-hover-content');
+await check('BMO HTML class hover explains BEM composition and source', async () => {
+  const hover = (await page.locator('.monaco-hover-content').allTextContents()).join(' ');
+  return hover.includes('BEM modifier')
+    && hover.includes('Compose with .btn')
+    && hover.includes('components.css');
+});
+await page.keyboard.press('Escape');
+
 const alpineRow = page.locator('.lib-item', { hasText: 'Alpine.js' });
 await alpineRow.locator('input[type="checkbox"]').check();
 await page.waitForFunction(() =>
@@ -209,12 +260,14 @@ await check('Alpine declarations unload with the runtime library', () =>
     const paths = Object.keys(
       monaco.typescript.javascriptDefaults.getExtraLibs(),
     );
-    return !paths.some((path) => path.includes('@types/dcspad-alpine'));
+    return !paths.some((path) => path.includes('@types/dcspad-alpine'))
+      && document.documentElement.dataset.bspIntelligence === 'ready';
   }));
 
 await setDoc('js', 'SNIPPET_UNDO_MARKER();');
-page.once('dialog', (dialog) => dialog.accept('undo-boundary'));
 await page.click('#btn-snippet-add');
+await page.fill('#snippet-name-input', 'undo-boundary');
+await page.click('#snippet-name-save');
 await setDoc('js', 'const KEEP_BEFORE_SNIPPET = true;');
 await focusEditor();
 await page.keyboard.press('Control+End');

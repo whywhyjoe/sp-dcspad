@@ -10,6 +10,14 @@ import {
   ALPINE_PACK_ID,
   createAlpineHtmlCompletionProvider,
 } from './intelligence/alpine.js';
+import {
+  BSP_PACK_ID,
+  createBspCssCompletionProvider,
+  createBspCssHoverProvider,
+  createBspHtmlClassCompletionProvider,
+  createBspHtmlClassHoverProvider,
+  fetchBspIntelligence,
+} from './intelligence/bsp.js';
 
 const NAMES = ['html', 'css', 'js'];
 const LANGUAGES = { html: 'html', css: 'css', js: 'javascript' };
@@ -30,6 +38,9 @@ export async function initEditors({ onChange, onRunShortcut }) {
   let active = NAMES.includes(state.layout.editorTab) ? state.layout.editorTab : 'js';
   let desiredPnpTypes = false;
   let pnpTypesGeneration = 0;
+  let desiredBspIntelligence = false;
+  let bspIntelligenceGeneration = 0;
+  let bspIntelligence = null;
   const jsLibraryPacks = new Map();
   const htmlDataPacks = new Map();
   const enabledIntelligence = new Set();
@@ -134,6 +145,24 @@ export async function initEditors({ onChange, onRunShortcut }) {
       () => enabledIntelligence.has(ALPINE_PACK_ID),
     ),
   );
+  const bspRegistrations = [
+    monaco.languages.registerCompletionItemProvider(
+      'css',
+      createBspCssCompletionProvider(monaco, () => bspIntelligence),
+    ),
+    monaco.languages.registerHoverProvider(
+      'css',
+      createBspCssHoverProvider(() => bspIntelligence),
+    ),
+    monaco.languages.registerCompletionItemProvider(
+      'html',
+      createBspHtmlClassCompletionProvider(monaco, () => bspIntelligence),
+    ),
+    monaco.languages.registerHoverProvider(
+      'html',
+      createBspHtmlClassHoverProvider(() => bspIntelligence),
+    ),
+  ];
 
   for (const name of NAMES) {
     models[name] = monaco.editor.createModel(
@@ -235,10 +264,36 @@ export async function initEditors({ onChange, onRunShortcut }) {
     }
   }
 
+  async function setBspIntelligenceEnabled(enabled) {
+    desiredBspIntelligence = !!enabled;
+    const generation = ++bspIntelligenceGeneration;
+    if (!desiredBspIntelligence) {
+      bspIntelligence = null;
+      enabledIntelligence.delete(BSP_PACK_ID);
+      document.documentElement.dataset.bspIntelligence = 'disabled';
+      return;
+    }
+    enabledIntelligence.add(BSP_PACK_ID);
+    document.documentElement.dataset.bspIntelligence = 'loading';
+    try {
+      const data = await fetchBspIntelligence();
+      if (!desiredBspIntelligence || generation !== bspIntelligenceGeneration) return;
+      bspIntelligence = data;
+      document.documentElement.dataset.bspIntelligence = 'ready';
+    } catch (error) {
+      if (generation !== bspIntelligenceGeneration) return;
+      bspIntelligence = null;
+      enabledIntelligence.delete(BSP_PACK_ID);
+      document.documentElement.dataset.bspIntelligence = 'error';
+      console.warn('DCSPad: BMO design-system intelligence could not be loaded', error);
+    }
+  }
+
   function setIntelligencePacks(packIds) {
     const requested = new Set(packIds || []);
     setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
     setPnpTypesEnabled(requested.has('pnpjs-2.15.0'));
+    setBspIntelligenceEnabled(requested.has(BSP_PACK_ID));
   }
 
   reportCursor();
@@ -296,6 +351,7 @@ export async function initEditors({ onChange, onRunShortcut }) {
     dispose: () => {
       resizeObserver.disconnect();
       alpineCompletionRegistration.dispose();
+      for (const registration of bspRegistrations) registration.dispose();
       editor.dispose();
       for (const model of Object.values(models)) model.dispose();
     },

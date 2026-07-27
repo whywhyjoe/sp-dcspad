@@ -6,7 +6,7 @@
     "items": {
       "pnpjs2": {
         "localUrl": "",
-        "cdnUrl": "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnpjs.es5.umd.bundle.min.js",
+        "cdnUrl": "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js",
         "probeGlobal": "pnp",
         "intelligence": [
           "pnpjs-2.15.0"
@@ -27,6 +27,9 @@
       "prefer": "local",
       "localBaseUrl": "./bsp-design-system/",
       "hostedBaseUrl": "",
+      "intelligence": [
+        "bsp-design"
+      ],
       "files": {
         "tokens": "colors_and_type.css",
         "components": "components.css",

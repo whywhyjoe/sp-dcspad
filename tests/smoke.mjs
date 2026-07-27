@@ -316,8 +316,11 @@ await check('catalog file round-trip restores entries', () =>
 await setJs('var SNIPPET_MARKER = 42;');
 await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
 await page.keyboard.press('Control+a');
-page.once('dialog', (d) => d.accept('my-snip'));
 await page.click('#btn-snippet-add');
+await check('snippet naming dialog opens', () =>
+  page.locator('#snippet-name-dialog').evaluate((dialog) => dialog.open));
+await page.fill('#snippet-name-input', 'my-snip');
+await page.click('#snippet-name-save');
 await check('snippet saved from selection', async () =>
   (await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).count()) === 1);
 

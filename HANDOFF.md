@@ -1,7 +1,8 @@
 # Handoff — DCSPad
 
 Read `CLAUDE.md` first for architecture invariants; this file covers **state**
-and **what's next**. Last updated: 2026-07-26, the Monaco migration.
+and **what's next**. Last updated: 2026-07-26, Monaco plus generated BMO
+design-system intelligence.
 
 ## Where things stand
 
@@ -113,11 +114,11 @@ inspector, REPL and network capture all work inside the web part; a live
 - The PnPjs 2.15.0 type pack can now follow a custom rollup through explicit
   metadata even when its URL is opaque.
 - The imported BMO SharePoint design-system and Fluent-icon repositories are
-  reviewed but not copied by `Sync-Live.ps1`. Their local and eventual hosted
-  base folders live under `assets` in the config. The generation/integration
-  design is in `plans/design-system-intellisense.md`.
-- `tests/config.mjs` covers URL resolution, explicit PnP intelligence, and
-  ordered primary/fallback loading.
+  source inputs and are not copied by `Sync-Live.ps1`. Their local and eventual
+  hosted base folders live under `assets` in the config. The generated compact
+  runtime data is copied under `vendor/intelligence/`.
+- `tests/config.mjs` covers URL resolution, config-enabled asset intelligence,
+  explicit PnP intelligence, and ordered primary/fallback loading.
 
 ### Alpine intelligence (2026-07-26)
 
@@ -135,7 +136,24 @@ inspector, REPL and network capture all work inside the web part; a live
   nearest `x-data` object remains the later deep-expression phase.
 - `tests/monaco.mjs` now verifies Alpine JS, HTML directives, magics, pack
   coexistence, unloading, legacy-catalog detection, and false diagnostics. The
-  complete browser suite is 98 checks.
+  complete browser suite is 103 checks.
+
+### BMO design-system intelligence (2026-07-26)
+
+- `tools/build-design-intelligence.mjs` reads the configured local
+  `colors_and_type.css`, `components.css`, and `editorial.css` files and emits
+  deterministic `vendor/intelligence/bsp-design.json` plus `manifest.json`.
+- The current artifact contains 164 CSS custom properties and 375 canonical
+  classes. Records include values, categories, nearby source documentation,
+  source line numbers, BEM kind/base relationships, and Editorial-mode scope.
+- `assets.designSystem.intelligence: ["bsp-design"]` enables the pack
+  independently of framework checkboxes. CSS completion/hover works inside
+  `var(--...)`; HTML completion/hover works inside `class=""`.
+- Hosted mode versions the intelligence manifest as a unit. Because `boot.js`
+  changed for that version seam, `dcspad.webpart.html` is now at `boot.js?v=11`.
+- `Sync-Live.ps1` regenerates intelligence before rebuilding/copying the app.
+  The design-system source folder remains a development input, not a runtime
+  dependency.
 
 ## Open items
 

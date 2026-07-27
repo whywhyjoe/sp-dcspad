@@ -57,8 +57,12 @@ function Copy-DirectoryContents {
     }
 }
 
-Write-Host "Building dcspad.app.js…" -ForegroundColor Cyan
+Write-Host "Building design-system intelligence…" -ForegroundColor Cyan
 Push-Location (Join-Path $repo 'tools')
+node build-design-intelligence.mjs
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "design-system intelligence build failed" }
+
+Write-Host "Building dcspad.app.js…" -ForegroundColor Cyan
 node build-app.mjs
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "bundle build failed" }
 Pop-Location

@@ -41,9 +41,12 @@ URLs without editing or rebuilding the application.
   custom PnPjs rollup can therefore keep `["pnpjs-2.15.0"]` even when its URL
   does not contain a recognizable package/version path.
 - `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
-  hosted base folders plus the files DCSPad's generated autocomplete will
-  consume. Relative local paths resolve from `dcspad.config.json`; hosted
-  locations may be absolute SharePoint URLs.
+  hosted base folders. Relative local paths resolve from `dcspad.config.json`;
+  hosted locations may be absolute SharePoint URLs.
+- `assets.designSystem.intelligence: ["bsp-design"]` enables the generated BMO
+  design-system pack independently of framework checkboxes. Remove that ID to
+  disable it. The browser loads the compact versioned artifact under
+  `vendor/intelligence/`, never the source CSS repository.
 
 Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
 their existing CDN URLs until local copies are filled in. Hosted mode versions
@@ -96,7 +99,7 @@ Or by hand:
 |---|---|
 | Run | `Run` button or `Ctrl/Cmd+Enter` anywhere in an editor |
 | Auto-run | Toggle in the toolbar; re-runs ~800 ms after you stop typing |
-| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types; enabling Alpine adds v3 JavaScript API, HTML directive, shorthand, magic-property, hover and snippet intelligence |
+| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types; enabling Alpine adds v3 JavaScript API and HTML intelligence; the configured `bsp-design` pack adds documented BMO CSS custom properties and canonical HTML class names |
 | Editor status | The status bar shows `Monaco ✓`; `Monaco ⚠` remains visible if a worker is blocked, even after running code |
 | Top-level `await` | Settings ⚙ → "Run JS as module" (strict mode; `var` won't become window globals) |
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
@@ -122,6 +125,12 @@ Framework intelligence follows the enabled runtime checkbox.
 - **Alpine HTML magics:** type `<button x-data @click="$d`, then press
   `Ctrl+Space`; `$dispatch` should be offered. `$refs`, `$store`, `$watch`,
   `$nextTick`, `$root`, `$data`, `$id`, `$el`, and `$event` are also included.
+- **BMO CSS tokens:** type `color: var(--fg-p`, then press `Ctrl+Space`;
+  `--fg-primary` should be offered with its resolved design-system value,
+  category, source line, and hover documentation.
+- **BMO HTML classes:** type `<button class="btn btn--p`, then press
+  `Ctrl+Space`; `btn--primary` should be offered as a BEM modifier with
+  `.btn` composition guidance and source documentation.
 
 The first Alpine pack understands the stable core API and whether the cursor is
 inside an Alpine attribute. It does not yet infer arbitrary properties declared
@@ -144,12 +153,15 @@ Console output and network response bodies are rendered by an inspector that und
 index.html            app shell
 styles/app.css        theme + layout
 vendor/monaco/        generated Monaco runtime, workers, CSS/font + PnPjs 2.15 types
+vendor/intelligence/  generated compact BMO token/class data + version manifest
 tools/build-monaco.mjs reproducible Monaco/PnPjs vendor build (esbuild)
+tools/build-design-intelligence.mjs deterministic BMO CSS/class data generator
 src/
   main.js             bootstrap/wiring
   layout.js           splitters, tabs, collapse/maximize (persisted)
   editors.js          Monaco adapter: three models, language tools, editor API
   monaco-runtime.js   standalone/hosted asset and same-origin worker loading
+  intelligence/bsp.js BMO CSS-token and HTML-class completion/hover providers
   state.js            workspace state + debounced autosave
   runner.js           document assembly + iframe lifecycle
   libraries.js        preset catalog + custom URLs
@@ -166,6 +178,11 @@ Monaco is fully vendored: the ESM runtime, CSS/font, classic same-origin `.js`
 workers, and exact PnPjs 2.15.0 declaration graph. There is no runtime CDN,
 blob worker, or `.mjs` dependency. From `tools/`, run `npm run build:monaco`
 after changing the pinned editor/type versions or the vendor builder.
+
+Design-system intelligence is generated rather than scraped in the browser.
+From `tools/`, run `npm run build:intelligence` after changing the configured
+local design-system CSS. `deploy/Sync-Live.ps1` runs that generator and the app
+bundle build automatically.
 
 ## Tests
 

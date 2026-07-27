@@ -208,6 +208,7 @@
     'styles/app.css',
     'dcspad.app.js',
     'dcspad.config.json',
+    'vendor/intelligence/manifest.json',
     'vendor/monaco/version.json',
   ];
 
@@ -241,6 +242,7 @@
     .then(function (html) {
       return revalidated.then(function () {
         window.__DCSPAD_MONACO_VERSION__ = versions['vendor/monaco/version.json'];
+        window.__DCSPAD_INTELLIGENCE_VERSION__ = versions['vendor/intelligence/manifest.json'];
         window.__DCSPAD_CONFIG_URL__ = versioned('dcspad.config.json');
         bootSplash.status('Starting application…');
         return html;

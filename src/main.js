@@ -10,7 +10,7 @@ import {
   initLibraries, getEnabledLibraries, getCatalogDoc, replaceCatalog,
   unknownLibraryIds, refreshLibraryUI, getEnabledIntelligence,
 } from './libraries.js';
-import { initSnippets } from './snippets.js';
+import { initSnippets } from './snippets.js?v=2';
 import { downloadText, wireJsonImport } from './io.js';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import { showSplash } from './splash.js';

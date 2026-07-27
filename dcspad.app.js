@@ -588,6 +588,228 @@ function createAlpineHtmlCompletionProvider(monaco, isEnabled) {
   };
 }
 
+// ../src/intelligence/bsp.js
+var BSP_PACK_ID = "bsp-design";
+var dataPromise = null;
+function artifactUrl() {
+  const root = window.__DCSPAD_ASSET_BASE__ || new URL("../../", import.meta.url).href;
+  const url = new URL("vendor/intelligence/bsp-design.json", root);
+  const version = window.__DCSPAD_INTELLIGENCE_VERSION__;
+  if (version) url.searchParams.set("v", version);
+  return url.href;
+}
+function prepareData(raw) {
+  if (raw?.schemaVersion !== 1 || raw?.pack !== BSP_PACK_ID || !Array.isArray(raw.tokens) || !Array.isArray(raw.classes)) {
+    throw new Error("unsupported or malformed bsp-design.json");
+  }
+  return {
+    ...raw,
+    tokenByName: new Map(raw.tokens.map((token) => [token.name, token])),
+    classByName: new Map(raw.classes.map((item) => [item.name, item]))
+  };
+}
+function fetchBspIntelligence() {
+  if (!dataPromise) {
+    dataPromise = fetch(artifactUrl(), {
+      credentials: "same-origin",
+      cache: "no-cache"
+    }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status} loading BSP intelligence`);
+      return response.json();
+    }).then(prepareData).catch((error) => {
+      dataPromise = null;
+      throw error;
+    });
+  }
+  return dataPromise;
+}
+function markdownToken(token) {
+  const scope = token.scope === "editorial" ? "\n\nScoped to **`.editorial`**." : "";
+  return [
+    `**\`${token.name}\`** \xB7 ${token.category}`,
+    token.description,
+    `Value: \`${token.value}\`${scope}`,
+    `Source: \`${token.source.file}:${token.source.line}\``
+  ].filter(Boolean).join("\n\n");
+}
+function markdownClass(item) {
+  const labels = {
+    base: "base/component",
+    element: "BEM element",
+    modifier: "BEM modifier",
+    state: "state",
+    utility: "utility"
+  };
+  const requirements = item.base ? `
+
+Compose with **\`.${item.base}\`**.` : "";
+  const scope = item.scopes?.includes("editorial") ? "\n\nAvailable in **Editorial mode**." : "";
+  return [
+    `**\`.${item.name}\`** \xB7 ${labels[item.kind] || item.kind}`,
+    `${item.description}${requirements}${scope}`,
+    `Source: \`${item.source.file}:${item.source.line}\``
+  ].filter(Boolean).join("\n\n");
+}
+function cssTokenAt(model, position) {
+  const line = model.getLineContent(position.lineNumber);
+  const offset = position.column - 1;
+  const pattern = /--[\w-]+/g;
+  let match;
+  while (match = pattern.exec(line)) {
+    if (offset >= match.index && offset <= match.index + match[0].length) {
+      return {
+        name: match[0],
+        range: {
+          startLineNumber: position.lineNumber,
+          startColumn: match.index + 1,
+          endLineNumber: position.lineNumber,
+          endColumn: match.index + match[0].length + 1
+        }
+      };
+    }
+  }
+  return null;
+}
+function cssCompletionContext(model, position) {
+  const before = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+  const variable = before.match(/var\(\s*(--[\w-]*)?$/);
+  const declaration = before.match(/^\s*(--[\w-]*)$/);
+  const prefix = variable ? variable[1] || "" : declaration?.[1];
+  if (prefix === void 0) return null;
+  return {
+    prefix,
+    range: {
+      startLineNumber: position.lineNumber,
+      startColumn: position.column - prefix.length,
+      endLineNumber: position.lineNumber,
+      endColumn: position.column
+    }
+  };
+}
+function createBspCssCompletionProvider(monaco, getData) {
+  return {
+    triggerCharacters: ["-", "("],
+    provideCompletionItems(model, position) {
+      const data = getData();
+      const context = data && cssCompletionContext(model, position);
+      if (!context) return { suggestions: [] };
+      return {
+        suggestions: data.tokens.map((token) => ({
+          label: token.name,
+          kind: monaco.languages.CompletionItemKind.Variable,
+          detail: `${token.category} \xB7 ${token.value}`,
+          documentation: { value: markdownToken(token) },
+          insertText: token.name,
+          filterText: token.name,
+          sortText: token.name,
+          range: context.range
+        }))
+      };
+    }
+  };
+}
+function createBspCssHoverProvider(getData) {
+  return {
+    provideHover(model, position) {
+      const data = getData();
+      const target = data && cssTokenAt(model, position);
+      const token = target && data.tokenByName.get(target.name);
+      if (!token) return null;
+      return {
+        range: target.range,
+        contents: [{ value: markdownToken(token) }]
+      };
+    }
+  };
+}
+function classAttributeBeforeCursor(model, position) {
+  const offset = model.getOffsetAt(position);
+  const start = Math.max(0, offset - 6e3);
+  const before = model.getValue().slice(start, offset);
+  const match = before.match(/\bclass\s*=\s*(["'])([^"']*)$/i);
+  if (!match) return null;
+  const value = match[2];
+  const prefix = value.match(/[^\s]*$/)?.[0] || "";
+  return {
+    value,
+    prefix,
+    startOffset: offset - prefix.length
+  };
+}
+function classTokenAt(model, position) {
+  const value = model.getValue();
+  const offset = model.getOffsetAt(position);
+  const before = value.slice(Math.max(0, offset - 6e3), offset);
+  const open = before.match(/\bclass\s*=\s*(["'])([^"']*)$/i);
+  if (!open) return null;
+  const quote = open[1];
+  const valueStart = offset - open[2].length;
+  const close = value.indexOf(quote, offset);
+  if (close < 0) return null;
+  let start = offset;
+  let end = offset;
+  while (start > valueStart && !/\s/.test(value[start - 1])) start--;
+  while (end < close && !/\s/.test(value[end])) end++;
+  const name = value.slice(start, end);
+  if (!name) return null;
+  const startPosition = model.getPositionAt(start);
+  const endPosition = model.getPositionAt(end);
+  return {
+    name,
+    range: {
+      startLineNumber: startPosition.lineNumber,
+      startColumn: startPosition.column,
+      endLineNumber: endPosition.lineNumber,
+      endColumn: endPosition.column
+    }
+  };
+}
+function createBspHtmlClassCompletionProvider(monaco, getData) {
+  return {
+    triggerCharacters: [" ", "-", "_"],
+    provideCompletionItems(model, position) {
+      const data = getData();
+      const context = data && classAttributeBeforeCursor(model, position);
+      if (!context) return { suggestions: [] };
+      const present = new Set(context.value.trim().split(/\s+/).filter(Boolean));
+      present.delete(context.prefix);
+      const startPosition = model.getPositionAt(context.startOffset);
+      const range = new monaco.Range(
+        startPosition.lineNumber,
+        startPosition.column,
+        position.lineNumber,
+        position.column
+      );
+      return {
+        suggestions: data.classes.filter((item) => !present.has(item.name)).map((item) => ({
+          label: item.name,
+          kind: monaco.languages.CompletionItemKind.Class,
+          detail: `BMO design system \xB7 ${item.kind}`,
+          documentation: { value: markdownClass(item) },
+          insertText: item.name,
+          filterText: item.name,
+          sortText: `${item.kind === "base" ? "0" : "1"}-${item.name}`,
+          range
+        }))
+      };
+    }
+  };
+}
+function createBspHtmlClassHoverProvider(getData) {
+  return {
+    provideHover(model, position) {
+      const data = getData();
+      const target = data && classTokenAt(model, position);
+      const item = target && data.classByName.get(target.name);
+      if (!item) return null;
+      return {
+        range: target.range,
+        contents: [{ value: markdownClass(item) }]
+      };
+    }
+  };
+}
+
 // ../src/editors.js
 var NAMES = ["html", "css", "js"];
 var LANGUAGES = { html: "html", css: "css", js: "javascript" };
@@ -607,6 +829,9 @@ async function initEditors({ onChange, onRunShortcut }) {
   let active = NAMES.includes(state3.layout.editorTab) ? state3.layout.editorTab : "js";
   let desiredPnpTypes = false;
   let pnpTypesGeneration = 0;
+  let desiredBspIntelligence = false;
+  let bspIntelligenceGeneration = 0;
+  let bspIntelligence = null;
   const jsLibraryPacks = /* @__PURE__ */ new Map();
   const htmlDataPacks = /* @__PURE__ */ new Map();
   const enabledIntelligence = /* @__PURE__ */ new Set();
@@ -705,6 +930,24 @@ async function initEditors({ onChange, onRunShortcut }) {
       () => enabledIntelligence.has(ALPINE_PACK_ID)
     )
   );
+  const bspRegistrations = [
+    monaco.languages.registerCompletionItemProvider(
+      "css",
+      createBspCssCompletionProvider(monaco, () => bspIntelligence)
+    ),
+    monaco.languages.registerHoverProvider(
+      "css",
+      createBspCssHoverProvider(() => bspIntelligence)
+    ),
+    monaco.languages.registerCompletionItemProvider(
+      "html",
+      createBspHtmlClassCompletionProvider(monaco, () => bspIntelligence)
+    ),
+    monaco.languages.registerHoverProvider(
+      "html",
+      createBspHtmlClassHoverProvider(() => bspIntelligence)
+    )
+  ];
   for (const name of NAMES) {
     models[name] = monaco.editor.createModel(
       state3[name],
@@ -797,10 +1040,35 @@ async function initEditors({ onChange, onRunShortcut }) {
       console.warn("DCSPad: PnPjs IntelliSense could not be loaded", error);
     }
   }
+  async function setBspIntelligenceEnabled(enabled) {
+    desiredBspIntelligence = !!enabled;
+    const generation = ++bspIntelligenceGeneration;
+    if (!desiredBspIntelligence) {
+      bspIntelligence = null;
+      enabledIntelligence.delete(BSP_PACK_ID);
+      document.documentElement.dataset.bspIntelligence = "disabled";
+      return;
+    }
+    enabledIntelligence.add(BSP_PACK_ID);
+    document.documentElement.dataset.bspIntelligence = "loading";
+    try {
+      const data = await fetchBspIntelligence();
+      if (!desiredBspIntelligence || generation !== bspIntelligenceGeneration) return;
+      bspIntelligence = data;
+      document.documentElement.dataset.bspIntelligence = "ready";
+    } catch (error) {
+      if (generation !== bspIntelligenceGeneration) return;
+      bspIntelligence = null;
+      enabledIntelligence.delete(BSP_PACK_ID);
+      document.documentElement.dataset.bspIntelligence = "error";
+      console.warn("DCSPad: BMO design-system intelligence could not be loaded", error);
+    }
+  }
   function setIntelligencePacks(packIds) {
     const requested = new Set(packIds || []);
     setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
     setPnpTypesEnabled(requested.has("pnpjs-2.15.0"));
+    setBspIntelligenceEnabled(requested.has(BSP_PACK_ID));
   }
   reportCursor();
   return {
@@ -854,6 +1122,7 @@ async function initEditors({ onChange, onRunShortcut }) {
     dispose: () => {
       resizeObserver.disconnect();
       alpineCompletionRegistration.dispose();
+      for (const registration of bspRegistrations) registration.dispose();
       editor.dispose();
       for (const model of Object.values(models)) model.dispose();
     }
@@ -1752,6 +2021,7 @@ function normalizeAssetGroup(raw, configUrl2, defaultPreference) {
     prefer: sourcePreference(raw.prefer, defaultPreference),
     localBaseUrl: resolveUrl(raw.localBaseUrl, configUrl2, { folder: true }),
     hostedBaseUrl: resolveUrl(raw.hostedBaseUrl, configUrl2, { folder: true }),
+    intelligence: Array.isArray(raw.intelligence) ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))] : [],
     files
   };
 }
@@ -1846,7 +2116,7 @@ var PRESETS = [
   {
     id: "pnpjs2",
     name: "PnPjs v2 (classic)",
-    js: "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnpjs.es5.umd.bundle.min.js",
+    js: "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js",
     intelligence: ["pnpjs-2.15.0"],
     hint: "Exposes global pnp \u2014 use const { sp } = pnp;"
   },
@@ -2056,6 +2326,9 @@ function isAlpine3Runtime(entry) {
 function getEnabledIntelligence() {
   const enabled = new Set(getState().libraries.enabled);
   const packs = /* @__PURE__ */ new Set();
+  for (const group of Object.values(appConfig?.assets || {})) {
+    for (const pack of group.intelligence || []) packs.add(pack);
+  }
   for (const entry of catalog.items) {
     if (!enabled.has(entry.id)) continue;
     const effective = applyFrameworkConfig(entry, appConfig);
@@ -2126,22 +2399,48 @@ function wireJsonImport(inputId, onDoc) {
   return input;
 }
 
-// ../src/snippets.js
+// ../src/snippets.js?v=2
 var doc = null;
 var deps3 = {};
 function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
   deps3 = { getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError };
   doc = loadDoc(SNIPPETS_KEY) || { v: 1, items: [] };
   render2();
+  const dialog = document.getElementById("snippet-name-dialog");
+  const form = document.getElementById("snippet-name-form");
+  const input = document.getElementById("snippet-name-input");
+  const context = document.getElementById("snippet-name-context");
+  let pendingSnippet = null;
+  const closeNamingDialog = () => {
+    pendingSnippet = null;
+    if (dialog.open) dialog.close();
+  };
   document.getElementById("btn-snippet-add").addEventListener("click", () => {
     const lang = getState().layout.editorTab;
-    const code = deps3.getSelection(lang) || deps3.getDocs()[lang];
+    const selection = deps3.getSelection(lang);
+    const code = selection || deps3.getDocs()[lang];
     if (!code.trim()) return;
-    const name = prompt("Snippet name:");
-    if (!name || !name.trim()) return;
-    doc.items.push({ id: newId("snip"), name: name.trim(), lang, code, createdAt: Date.now() });
+    pendingSnippet = { lang, code };
+    input.value = "";
+    context.textContent = `Save ${selection ? "the selected" : "all"} ${lang.toUpperCase()} code as a reusable snippet.`;
+    if (!dialog.open) dialog.showModal();
+    requestAnimationFrame(() => input.focus());
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!pendingSnippet || !name) return;
+    const { lang, code } = pendingSnippet;
+    doc.items.push({ id: newId("snip"), name, lang, code, createdAt: Date.now() });
     persist2();
     render2();
+    pendingSnippet = null;
+    dialog.close();
+  });
+  document.getElementById("snippet-name-cancel").addEventListener("click", closeNamingDialog);
+  document.getElementById("snippet-name-close").addEventListener("click", closeNamingDialog);
+  dialog.addEventListener("cancel", () => {
+    pendingSnippet = null;
   });
   document.getElementById("btn-snippets-export").addEventListener("click", () => {
     downloadText("dcspad-snippets.json", JSON.stringify(doc, null, 2));

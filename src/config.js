@@ -72,6 +72,9 @@ function normalizeAssetGroup(raw, configUrl, defaultPreference) {
     prefer: sourcePreference(raw.prefer, defaultPreference),
     localBaseUrl: resolveUrl(raw.localBaseUrl, configUrl, { folder: true }),
     hostedBaseUrl: resolveUrl(raw.hostedBaseUrl, configUrl, { folder: true }),
+    intelligence: Array.isArray(raw.intelligence)
+      ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))]
+      : [],
     files,
   };
 }

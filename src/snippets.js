@@ -15,16 +15,45 @@ export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEdit
   doc = loadDoc(SNIPPETS_KEY) || { v: 1, items: [] };
   render();
 
+  const dialog = document.getElementById('snippet-name-dialog');
+  const form = document.getElementById('snippet-name-form');
+  const input = document.getElementById('snippet-name-input');
+  const context = document.getElementById('snippet-name-context');
+  let pendingSnippet = null;
+
+  const closeNamingDialog = () => {
+    pendingSnippet = null;
+    if (dialog.open) dialog.close();
+  };
+
   document.getElementById('btn-snippet-add').addEventListener('click', () => {
     const lang = getState().layout.editorTab;
-    const code = deps.getSelection(lang) || deps.getDocs()[lang];
+    const selection = deps.getSelection(lang);
+    const code = selection || deps.getDocs()[lang];
     if (!code.trim()) return;
-    const name = prompt('Snippet name:');
-    if (!name || !name.trim()) return;
-    doc.items.push({ id: newId('snip'), name: name.trim(), lang, code, createdAt: Date.now() });
+
+    pendingSnippet = { lang, code };
+    input.value = '';
+    context.textContent = `Save ${selection ? 'the selected' : 'all'} ${lang.toUpperCase()} code as a reusable snippet.`;
+    if (!dialog.open) dialog.showModal();
+    requestAnimationFrame(() => input.focus());
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!pendingSnippet || !name) return;
+    const { lang, code } = pendingSnippet;
+    doc.items.push({ id: newId('snip'), name, lang, code, createdAt: Date.now() });
     persist();
     render();
+    pendingSnippet = null;
+    dialog.close();
   });
+
+  document.getElementById('snippet-name-cancel').addEventListener('click', closeNamingDialog);
+  document.getElementById('snippet-name-close').addEventListener('click', closeNamingDialog);
+  dialog.addEventListener('cancel', () => { pendingSnippet = null; });
 
   document.getElementById('btn-snippets-export').addEventListener('click', () => {
     downloadText('dcspad-snippets.json', JSON.stringify(doc, null, 2));

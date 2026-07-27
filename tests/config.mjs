@@ -36,6 +36,7 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
         prefer: 'local',
         localBaseUrl: './bsp-design-system/',
         hostedBaseUrl: '',
+        intelligence: ['bsp-design'],
         files: { components: 'components.css' },
       },
     },
@@ -50,6 +51,12 @@ await check('relative configured asset folders resolve from dcspad.config.json',
     const { getAppConfig } = await import('/src/config.js');
     return getAppConfig().assets.designSystem.localBaseUrl === expected;
   }, `${origin}/bsp-design-system/`));
+
+await check('asset intelligence packs activate independently of framework checkboxes', () =>
+  page.evaluate(async () => {
+    const { getEnabledIntelligence } = await import('/src/libraries.js');
+    return getEnabledIntelligence().includes('bsp-design');
+  }));
 
 const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs v2 (classic)' });
 await pnpRow.locator('input[type="checkbox"]').check();
