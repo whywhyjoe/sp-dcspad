@@ -8,6 +8,12 @@
 > in a `devpad/` subfolder. Commit history is preserved; paths are now at the
 > repo root. Older entries in `REVIEW-LOG.md` refer to `devpad/…` paths — read
 > those as repo-root-relative.
+>
+> UI/design-system changes must also read
+> `design/POST-MONACO-UI-INTEGRATION.md`. It compares the exact pre-Monaco
+> baseline (`3414854`) with the current shell and is authoritative for DOM
+> hooks, Monaco theming/widget integration, settings and persistence,
+> splash/dialog states, and preview/runtime configuration boundaries.
 
 SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CSS/JS editors (Monaco), live preview iframe, console + network panels with an SP-aware object inspector, library manager, REPL. No backend, no framework, no user build step — deploy by uploading this folder to a SharePoint library.
 
@@ -28,7 +34,7 @@ SharePoint-native, JSFiddle-style developer workbench. Pure client-side: HTML/CS
    Gotchas). **Rebuild the app bundle after touching `src/`; rebuild the
    Monaco vendor set after changing Monaco, PnPjs types, or
    `tools/build-monaco.mjs`; regenerate `vendor/intelligence/` after changing
-   configured BMO design-system CSS.** Monaco lives under `vendor/monaco/` as one
+   configured BMO design-system CSS or the Fluent icon catalog.** Monaco lives under `vendor/monaco/` as one
    ESM entry, CSS/font assets, same-origin classic `.js` workers, and the
    exact PnPjs 2.15.0 declaration graph. There are no CDN, blob-worker, or
    `.mjs` dependencies. `boot.js` versions the complete set through
@@ -46,9 +52,9 @@ dcspad.app.js             generated single-file ESM bundle of src/ (tools/build-
                           what the web part actually runs — rebuild on every deploy
 styles/app.css            all styling; layout via CSS grid + JS-set vars (--sidebar-w etc.)
 vendor/monaco/            generated Monaco runtime, workers, CSS/font + PnPjs type graph
-vendor/intelligence/      generated BMO design-token/class data + version manifest
+vendor/intelligence/      generated BMO design-token/class + Fluent icon data
 tools/build-monaco.mjs    reproducible Monaco/PnPjs vendor build; never hand-edit its output
-tools/build-design-intelligence.mjs deterministic BMO CSS/class intelligence generator
+tools/build-design-intelligence.mjs deterministic BMO CSS/class + Fluent icon generator
 src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
 src/editors.js            Monaco adapter; 3 models, Mod-Enter, PnPjs types, stack jumps
@@ -56,6 +62,7 @@ src/monaco-runtime.js     hosted/standalone asset URLs + same-origin worker wiri
 src/config.js             loads/normalizes editable dcspad.config.json runtime URLs
 src/intelligence/alpine.js Alpine v3 JS declarations + HTML data/completion provider
 src/intelligence/bsp.js   BMO CSS-token + HTML-class completion/hover providers
+src/intelligence/fluent-icons.js Fluent element/sprite/font completion, hover, diagnostics
 src/state.js              defaults + deep-merge load + debounced autosave; loadDoc/saveDoc
                           for the catalog + snippet documents (sole localStorage toucher)
 src/io.js                 file download + JSON file-picker helpers (no storage)
@@ -71,6 +78,7 @@ src/inspect/sp-shapes.js  SP/OData/PnPjs shape detection + smart views (standalo
                           the future Site Inspector reuses it)
 src/bridge/harness.js     iframe-side instrumentation; plain classic script, no imports;
                           __DCSPAD_TOKEN__ placeholder replaced per run
+src/bridge/fluent-icon-font.js preview-only font-backed <fluent-icon> adapter
 src/bridge/sp-context.js  real _spPageContextInfo capture (live) or labeled mock
 tests/                    Playwright verification suites — see tests/README.md
 REVIEW-LOG.md             external-review triage record + accepted low-priority backlog
@@ -80,14 +88,14 @@ REVIEW-LOG.md             external-review triage record + accepted low-priority 
 
 ```bash
 python3 -m http.server 8642     # from the repo root; app at http://localhost:8642/index.html
-cd tools && npm run build:intelligence  # after configured design-system CSS changes
+cd tools && npm run build:intelligence  # after design CSS or Fluent catalog changes
 ```
 
 Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected. Live PnPjs/REST behavior can only be validated in a tenant (deployment + validation checklist in README.md). Run the test suites (below) after any change to runner/harness/console/inspector — they exist because this project's failure modes are timing- and boundary-shaped, not type-shaped.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (49 checks: capture, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (26: typed models, editor integration, PnPjs/Alpine/BMO completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (7: runtime URL config, framework and asset intelligence, ordered fallback), `hosted.mjs` (10: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 103 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (50 checks: capture, Fluent preview runtime, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (33: typed models, editor integration, PnPjs/Alpine/BMO/Fluent completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (8: runtime URL config, framework and asset intelligence/runtime, ordered fallback), `hosted.mjs` (11: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence/Fluent bridge and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3). All 113 should pass; a `custom library` failure usually means the 8643 fixture server isn't running.
 
 ## Gotchas already paid for
 

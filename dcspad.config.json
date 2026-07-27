@@ -45,10 +45,25 @@
       "prefer": "local",
       "localBaseUrl": "./bsp-fluent-icon-lib/",
       "hostedBaseUrl": "",
+      "intelligence": [
+        "fluent-icons"
+      ],
       "files": {
         "catalog": "fluent-font-library.json",
         "svgFolder": "svg/",
-        "fontFolder": "fonts/"
+        "fontFolder": "fonts/",
+        "regularCss": "fonts/FluentSystemIcons-Regular.css",
+        "filledCss": "fonts/FluentSystemIcons-Filled.css",
+        "lightCss": "fonts/FluentSystemIcons-Light.css"
+      },
+      "runtime": {
+        "enabled": true,
+        "cssFiles": [
+          "regularCss",
+          "filledCss",
+          "lightCss"
+        ],
+        "fluentIconElement": true
       }
     }
   }

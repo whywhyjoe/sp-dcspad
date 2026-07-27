@@ -14,6 +14,7 @@ const outputDir = path.join(repoRoot, 'vendor', 'intelligence');
 
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 const designConfig = config?.assets?.designSystem;
+const fluentIconsConfig = config?.assets?.fluentIcons;
 if (!designConfig || typeof designConfig.localBaseUrl !== 'string') {
   throw new Error('dcspad.config.json must define assets.designSystem.localBaseUrl');
 }
@@ -29,6 +30,15 @@ const sourceSpecs = [
   { key: 'components', file: relativeSource('components', 'components.css'), classes: true },
   { key: 'editorial', file: relativeSource('editorial', 'editorial.css'), tokens: true, classes: true, scope: 'editorial' },
 ];
+
+if (!fluentIconsConfig || typeof fluentIconsConfig.localBaseUrl !== 'string') {
+  throw new Error('dcspad.config.json must define assets.fluentIcons.localBaseUrl');
+}
+if (/^[a-z][a-z\d+.-]*:/i.test(fluentIconsConfig.localBaseUrl)) {
+  throw new Error('assets.fluentIcons.localBaseUrl must be a local path when generating intelligence');
+}
+const fluentIconsRoot = path.resolve(repoRoot, fluentIconsConfig.localBaseUrl);
+const fluentCatalogFile = fluentIconsConfig.files?.catalog || 'fluent-font-library.json';
 
 const cleanComment = (raw) => {
   const text = String(raw || '')
@@ -235,6 +245,108 @@ for (const token of allTokens) {
 const tokens = [...tokenMap.values()].sort((a, b) => a.name.localeCompare(b.name));
 const classes = mergeClasses(allClassOccurrences);
 
+function parseFluentFilename(filename) {
+  const match = String(filename || '').match(
+    /^ic_fluent_(.+)_(\d+)_(regular|filled|light|color)(?:_(ltr|rtl))?\.svg$/i,
+  );
+  if (!match) return null;
+  return {
+    idBase: match[1].toLowerCase(),
+    size: Number(match[2]),
+    style: match[3].toLowerCase(),
+    direction: match[4]?.toLowerCase() || '',
+  };
+}
+
+function buildFluentIcons(raw) {
+  if (!raw || !Array.isArray(raw.icons)) {
+    throw new Error('fluent-font-library.json must contain an icons array');
+  }
+  const byIdBase = new Map();
+  for (const sourceIcon of raw.icons) {
+    const grouped = new Map();
+    for (const filename of Array.isArray(sourceIcon?.filenames) ? sourceIcon.filenames : []) {
+      const parsed = parseFluentFilename(filename);
+      if (!parsed) continue;
+      if (!grouped.has(parsed.idBase)) grouped.set(parsed.idBase, []);
+      const suffix = [
+        parsed.size,
+        parsed.style,
+        parsed.direction,
+      ].filter(Boolean).join('-');
+      const fontKey = filename.replace(/\.svg$/i, '');
+      grouped.get(parsed.idBase).push({
+        suffix,
+        font: Object.prototype.hasOwnProperty.call(
+          sourceIcon.fontCodepoints || {},
+          fontKey,
+        ),
+      });
+    }
+    for (const [idBase, rawVariants] of grouped) {
+      let record = byIdBase.get(idBase);
+      if (!record) {
+        record = {
+          name: String(sourceIcon.name || idBase.replaceAll('_', ' ')).trim(),
+          slug: idBase.replaceAll('_', '-'),
+          idBase,
+          ...(String(sourceIcon.description || '').trim()
+            ? { description: String(sourceIcon.description).trim() }
+            : {}),
+          metaphors: [],
+          variants: [],
+          svgOnly: [],
+        };
+        byIdBase.set(idBase, record);
+      }
+      for (const metaphor of Array.isArray(sourceIcon.metaphor) ? sourceIcon.metaphor : []) {
+        const clean = String(metaphor || '').trim();
+        if (clean && !record.metaphors.includes(clean)) record.metaphors.push(clean);
+      }
+      for (const variant of rawVariants) {
+        if (!record.variants.includes(variant.suffix)) {
+          record.variants.push(variant.suffix);
+        }
+        if (!variant.font && !record.svgOnly.includes(variant.suffix)) {
+          record.svgOnly.push(variant.suffix);
+        }
+      }
+    }
+  }
+
+  const styleOrder = { regular: 0, filled: 1, light: 2 };
+  for (const record of byIdBase.values()) {
+    record.metaphors.sort((a, b) => a.localeCompare(b));
+    if (!record.metaphors.length) delete record.metaphors;
+    const sortVariants = (a, b) => {
+      const [aSize, aStyle, aDirection = ''] = a.split('-');
+      const [bSize, bStyle, bDirection = ''] = b.split('-');
+      return Number(aSize) - Number(bSize)
+        || (styleOrder[aStyle] ?? 9) - (styleOrder[bStyle] ?? 9)
+        || aDirection.localeCompare(bDirection);
+    };
+    record.variants.sort(sortVariants);
+    record.svgOnly.sort(sortVariants);
+    if (!record.svgOnly.length) delete record.svgOnly;
+  }
+  return [...byIdBase.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+const fluentCatalogPath = path.resolve(fluentIconsRoot, fluentCatalogFile);
+if (!fluentCatalogPath.startsWith(fluentIconsRoot + path.sep)) {
+  throw new Error(`Refusing to read Fluent icon catalog outside ${fluentIconsRoot}`);
+}
+const fluentCatalogSource = await readFile(fluentCatalogPath, 'utf8');
+const fluentIcons = buildFluentIcons(JSON.parse(fluentCatalogSource));
+const fluentVariantCount = fluentIcons.reduce(
+  (count, icon) => count + icon.variants.length,
+  0,
+);
+const fluentFontVariantCount = fluentIcons.reduce(
+  (count, icon) => count + icon.variants.length - (icon.svgOnly?.length || 0),
+  0,
+);
+
 const artifact = {
   schemaVersion: 1,
   pack: 'bsp-design',
@@ -243,6 +355,13 @@ const artifact = {
 };
 const artifactText = `${JSON.stringify(artifact, null, 2)}\n`;
 const artifactHash = createHash('sha256').update(artifactText).digest('hex');
+const fluentArtifact = {
+  schemaVersion: 1,
+  pack: 'fluent-icons',
+  icons: fluentIcons,
+};
+const fluentArtifactText = `${JSON.stringify(fluentArtifact, null, 2)}\n`;
+const fluentArtifactHash = createHash('sha256').update(fluentArtifactText).digest('hex');
 const manifest = {
   schemaVersion: 1,
   pack: 'bsp-design',
@@ -250,13 +369,30 @@ const manifest = {
   artifactSha256: artifactHash,
   counts: { tokens: tokens.length, classes: classes.length },
   sources: sourceHashes,
+  fluentIcons: {
+    artifact: 'fluent-icons.json',
+    artifactSha256: fluentArtifactHash,
+    counts: {
+      icons: fluentIcons.length,
+      variants: fluentVariantCount,
+      fontVariants: fluentFontVariantCount,
+    },
+    source: {
+      file: fluentCatalogFile,
+      sha256: createHash('sha256').update(fluentCatalogSource).digest('hex'),
+    },
+  },
 };
 
 await mkdir(outputDir, { recursive: true });
 await writeFile(path.join(outputDir, 'bsp-design.json'), artifactText);
+await writeFile(path.join(outputDir, 'fluent-icons.json'), fluentArtifactText);
 await writeFile(
   path.join(outputDir, 'manifest.json'),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 
-console.log(`BSP intelligence generated: ${tokens.length} tokens, ${classes.length} classes`);
+console.log(
+  `BSP intelligence generated: ${tokens.length} tokens, ${classes.length} classes; `
+  + `${fluentIcons.length} Fluent icons, ${fluentVariantCount} variants`,
+);

@@ -47,6 +47,11 @@ URLs without editing or rebuilding the application.
   design-system pack independently of framework checkboxes. Remove that ID to
   disable it. The browser loads the compact versioned artifact under
   `vendor/intelligence/`, never the source CSS repository.
+- `assets.fluentIcons.intelligence: ["fluent-icons"]` enables completions,
+  hover, and diagnostics for real Fluent tokens, symbol IDs, and font classes.
+  Its `runtime` block controls which configured font CSS files and the
+  preview-only `<fluent-icon>` adapter are injected on Run. Set
+  `runtime.enabled` to `false` if the consuming page supplies those assets.
 
 Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
 their existing CDN URLs until local copies are filled in. Hosted mode versions
@@ -99,7 +104,7 @@ Or by hand:
 |---|---|
 | Run | `Run` button or `Ctrl/Cmd+Enter` anywhere in an editor |
 | Auto-run | Toggle in the toolbar; re-runs ~800 ms after you stop typing |
-| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types; enabling Alpine adds v3 JavaScript API and HTML intelligence; the configured `bsp-design` pack adds documented BMO CSS custom properties and canonical HTML class names |
+| Language tools | Monaco find/replace, suggestions, hover, signatures, diagnostics and navigation; enabling PnPjs v2 adds matching 2.15.0 fluent API types; enabling Alpine adds v3 JavaScript API and HTML intelligence; the configured design packs add documented BMO CSS/classes plus exact Fluent icon tokens, symbol IDs, and font classes |
 | Editor status | The status bar shows `Monaco ✓`; `Monaco ⚠` remains visible if a worker is blocked, even after running code |
 | Top-level `await` | Settings ⚙ → "Run JS as module" (strict mode; `var` won't become window globals) |
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
@@ -131,6 +136,15 @@ Framework intelligence follows the enabled runtime checkbox.
 - **BMO HTML classes:** type `<button class="btn btn--p`, then press
   `Ctrl+Space`; `btn--primary` should be offered as a BEM modifier with
   `.btn` composition guidance and source documentation.
+- **Fluent custom element:** type `<fluent-icon name="home-24-r`, then press
+  `Ctrl+Space`; `home-24-regular` should be offered. Run it to verify the
+  configured icon font renders in the preview.
+- **Fluent sprite:** inside a project that supplies a symbol sprite, type
+  `<svg><use href="#ic_fluent_home_24_r`, then press `Ctrl+Space`; the exact
+  `ic_fluent_home_24_regular` symbol ID should be offered.
+- **Fluent font class:** type
+  `<i class="icon-ic_fluent_home_24_r`, then press `Ctrl+Space`; the generated
+  `icon-ic_fluent_home_24_regular` class should be offered.
 
 The first Alpine pack understands the stable core API and whether the cursor is
 inside an Alpine attribute. It does not yet infer arbitrary properties declared
@@ -153,15 +167,16 @@ Console output and network response bodies are rendered by an inspector that und
 index.html            app shell
 styles/app.css        theme + layout
 vendor/monaco/        generated Monaco runtime, workers, CSS/font + PnPjs 2.15 types
-vendor/intelligence/  generated compact BMO token/class data + version manifest
+vendor/intelligence/  generated compact BMO token/class + Fluent icon data
 tools/build-monaco.mjs reproducible Monaco/PnPjs vendor build (esbuild)
-tools/build-design-intelligence.mjs deterministic BMO CSS/class data generator
+tools/build-design-intelligence.mjs deterministic BMO CSS/class + Fluent icon generator
 src/
   main.js             bootstrap/wiring
   layout.js           splitters, tabs, collapse/maximize (persisted)
   editors.js          Monaco adapter: three models, language tools, editor API
   monaco-runtime.js   standalone/hosted asset and same-origin worker loading
   intelligence/bsp.js BMO CSS-token and HTML-class completion/hover providers
+  intelligence/fluent-icons.js Fluent element/sprite/font completion, hover, diagnostics
   state.js            workspace state + debounced autosave
   runner.js           document assembly + iframe lifecycle
   libraries.js        preset catalog + custom URLs
@@ -171,8 +186,15 @@ src/
   inspect/tree-view.js   generic expandable trees + tables
   inspect/sp-shapes.js   SP/OData/PnPjs smart views
   bridge/harness.js   iframe-side instrumentation (injected per run)
+  bridge/fluent-icon-font.js preview-only font-backed <fluent-icon> adapter
   bridge/sp-context.js   real/mock _spPageContextInfo capture
 ```
+
+For UI/design-system work based on the pre-Monaco shell, read
+[`design/POST-MONACO-UI-INTEGRATION.md`](design/POST-MONACO-UI-INTEGRATION.md).
+It is the authoritative migration and UI contract: exact baseline, changed DOM
+hooks, complete settings/persistence reference, Monaco theme/widget rules,
+splash/dialog states, runtime configuration, and code ownership.
 
 Monaco is fully vendored: the ESM runtime, CSS/font, classic same-origin `.js`
 workers, and exact PnPjs 2.15.0 declaration graph. There is no runtime CDN,
@@ -181,8 +203,8 @@ after changing the pinned editor/type versions or the vendor builder.
 
 Design-system intelligence is generated rather than scraped in the browser.
 From `tools/`, run `npm run build:intelligence` after changing the configured
-local design-system CSS. `deploy/Sync-Live.ps1` runs that generator and the app
-bundle build automatically.
+local design-system CSS or Fluent icon catalog. `deploy/Sync-Live.ps1` runs
+that generator and the app bundle build automatically.
 
 ## Tests
 

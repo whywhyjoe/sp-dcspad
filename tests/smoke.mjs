@@ -36,6 +36,40 @@ const setDoc = async (name, code) => {
 };
 const setJs = (code) => setDoc('js', code);
 
+await setDoc('html', `
+<button id="fluent-button" aria-label="Home">
+  <fluent-icon name="home-24-regular"></fluent-icon>
+</button>
+<i id="fluent-filled" class="icon-ic_fluent_home_24_filled" aria-hidden="true"></i>
+`);
+await setJs('');
+await page.click('#btn-run');
+await page.waitForFunction(() => {
+  const frame = document.querySelector('#preview-host iframe');
+  const icon = frame?.contentDocument?.querySelector('fluent-icon');
+  return icon?.firstElementChild?.classList.contains('icon-ic_fluent_home_24_regular');
+});
+await check('configured Fluent runtime injects font CSS and upgrades <fluent-icon>', () =>
+  page.evaluate(() => {
+    const frame = document.querySelector('#preview-host iframe');
+    const previewDocument = frame.contentDocument;
+    const links = [...previewDocument.querySelectorAll('link[rel="stylesheet"]')]
+      .map((link) => new URL(link.href).pathname);
+    const icon = previewDocument.querySelector('fluent-icon');
+    const regular = icon.firstElementChild;
+    const filled = previewDocument.querySelector('#fluent-filled');
+    const regularStyle = frame.contentWindow.getComputedStyle(regular, '::before');
+    const filledStyle = frame.contentWindow.getComputedStyle(filled, '::before');
+    return links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Regular.css')
+      && links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Filled.css')
+      && links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Light.css')
+      && regular.className === 'icon-ic_fluent_home_24_regular'
+      && regular.style.fontSize === '24px'
+      && regularStyle.fontFamily.includes('FluentSystemIcons-Regular')
+      && filledStyle.fontFamily.includes('FluentSystemIcons-Filled')
+      && regularStyle.content !== 'none';
+  }));
+
 await setJs(`
 window.counter = (window.counter || 0) + 1;
 console.log("counter", window.counter);
@@ -242,7 +276,8 @@ const scriptOrderBecomes = (expected) => page.waitForFunction((exp) => {
   const f = document.querySelector('#preview-host iframe');
   if (!f || !f.contentDocument) return false;
   const srcs = [...f.contentDocument.querySelectorAll('script[src]')].map((s) => s.getAttribute('src'));
-  return JSON.stringify(srcs) === JSON.stringify(exp);
+  const catalogScripts = srcs.filter((src) => exp.includes(src));
+  return JSON.stringify(catalogScripts) === JSON.stringify(exp);
 }, expected, { timeout: 8000 }).then(() => true, () => false);
 
 const LIB_A = `${FIXTURES_URL}/fixtures/testlib.js`;

@@ -1,8 +1,13 @@
 # Handoff — DCSPad
 
 Read `CLAUDE.md` first for architecture invariants; this file covers **state**
-and **what's next**. Last updated: 2026-07-26, Monaco plus generated BMO
-design-system intelligence.
+and **what's next**. Last updated: 2026-07-27, Monaco plus generated BMO and
+Fluent design-system intelligence.
+
+For the UI redesign handoff, also read
+`design/POST-MONACO-UI-INTEGRATION.md`. It documents the exact pre-Monaco
+baseline, all post-baseline changes, every setting and persistence boundary,
+and the functional DOM/CSS hooks the workbench design system must preserve.
 
 ## Where things stand
 
@@ -136,7 +141,7 @@ inspector, REPL and network capture all work inside the web part; a live
   nearest `x-data` object remains the later deep-expression phase.
 - `tests/monaco.mjs` now verifies Alpine JS, HTML directives, magics, pack
   coexistence, unloading, legacy-catalog detection, and false diagnostics. The
-  complete browser suite is 103 checks.
+  complete browser suite is 113 checks.
 
 ### BMO design-system intelligence (2026-07-26)
 
@@ -154,6 +159,23 @@ inspector, REPL and network capture all work inside the web part; a live
 - `Sync-Live.ps1` regenerates intelligence before rebuilding/copying the app.
   The design-system source folder remains a development input, not a runtime
   dependency.
+
+### Fluent icon intelligence and preview runtime (2026-07-27)
+
+- `tools/build-design-intelligence.mjs` also projects the complete Fluent
+  catalog into `vendor/intelligence/fluent-icons.json`: 2,655 normalized icon
+  groups and all 18,681 real SVG variants, with font availability preserved.
+- Monaco completes and explains `<fluent-icon name="">`, Fluent
+  `<use href="...#symbol">` IDs, and generated `icon-ic_fluent_*` font classes.
+  Unknown and SVG-only/font mismatches receive focused warnings.
+- The configured runtime loads the vendored Regular, Filled, and Light font
+  CSS plus `src/bridge/fluent-icon-font.js`, a preview-only adapter for
+  `<fluent-icon>`. Generated suffix-specific CSS keeps all three font families
+  working together.
+- The imported Fluent package contains individual SVG files, not a combined
+  symbol sprite. `<use>` intelligence is retained for consuming projects that
+  provide a Fluent sprite. No new BMO sprite integration was added because
+  that UI icon path is being deprecated.
 
 ## Open items
 

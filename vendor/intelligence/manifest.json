@@ -11,5 +11,18 @@
     "colors_and_type.css": "dd83101a48f8f5740f35f5802d5b25cc351c37027a127011f1823d721c5dece1",
     "components.css": "4fa9a99a434242d22a616ae28854b61b5f8b638e9df7856ce18cbf17cd31d6c6",
     "editorial.css": "ba6454196c7a10e5e69df6e12d3c247c2eb770b079b9538f8db17ebabb85f139"
+  },
+  "fluentIcons": {
+    "artifact": "fluent-icons.json",
+    "artifactSha256": "da05014b37be0e45eafead1b59e469c0ae9c00b6c09caf359c3bbd44176273b6",
+    "counts": {
+      "icons": 2655,
+      "variants": 18681,
+      "fontVariants": 17799
+    },
+    "source": {
+      "file": "fluent-font-library.json",
+      "sha256": "d3ee1ead9c6084f8effdd589e8532f4bb3c2e85d9af0ca04a4161495dc80627b"
+    }
   }
 }

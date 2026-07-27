@@ -90,6 +90,12 @@ function assemble({ docs, libraries, spContext, settings, token }) {
     .filter((l) => l.css)
     .map((l) => (Array.isArray(l.css) ? l.css : [l.css]).map((u) => `<link rel="stylesheet" href="${escAttr(u)}">`).join('\n'))
     .join('\n');
+  const libraryStyles = libraries
+    .filter((l) => l.cssText)
+    .map((l) => `<style data-dcspad-library="${escAttr(l.name || 'configured')}">
+${escStyle(l.cssText)}
+</style>`)
+    .join('\n');
   const jsTags = libraries
     .filter((l) => l.js)
     .map((l) => {
@@ -120,6 +126,7 @@ html { background: #1d2026; color: #d6d9e0; }
 <meta charset="utf-8">
 <script${nonceAttr}>${escScript(harnessText.replaceAll('__DCSPAD_TOKEN__', token))}<\/script>
 ${contextScript}${chromeStyle}${cssLinks}
+${libraryStyles}
 <style>
 ${escStyle(docs.css)}
 </style>

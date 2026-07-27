@@ -126,6 +126,8 @@ await check('JavaScript semantic diagnostics render', () =>
 
 await page.waitForFunction(() =>
   document.documentElement.dataset.bspIntelligence === 'ready');
+await page.waitForFunction(() =>
+  document.documentElement.dataset.fluentIconIntelligence === 'ready');
 await check('generated BMO design intelligence includes documented tokens and classes', () =>
   page.evaluate(async () => {
     const response = await fetch('/vendor/intelligence/bsp-design.json');
@@ -139,6 +141,27 @@ await check('generated BMO design intelligence includes documented tokens and cl
       && token.description
       && classItem?.base === 'btn'
       && classItem.description;
+  }));
+
+await check('generated Fluent intelligence covers the complete SVG catalog', () =>
+  page.evaluate(async () => {
+    const [artifactResponse, manifestResponse] = await Promise.all([
+      fetch('/vendor/intelligence/fluent-icons.json'),
+      fetch('/vendor/intelligence/manifest.json'),
+    ]);
+    const artifact = await artifactResponse.json();
+    const manifest = await manifestResponse.json();
+    const home = artifact.icons.find((item) => item.idBase === 'home');
+    const directional = artifact.icons.some((item) =>
+      item.variants.some((variant) => /-(?:ltr|rtl)$/.test(variant)));
+    const color = artifact.icons.some((item) =>
+      item.variants.some((variant) => variant.includes('-color')));
+    return artifact.pack === 'fluent-icons'
+      && artifact.icons.length > 2600
+      && manifest.fluentIcons.counts.variants === 18681
+      && home?.variants.includes('24-regular')
+      && directional
+      && color;
   }));
 
 await setDoc('css', 'main { color: var(--fg-p');
@@ -174,6 +197,67 @@ await check('BMO HTML class hover explains BEM composition and source', async ()
     && hover.includes('components.css');
 });
 await page.keyboard.press('Escape');
+
+await setDoc('html', '<fluent-icon name="home-24-r');
+await page.waitForTimeout(250);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('Fluent custom-element completion includes real font variants', async () =>
+  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
+    .some((text) => text.startsWith('home-24-regular')));
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<svg><use href="#ic_fluent_home_24_r');
+await page.waitForTimeout(250);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('Fluent sprite completion includes exact symbol ids', async () =>
+  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
+    .some((text) => text.startsWith('ic_fluent_home_24_regular')));
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<i class="icon-ic_fluent_home_24_r');
+await page.waitForTimeout(250);
+await page.keyboard.press('Control+Space');
+await page.waitForSelector('.suggest-widget.visible');
+await check('Fluent font completion includes generated CSS classes', async () =>
+  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
+    .some((text) => text.startsWith('icon-ic_fluent_home_24_regular')));
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<fluent-icon name="home-24-regular"></fluent-icon>');
+await page.evaluate(async () => {
+  const monaco = await import('/vendor/monaco/monaco.js');
+  const editor = monaco.editor.getEditors()[0];
+  editor.setPosition({ lineNumber: 1, column: 27 });
+  editor.trigger('dcspad-test', 'editor.action.showHover', {});
+});
+await page.waitForSelector('.monaco-hover-content');
+await check('Fluent hover documents element, font, and sprite forms', async () => {
+  const hover = (await page.locator('.monaco-hover-content').allTextContents()).join(' ');
+  return hover.includes('home-24-regular')
+    && hover.includes('icon-ic_fluent_home_24_regular')
+    && hover.includes('ic_fluent_home_24_regular');
+});
+await page.keyboard.press('Escape');
+
+await setDoc('html', '<fluent-icon name="definitely-not-a-fluent-icon"></fluent-icon>');
+await page.waitForFunction(async () => {
+  const monaco = await import('/vendor/monaco/monaco.js');
+  const resource = monaco.Uri.parse('file:///dcspad/index.html');
+  return monaco.editor.getModelMarkers({ resource })
+    .some((marker) => marker.message.includes('Unknown Fluent icon token'));
+});
+await check('unknown Fluent tokens receive a focused Monaco warning', true);
+
+await setDoc('html', '<fluent-icon name="home-24-regular"></fluent-icon>');
+await page.waitForFunction(async () => {
+  const monaco = await import('/vendor/monaco/monaco.js');
+  const resource = monaco.Uri.parse('file:///dcspad/index.html');
+  return !monaco.editor.getModelMarkers({ resource })
+    .some((marker) => marker.message.includes('Fluent icon'));
+});
+await check('valid Fluent tokens do not receive custom diagnostics', true);
 
 const alpineRow = page.locator('.lib-item', { hasText: 'Alpine.js' });
 await alpineRow.locator('input[type="checkbox"]').check();

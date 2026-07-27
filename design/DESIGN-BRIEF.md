@@ -1,5 +1,14 @@
 # DCSPad — visual design brief (for Claude Design)
 
+> **Post-brief implementation note:** this brief was originally prepared
+> against the pre-Monaco workbench. Before applying its UI system, read
+> [`POST-MONACO-UI-INTEGRATION.md`](POST-MONACO-UI-INTEGRATION.md). It records
+> the exact `3414854` baseline, the current DOM contract, every settings and
+> persistence behavior, Monaco theming/widget requirements, the splash and
+> snippet-dialog states, and the preview/runtime configuration boundary.
+> The overall layout remains valid; the integration note is authoritative
+> wherever the two documents differ.
+
 ## The prompt
 
 > You are redesigning the visual layer of **DCSPad**, a SharePoint-native

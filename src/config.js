@@ -68,6 +68,7 @@ function normalizeAssetGroup(raw, configUrl, defaultPreference) {
     const clean = cleanString(path);
     if (clean) files[name] = clean;
   }
+  const rawRuntime = isRecord(raw.runtime) ? raw.runtime : {};
   return {
     prefer: sourcePreference(raw.prefer, defaultPreference),
     localBaseUrl: resolveUrl(raw.localBaseUrl, configUrl, { folder: true }),
@@ -76,6 +77,13 @@ function normalizeAssetGroup(raw, configUrl, defaultPreference) {
       ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))]
       : [],
     files,
+    runtime: {
+      enabled: rawRuntime.enabled === true,
+      cssFiles: Array.isArray(rawRuntime.cssFiles)
+        ? [...new Set(rawRuntime.cssFiles.map(cleanString).filter(Boolean))]
+        : [],
+      fluentIconElement: rawRuntime.fluentIconElement === true,
+    },
   };
 }
 

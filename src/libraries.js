@@ -11,7 +11,7 @@
 
 import { getState, updateNested, loadDoc, saveDoc, newId, CATALOG_KEY } from './state.js';
 import { el } from './inspect/tree-view.js';
-import { applyFrameworkConfig } from './config.js';
+import { applyFrameworkConfig, selectedAssetBase } from './config.js';
 
 // Seed only — after first boot the stored catalog is the truth.
 export const PRESETS = [
@@ -215,6 +215,61 @@ export function getEnabledLibraries() {
       fallbackJs: effective.fallbackJs,
       probeGlobal: effective.probeGlobal,
     });
+  }
+  result.push(...getConfiguredAssetLibraries());
+  return result;
+}
+
+const FLUENT_FONT_RUNTIME_CSS = `
+/* The vendored per-style font files share a generated broad selector.
+   Restore the intended family per class suffix so the three styles can
+   coexist in one preview document. */
+i[class*="icon-ic_fluent_"][class*="_regular"]::before {
+  font-family: "FluentSystemIcons-Regular" !important;
+}
+i[class*="icon-ic_fluent_"][class*="_filled"]::before {
+  font-family: "FluentSystemIcons-Filled" !important;
+}
+i[class*="icon-ic_fluent_"][class*="_light"]::before {
+  font-family: "FluentSystemIcons-Light" !important;
+}
+fluent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: -0.125em;
+}
+`;
+
+function appSourceUrl(path) {
+  const base = window.__DCSPAD_SRC_BASE__
+    || new URL('./', import.meta.url).href;
+  const url = new URL(path, base);
+  const version = window.__DCSPAD_INTELLIGENCE_VERSION__;
+  if (version) url.searchParams.set('v', version);
+  return url.href;
+}
+
+function getConfiguredAssetLibraries() {
+  const result = [];
+  for (const [id, group] of Object.entries(appConfig?.assets || {})) {
+    if (!group.runtime?.enabled) continue;
+    const base = selectedAssetBase(group);
+    if (!base) continue;
+    const css = group.runtime.cssFiles
+      .map((key) => group.files[key] || key)
+      .filter(Boolean)
+      .map((path) => new URL(path, base).href);
+    const entry = {
+      name: `${id} configured assets`,
+      ...(css.length ? { css } : {}),
+    };
+    if (id === 'fluentIcons' && group.runtime.fluentIconElement) {
+      entry.js = appSourceUrl('bridge/fluent-icon-font.js');
+      entry.cssText = FLUENT_FONT_RUNTIME_CSS;
+    }
+    if (entry.css || entry.js || entry.cssText) result.push(entry);
   }
   return result;
 }

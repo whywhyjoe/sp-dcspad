@@ -18,6 +18,14 @@ import {
   createBspHtmlClassHoverProvider,
   fetchBspIntelligence,
 } from './intelligence/bsp.js';
+import {
+  FLUENT_ICONS_HTML_DATA,
+  FLUENT_ICONS_PACK_ID,
+  collectFluentIconMarkers,
+  createFluentIconCompletionProvider,
+  createFluentIconHoverProvider,
+  fetchFluentIconIntelligence,
+} from './intelligence/fluent-icons.js';
 
 const NAMES = ['html', 'css', 'js'];
 const LANGUAGES = { html: 'html', css: 'css', js: 'javascript' };
@@ -41,6 +49,9 @@ export async function initEditors({ onChange, onRunShortcut }) {
   let desiredBspIntelligence = false;
   let bspIntelligenceGeneration = 0;
   let bspIntelligence = null;
+  let desiredFluentIconIntelligence = false;
+  let fluentIconIntelligenceGeneration = 0;
+  let fluentIconIntelligence = null;
   const jsLibraryPacks = new Map();
   const htmlDataPacks = new Map();
   const enabledIntelligence = new Set();
@@ -163,6 +174,29 @@ export async function initEditors({ onChange, onRunShortcut }) {
       createBspHtmlClassHoverProvider(() => bspIntelligence),
     ),
   ];
+  const fluentIconRegistrations = [
+    monaco.languages.registerCompletionItemProvider(
+      'html',
+      createFluentIconCompletionProvider(monaco, () => fluentIconIntelligence),
+    ),
+    monaco.languages.registerHoverProvider(
+      'html',
+      createFluentIconHoverProvider(() => fluentIconIntelligence),
+    ),
+  ];
+
+  function applyFluentIconMarkers() {
+    if (!models.html) return;
+    monaco.editor.setModelMarkers(
+      models.html,
+      FLUENT_ICONS_PACK_ID,
+      collectFluentIconMarkers(
+        monaco,
+        models.html,
+        fluentIconIntelligence,
+      ),
+    );
+  }
 
   for (const name of NAMES) {
     models[name] = monaco.editor.createModel(
@@ -175,6 +209,7 @@ export async function initEditors({ onChange, onRunShortcut }) {
     models[name].onDidChangeContent(() => {
       update({ [name]: models[name].getValue() });
       onChange?.(name);
+      if (name === 'html') applyFluentIconMarkers();
       if (name === active) reportCursor();
     });
   }
@@ -289,11 +324,46 @@ export async function initEditors({ onChange, onRunShortcut }) {
     }
   }
 
+  async function setFluentIconIntelligenceEnabled(enabled) {
+    desiredFluentIconIntelligence = !!enabled;
+    const generation = ++fluentIconIntelligenceGeneration;
+    if (!desiredFluentIconIntelligence) {
+      fluentIconIntelligence = null;
+      htmlDataPacks.delete(FLUENT_ICONS_PACK_ID);
+      enabledIntelligence.delete(FLUENT_ICONS_PACK_ID);
+      applyHtmlData();
+      applyFluentIconMarkers();
+      document.documentElement.dataset.fluentIconIntelligence = 'disabled';
+      return;
+    }
+
+    enabledIntelligence.add(FLUENT_ICONS_PACK_ID);
+    htmlDataPacks.set(FLUENT_ICONS_PACK_ID, FLUENT_ICONS_HTML_DATA);
+    applyHtmlData();
+    document.documentElement.dataset.fluentIconIntelligence = 'loading';
+    try {
+      const data = await fetchFluentIconIntelligence();
+      if (!desiredFluentIconIntelligence
+          || generation !== fluentIconIntelligenceGeneration) return;
+      fluentIconIntelligence = data;
+      applyFluentIconMarkers();
+      document.documentElement.dataset.fluentIconIntelligence = 'ready';
+    } catch (error) {
+      if (generation !== fluentIconIntelligenceGeneration) return;
+      fluentIconIntelligence = null;
+      enabledIntelligence.delete(FLUENT_ICONS_PACK_ID);
+      applyFluentIconMarkers();
+      document.documentElement.dataset.fluentIconIntelligence = 'error';
+      console.warn('DCSPad: Fluent icon intelligence could not be loaded', error);
+    }
+  }
+
   function setIntelligencePacks(packIds) {
     const requested = new Set(packIds || []);
     setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
     setPnpTypesEnabled(requested.has('pnpjs-2.15.0'));
     setBspIntelligenceEnabled(requested.has(BSP_PACK_ID));
+    setFluentIconIntelligenceEnabled(requested.has(FLUENT_ICONS_PACK_ID));
   }
 
   reportCursor();
@@ -352,6 +422,8 @@ export async function initEditors({ onChange, onRunShortcut }) {
       resizeObserver.disconnect();
       alpineCompletionRegistration.dispose();
       for (const registration of bspRegistrations) registration.dispose();
+      for (const registration of fluentIconRegistrations) registration.dispose();
+      monaco.editor.setModelMarkers(models.html, FLUENT_ICONS_PACK_ID, []);
       editor.dispose();
       for (const model of Object.values(models)) model.dispose();
     },

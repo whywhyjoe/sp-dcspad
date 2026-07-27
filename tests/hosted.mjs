@@ -77,17 +77,32 @@ await check('hosted runtime uses the boot script folder as its asset base', () =
 await page.waitForFunction(() => document.documentElement.dataset.monacoReady === 'true');
 await page.waitForFunction(() =>
   document.documentElement.dataset.bspIntelligence === 'ready');
+await page.waitForFunction(() =>
+  document.documentElement.dataset.fluentIconIntelligence === 'ready');
 await check('hosted app, config, Monaco, and intelligence URLs are versioned', () => {
   const app = requests.find((url) => url.includes('/dcspad.app.js?'));
   const config = requests.find((url) => url.includes('/dcspad.config.json?'));
   const monaco = requests.find((url) => url.includes('/vendor/monaco/monaco.js?'));
   const intelligence = requests.find((url) =>
     url.includes('/vendor/intelligence/bsp-design.json?'));
-  return !!app && !!config && !!monaco && !!intelligence
+  const fluentIntelligence = requests.find((url) =>
+    url.includes('/vendor/intelligence/fluent-icons.json?'));
+  return !!app && !!config && !!monaco && !!intelligence && !!fluentIntelligence
     && new URL(app).searchParams.has('v')
     && new URL(config).searchParams.has('v')
     && new URL(monaco).searchParams.has('v')
-    && new URL(intelligence).searchParams.has('v');
+    && new URL(intelligence).searchParams.has('v')
+    && new URL(fluentIntelligence).searchParams.has('v');
+});
+
+await page.click('#btn-run');
+await page.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('ran in'));
+await check('hosted Fluent preview bridge is same-origin and versioned', () => {
+  const bridge = requests.find((url) => url.includes('/src/bridge/fluent-icon-font.js?'));
+  return !!bridge
+    && new URL(bridge).origin === origin
+    && new URL(bridge).searchParams.has('v');
 });
 
 const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs v2 (classic)' });
