@@ -4,10 +4,25 @@
 
 import { renderValue, el } from './inspect/tree-view.js';
 import { enhance } from './inspect/sp-shapes.js';
+import { getState } from './state.js';
 
 const requests = new Map();   // id -> { row, data }
 let selectedId = null;
+let errorCount = 0;
 let deps = {};
+
+// Error count on the Network tab: failed/4xx/5xx requests since the last
+// clear (or since the last run, when auto-clear is on). Zero = no badge.
+function bumpErrorCount() {
+  errorCount++;
+  const badge = document.getElementById('network-badge');
+  badge.textContent = errorCount > 99 ? '99+' : String(errorCount);
+  badge.hidden = false;
+}
+function resetErrorCount() {
+  errorCount = 0;
+  document.getElementById('network-badge').hidden = true;
+}
 
 export function initNetworkPanel({ isNetworkVisible }) {
   deps = { isNetworkVisible };
@@ -56,9 +71,9 @@ function onEnd(d) {
   tdTime.textContent = `${d.ms} ms`;
   tdSize.textContent = d.size != null ? fmtSize(d.size) : '—';
   if (selectedId === d.id) renderDetail(entry.data);
-  // Error dot on the Network tab: any failed request or 4xx/5xx status.
-  // Cleared with the request log, not on tab focus.
-  if (!d.ok) document.getElementById('network-badge').hidden = false;
+  // Any failed request or 4xx/5xx status counts. Cleared with the request
+  // log, not on tab focus.
+  if (!d.ok) bumpErrorCount();
 }
 
 function select(id) {
@@ -149,7 +164,7 @@ function clear() {
   selectedId = null;
   document.getElementById('network-rows').textContent = '';
   document.getElementById('network-detail').hidden = true;
-  document.getElementById('network-badge').hidden = true;
+  resetErrorCount();
 }
 
 function applyApiFilter() {
@@ -161,6 +176,11 @@ function applyApiFilterTo(row) {
 }
 
 export function markRun() {
+  // Mirror the console's reset semantics: a run resets the error count
+  // only when "Clear console on each run" is on — otherwise it accumulates
+  // alongside the kept request rows.
+  if (getState().settings.autoClearConsole) resetErrorCount();
+
   // The outgoing frame is about to be destroyed, so its in-flight
   // requests can never complete — settle them as cancelled instead of
   // leaving them pending forever.

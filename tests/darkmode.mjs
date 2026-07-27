@@ -26,9 +26,9 @@ const bodyBg = () => page.evaluate(() => {
 
 await page.click('#btn-run');
 await page.waitForTimeout(800);
-await check('default preview is dark', (await frameBg()) === 'rgb(29, 32, 38)');
+await check('default preview is dark', (await frameBg()) === 'rgb(26, 29, 35)');
 await check('toggle shows sun in dark mode',
-  (await page.locator('#btn-preview-theme').textContent()) === '☀');
+  (await page.locator('#btn-preview-theme').getAttribute('data-mode')) === 'dark');
 await check('host has dark class (no white flash)', await page.evaluate(() =>
   document.getElementById('preview-host').classList.contains('dark')));
 
@@ -38,7 +38,7 @@ const lightBg = await frameBg();
 await check('toggle to light re-runs with default rendering',
   lightBg === 'rgba(0, 0, 0, 0)' || lightBg === 'rgb(255, 255, 255)');
 await check('toggle shows moon in light mode',
-  (await page.locator('#btn-preview-theme').textContent()) === '🌙');
+  (await page.locator('#btn-preview-theme').getAttribute('data-mode')) === 'light');
 
 await page.click('#btn-preview-theme');
 await page.waitForTimeout(800);
@@ -50,14 +50,14 @@ await page.keyboard.press('Control+v');
 await page.click('#btn-run');
 await page.waitForTimeout(800);
 await check('user CSS beats dark chrome style', (await bodyBg()) === 'rgb(255, 239, 213)');
-await check('html stays dark where user did not style it', (await frameBg()) === 'rgb(29, 32, 38)');
+await check('html stays dark where user did not style it', (await frameBg()) === 'rgb(26, 29, 35)');
 
 await page.click('#btn-preview-theme');
 await page.waitForTimeout(600);
 await page.reload();
 await page.waitForTimeout(1500);
 await check('preview theme persists across reload',
-  (await page.locator('#btn-preview-theme').textContent()) === '🌙');
+  (await page.locator('#btn-preview-theme').getAttribute('data-mode')) === 'light');
 
 await browser.close();
 exitWithResult();

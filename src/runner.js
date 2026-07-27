@@ -111,7 +111,7 @@ ${escStyle(l.cssText)}
   const chromeStyle = settings.previewDark
     ? `<style data-dcspad-chrome>
 :root { color-scheme: dark; }
-html { background: #1d2026; color: #d6d9e0; }
+html { background: #1a1d23; color: #e6e9ef; }
 </style>\n`
     : '';
 

@@ -29,9 +29,10 @@ node config.mjs     #  8 checks: config URL resolution, framework/asset intellig
 node hosted.mjs     # 11 checks: early/delayed splash, exact boot/bundle/config path, hosted flag/base, versioned runtime/types/intelligence/Fluent bridge and same-origin worker
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle
+node ux.mjs         # 18 checks: pane toggles (visibility/persistence/Ctrl+J via Monaco), editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence
 ```
 
-`npm test` runs all 113 checks in that order. Exit code is non-zero on any
+`npm test` runs all 131 checks in that order. Exit code is non-zero on any
 failure. Override endpoints with `DCSPAD_URL` / `DCSPAD_FIXTURES` if you serve
 on different ports.
 

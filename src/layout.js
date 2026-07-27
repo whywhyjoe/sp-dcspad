@@ -1,5 +1,6 @@
-// Layout: splitter dragging, sidebar collapse, tab switching,
-// preview/diagnostics maximize. Positions persist via state.layout.
+// Layout: splitter dragging, pane visibility (topbar segmented toggles),
+// tab switching, editor/preview/diagnostics maximize. Positions persist
+// via state.layout.
 
 import { getState, updateNested } from './state.js';
 
@@ -16,10 +17,43 @@ export function initLayout({ onEditorTabChange } = {}) {
   root.style.setProperty('--runtime-w', `${layout.runtimeFr}fr`);
   root.style.setProperty('--preview-h', `${layout.previewFr}fr`);
   root.style.setProperty('--diag-h', px(layout.diagH));
-  if (layout.sidebarCollapsed) collapseSidebar(true);
-  if (layout.diagCollapsed) collapseDiag(true);
   selectEditorTab(layout.editorTab, { silent: true });
   selectDiagTab(layout.diagTab);
+
+  // ----- pane visibility (topbar segmented toggles) -----
+  // Seed from the legacy collapse flags the first time a pre-panes
+  // workspace loads, then retire them so a later re-open can't be undone
+  // by a stale flag on the next boot.
+  const panes = { ...layout.panes };
+  if (layout.sidebarCollapsed) panes.resources = false;
+  if (layout.diagCollapsed) panes.console = false;
+  if (layout.sidebarCollapsed || layout.diagCollapsed) {
+    updateNested('layout', { panes: { ...panes }, sidebarCollapsed: false, diagCollapsed: false });
+  }
+
+  function applyPanes() {
+    main.classList.toggle('hide-resources', !panes.resources);
+    main.classList.toggle('hide-preview', !panes.preview);
+    main.classList.toggle('hide-console', !panes.console);
+    for (const name of ['resources', 'preview', 'console']) {
+      const seg = document.getElementById(`seg-${name}`);
+      seg.classList.toggle('active', !!panes[name]);
+      seg.setAttribute('aria-pressed', String(!!panes[name]));
+    }
+  }
+  applyPanes();
+
+  function setPaneVisible(name, on) {
+    panes[name] = !!on;
+    applyPanes();
+    updateNested('layout', { panes: { ...panes } });
+  }
+  function togglePane(name) { setPaneVisible(name, !panes[name]); }
+
+  document.getElementById('pane-toggles').addEventListener('click', (e) => {
+    const seg = e.target.closest('.pane-seg');
+    if (seg) togglePane(seg.dataset.pane);
+  });
 
   // ----- splitters -----
   dragSplitter(document.getElementById('split-sidebar'), 'x', (dx, start) => {
@@ -50,23 +84,25 @@ export function initLayout({ onEditorTabChange } = {}) {
     runtimeH: document.getElementById('runtime').getBoundingClientRect().height,
   }));
 
-  // ----- sidebar collapse -----
-  document.getElementById('btn-collapse-sidebar').addEventListener('click', () => collapseSidebar(true));
-  document.getElementById('btn-expand-sidebar').addEventListener('click', () => collapseSidebar(false));
-
-  function collapseSidebar(collapsed) {
-    main.classList.toggle('sidebar-collapsed', collapsed);
-    document.getElementById('btn-expand-sidebar').hidden = !collapsed;
-    updateNested('layout', { sidebarCollapsed: collapsed });
-  }
-
-  // ----- diagnostics collapse (tabs bar stays; clicking a tab reopens) -----
-  document.getElementById('btn-collapse-diag').addEventListener('click', () => collapseDiag(true));
-
-  function collapseDiag(collapsed) {
-    main.classList.toggle('diag-collapsed', collapsed);
-    updateNested('layout', { diagCollapsed: collapsed });
-  }
+  // ----- sidebar vertical split (Frameworks / Snippets) -----
+  const DEFAULT_SNIPPETS_H = 210;
+  root.style.setProperty('--snippets-h', px(layout.snippetsPanelH || DEFAULT_SNIPPETS_H));
+  const splitSide = document.getElementById('split-side');
+  dragSplitter(splitSide, 'y', (dy, start) => {
+    // Dragging down grows Frameworks / shrinks Snippets. Clamp so neither
+    // panel can collapse (Frameworks list ≥ 120px + chrome, Snippets ≥ 150px).
+    const max = start.sidebarH - 160;
+    const h = Math.min(max, Math.max(150, start.snippetsH - dy));
+    root.style.setProperty('--snippets-h', px(h));
+    updateNested('layout', { snippetsPanelH: h });
+  }, () => ({
+    snippetsH: document.getElementById('panel-snippets').getBoundingClientRect().height,
+    sidebarH: document.getElementById('sidebar').getBoundingClientRect().height,
+  }));
+  splitSide.addEventListener('dblclick', () => {
+    root.style.setProperty('--snippets-h', px(DEFAULT_SNIPPETS_H));
+    updateNested('layout', { snippetsPanelH: DEFAULT_SNIPPETS_H });
+  });
 
   // ----- editor tabs -----
   document.getElementById('editor-tabs').addEventListener('click', (e) => {
@@ -84,9 +120,7 @@ export function initLayout({ onEditorTabChange } = {}) {
   // ----- diagnostics tabs -----
   document.getElementById('diag-tabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.tab');
-    if (!tab) return;
-    if (main.classList.contains('diag-collapsed')) collapseDiag(false);
-    selectDiagTab(tab.dataset.diag);
+    if (tab) selectDiagTab(tab.dataset.diag);
   });
 
   // Note: the tab dots (#console-badge / #network-badge) are error
@@ -104,19 +138,32 @@ export function initLayout({ onEditorTabChange } = {}) {
 
   // ----- maximize toggles -----
   document.getElementById('btn-max-preview').addEventListener('click', () => {
-    main.classList.remove('max-diag');
+    main.classList.remove('max-diag', 'max-editor');
     main.classList.toggle('max-preview');
   });
   document.getElementById('btn-max-diag').addEventListener('click', () => {
-    if (main.classList.contains('diag-collapsed')) collapseDiag(false);
-    main.classList.remove('max-preview');
+    main.classList.remove('max-preview', 'max-editor');
     main.classList.toggle('max-diag');
   });
+  document.getElementById('btn-max-editor').addEventListener('click', () => {
+    main.classList.remove('max-preview', 'max-diag');
+    main.classList.toggle('max-editor');
+  });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') main.classList.remove('max-preview', 'max-diag');
+    if (e.key === 'Escape') { main.classList.remove('max-preview', 'max-diag', 'max-editor'); return; }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    // Monaco registers the same chords as editor actions — this listener
+    // covers everywhere else.
+    if (e.code === 'Backslash') {
+      e.preventDefault();
+      togglePane(e.shiftKey ? 'preview' : 'resources');
+    } else if (e.code === 'KeyJ' && !e.shiftKey) {
+      e.preventDefault();
+      togglePane('console');
+    }
   });
 
-  return { selectEditorTab, selectDiagTab };
+  return { selectEditorTab, selectDiagTab, togglePane, setPaneVisible };
 }
 
 function dragSplitter(el, axis, onMove, getStart) {

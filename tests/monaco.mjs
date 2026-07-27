@@ -402,17 +402,15 @@ await blocked.route('**/ts.worker.js*', (route) => route.abort());
 await blocked.goto(APP_URL);
 await blocked.waitForSelector('.monaco-editor');
 await blocked.waitForFunction(() =>
-    (document.documentElement.dataset.monacoWorkerError === 'javascript'
-    || document.documentElement.dataset.monacoWorkerError === 'typescript')
-    && document.querySelector('#status-editor')?.textContent.includes('Monaco ⚠'));
+    document.documentElement.dataset.monacoWorkerError === 'javascript'
+    || document.documentElement.dataset.monacoWorkerError === 'typescript');
 await blocked.click('#btn-run');
 await blocked.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('ran in'));
 await check('worker warning persists after Run without losing the editor', () =>
   blocked.evaluate(() =>
     document.querySelectorAll('.monaco-editor').length === 1
-    && document.querySelector('#status-editor')?.textContent.includes('Monaco ⚠')
-    && document.querySelector('#status-editor')?.title.includes('language tools limited')
+    && !!document.documentElement.dataset.monacoWorkerError
     && document.querySelector('#status-run')?.textContent.includes('ran in')));
 await blocked.close();
 

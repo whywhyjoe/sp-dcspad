@@ -14,12 +14,21 @@ const DEFAULTS = {
   css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
   js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
   libraries: { enabled: [], pinned: ['pnpjs2'], custom: [] },
-  settings: { autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false, previewDark: true, diagFontSize: 12 },
+  settings: {
+    autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false,
+    previewDark: true, diagFontSize: 12, editorFontSize: 13, wordWrap: false,
+  },
   layout: {
     sidebarW: 230, sidebarCollapsed: false,
     editorsFr: 1, runtimeFr: 1,
     previewFr: 1, diagH: 260, diagCollapsed: false,
     editorTab: 'js', diagTab: 'console',
+    // Pane visibility (the topbar segmented toggles). sidebarCollapsed /
+    // diagCollapsed above are legacy flags kept for shape stability: layout.js
+    // reads them once to seed `panes` for pre-existing workspaces, then only
+    // writes `panes`.
+    panes: { resources: true, preview: true, console: true },
+    snippetsPanelH: 210,
   },
 };
 

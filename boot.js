@@ -73,16 +73,17 @@
     'html.dcspad-hosted,html.dcspad-hosted body{background:#101216}' +
     'html.dcspad-hosted #dcspad-mount:before{content:"";position:fixed;inset:0;' +
     'z-index:998;background:#101216;pointer-events:none}' +
-    '#splash.dcspad-boot-splash{position:fixed;inset:0;z-index:1000;background:#16181d;' +
+    '#splash.dcspad-boot-splash{position:fixed;inset:0;z-index:1000;background:#14161b;' +
     'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;' +
-    'opacity:0;transition:opacity .75s ease;color:#4ec9b0;cursor:pointer}' +
+    'opacity:0;transition:opacity .75s ease;color:#3fd8b4;cursor:pointer}' +
     '#splash.dcspad-boot-splash.visible{opacity:1}' +
     '#splash.dcspad-boot-splash.fading{opacity:0;pointer-events:none}' +
     '#splash.dcspad-boot-splash pre{font:clamp(8px,1.6vw,14px)/1.15 Consolas,monospace;' +
-    'white-space:pre;margin:0;text-shadow:0 0 14px #4ec9b044}' +
-    '#splash.dcspad-boot-splash .splash-status{min-height:1.4em;color:#b8bdc9;' +
+    'white-space:pre;margin:0}' +
+    '#splash.dcspad-boot-splash pre .dim{color:#2c6a5c}' +
+    '#splash.dcspad-boot-splash .splash-status{min-height:1.4em;color:#a2a9b8;' +
     'font:12px/1.4 Consolas,monospace;letter-spacing:.04em}' +
-    '#splash.dcspad-boot-splash.failed .splash-status{color:#f47067}' +
+    '#splash.dcspad-boot-splash.failed .splash-status{color:#ff6b62}' +
     '@media(prefers-reduced-motion:reduce){#splash.dcspad-boot-splash{transition:none}}';
   document.head.appendChild(bootStyle);
 
@@ -92,7 +93,10 @@
   var bootLogo = document.createElement('pre');
   bootLogo.id = 'splash-logo';
   bootLogo.className = 'splash-logo';
-  bootLogo.textContent = BOOT_LOGO;
+  // Two flat layers, matched in splash.js: the block mass stays accent, the
+  // box-drawing outline drops to the accent-line tone. BOOT_LOGO contains no
+  // HTML-significant characters, so the wrap is injection-safe.
+  bootLogo.innerHTML = BOOT_LOGO.replace(/([═-╬]+)/g, '<span class="dim">$1</span>');
   var bootStatus = document.createElement('div');
   bootStatus.id = 'splash-status';
   bootStatus.className = 'splash-status';

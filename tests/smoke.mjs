@@ -265,9 +265,11 @@ await page.waitForTimeout(FILTER_SETTLE);
 // (local fixture: sandbox blocks public CDNs; the mechanism — ordered
 // blocking <script src> — is identical)
 const addFramework = async (name, url) => {
+  // The add form is a collapsed pinned footer by default.
+  if (await page.locator('#lib-custom-form').isHidden()) await page.click('#btn-add-framework');
   await page.fill('#lib-custom-name', name);
   await page.fill('#lib-custom-url', url);
-  await page.click('#lib-custom-form button');
+  await page.click('#lib-add-submit');
 };
 const libRow = (text) => page.locator('#lib-list .lib-item', { hasText: text });
 // The assertion IS the wait: poll until the iframe's <script src> order

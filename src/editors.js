@@ -35,7 +35,7 @@ const MODEL_URIS = {
   js: 'file:///dcspad/script.js',
 };
 
-export async function initEditors({ onChange, onRunShortcut }) {
+export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }) {
   const monaco = await loadMonacoRuntime();
   const state = getState();
   const host = document.getElementById('pane-editor');
@@ -56,41 +56,83 @@ export async function initEditors({ onChange, onRunShortcut }) {
   const htmlDataPacks = new Map();
   const enabledIntelligence = new Set();
 
+  // Design-system syntax palette: VS Code Dark Modern hues on the --bg-editor
+  // ground (#17191f). Widget surfaces mirror the app's popover tokens
+  // (--bg-2 / --border-strong / --fg-row). :root CSS variables cannot reach
+  // in here — keep this table and styles/app.css tokens in sync by hand.
   monaco.editor.defineTheme('dcspad-dark', {
     base: 'vs-dark',
     inherit: true,
     rules: [
-      { token: 'comment', foreground: '6A9955' },
-      { token: 'keyword', foreground: 'C586C0' },
+      { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+      { token: 'comment.doc', foreground: '6A9955', fontStyle: 'italic' },
+      { token: 'keyword', foreground: '569CD6' },
+      { token: 'keyword.flow', foreground: 'C586C0' },
       { token: 'number', foreground: 'B5CEA8' },
       { token: 'string', foreground: 'CE9178' },
+      { token: 'string.escape', foreground: 'D7BA7D' },
+      { token: 'regexp', foreground: 'D16969' },
       { token: 'type', foreground: '4EC9B0' },
       { token: 'type.identifier', foreground: '4EC9B0' },
-      { token: 'identifier', foreground: 'DCDCAA' },
+      { token: 'identifier', foreground: '9CDCFE' },
+      { token: 'constant', foreground: '4FC1FF' },
       { token: 'tag', foreground: '569CD6' },
+      { token: 'tag.css', foreground: 'D7BA7D' },
       { token: 'attribute.name', foreground: '9CDCFE' },
+      { token: 'attribute.value', foreground: 'CE9178' },
+      { token: 'attribute.value.number.css', foreground: 'B5CEA8' },
+      { token: 'attribute.value.unit.css', foreground: 'B5CEA8' },
+      { token: 'delimiter', foreground: 'D4D4D4' },
+      { token: 'operator', foreground: 'D4D4D4' },
+      { token: 'invalid', foreground: 'F44747' },
     ],
     colors: {
-      // Preserve the prior One Dark editor ground while Monaco replaces its
-      // rendering and language-service layers.
-      'editor.background': '#282c34',
-      'editor.foreground': '#d6d9e0',
-      'editorGutter.background': '#282c34',
-      'editorLineNumber.foreground': '#5c6270',
-      'editorLineNumber.activeForeground': '#b8bdc9',
-      'editor.lineHighlightBackground': '#2c313a',
+      'editor.background': '#17191f',
+      'editor.foreground': '#cccccc',
+      'editorGutter.background': '#14161b',
+      'editorLineNumber.foreground': '#6d7484',
+      'editorLineNumber.activeForeground': '#a2a9b8',
+      'editor.lineHighlightBackground': '#1f232b',
+      'editor.lineHighlightBorder': '#262b34',
       'editor.selectionBackground': '#264f78',
       'editor.inactiveSelectionBackground': '#264f7855',
-      'editorCursor.foreground': '#4ec9b0',
-      'editorIndentGuide.background1': '#33374255',
-      'editorIndentGuide.activeBackground1': '#4b5263',
-      'editorSuggestWidget.background': '#23262e',
-      'editorSuggestWidget.border': '#3c4150',
-      'editorSuggestWidget.selectedBackground': '#2b4058',
-      'editorHoverWidget.background': '#23262e',
-      'editorHoverWidget.border': '#3c4150',
-      'editorWidget.background': '#23262e',
-      'editorWidget.border': '#3c4150',
+      'editorCursor.foreground': '#aeafad',
+      'editorBracketMatch.background': '#00000000',
+      'editorBracketMatch.border': '#888888',
+      'editorIndentGuide.background1': '#2a2e38',
+      'editorIndentGuide.activeBackground1': '#3a4150',
+      'editorWhitespace.foreground': '#333947',
+      'editorWidget.background': '#20242c',
+      'editorWidget.border': '#3a4150',
+      'editorWidget.foreground': '#d4d9e2',
+      'editorSuggestWidget.background': '#20242c',
+      'editorSuggestWidget.border': '#3a4150',
+      'editorSuggestWidget.foreground': '#d4d9e2',
+      'editorSuggestWidget.selectedBackground': '#2a2f3a',
+      'editorSuggestWidget.highlightForeground': '#5ee3c4',
+      'editorSuggestWidget.focusHighlightForeground': '#5ee3c4',
+      'editorHoverWidget.background': '#20242c',
+      'editorHoverWidget.border': '#3a4150',
+      'editorHoverWidget.foreground': '#d4d9e2',
+      'list.hoverBackground': '#2a2f3a',
+      'list.highlightForeground': '#5ee3c4',
+      'input.background': '#14161b',
+      'input.border': '#3a4150',
+      'input.foreground': '#e6e9ef',
+      'inputOption.activeBorder': '#3fd8b4',
+      'editor.findMatchBackground': '#2c6a5c66',
+      'editor.findMatchBorder': '#3fd8b4',
+      'editor.findMatchHighlightBackground': '#1e3b35',
+      'editorError.foreground': '#ff6b62',
+      'editorWarning.foreground': '#e8b660',
+      'editorInfo.foreground': '#67a7f7',
+      'editorLink.activeForeground': '#67a7f7',
+      'menu.background': '#20242c',
+      'menu.foreground': '#d4d9e2',
+      'menu.selectionBackground': '#2a2f3a',
+      'scrollbarSlider.background': '#3a415055',
+      'scrollbarSlider.hoverBackground': '#3a415088',
+      'scrollbarSlider.activeBackground': '#3a4150aa',
     },
   });
 
@@ -221,8 +263,10 @@ export async function initEditors({ onChange, onRunShortcut }) {
     automaticLayout: true,
     fixedOverflowWidgets: true,
     fontFamily: '"Cascadia Code", "Consolas", "SF Mono", Menlo, monospace',
-    fontSize: 13,
-    lineHeight: 20,
+    // Editor text size is a setting (11–18); line height locks to 1.7×.
+    fontSize: state.settings.editorFontSize || 13,
+    lineHeight: Math.round((state.settings.editorFontSize || 13) * 1.7),
+    wordWrap: state.settings.wordWrap ? 'on' : 'off',
     lineNumbersMinChars: 3,
     minimap: { enabled: false },
     overviewRulerLanes: 0,
@@ -242,6 +286,39 @@ export async function initEditors({ onChange, onRunShortcut }) {
     label: 'Run DCSPad',
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
     run: () => onRunShortcut?.(),
+  });
+
+  // Pane toggles + font stepping must also work while Monaco has focus —
+  // it swallows document-level keydown for bound chords.
+  editor.addAction({
+    id: 'dcspad.togglePane.resources',
+    label: 'Toggle resources pane',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backslash],
+    run: () => onTogglePane?.('resources'),
+  });
+  editor.addAction({
+    id: 'dcspad.togglePane.preview',
+    label: 'Toggle preview pane',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Backslash],
+    run: () => onTogglePane?.('preview'),
+  });
+  editor.addAction({
+    id: 'dcspad.togglePane.console',
+    label: 'Toggle console pane',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ],
+    run: () => onTogglePane?.('console'),
+  });
+  editor.addAction({
+    id: 'dcspad.fontLarger',
+    label: 'Larger editor text',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Equal],
+    run: () => onFontStep?.(+1),
+  });
+  editor.addAction({
+    id: 'dcspad.fontSmaller',
+    label: 'Smaller editor text',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Minus],
+    run: () => onFontStep?.(-1),
   });
 
   editor.onDidChangeCursorPosition(() => {
@@ -370,6 +447,12 @@ export async function initEditors({ onChange, onRunShortcut }) {
 
   return {
     activate,
+    setFontSize: (px) => {
+      editor.updateOptions({ fontSize: px, lineHeight: Math.round(px * 1.7) });
+    },
+    setWordWrap: (on) => {
+      editor.updateOptions({ wordWrap: on ? 'on' : 'off' });
+    },
     getDocs: () => ({
       html: models.html.getValue(),
       css: models.css.getValue(),

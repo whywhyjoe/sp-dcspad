@@ -36,6 +36,7 @@ let catalog = null;
 let appConfig = null;
 let onChangeCb = null;
 let onStorageErrorCb = null;
+let filterText = '';
 
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 const entryFromUrl = (url, name) => ({
@@ -70,12 +71,75 @@ export function initLibraries({ config, onChange, onStorageError }) {
   }
 
   render();
-  document.getElementById('lib-custom-form').addEventListener('submit', (e) => {
+
+  // Add-framework pinned footer: collapsed dashed button ↔ inline form.
+  // Validation is inline (no dialogs): the URL must parse and end .js/.css.
+  const form = document.getElementById('lib-custom-form');
+  const toggleBtn = document.getElementById('btn-add-framework');
+  const urlInput = document.getElementById('lib-custom-url');
+  const nameInput = document.getElementById('lib-custom-name');
+  const errorEl = document.getElementById('lib-custom-error');
+
+  function setAddFormOpen(open) {
+    form.hidden = !open;
+    toggleBtn.hidden = open;
+    if (open) {
+      nameInput.focus();
+    } else {
+      clearAddError();
+      urlInput.value = '';
+      nameInput.value = '';
+    }
+  }
+  function showAddError(msg) {
+    errorEl.textContent = msg;
+    errorEl.hidden = false;
+    urlInput.classList.add('invalid');
+  }
+  function clearAddError() {
+    errorEl.hidden = true;
+    urlInput.classList.remove('invalid');
+  }
+
+  // Frameworks header search: the magnifier swaps in an inline filter row;
+  // Esc (or emptying it and closing) restores the header.
+  const filterRow = document.getElementById('frameworks-filter-row');
+  const filterInput = document.getElementById('frameworks-filter');
+  document.getElementById('btn-frameworks-search').addEventListener('click', () => {
+    filterRow.hidden = !filterRow.hidden;
+    if (!filterRow.hidden) filterInput.focus();
+    else { filterInput.value = ''; filterText = ''; render(); }
+  });
+  filterInput.addEventListener('input', () => {
+    filterText = filterInput.value.trim().toLowerCase();
+    render();
+  });
+  filterInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      filterRow.hidden = true;
+      filterInput.value = '';
+      filterText = '';
+      render();
+    }
+  });
+
+  toggleBtn.addEventListener('click', () => setAddFormOpen(true));
+  document.getElementById('lib-add-cancel').addEventListener('click', () => setAddFormOpen(false));
+  form.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); setAddFormOpen(false); }
+  });
+  urlInput.addEventListener('input', clearAddError);
+
+  form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const urlInput = document.getElementById('lib-custom-url');
-    const nameInput = document.getElementById('lib-custom-name');
     const url = urlInput.value.trim();
-    if (!url) return;
+    if (!url) { showAddError('Enter a script or stylesheet URL.'); return; }
+    try { new URL(url, location.href); } catch { showAddError('That is not a valid URL.'); return; }
+    if (!/\.(js|css)(\?|#|$)/i.test(url)) {
+      showAddError('The URL should point at a .js or .css file.');
+      return;
+    }
     const entry = entryFromUrl(url, nameInput.value.trim());
     catalog.items.push(entry);
     persistCatalog();
@@ -83,8 +147,7 @@ export function initLibraries({ config, onChange, onStorageError }) {
     const enabled = new Set(getState().libraries.enabled);
     enabled.add(entry.id);
     updateNested('libraries', { enabled: [...enabled] });
-    urlInput.value = '';
-    nameInput.value = '';
+    setAddFormOpen(false);
     render();
     onChangeCb?.();
   });
@@ -104,11 +167,32 @@ function render() {
   pinnedHost.textContent = '';
   listHost.textContent = '';
 
+  let shown = 0;
   for (const entry of catalog.items) {
+    if (filterText && !entry.name.toLowerCase().includes(filterText)) continue;
+    shown++;
     const pinned = libs.pinned.includes(entry.id);
     (pinned ? pinnedHost : listHost).append(catalogItem(entry, libs, pinned));
   }
+  const noMatch = document.getElementById('frameworks-no-match');
+  if (noMatch) noMatch.hidden = !(filterText && shown === 0);
+
+  // Header count chip: enabled/total.
+  const countEl = document.getElementById('frameworks-count');
+  if (countEl) {
+    const known = new Set(catalog.items.map((it) => it.id));
+    const enabledCount = libs.enabled.filter((id) => known.has(id)).length;
+    countEl.textContent = `${enabledCount}/${catalog.items.length}`;
+  }
 }
+
+const TOOL_ICONS = {
+  up: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg>',
+  down: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/></svg>',
+  pin: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z"/></svg>',
+  pinFilled: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z" fill="currentColor"/></svg>',
+  del: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>',
+};
 
 function catalogItem(entry, libs, pinned) {
   const effective = applyFrameworkConfig(entry, appConfig);
@@ -142,14 +226,18 @@ function catalogItem(entry, libs, pinned) {
     onChangeCb?.();
   });
 
-  // Row tools. All live inside the <label>, so each must preventDefault
-  // to stop the click from also toggling the checkbox.
+  // Row tools — real buttons so keyboard focus can reach them (the hover
+  // reveal is focus-within-aware). All live inside the <label>, so each
+  // must preventDefault to stop the click from also toggling the checkbox.
   const tools = el('span', 'lib-tools');
-  const tool = (cls, text, title, fn) => {
-    const s = el('span', cls, text);
-    s.title = title;
-    s.addEventListener('click', (e) => { e.preventDefault(); fn(); });
-    return s;
+  const tool = (cls, icon, title, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = cls;
+    b.innerHTML = icon;
+    b.title = title;
+    b.addEventListener('click', (e) => { e.preventDefault(); fn(); });
+    return b;
   };
 
   // Index is looked up at event time, not captured at render time: a
@@ -157,15 +245,15 @@ function catalogItem(entry, libs, pinned) {
   // must never splice by a stale position.
   const liveIdx = () => catalog.items.indexOf(entry);
   tools.append(
-    tool('lib-move', '↑', 'Move up (injection order)', () => moveEntry(liveIdx(), -1)),
-    tool('lib-move', '↓', 'Move down (injection order)', () => moveEntry(liveIdx(), +1)),
-    tool('lib-pin' + (pinned ? ' pinned' : ''), pinned ? '★' : '☆', pinned ? 'Unpin' : 'Pin to top', () => {
+    tool('lib-move', TOOL_ICONS.up, 'Move up (injection order)', () => moveEntry(liveIdx(), -1)),
+    tool('lib-move', TOOL_ICONS.down, 'Move down (injection order)', () => moveEntry(liveIdx(), +1)),
+    tool('lib-pin' + (pinned ? ' pinned' : ''), pinned ? TOOL_ICONS.pinFilled : TOOL_ICONS.pin, pinned ? 'Unpin' : 'Pin to top', () => {
       const pins = new Set(getState().libraries.pinned);
       pinned ? pins.delete(entry.id) : pins.add(entry.id);
       updateNested('libraries', { pinned: [...pins] });
       render();
     }),
-    tool('lib-del', '✕', 'Remove from catalog', () => {
+    tool('lib-del', TOOL_ICONS.del, 'Remove from catalog', () => {
       const idx = liveIdx();
       if (idx === -1) return;
       if (!confirm(`Remove "${entry.name}" from the framework catalog?`)) return;

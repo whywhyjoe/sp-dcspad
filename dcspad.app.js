@@ -8,7 +8,16 @@ var DEFAULTS = {
   css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
   js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
   libraries: { enabled: [], pinned: ["pnpjs2"], custom: [] },
-  settings: { autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false, previewDark: true, diagFontSize: 12 },
+  settings: {
+    autorun: false,
+    jsAsModule: false,
+    autoClearConsole: true,
+    seenSplash: false,
+    previewDark: true,
+    diagFontSize: 12,
+    editorFontSize: 13,
+    wordWrap: false
+  },
   layout: {
     sidebarW: 230,
     sidebarCollapsed: false,
@@ -18,7 +27,13 @@ var DEFAULTS = {
     diagH: 260,
     diagCollapsed: false,
     editorTab: "js",
-    diagTab: "console"
+    diagTab: "console",
+    // Pane visibility (the topbar segmented toggles). sidebarCollapsed /
+    // diagCollapsed above are legacy flags kept for shape stability: layout.js
+    // reads them once to seed `panes` for pre-existing workspaces, then only
+    // writes `panes`.
+    panes: { resources: true, preview: true, console: true },
+    snippetsPanelH: 210
   }
 };
 var state = load();
@@ -112,10 +127,37 @@ function initLayout({ onEditorTabChange } = {}) {
   root.style.setProperty("--runtime-w", `${layout.runtimeFr}fr`);
   root.style.setProperty("--preview-h", `${layout.previewFr}fr`);
   root.style.setProperty("--diag-h", px(layout.diagH));
-  if (layout.sidebarCollapsed) collapseSidebar(true);
-  if (layout.diagCollapsed) collapseDiag(true);
   selectEditorTab(layout.editorTab, { silent: true });
   selectDiagTab(layout.diagTab);
+  const panes = { ...layout.panes };
+  if (layout.sidebarCollapsed) panes.resources = false;
+  if (layout.diagCollapsed) panes.console = false;
+  if (layout.sidebarCollapsed || layout.diagCollapsed) {
+    updateNested("layout", { panes: { ...panes }, sidebarCollapsed: false, diagCollapsed: false });
+  }
+  function applyPanes() {
+    main.classList.toggle("hide-resources", !panes.resources);
+    main.classList.toggle("hide-preview", !panes.preview);
+    main.classList.toggle("hide-console", !panes.console);
+    for (const name of ["resources", "preview", "console"]) {
+      const seg = document.getElementById(`seg-${name}`);
+      seg.classList.toggle("active", !!panes[name]);
+      seg.setAttribute("aria-pressed", String(!!panes[name]));
+    }
+  }
+  applyPanes();
+  function setPaneVisible(name, on) {
+    panes[name] = !!on;
+    applyPanes();
+    updateNested("layout", { panes: { ...panes } });
+  }
+  function togglePane(name) {
+    setPaneVisible(name, !panes[name]);
+  }
+  document.getElementById("pane-toggles").addEventListener("click", (e) => {
+    const seg = e.target.closest(".pane-seg");
+    if (seg) togglePane(seg.dataset.pane);
+  });
   dragSplitter(document.getElementById("split-sidebar"), "x", (dx, start) => {
     const w = Math.min(420, Math.max(140, start.sidebarW + dx));
     root.style.setProperty("--sidebar-w", px(w));
@@ -140,18 +182,22 @@ function initLayout({ onEditorTabChange } = {}) {
     diagH: document.getElementById("diag-panel").getBoundingClientRect().height,
     runtimeH: document.getElementById("runtime").getBoundingClientRect().height
   }));
-  document.getElementById("btn-collapse-sidebar").addEventListener("click", () => collapseSidebar(true));
-  document.getElementById("btn-expand-sidebar").addEventListener("click", () => collapseSidebar(false));
-  function collapseSidebar(collapsed) {
-    main.classList.toggle("sidebar-collapsed", collapsed);
-    document.getElementById("btn-expand-sidebar").hidden = !collapsed;
-    updateNested("layout", { sidebarCollapsed: collapsed });
-  }
-  document.getElementById("btn-collapse-diag").addEventListener("click", () => collapseDiag(true));
-  function collapseDiag(collapsed) {
-    main.classList.toggle("diag-collapsed", collapsed);
-    updateNested("layout", { diagCollapsed: collapsed });
-  }
+  const DEFAULT_SNIPPETS_H = 210;
+  root.style.setProperty("--snippets-h", px(layout.snippetsPanelH || DEFAULT_SNIPPETS_H));
+  const splitSide = document.getElementById("split-side");
+  dragSplitter(splitSide, "y", (dy, start) => {
+    const max = start.sidebarH - 160;
+    const h = Math.min(max, Math.max(150, start.snippetsH - dy));
+    root.style.setProperty("--snippets-h", px(h));
+    updateNested("layout", { snippetsPanelH: h });
+  }, () => ({
+    snippetsH: document.getElementById("panel-snippets").getBoundingClientRect().height,
+    sidebarH: document.getElementById("sidebar").getBoundingClientRect().height
+  }));
+  splitSide.addEventListener("dblclick", () => {
+    root.style.setProperty("--snippets-h", px(DEFAULT_SNIPPETS_H));
+    updateNested("layout", { snippetsPanelH: DEFAULT_SNIPPETS_H });
+  });
   document.getElementById("editor-tabs").addEventListener("click", (e) => {
     const tab = e.target.closest(".tab");
     if (tab) selectEditorTab(tab.dataset.editor);
@@ -164,9 +210,7 @@ function initLayout({ onEditorTabChange } = {}) {
   }
   document.getElementById("diag-tabs").addEventListener("click", (e) => {
     const tab = e.target.closest(".tab");
-    if (!tab) return;
-    if (main.classList.contains("diag-collapsed")) collapseDiag(false);
-    selectDiagTab(tab.dataset.diag);
+    if (tab) selectDiagTab(tab.dataset.diag);
   });
   function selectDiagTab(name) {
     for (const t of document.querySelectorAll("#diag-tabs .tab"))
@@ -178,18 +222,32 @@ function initLayout({ onEditorTabChange } = {}) {
     updateNested("layout", { diagTab: name });
   }
   document.getElementById("btn-max-preview").addEventListener("click", () => {
-    main.classList.remove("max-diag");
+    main.classList.remove("max-diag", "max-editor");
     main.classList.toggle("max-preview");
   });
   document.getElementById("btn-max-diag").addEventListener("click", () => {
-    if (main.classList.contains("diag-collapsed")) collapseDiag(false);
-    main.classList.remove("max-preview");
+    main.classList.remove("max-preview", "max-editor");
     main.classList.toggle("max-diag");
   });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") main.classList.remove("max-preview", "max-diag");
+  document.getElementById("btn-max-editor").addEventListener("click", () => {
+    main.classList.remove("max-preview", "max-diag");
+    main.classList.toggle("max-editor");
   });
-  return { selectEditorTab, selectDiagTab };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      main.classList.remove("max-preview", "max-diag", "max-editor");
+      return;
+    }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    if (e.code === "Backslash") {
+      e.preventDefault();
+      togglePane(e.shiftKey ? "preview" : "resources");
+    } else if (e.code === "KeyJ" && !e.shiftKey) {
+      e.preventDefault();
+      togglePane("console");
+    }
+  });
+  return { selectEditorTab, selectDiagTab, togglePane, setPaneVisible };
 }
 function dragSplitter(el2, axis, onMove, getStart) {
   el2.addEventListener("pointerdown", (e) => {
@@ -1198,7 +1256,7 @@ var MODEL_URIS = {
   css: "file:///dcspad/styles.css",
   js: "file:///dcspad/script.js"
 };
-async function initEditors({ onChange, onRunShortcut }) {
+async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }) {
   const monaco = await loadMonacoRuntime();
   const state3 = getState();
   const host = document.getElementById("pane-editor");
@@ -1222,37 +1280,75 @@ async function initEditors({ onChange, onRunShortcut }) {
     base: "vs-dark",
     inherit: true,
     rules: [
-      { token: "comment", foreground: "6A9955" },
-      { token: "keyword", foreground: "C586C0" },
+      { token: "comment", foreground: "6A9955", fontStyle: "italic" },
+      { token: "comment.doc", foreground: "6A9955", fontStyle: "italic" },
+      { token: "keyword", foreground: "569CD6" },
+      { token: "keyword.flow", foreground: "C586C0" },
       { token: "number", foreground: "B5CEA8" },
       { token: "string", foreground: "CE9178" },
+      { token: "string.escape", foreground: "D7BA7D" },
+      { token: "regexp", foreground: "D16969" },
       { token: "type", foreground: "4EC9B0" },
       { token: "type.identifier", foreground: "4EC9B0" },
-      { token: "identifier", foreground: "DCDCAA" },
+      { token: "identifier", foreground: "9CDCFE" },
+      { token: "constant", foreground: "4FC1FF" },
       { token: "tag", foreground: "569CD6" },
-      { token: "attribute.name", foreground: "9CDCFE" }
+      { token: "tag.css", foreground: "D7BA7D" },
+      { token: "attribute.name", foreground: "9CDCFE" },
+      { token: "attribute.value", foreground: "CE9178" },
+      { token: "attribute.value.number.css", foreground: "B5CEA8" },
+      { token: "attribute.value.unit.css", foreground: "B5CEA8" },
+      { token: "delimiter", foreground: "D4D4D4" },
+      { token: "operator", foreground: "D4D4D4" },
+      { token: "invalid", foreground: "F44747" }
     ],
     colors: {
-      // Preserve the prior One Dark editor ground while Monaco replaces its
-      // rendering and language-service layers.
-      "editor.background": "#282c34",
-      "editor.foreground": "#d6d9e0",
-      "editorGutter.background": "#282c34",
-      "editorLineNumber.foreground": "#5c6270",
-      "editorLineNumber.activeForeground": "#b8bdc9",
-      "editor.lineHighlightBackground": "#2c313a",
+      "editor.background": "#17191f",
+      "editor.foreground": "#cccccc",
+      "editorGutter.background": "#14161b",
+      "editorLineNumber.foreground": "#6d7484",
+      "editorLineNumber.activeForeground": "#a2a9b8",
+      "editor.lineHighlightBackground": "#1f232b",
+      "editor.lineHighlightBorder": "#262b34",
       "editor.selectionBackground": "#264f78",
       "editor.inactiveSelectionBackground": "#264f7855",
-      "editorCursor.foreground": "#4ec9b0",
-      "editorIndentGuide.background1": "#33374255",
-      "editorIndentGuide.activeBackground1": "#4b5263",
-      "editorSuggestWidget.background": "#23262e",
-      "editorSuggestWidget.border": "#3c4150",
-      "editorSuggestWidget.selectedBackground": "#2b4058",
-      "editorHoverWidget.background": "#23262e",
-      "editorHoverWidget.border": "#3c4150",
-      "editorWidget.background": "#23262e",
-      "editorWidget.border": "#3c4150"
+      "editorCursor.foreground": "#aeafad",
+      "editorBracketMatch.background": "#00000000",
+      "editorBracketMatch.border": "#888888",
+      "editorIndentGuide.background1": "#2a2e38",
+      "editorIndentGuide.activeBackground1": "#3a4150",
+      "editorWhitespace.foreground": "#333947",
+      "editorWidget.background": "#20242c",
+      "editorWidget.border": "#3a4150",
+      "editorWidget.foreground": "#d4d9e2",
+      "editorSuggestWidget.background": "#20242c",
+      "editorSuggestWidget.border": "#3a4150",
+      "editorSuggestWidget.foreground": "#d4d9e2",
+      "editorSuggestWidget.selectedBackground": "#2a2f3a",
+      "editorSuggestWidget.highlightForeground": "#5ee3c4",
+      "editorSuggestWidget.focusHighlightForeground": "#5ee3c4",
+      "editorHoverWidget.background": "#20242c",
+      "editorHoverWidget.border": "#3a4150",
+      "editorHoverWidget.foreground": "#d4d9e2",
+      "list.hoverBackground": "#2a2f3a",
+      "list.highlightForeground": "#5ee3c4",
+      "input.background": "#14161b",
+      "input.border": "#3a4150",
+      "input.foreground": "#e6e9ef",
+      "inputOption.activeBorder": "#3fd8b4",
+      "editor.findMatchBackground": "#2c6a5c66",
+      "editor.findMatchBorder": "#3fd8b4",
+      "editor.findMatchHighlightBackground": "#1e3b35",
+      "editorError.foreground": "#ff6b62",
+      "editorWarning.foreground": "#e8b660",
+      "editorInfo.foreground": "#67a7f7",
+      "editorLink.activeForeground": "#67a7f7",
+      "menu.background": "#20242c",
+      "menu.foreground": "#d4d9e2",
+      "menu.selectionBackground": "#2a2f3a",
+      "scrollbarSlider.background": "#3a415055",
+      "scrollbarSlider.hoverBackground": "#3a415088",
+      "scrollbarSlider.activeBackground": "#3a4150aa"
     }
   });
   const jsDefaults = monaco.typescript.javascriptDefaults;
@@ -1375,8 +1471,10 @@ async function initEditors({ onChange, onRunShortcut }) {
     automaticLayout: true,
     fixedOverflowWidgets: true,
     fontFamily: '"Cascadia Code", "Consolas", "SF Mono", Menlo, monospace',
-    fontSize: 13,
-    lineHeight: 20,
+    // Editor text size is a setting (11–18); line height locks to 1.7×.
+    fontSize: state3.settings.editorFontSize || 13,
+    lineHeight: Math.round((state3.settings.editorFontSize || 13) * 1.7),
+    wordWrap: state3.settings.wordWrap ? "on" : "off",
     lineNumbersMinChars: 3,
     minimap: { enabled: false },
     overviewRulerLanes: 0,
@@ -1395,6 +1493,36 @@ async function initEditors({ onChange, onRunShortcut }) {
     label: "Run DCSPad",
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
     run: () => onRunShortcut?.()
+  });
+  editor.addAction({
+    id: "dcspad.togglePane.resources",
+    label: "Toggle resources pane",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backslash],
+    run: () => onTogglePane?.("resources")
+  });
+  editor.addAction({
+    id: "dcspad.togglePane.preview",
+    label: "Toggle preview pane",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Backslash],
+    run: () => onTogglePane?.("preview")
+  });
+  editor.addAction({
+    id: "dcspad.togglePane.console",
+    label: "Toggle console pane",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ],
+    run: () => onTogglePane?.("console")
+  });
+  editor.addAction({
+    id: "dcspad.fontLarger",
+    label: "Larger editor text",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Equal],
+    run: () => onFontStep?.(1)
+  });
+  editor.addAction({
+    id: "dcspad.fontSmaller",
+    label: "Smaller editor text",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Minus],
+    run: () => onFontStep?.(-1)
   });
   editor.onDidChangeCursorPosition(() => {
     selections[active] = editor.getSelection() || selections[active];
@@ -1511,6 +1639,12 @@ async function initEditors({ onChange, onRunShortcut }) {
   reportCursor();
   return {
     activate,
+    setFontSize: (px2) => {
+      editor.updateOptions({ fontSize: px2, lineHeight: Math.round(px2 * 1.7) });
+    },
+    setWordWrap: (on) => {
+      editor.updateOptions({ wordWrap: on ? "on" : "off" });
+    },
     getDocs: () => ({
       html: models.html.getValue(),
       css: models.css.getValue(),
@@ -1635,7 +1769,7 @@ ${escStyle(l.cssText)}
   }).join("\n");
   const chromeStyle = settings.previewDark ? `<style data-dcspad-chrome>
 :root { color-scheme: dark; }
-html { background: #1d2026; color: #d6d9e0; }
+html { background: #1a1d23; color: #e6e9ef; }
 </style>
 ` : "";
   const contextScript = spContext ? `<script${nonceAttr}>window._spPageContextInfo = ${JSON.stringify(spContext.pageContext)};<\/script>
@@ -2074,6 +2208,7 @@ var out;
 var groupStack;
 var replHistory;
 var replIndex;
+var errorCount = 0;
 var deps = {};
 var FILTER_DEBOUNCE_MS = 150;
 function initConsolePanel({ evalInFrame: evalInFrame2, mapSrcdocLine, gotoJsLine, isConsoleVisible }) {
@@ -2096,21 +2231,26 @@ function initConsolePanel({ evalInFrame: evalInFrame2, mapSrcdocLine, gotoJsLine
   });
   refreshFilterState();
   const input = document.getElementById("console-input");
+  async function submitRepl() {
+    if (!input.value.trim()) return;
+    const code = input.value;
+    input.value = "";
+    replHistory.push(code);
+    replIndex = replHistory.length;
+    addEntry("log", [el("span", "", code)], { cls: "repl-echo" });
+    const res = await deps.evalInFrame(code);
+    const body = renderNodeSmart(res.value);
+    if (res.awaited) {
+      const tag = el("span", "sp-badge", "awaited");
+      addEntry(res.ok ? "log" : "error", [tag, body], { cls: "repl-result" });
+    } else {
+      addEntry(res.ok ? "log" : "error", [body], { cls: "repl-result" });
+    }
+  }
+  document.getElementById("btn-repl-eval").addEventListener("click", submitRepl);
   input.addEventListener("keydown", async (e) => {
     if (e.key === "Enter" && input.value.trim()) {
-      const code = input.value;
-      input.value = "";
-      replHistory.push(code);
-      replIndex = replHistory.length;
-      addEntry("log", [el("span", "", code)], { cls: "repl-echo" });
-      const res = await deps.evalInFrame(code);
-      const body = renderNodeSmart(res.value);
-      if (res.awaited) {
-        const tag = el("span", "sp-badge", "awaited");
-        addEntry(res.ok ? "log" : "error", [tag, body], { cls: "repl-result" });
-      } else {
-        addEntry(res.ok ? "log" : "error", [body], { cls: "repl-result" });
-      }
+      await submitRepl();
     } else if (e.key === "ArrowUp") {
       if (replIndex > 0) {
         replIndex--;
@@ -2211,7 +2351,13 @@ function addEntry(level, parts, { cls } = {}) {
   applyFilterTo(entry);
   currentContainer().append(entry);
   scrollIfPinned();
-  if (level === "error") document.getElementById("console-badge").hidden = false;
+  updateConsoleEmpty();
+  if (level === "error") {
+    errorCount++;
+    const badge2 = document.getElementById("console-badge");
+    badge2.textContent = errorCount > 99 ? "99+" : String(errorCount);
+    badge2.hidden = false;
+  }
 }
 function runDivider(runNumber) {
   groupStack = [];
@@ -2219,12 +2365,19 @@ function runDivider(runNumber) {
   const ts = (/* @__PURE__ */ new Date()).toLocaleTimeString();
   div.append(el("span", "rd-mark", "\u259E \u25B6"), el("span", "", `run #${runNumber} \xB7 ${ts}`));
   out.append(div);
+  updateConsoleEmpty();
   scrollIfPinned(true);
 }
 function clear() {
   out.textContent = "";
   groupStack = [];
+  errorCount = 0;
   document.getElementById("console-badge").hidden = true;
+  updateConsoleEmpty();
+}
+function updateConsoleEmpty() {
+  const emptyEl = document.getElementById("console-empty");
+  if (emptyEl) emptyEl.hidden = out.children.length > 0;
 }
 var filterState = { lvls: /* @__PURE__ */ new Set(), text: "" };
 function refreshFilterState() {
@@ -2253,7 +2406,18 @@ function scrollIfPinned(force) {
 // ../src/network-panel.js
 var requests = /* @__PURE__ */ new Map();
 var selectedId = null;
+var errorCount2 = 0;
 var deps2 = {};
+function bumpErrorCount() {
+  errorCount2++;
+  const badge2 = document.getElementById("network-badge");
+  badge2.textContent = errorCount2 > 99 ? "99+" : String(errorCount2);
+  badge2.hidden = false;
+}
+function resetErrorCount() {
+  errorCount2 = 0;
+  document.getElementById("network-badge").hidden = true;
+}
 function initNetworkPanel({ isNetworkVisible }) {
   deps2 = { isNetworkVisible };
   document.getElementById("btn-clear-network").addEventListener("click", clear2);
@@ -2291,7 +2455,7 @@ function onEnd(d) {
   tdTime.textContent = `${d.ms} ms`;
   tdSize.textContent = d.size != null ? fmtSize(d.size) : "\u2014";
   if (selectedId === d.id) renderDetail(entry.data);
-  if (!d.ok) document.getElementById("network-badge").hidden = false;
+  if (!d.ok) bumpErrorCount();
 }
 function select(id) {
   selectedId = id;
@@ -2378,7 +2542,7 @@ function clear2() {
   selectedId = null;
   document.getElementById("network-rows").textContent = "";
   document.getElementById("network-detail").hidden = true;
-  document.getElementById("network-badge").hidden = true;
+  resetErrorCount();
 }
 function applyApiFilter() {
   for (const { row } of requests.values()) applyApiFilterTo(row);
@@ -2388,6 +2552,7 @@ function applyApiFilterTo(row) {
   row.classList.toggle("hidden-api", apiOnly && !row.classList.contains("is-api"));
 }
 function markRun() {
+  if (getState().settings.autoClearConsole) resetErrorCount();
   for (const { row, data } of requests.values()) {
     if (data.status !== void 0 || data.cancelled) continue;
     data.cancelled = true;
@@ -2594,6 +2759,7 @@ var catalog = null;
 var appConfig = null;
 var onChangeCb = null;
 var onStorageErrorCb = null;
+var filterText = "";
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 var entryFromUrl = (url, name) => ({
   id: newId("lib"),
@@ -2621,20 +2787,88 @@ function initLibraries({ config, onChange, onStorageError }) {
     persistCatalog();
   }
   render();
-  document.getElementById("lib-custom-form").addEventListener("submit", (e) => {
+  const form = document.getElementById("lib-custom-form");
+  const toggleBtn = document.getElementById("btn-add-framework");
+  const urlInput = document.getElementById("lib-custom-url");
+  const nameInput = document.getElementById("lib-custom-name");
+  const errorEl = document.getElementById("lib-custom-error");
+  function setAddFormOpen(open) {
+    form.hidden = !open;
+    toggleBtn.hidden = open;
+    if (open) {
+      nameInput.focus();
+    } else {
+      clearAddError();
+      urlInput.value = "";
+      nameInput.value = "";
+    }
+  }
+  function showAddError(msg) {
+    errorEl.textContent = msg;
+    errorEl.hidden = false;
+    urlInput.classList.add("invalid");
+  }
+  function clearAddError() {
+    errorEl.hidden = true;
+    urlInput.classList.remove("invalid");
+  }
+  const filterRow = document.getElementById("frameworks-filter-row");
+  const filterInput = document.getElementById("frameworks-filter");
+  document.getElementById("btn-frameworks-search").addEventListener("click", () => {
+    filterRow.hidden = !filterRow.hidden;
+    if (!filterRow.hidden) filterInput.focus();
+    else {
+      filterInput.value = "";
+      filterText = "";
+      render();
+    }
+  });
+  filterInput.addEventListener("input", () => {
+    filterText = filterInput.value.trim().toLowerCase();
+    render();
+  });
+  filterInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      filterRow.hidden = true;
+      filterInput.value = "";
+      filterText = "";
+      render();
+    }
+  });
+  toggleBtn.addEventListener("click", () => setAddFormOpen(true));
+  document.getElementById("lib-add-cancel").addEventListener("click", () => setAddFormOpen(false));
+  form.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      setAddFormOpen(false);
+    }
+  });
+  urlInput.addEventListener("input", clearAddError);
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const urlInput = document.getElementById("lib-custom-url");
-    const nameInput = document.getElementById("lib-custom-name");
     const url = urlInput.value.trim();
-    if (!url) return;
+    if (!url) {
+      showAddError("Enter a script or stylesheet URL.");
+      return;
+    }
+    try {
+      new URL(url, location.href);
+    } catch {
+      showAddError("That is not a valid URL.");
+      return;
+    }
+    if (!/\.(js|css)(\?|#|$)/i.test(url)) {
+      showAddError("The URL should point at a .js or .css file.");
+      return;
+    }
     const entry = entryFromUrl(url, nameInput.value.trim());
     catalog.items.push(entry);
     persistCatalog();
     const enabled = new Set(getState().libraries.enabled);
     enabled.add(entry.id);
     updateNested("libraries", { enabled: [...enabled] });
-    urlInput.value = "";
-    nameInput.value = "";
+    setAddFormOpen(false);
     render();
     onChangeCb?.();
   });
@@ -2651,11 +2885,29 @@ function render() {
   const listHost = document.getElementById("lib-list");
   pinnedHost.textContent = "";
   listHost.textContent = "";
+  let shown = 0;
   for (const entry of catalog.items) {
+    if (filterText && !entry.name.toLowerCase().includes(filterText)) continue;
+    shown++;
     const pinned = libs.pinned.includes(entry.id);
     (pinned ? pinnedHost : listHost).append(catalogItem(entry, libs, pinned));
   }
+  const noMatch = document.getElementById("frameworks-no-match");
+  if (noMatch) noMatch.hidden = !(filterText && shown === 0);
+  const countEl = document.getElementById("frameworks-count");
+  if (countEl) {
+    const known = new Set(catalog.items.map((it) => it.id));
+    const enabledCount = libs.enabled.filter((id) => known.has(id)).length;
+    countEl.textContent = `${enabledCount}/${catalog.items.length}`;
+  }
 }
+var TOOL_ICONS = {
+  up: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg>',
+  down: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/></svg>',
+  pin: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z"/></svg>',
+  pinFilled: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z" fill="currentColor"/></svg>',
+  del: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>'
+};
 function catalogItem(entry, libs, pinned) {
   const effective = applyFrameworkConfig(entry, appConfig);
   const item = el("label", "lib-item");
@@ -2689,26 +2941,29 @@ Fallback: ${effective.fallbackJs}`;
     onChangeCb?.();
   });
   const tools = el("span", "lib-tools");
-  const tool = (cls, text, title, fn) => {
-    const s = el("span", cls, text);
-    s.title = title;
-    s.addEventListener("click", (e) => {
+  const tool = (cls, icon, title, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.innerHTML = icon;
+    b.title = title;
+    b.addEventListener("click", (e) => {
       e.preventDefault();
       fn();
     });
-    return s;
+    return b;
   };
   const liveIdx = () => catalog.items.indexOf(entry);
   tools.append(
-    tool("lib-move", "\u2191", "Move up (injection order)", () => moveEntry(liveIdx(), -1)),
-    tool("lib-move", "\u2193", "Move down (injection order)", () => moveEntry(liveIdx(), 1)),
-    tool("lib-pin" + (pinned ? " pinned" : ""), pinned ? "\u2605" : "\u2606", pinned ? "Unpin" : "Pin to top", () => {
+    tool("lib-move", TOOL_ICONS.up, "Move up (injection order)", () => moveEntry(liveIdx(), -1)),
+    tool("lib-move", TOOL_ICONS.down, "Move down (injection order)", () => moveEntry(liveIdx(), 1)),
+    tool("lib-pin" + (pinned ? " pinned" : ""), pinned ? TOOL_ICONS.pinFilled : TOOL_ICONS.pin, pinned ? "Unpin" : "Pin to top", () => {
       const pins = new Set(getState().libraries.pinned);
       pinned ? pins.delete(entry.id) : pins.add(entry.id);
       updateNested("libraries", { pinned: [...pins] });
       render();
     }),
-    tool("lib-del", "\u2715", "Remove from catalog", () => {
+    tool("lib-del", TOOL_ICONS.del, "Remove from catalog", () => {
       const idx = liveIdx();
       if (idx === -1) return;
       if (!confirm(`Remove "${entry.name}" from the framework catalog?`)) return;
@@ -2968,18 +3223,25 @@ function persist2() {
     deps3.onStorageError?.("snippet library save failed (storage full?)");
   }
 }
+var DEL_ICON = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
 function render2() {
   const host = document.getElementById("snippet-list");
   host.textContent = "";
   document.getElementById("snippet-empty").hidden = doc.items.length > 0;
+  const countEl = document.getElementById("snippets-count");
+  if (countEl) countEl.textContent = String(doc.items.length);
   for (const snip of doc.items) {
     const item = el("div", "lib-item snippet-item");
     const lang = el("span", "snippet-lang", snip.lang);
+    lang.dataset.lang = snip.lang;
     const name = el("span", "lib-name", snip.name);
     name.title = `Insert into the ${snip.lang.toUpperCase()} editor at the cursor
 
 ${snip.code.slice(0, 400)}`;
-    const del = el("span", "lib-del", "\u2715");
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "lib-del";
+    del.innerHTML = DEL_ICON;
     del.title = "Delete snippet";
     del.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -3138,7 +3400,13 @@ function showSplash() {
     }, skip() {
     } };
   }
-  logoEl.textContent = LOGO;
+  logoEl.innerHTML = LOGO.replace(/([═-╬]+)/g, '<span class="dim">$1</span>');
+  if (!splash.querySelector(".splash-version")) {
+    const ver = document.createElement("div");
+    ver.className = "splash-version";
+    ver.innerHTML = "developer workbench \xB7 <b>sharepoint</b>";
+    logoEl.after(ver);
+  }
   splash.hidden = false;
   splash.getBoundingClientRect();
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -3159,14 +3427,38 @@ var state2 = getState();
 applyContextIndicators();
 var editorsApi = null;
 var layoutApi = initLayout({
-  onEditorTabChange: (name) => editorsApi?.activate(name)
+  onEditorTabChange: (name) => {
+    editorsApi?.activate(name);
+    updateStatusLang(name);
+  }
 });
+function updateStatusLang(name) {
+  const badge2 = document.getElementById("status-lang");
+  badge2.textContent = name;
+  badge2.dataset.lang = name;
+}
+updateStatusLang(state2.layout.editorTab);
+function markUnsaved(name) {
+  const dot = document.getElementById(`unsaved-${name}`);
+  if (dot) dot.hidden = false;
+}
+function clearUnsaved() {
+  for (const name of ["html", "css", "js"]) {
+    const dot = document.getElementById(`unsaved-${name}`);
+    if (dot) dot.hidden = true;
+  }
+}
 var isDiagVisible = (name) => document.querySelector(`#diag-tabs .tab[data-diag="${name}"]`).classList.contains("active");
 splashApi.status("Starting Monaco editor\u2026");
 try {
   editorsApi = await initEditors({
-    onChange: () => scheduleAutorun(),
-    onRunShortcut: () => run2()
+    onChange: (name) => {
+      markUnsaved(name);
+      scheduleAutorun();
+    },
+    onRunShortcut: () => run2(),
+    onTogglePane: (name) => layoutApi.togglePane?.(name),
+    onFontStep: (delta) => stepEditorFontSize(delta)
   });
 } catch (error) {
   splashApi.fail(`Monaco failed to start \u2014 ${error.message || error}`);
@@ -3211,8 +3503,22 @@ var runnerReady = initRunner({
     stopSpinner();
     statusRun.textContent = `ran in ${d.ms} ms`;
     statusRun.className = "status-item ok";
+    settleRunFeedback();
   }
 });
+var longRunTimer = null;
+function settleRunFeedback() {
+  clearTimeout(longRunTimer);
+  longRunTimer = null;
+  const panel = document.getElementById("preview-panel");
+  panel.classList.remove("running-long");
+  const chip = document.getElementById("preview-run-chip");
+  document.getElementById("preview-run-time").textContent = (/* @__PURE__ */ new Date()).toTimeString().slice(0, 8);
+  chip.hidden = false;
+  chip.classList.remove("pop");
+  void chip.offsetWidth;
+  chip.classList.add("pop");
+}
 function startSpinner() {
   let i = 0;
   statusRun.className = "status-item running";
@@ -3241,9 +3547,12 @@ async function run2() {
   void document.getElementById("btn-run").offsetWidth;
   document.getElementById("btn-run").classList.add("running");
   const panel = document.getElementById("preview-panel");
-  panel.classList.remove("sweeping");
+  panel.classList.remove("sweeping", "running-long");
   void panel.offsetWidth;
   panel.classList.add("sweeping");
+  clearUnsaved();
+  clearTimeout(longRunTimer);
+  longRunTimer = setTimeout(() => panel.classList.add("running-long"), 1200);
   const { runNumber } = run({
     docs: editorsApi.getDocs(),
     libraries: getEnabledLibraries(),
@@ -3258,6 +3567,8 @@ async function run2() {
       stopSpinner();
       statusRun.textContent = "still loading\u2026";
       statusRun.className = "status-item";
+      clearTimeout(longRunTimer);
+      document.getElementById("preview-panel").classList.remove("running-long");
     }
   }, 15e3);
 }
@@ -3266,7 +3577,7 @@ document.getElementById("btn-rerun").addEventListener("click", run2);
 var btnPreviewTheme = document.getElementById("btn-preview-theme");
 function applyPreviewTheme() {
   const dark = getState().settings.previewDark;
-  btnPreviewTheme.textContent = dark ? "\u2600" : "\u{1F319}";
+  btnPreviewTheme.dataset.mode = dark ? "dark" : "light";
   btnPreviewTheme.title = dark ? "Switch preview to light \u2014 pad-only canvas color; your CSS still wins, and SharePoint pages are typically light" : "Switch preview to dark \u2014 pad-only canvas color; your CSS still wins";
   document.getElementById("preview-host").classList.toggle("dark", dark);
 }
@@ -3399,7 +3710,7 @@ var DIAG_FS_MIN = 10;
 var DIAG_FS_MAX = 18;
 function applyDiagFontSize(px2) {
   document.documentElement.style.setProperty("--diag-fs", `${px2}px`);
-  document.getElementById("diag-font-val").textContent = String(px2);
+  refreshStepperDisabled("btn-diag-font-dec", "btn-diag-font-inc", px2, DIAG_FS_MIN, DIAG_FS_MAX);
 }
 applyDiagFontSize(state2.settings.diagFontSize);
 function stepDiagFontSize(delta) {
@@ -3411,6 +3722,55 @@ function stepDiagFontSize(delta) {
 }
 document.getElementById("btn-diag-font-dec").addEventListener("click", () => stepDiagFontSize(-1));
 document.getElementById("btn-diag-font-inc").addEventListener("click", () => stepDiagFontSize(1));
+var EDITOR_FS_MIN = 11;
+var EDITOR_FS_MAX = 18;
+function refreshStepperDisabled(decId, incId, val, min, max) {
+  document.getElementById(decId).disabled = val <= min;
+  document.getElementById(incId).disabled = val >= max;
+}
+function applyEditorFontSize(px2) {
+  editorsApi.setFontSize(px2);
+  refreshStepperDisabled("btn-editor-font-dec", "btn-editor-font-inc", px2, EDITOR_FS_MIN, EDITOR_FS_MAX);
+}
+function stepEditorFontSize(delta) {
+  const cur = getState().settings.editorFontSize;
+  const next = Math.min(EDITOR_FS_MAX, Math.max(EDITOR_FS_MIN, cur + delta));
+  if (next === cur) return;
+  updateNested("settings", { editorFontSize: next });
+  applyEditorFontSize(next);
+}
+refreshStepperDisabled(
+  "btn-editor-font-dec",
+  "btn-editor-font-inc",
+  state2.settings.editorFontSize,
+  EDITOR_FS_MIN,
+  EDITOR_FS_MAX
+);
+document.getElementById("btn-editor-font-dec").addEventListener("click", () => stepEditorFontSize(-1));
+document.getElementById("btn-editor-font-inc").addEventListener("click", () => stepEditorFontSize(1));
+document.getElementById("diag-panel").addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key === "=" || e.key === "+") {
+    e.preventDefault();
+    stepDiagFontSize(1);
+  } else if (e.key === "-") {
+    e.preventDefault();
+    stepDiagFontSize(-1);
+  }
+});
+var btnWordWrap = document.getElementById("btn-word-wrap");
+function reflectWordWrap() {
+  const on = getState().settings.wordWrap;
+  btnWordWrap.classList.toggle("active", on);
+  btnWordWrap.setAttribute("aria-pressed", String(on));
+}
+reflectWordWrap();
+btnWordWrap.addEventListener("click", () => {
+  const on = !getState().settings.wordWrap;
+  updateNested("settings", { wordWrap: on });
+  editorsApi.setWordWrap(on);
+  reflectWordWrap();
+});
 var saveEl = document.getElementById("status-save");
 onSaveStatus((status) => {
   saveEl.classList.remove("saved", "error");

@@ -1,2 +1,8 @@
 tools/node_modules/
 tests/node_modules/
+
+# local-only: sibling asset repos bridged into the serve root via junctions
+bsp-design-system/
+bsp-fluent-icon-lib/
+# playwright MCP scratch output
+.playwright-mcp/

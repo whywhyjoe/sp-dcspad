@@ -80,17 +80,25 @@ function persist() {
   }
 }
 
+const DEL_ICON = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
+
 function render() {
   const host = document.getElementById('snippet-list');
   host.textContent = '';
   document.getElementById('snippet-empty').hidden = doc.items.length > 0;
+  const countEl = document.getElementById('snippets-count');
+  if (countEl) countEl.textContent = String(doc.items.length);
 
   for (const snip of doc.items) {
     const item = el('div', 'lib-item snippet-item');
     const lang = el('span', 'snippet-lang', snip.lang);
+    lang.dataset.lang = snip.lang;
     const name = el('span', 'lib-name', snip.name);
     name.title = `Insert into the ${snip.lang.toUpperCase()} editor at the cursor\n\n${snip.code.slice(0, 400)}`;
-    const del = el('span', 'lib-del', '✕');
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'lib-del';
+    del.innerHTML = DEL_ICON;
     del.title = 'Delete snippet';
     del.addEventListener('click', (e) => {
       e.stopPropagation();

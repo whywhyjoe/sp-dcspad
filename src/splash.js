@@ -86,7 +86,17 @@ export function showSplash() {
     return { status() {}, finish() {}, fail() {}, skip() {} };
   }
 
-  logoEl.textContent = LOGO;
+  // Two flat layers: the block mass stays accent, the box-drawing outline
+  // drops to .dim (accent-line). LOGO contains no HTML-significant
+  // characters, so the wrap is injection-safe. U+2550–U+256C is the
+  // double-line box-drawing range; █ (U+2588) sits outside it.
+  logoEl.innerHTML = LOGO.replace(/([═-╬]+)/g, '<span class="dim">$1</span>');
+  if (!splash.querySelector('.splash-version')) {
+    const ver = document.createElement('div');
+    ver.className = 'splash-version';
+    ver.innerHTML = 'developer workbench · <b>sharepoint</b>';
+    logoEl.after(ver);
+  }
   splash.hidden = false;
   splash.getBoundingClientRect();
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
