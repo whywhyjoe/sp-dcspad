@@ -9,9 +9,11 @@ import { createSpRestClient } from './sp-rest.js';
 import { mockResolver } from './mock-data.js';
 import { createShell } from './shell.js';
 import { createListsView } from './views/lists.js';
+import { createSecurityView } from './views/security.js';
 
 const GLYPHS = {
   lists: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.7" cy="4" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="12" r=".9" fill="currentColor" stroke="none"/></svg>',
+  security: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13 3.6v3.6c0 3.2-2.1 5.6-5 6.9-2.9-1.3-5-3.7-5-6.9V3.6z"/><path d="m5.8 7.8 1.6 1.6 2.9-3"/></svg>',
 };
 
 function applyWorkbenchContext(ctx) {
@@ -41,7 +43,7 @@ const shell = createShell({
   deps: { client },
   views: [
     { id: 'lists', label: 'Lists', glyph: GLYPHS.lists, create: createListsView },
-    // M3: { id: 'security', label: 'Security', ... }
+    { id: 'security', label: 'Security', glyph: GLYPHS.security, create: createSecurityView },
     // M4: { id: 'site', label: 'Site', ... }
   ],
 });

@@ -120,6 +120,22 @@ html.dcspad-hosted .wb { height: min(92vh, 980px); border: 1px solid var(--borde
   padding: 10px 12px; font: var(--diag-fs, 12px)/1.6 var(--mono);
 }
 
+/* ---- subpanels (group membership, decoded role flags) ---- */
+.wb-subpanel {
+  flex: none; max-height: 45%; display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--border); padding-top: 8px;
+}
+.wb-subpanel[hidden] { display: none; }
+.wb-subpanel-title { margin: 0; font: 600 13px/1.3 var(--sans); color: var(--fg-strong); }
+.wb-subpanel-body { min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.wb-flags { flex-direction: row; flex-wrap: wrap; gap: 5px; padding: 4px 0; }
+.wb-flag {
+  font: 11px/1 var(--mono); color: var(--accent-soft-fg);
+  background: var(--accent-soft); border: 1px solid var(--accent-soft-line);
+  border-radius: var(--radius-s); padding: 4px 7px;
+}
+.wb-scan-bar { display: flex; align-items: center; gap: 12px; }
+
 /* ---- toolbar menus (export, copy-as) ---- */
 .wb-menu-wrap { position: relative; display: inline-flex; }
 .wb-menu {

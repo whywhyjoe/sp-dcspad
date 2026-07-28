@@ -4,6 +4,7 @@
 
 import { createGrid } from '../grid.js';
 import { copyText } from '../export.js';
+import { principalTypeName } from '../perm-kinds.js';
 import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { toNode } from '../../inspect/to-node.js';
@@ -184,6 +185,31 @@ export function createListsView({ client, navigate }) {
         ],
         exportName: `contenttypes-${fileStem(title)}`,
         fetch: () => client.getAll(guidPath(listId, '/contenttypes'), { select: CT_SELECT }),
+      }),
+    },
+    {
+      id: 'permissions',
+      label: 'Permissions',
+      grid: (listId, title) => ({
+        columns: [
+          { key: 'Member', label: 'Principal', value: (row) => row.Member?.Title || '' },
+          { key: 'LoginName', label: 'Login', value: (row) => row.Member?.LoginName || '', mono: true, copyable: true },
+          { key: 'PrincipalType', label: 'Type', value: (row) => row.Member?.PrincipalType, format: principalTypeName },
+          {
+            key: 'Roles',
+            label: 'Roles',
+            value: (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || [])
+              .map((r) => r.Name).filter(Boolean).join(', '),
+          },
+        ],
+        exportName: `permissions-${fileStem(title)}`,
+        fetch: () => client.getAll(guidPath(listId, '/roleassignments'), {
+          expand: ['Member', 'RoleDefinitionBindings'],
+          select: [
+            'PrincipalId', 'Member/Id', 'Member/Title', 'Member/LoginName',
+            'Member/PrincipalType', 'RoleDefinitionBindings/Id', 'RoleDefinitionBindings/Name',
+          ],
+        }),
       }),
     },
     { id: 'raw', label: 'Raw' },

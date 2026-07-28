@@ -452,11 +452,11 @@ var ROLE_ASSIGNMENTS = [
   assignment(5, "Mock Site Members", 8, ["Contribute"]),
   assignment(7, "Mock Site Visitors", 8, ["Read"])
 ];
-function assignment(principalId, title, principalType, roleNames) {
+function assignment(principalId, title, principalType, roleNames2) {
   return {
     PrincipalId: principalId,
     Member: { Id: principalId, Title: title, LoginName: title, PrincipalType: principalType },
-    RoleDefinitionBindings: roleNames.map((name) => ({
+    RoleDefinitionBindings: roleNames2.map((name) => ({
       Id: ROLE_DEFINITIONS.find((r) => r.Name === name)?.Id || 0,
       Name: name
     }))
@@ -908,6 +908,67 @@ function createGrid({
     getColumns: () => columns
   };
 }
+
+// ../src/workbench/perm-kinds.js
+var FLAGS = [
+  // [name, bit] — bit as BigInt exponent in the combined 64-bit mask.
+  ["ViewListItems", 0n],
+  ["AddListItems", 1n],
+  ["EditListItems", 2n],
+  ["DeleteListItems", 3n],
+  ["ApproveItems", 4n],
+  ["OpenItems", 5n],
+  ["ViewVersions", 6n],
+  ["DeleteVersions", 7n],
+  ["CancelCheckout", 8n],
+  ["ManagePersonalViews", 9n],
+  ["ManageLists", 11n],
+  ["ViewFormPages", 12n],
+  ["AnonymousSearchAccessList", 13n],
+  ["Open", 16n],
+  ["ViewPages", 17n],
+  ["AddAndCustomizePages", 18n],
+  ["ApplyThemeAndBorder", 19n],
+  ["ApplyStyleSheets", 20n],
+  ["ViewUsageData", 21n],
+  ["CreateSSCSite", 22n],
+  ["ManageSubwebs", 23n],
+  ["CreateGroups", 24n],
+  ["ManagePermissions", 25n],
+  ["BrowseDirectories", 26n],
+  ["BrowseUserInfo", 27n],
+  ["AddDelPrivateWebParts", 28n],
+  ["UpdatePersonalWebParts", 29n],
+  ["ManageWeb", 30n],
+  ["AnonymousSearchAccessWebLists", 32n],
+  ["UseClientIntegration", 36n],
+  ["UseRemoteAPIs", 37n],
+  ["ManageAlerts", 38n],
+  ["CreateAlerts", 39n],
+  ["EditMyUserInfo", 40n],
+  ["EnumeratePermissions", 62n]
+];
+var FULL_MASK = 0x7FFFFFFFFFFFFFFFn;
+function combineBasePermissions(basePermissions) {
+  const high = BigInt(String(basePermissions?.High ?? "0"));
+  const low = BigInt(String(basePermissions?.Low ?? "0"));
+  return high << 32n | low;
+}
+function decodeBasePermissions(basePermissions) {
+  const mask = combineBasePermissions(basePermissions);
+  if ((mask & FULL_MASK) === FULL_MASK) {
+    return { flags: ["FullMask (all permissions)"], isFullControl: true, isEmpty: false };
+  }
+  const flags = FLAGS.filter(([, bit]) => (mask & 1n << bit) !== 0n).map(([name]) => name);
+  return { flags, isFullControl: false, isEmpty: flags.length === 0 };
+}
+var PRINCIPAL_TYPE_NAMES = {
+  1: "User",
+  2: "Distribution list",
+  4: "Security group",
+  8: "SharePoint group"
+};
+var principalTypeName = (v) => PRINCIPAL_TYPE_NAMES[v] || String(v ?? "");
 
 // ../src/inspect/tree-view.js
 var el3 = (tag, cls, text) => {
@@ -1487,6 +1548,35 @@ function createListsView({ client: client2, navigate }) {
         fetch: () => client2.getAll(guidPath(listId, "/contenttypes"), { select: CT_SELECT })
       })
     },
+    {
+      id: "permissions",
+      label: "Permissions",
+      grid: (listId, title) => ({
+        columns: [
+          { key: "Member", label: "Principal", value: (row) => row.Member?.Title || "" },
+          { key: "LoginName", label: "Login", value: (row) => row.Member?.LoginName || "", mono: true, copyable: true },
+          { key: "PrincipalType", label: "Type", value: (row) => row.Member?.PrincipalType, format: principalTypeName },
+          {
+            key: "Roles",
+            label: "Roles",
+            value: (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ")
+          }
+        ],
+        exportName: `permissions-${fileStem(title)}`,
+        fetch: () => client2.getAll(guidPath(listId, "/roleassignments"), {
+          expand: ["Member", "RoleDefinitionBindings"],
+          select: [
+            "PrincipalId",
+            "Member/Id",
+            "Member/Title",
+            "Member/LoginName",
+            "Member/PrincipalType",
+            "RoleDefinitionBindings/Id",
+            "RoleDefinitionBindings/Name"
+          ]
+        })
+      })
+    },
     { id: "raw", label: "Raw" }
   ];
   function showDetail(route) {
@@ -1572,9 +1662,221 @@ function createListsView({ client: client2, navigate }) {
   return { el: root, load, grid };
 }
 
+// ../src/workbench/views/security.js
+var el5 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var roleNames = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
+function createSecurityView({ client: client2 }) {
+  const root = el5("section", "wb-view wb-view-security");
+  const head = el5("div", "wb-view-head");
+  head.innerHTML = '<h2>Users, groups &amp; permissions</h2><p class="wb-view-hint">Site groups, role definitions, and who holds what on this web. The inheritance scan is on-demand \u2014 it makes SharePoint evaluate security per list.</p>';
+  const tabsBar = el5("div", "wb-tabs");
+  const body = el5("div", "wb-tab-body");
+  root.append(head, tabsBar, body);
+  const panes = /* @__PURE__ */ new Map();
+  function groupsPane() {
+    const wrap = el5("div", "wb-tab-pane");
+    const grid = createGrid({
+      columns: [
+        { key: "Title", label: "Group" },
+        { key: "Id", label: "Id" },
+        { key: "OwnerTitle", label: "Owner" },
+        { key: "OnlyAllowMembersViewMembership", label: "Members-only view" },
+        { key: "Description", label: "Description" }
+      ],
+      onOpen: openMembers,
+      emptyText: "No site groups.",
+      filterPlaceholder: "Filter groups\u2026",
+      exportName: "sp-groups"
+    });
+    const membersBox = el5("div", "wb-subpanel");
+    membersBox.hidden = true;
+    const membersTitle = el5("h3", "wb-subpanel-title", "");
+    const membersHost = el5("div", "wb-subpanel-body");
+    membersBox.append(membersTitle, membersHost);
+    wrap.append(grid.el, membersBox);
+    grid.setLoading("Loading site groups\u2026");
+    client2.getAll("web/sitegroups", {
+      select: ["Id", "Title", "Description", "OwnerTitle", "PrincipalType", "OnlyAllowMembersViewMembership"]
+    }).then(({ items, partial }) => grid.setRows(items, { partial })).catch((err) => grid.setError(err));
+    function openMembers(group) {
+      membersBox.hidden = false;
+      membersTitle.textContent = `Members of ${group.Title}`;
+      membersHost.textContent = "";
+      const membersGrid = createGrid({
+        columns: [
+          { key: "Title", label: "Name" },
+          { key: "LoginName", label: "Login", mono: true, copyable: true },
+          { key: "Email", label: "Email", copyable: true },
+          { key: "IsSiteAdmin", label: "Site admin" },
+          { key: "PrincipalType", label: "Type", format: principalTypeName }
+        ],
+        emptyText: "No members.",
+        filterPlaceholder: "Filter members\u2026",
+        exportName: `members-${group.Id}`
+      });
+      membersHost.append(membersGrid.el);
+      membersGrid.setLoading("Loading members\u2026");
+      client2.getAll(`web/sitegroups(${group.Id})/users`, {
+        select: ["Id", "Title", "LoginName", "Email", "IsSiteAdmin", "PrincipalType"]
+      }).then(({ items }) => membersGrid.setRows(items)).catch((err) => membersGrid.setError(err));
+    }
+    return wrap;
+  }
+  function roleDefsPane() {
+    const wrap = el5("div", "wb-tab-pane");
+    const grid = createGrid({
+      columns: [
+        { key: "Name", label: "Role" },
+        { key: "RoleTypeKind", label: "Kind" },
+        { key: "Hidden", label: "Hidden" },
+        {
+          key: "BasePermissions",
+          label: "Permissions",
+          value: (row) => decodeBasePermissions(row.BasePermissions).flags.length,
+          format: (v, row) => {
+            const d = decodeBasePermissions(row.BasePermissions);
+            if (d.isFullControl) return "Full control";
+            if (d.isEmpty) return "None";
+            return `${d.flags.length} flags`;
+          }
+        },
+        { key: "Description", label: "Description" }
+      ],
+      onOpen: openDecode,
+      emptyText: "No role definitions.",
+      filterPlaceholder: "Filter roles\u2026",
+      exportName: "sp-roledefinitions"
+    });
+    const decodeBox = el5("div", "wb-subpanel");
+    decodeBox.hidden = true;
+    const decodeTitle = el5("h3", "wb-subpanel-title", "");
+    const decodeBody = el5("div", "wb-subpanel-body wb-flags");
+    decodeBox.append(decodeTitle, decodeBody);
+    wrap.append(grid.el, decodeBox);
+    grid.setLoading("Loading role definitions\u2026");
+    client2.getAll("web/roledefinitions", {
+      select: ["Id", "Name", "Description", "RoleTypeKind", "Hidden", "BasePermissions"]
+    }).then(({ items, partial }) => grid.setRows(items, { partial })).catch((err) => grid.setError(err));
+    function openDecode(role) {
+      decodeBox.hidden = false;
+      const d = decodeBasePermissions(role.BasePermissions);
+      decodeTitle.textContent = `${role.Name} \u2014 ${d.isFullControl ? "full control" : `${d.flags.length} permission flags`}`;
+      decodeBody.textContent = "";
+      for (const flag of d.flags) decodeBody.append(el5("span", "wb-flag", flag));
+      if (d.isEmpty) decodeBody.append(el5("span", "wb-view-hint", "No permission bits set."));
+    }
+    return wrap;
+  }
+  function assignmentsPane() {
+    const wrap = el5("div", "wb-tab-pane");
+    const grid = createGrid({
+      rowKey: "PrincipalId",
+      columns: [
+        { key: "Member", label: "Principal", value: (row) => row.Member?.Title || "" },
+        { key: "LoginName", label: "Login", value: (row) => row.Member?.LoginName || "", mono: true, copyable: true },
+        { key: "PrincipalType", label: "Type", value: (row) => row.Member?.PrincipalType, format: principalTypeName },
+        { key: "Roles", label: "Roles", value: roleNames }
+      ],
+      emptyText: "No role assignments.",
+      filterPlaceholder: "Filter assignments\u2026",
+      exportName: "sp-roleassignments"
+    });
+    wrap.append(grid.el);
+    grid.setLoading("Loading role assignments\u2026");
+    client2.getAll("web/roleassignments", {
+      expand: ["Member", "RoleDefinitionBindings"],
+      select: [
+        "PrincipalId",
+        "Member/Id",
+        "Member/Title",
+        "Member/LoginName",
+        "Member/PrincipalType",
+        "RoleDefinitionBindings/Id",
+        "RoleDefinitionBindings/Name"
+      ]
+    }).then(({ items, partial }) => grid.setRows(items, { partial })).catch((err) => grid.setError(err));
+    return wrap;
+  }
+  function inheritancePane() {
+    const wrap = el5("div", "wb-tab-pane");
+    const bar = el5("div", "wb-scan-bar");
+    const btn = el5("button", "btn", "Scan lists for unique permissions");
+    btn.type = "button";
+    const hint = el5(
+      "span",
+      "wb-view-hint",
+      "Asks SharePoint for HasUniqueRoleAssignments on every list \u2014 slow on large sites, so it only runs on demand."
+    );
+    bar.append(btn, hint);
+    const grid = createGrid({
+      columns: [
+        { key: "Title", label: "List" },
+        { key: "HasUniqueRoleAssignments", label: "Unique permissions" },
+        { key: "BaseTemplate", label: "Template", format: (v) => BASE_TEMPLATE_NAMES[v] || String(v ?? "") },
+        { key: "Hidden", label: "Hidden" },
+        { key: "Id", label: "Id", mono: true, copyable: true }
+      ],
+      emptyText: "Run the scan to see results.",
+      filterPlaceholder: "Filter results\u2026",
+      exportName: "sp-unique-permissions"
+    });
+    wrap.append(bar, grid.el);
+    grid.setRows([]);
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      grid.setLoading("Scanning\u2026 (per-list security evaluation)");
+      try {
+        const { items, partial } = await client2.getAll("web/lists", {
+          select: ["Id", "Title", "Hidden", "BaseTemplate", "HasUniqueRoleAssignments"],
+          top: 5e3
+        });
+        const broken = items.filter((l) => l.HasUniqueRoleAssignments);
+        grid.setRows(broken.length ? broken : items, { partial });
+        hint.textContent = broken.length ? `${broken.length} of ${items.length} lists break inheritance (showing them).` : `No list breaks inheritance (showing all ${items.length} scanned).`;
+      } catch (err) {
+        grid.setError(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    return wrap;
+  }
+  const TABS = [
+    { id: "groups", label: "Groups", build: groupsPane },
+    { id: "roledefs", label: "Role definitions", build: roleDefsPane },
+    { id: "assignments", label: "Role assignments", build: assignmentsPane },
+    { id: "inheritance", label: "Inheritance scan", build: inheritancePane }
+  ];
+  function activate(tab) {
+    for (const btn of tabsBar.children) {
+      btn.classList.toggle("active", btn.dataset.tab === tab.id);
+    }
+    if (!panes.has(tab.id)) panes.set(tab.id, tab.build());
+    body.textContent = "";
+    body.append(panes.get(tab.id));
+  }
+  for (const tab of TABS) {
+    const btn = el5("button", "wb-tab", tab.label);
+    btn.type = "button";
+    btn.dataset.tab = tab.id;
+    btn.addEventListener("click", () => activate(tab));
+    tabsBar.append(btn);
+  }
+  function load() {
+    if (!tabsBar.querySelector(".wb-tab.active")) activate(TABS[0]);
+  }
+  return { el: root, load };
+}
+
 // ../src/workbench/main.js
 var GLYPHS = {
-  lists: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.7" cy="4" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="12" r=".9" fill="currentColor" stroke="none"/></svg>'
+  lists: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.7" cy="4" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="12" r=".9" fill="currentColor" stroke="none"/></svg>',
+  security: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13 3.6v3.6c0 3.2-2.1 5.6-5 6.9-2.9-1.3-5-3.7-5-6.9V3.6z"/><path d="m5.8 7.8 1.6 1.6 2.9-3"/></svg>'
 };
 function applyWorkbenchContext(ctx2) {
   const chip = document.getElementById("wb-chip");
@@ -1595,8 +1897,8 @@ var shell = createShell({
   mount: document.getElementById("wb-main"),
   deps: { client },
   views: [
-    { id: "lists", label: "Lists", glyph: GLYPHS.lists, create: createListsView }
-    // M3: { id: 'security', label: 'Security', ... }
+    { id: "lists", label: "Lists", glyph: GLYPHS.lists, create: createListsView },
+    { id: "security", label: "Security", glyph: GLYPHS.security, create: createSecurityView }
     // M4: { id: 'site', label: 'Site', ... }
   ]
 });

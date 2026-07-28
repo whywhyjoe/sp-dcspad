@@ -61,7 +61,7 @@ await check('drill: opening a list shows the detail tabs', async () => {
   await page.locator('.wb-table tbody tr', { hasText: 'Projects' }).locator('td').first().click();
   await page.waitForSelector('.wb-tab');
   const tabs = await page.locator('.wb-tab').allTextContents();
-  return tabs.join(',') === 'Fields,Views,Content types,Raw';
+  return tabs.join(',') === 'Fields,Views,Content types,Permissions,Raw';
 });
 
 await check('drill: fields grid lists internal names and joined choices', async () => {
@@ -113,6 +113,57 @@ await check('export: toMarkdown escapes pipes', async () =>
     const md = toMarkdown([{ a: 'x|y' }], [{ key: 'a', label: 'A' }]);
     return md.includes('| A |') && md.includes('x\\|y');
   }));
+
+// ---- security view (M3) ----
+
+await check('security: tabs render and groups load', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Security' }).click();
+  await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
+  const tabs = await page.locator('.wb-tab').allTextContents();
+  const rows = await page.locator('.wb-tab-body .wb-table tbody tr').count();
+  return tabs.join(',') === 'Groups,Role definitions,Role assignments,Inheritance scan' && rows === 3;
+});
+
+await check('security: opening a group loads membership lazily', async () => {
+  await page.locator('.wb-tab-body .wb-table tbody tr td').first().click();
+  await page.waitForSelector('.wb-subpanel .wb-table tbody tr');
+  const title = await page.locator('.wb-subpanel-title').textContent();
+  return title.includes('Members of Mock Site Owners');
+});
+
+await check('security: role definitions decode BasePermissions', async () => {
+  await page.locator('.wb-tab', { hasText: 'Role definitions' }).click();
+  await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
+  const text = await page.locator('.wb-tab-body .wb-table').textContent();
+  return text.includes('Full control') && text.includes('flags');
+});
+
+await check('security: decoder matches documented Contribute mask', async () =>
+  page.evaluate(async () => {
+    const { decodeBasePermissions } = await import('/src/workbench/perm-kinds.js');
+    const { flags } = decodeBasePermissions({ High: '432', Low: '1011028719' });
+    return flags.includes('AddListItems') && flags.includes('EditListItems')
+      && !flags.includes('ManageWeb') && !flags.includes('ManagePermissions');
+  }));
+
+await check('security: inheritance scan runs on demand only', async () => {
+  await page.locator('.wb-tab', { hasText: 'Inheritance scan' }).click();
+  const before = await page.locator('.wb-tab-body .wb-table tbody tr').allTextContents();
+  await page.locator('.wb-scan-bar .btn').click();
+  await page.waitForSelector('.wb-scan-bar .wb-view-hint:has-text("break inheritance")');
+  const rows = await page.locator('.wb-tab-body .wb-table tbody tr').count();
+  return before.join('').includes('Run the scan') && rows === 1;
+});
+
+await check('security: list detail has a Permissions tab', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
+  await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
+  await page.locator('.wb-table tbody tr', { hasText: 'Projects' }).locator('td').first().click();
+  await page.locator('.wb-tab', { hasText: 'Permissions' }).click();
+  await page.waitForSelector('.wb-tab-pane .wb-table tbody tr');
+  const text = await page.locator('.wb-tab-pane .wb-table').textContent();
+  return text.includes('Mock Site Owners') && text.includes('Full Control');
+});
 
 await page.close();
 
