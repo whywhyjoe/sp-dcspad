@@ -9,6 +9,10 @@ import { el } from './inspect/tree-view.js';
 
 let doc = null;
 let deps = {};
+const snippetNameCollator = new Intl.Collator(undefined, {
+  sensitivity: 'base',
+  numeric: true,
+});
 
 export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
   deps = { getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError };
@@ -89,7 +93,12 @@ function render() {
   const countEl = document.getElementById('snippets-count');
   if (countEl) countEl.textContent = String(doc.items.length);
 
-  for (const snip of doc.items) {
+  // Display order is deliberately independent of language and save/import
+  // order. Keep the stored document untouched so exports remain lossless.
+  const sortedItems = [...doc.items].sort((a, b) =>
+    snippetNameCollator.compare(a.name, b.name) || a.id.localeCompare(b.id));
+
+  for (const snip of sortedItems) {
     const item = el('div', 'lib-item snippet-item');
     const lang = el('span', 'snippet-lang', snip.lang);
     lang.dataset.lang = snip.lang;

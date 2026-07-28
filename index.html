@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DCSPad — SharePoint Developer Workbench</title>
-<link rel="stylesheet" href="styles/app.css?v=13">
+<link rel="stylesheet" href="styles/app.css?v=19">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⌘</text></svg>">
 </head>
 <body>
@@ -27,12 +27,17 @@
         <button id="btn-file" class="btn btn-icon" title="Save / load project, export panes"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z"/><path d="M9.5 1.5V5H13"/></svg> File <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".6" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></button>
         <div id="file-menu" class="settings-menu file-menu" hidden>
           <div class="menu-group-label">Project</div>
-          <button class="menu-item" id="mi-save-project">Save project (.json)</button>
-          <button class="menu-item" id="mi-load-project">Load project (.json)…</button>
+          <button class="menu-item" id="mi-save-project">Save project (.dcspad.json)</button>
+          <button class="menu-item" id="mi-load-project">Load project (.dcspad.json)…</button>
+          <div class="menu-group-label">Import</div>
+          <button class="menu-item" id="mi-import-pane"><span class="snippet-lang">file</span> Import HTML, CSS, or JS…</button>
+          <button class="menu-item" id="mi-sp-import" disabled title="Requires SP: Live"><span class="snippet-lang">SP</span> Import from SharePoint…</button>
           <div class="menu-group-label">Export</div>
+          <button class="menu-item" id="mi-export-all"><span class="snippet-lang">all</span> Export all non-empty</button>
           <button class="menu-item" id="mi-export-html"><span class="snippet-lang" data-lang="html">html</span> Export HTML</button>
           <button class="menu-item" id="mi-export-css"><span class="snippet-lang" data-lang="css">css</span> Export CSS</button>
           <button class="menu-item" id="mi-export-js"><span class="snippet-lang" data-lang="js">js</span> Export JS</button>
+          <button class="menu-item" id="mi-sp-export" disabled title="Requires SP: Live"><span class="snippet-lang">SP</span> Export to SharePoint…</button>
         </div>
       </div>
       <div class="settings-wrap">
@@ -44,6 +49,19 @@
           <div class="menu-note">Text size moved out of this menu — it now sits in the editor and console toolbars.</div>
         </div>
       </div>
+    </div>
+    <div id="project-name" class="project-name">
+      <span class="project-name__label">Project</span>
+      <button id="project-name-display" class="project-name__display" type="button" title="Set project name">
+        <span id="project-name-text" class="project-name__text">(untitled)</span>
+        <svg class="project-name__edit-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.8 2.5 2.7 2.7-7.7 7.7-3.3.6.6-3.3z"/><path d="m9.5 3.8 2.7 2.7"/></svg>
+      </button>
+      <form id="project-name-form" class="project-name__form" hidden>
+        <input id="project-name-input" type="text" maxlength="80" autocomplete="off" aria-label="Project name" placeholder="Project name">
+        <button id="project-name-save" class="project-name__action project-name__save" type="submit" title="Save project name" aria-label="Save project name"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3.2 3.2L13 4.8"/></svg></button>
+        <button id="project-name-cancel" class="project-name__action" type="button" title="Cancel" aria-label="Cancel editing project name"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+      </form>
+      <span id="project-name-error" class="project-name__error" role="alert" hidden></span>
     </div>
     <div class="topbar-right">
       <span class="pane-toggles" id="pane-toggles" role="group" aria-label="Show or hide panes">
@@ -252,11 +270,77 @@
   </form>
 </dialog>
 
+<dialog id="pane-replace-dialog" class="app-dialog" aria-labelledby="pane-replace-title" aria-describedby="pane-replace-context">
+  <form id="pane-replace-form" class="app-dialog__panel">
+    <div class="app-dialog__head">
+      <h2 id="pane-replace-title">Replace code?</h2>
+      <button id="pane-replace-close" class="btn btn-ghost btn-xs" type="button" aria-label="Close"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+    </div>
+    <p id="pane-replace-context" class="app-dialog__context"></p>
+    <div class="file-candidate">
+      <span id="pane-replace-badge" class="snippet-lang">file</span>
+      <span id="pane-replace-file" class="file-candidate__name"></span>
+    </div>
+    <div class="app-dialog__actions">
+      <button id="pane-replace-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="pane-replace-confirm" class="btn btn-run" type="submit">Replace code</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="sp-files-dialog" class="app-dialog sp-files-dialog" aria-labelledby="sp-files-title">
+  <div class="app-dialog__panel sp-files-panel">
+    <div class="app-dialog__head">
+      <h2 id="sp-files-title">SharePoint files</h2>
+      <button id="sp-files-close" class="btn btn-ghost btn-xs" type="button" aria-label="Close"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+    </div>
+    <form id="sp-site-form" class="sp-site-form">
+      <label class="app-dialog__field" for="sp-site-url">
+        <span>SharePoint site</span>
+        <span class="sp-site-input-row">
+          <input id="sp-site-url" type="text" autocomplete="url" spellcheck="false" placeholder="https://tenant.sharepoint.com/sites/project">
+          <button id="sp-site-open" class="btn" type="submit">Open site</button>
+        </span>
+      </label>
+    </form>
+    <div id="sp-export-controls" class="sp-export-controls" hidden>
+      <label class="app-dialog__field" for="sp-export-pane">
+        <span>Editor pane</span>
+        <select id="sp-export-pane">
+          <option value="html">HTML</option>
+          <option value="css">CSS</option>
+          <option value="js">JavaScript</option>
+        </select>
+      </label>
+      <label class="app-dialog__field" for="sp-export-name">
+        <span>File name</span>
+        <input id="sp-export-name" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div class="sp-folder-bar">
+      <button id="sp-folder-up" class="btn btn-ghost btn-xs" type="button" title="Parent folder" aria-label="Open parent folder"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5"/></svg></button>
+      <span id="sp-folder-path" class="sp-folder-path"></span>
+      <button id="sp-folder-refresh" class="btn btn-ghost btn-xs" type="button" title="Refresh folder" aria-label="Refresh folder"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 8A5.2 5.2 0 1 1 11 3.8"/><path d="M13.2 2.6v3.2H10"/></svg></button>
+    </div>
+    <div id="sp-files-notice" class="sp-files-notice" role="status" hidden></div>
+    <div id="sp-files-list" class="sp-files-list" role="listbox" aria-label="SharePoint folders and code files"></div>
+    <div id="sp-files-empty" class="sp-files-empty" hidden>No HTML, CSS, or JavaScript files in this folder.</div>
+    <div id="sp-files-error" class="sp-files-error" role="alert" hidden></div>
+    <div class="app-dialog__actions">
+      <button id="sp-files-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="sp-files-primary" class="btn btn-run" type="button" disabled>Continue</button>
+    </div>
+  </div>
+</dialog>
+
+<div id="app-toast" class="app-toast" role="status" aria-live="polite" hidden></div>
+
 <!-- Hidden pickers for file imports (one per purpose so tests can target them) -->
-<input type="file" id="import-project-file" accept=".json,application/json" hidden>
+<input type="file" id="import-project-file" accept=".dcspad.json" hidden>
+<input type="file" id="import-pane-file" accept=".html,.htm,.css,.js,text/html,text/css,text/javascript,application/javascript" hidden>
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js?v=13"></script>
+<script type="module" src="src/main.js?v=18"></script>
 </body>
 </html>

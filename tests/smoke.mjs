@@ -25,6 +25,10 @@ await check('Monaco editor renders', async () =>
 await check('SP chip shows Mock', async () =>
   (await page.locator('#sp-chip-text').textContent()) === 'SP: Mock');
 
+await check('new projects start with a labeled untitled name control', async () =>
+  (await page.locator('.project-name__label').textContent()) === 'Project'
+  && (await page.locator('#project-name-text').textContent()) === '(untitled)');
+
 await page.evaluate(() => localStorage.clear());
 
 const setDoc = async (name, code) => {
@@ -261,7 +265,7 @@ await check('text filter still matches logged content', async () =>
 await page.fill('#console-filter-text', '');
 await page.waitForTimeout(FILTER_SETTLE);
 
-// --- framework catalog: add via form, injection, 404, reorder, delete ---
+// --- framework catalog: add via form, injection, 404, drag reorder, delete ---
 // (local fixture: sandbox blocks public CDNs; the mechanism — ordered
 // blocking <script src> — is identical)
 const addFramework = async (name, url) => {
@@ -307,9 +311,11 @@ await addFramework('testlib-b', LIB_B);
 await page.click('#btn-run');
 await check('enabled frameworks inject in catalog order', () =>
   scriptOrderBecomes([LIB_A, LIB_B]));
-await libRow('testlib-b').locator('.lib-move').first().click();   // ↑
+await libRow('testlib-b').locator('.lib-drag').dragTo(libRow('testlib.js'), {
+  targetPosition: { x: 24, y: 2 },
+});
 await page.click('#btn-run');
-await check('reorder changes injection order', () =>
+await check('drag reorder changes injection order', () =>
   scriptOrderBecomes([LIB_B, LIB_A]));
 page.once('dialog', (d) => d.accept());
 await libRow('testlib-b').locator('.lib-del').click();
@@ -361,6 +367,21 @@ await page.click('#snippet-name-save');
 await check('snippet saved from selection', async () =>
   (await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).count()) === 1);
 
+const saveSnippet = async (pane, code, name) => {
+  await setDoc(pane, code);
+  await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
+  await page.keyboard.press('Control+a');
+  await page.click('#btn-snippet-add');
+  await page.fill('#snippet-name-input', name);
+  await page.click('#snippet-name-save');
+};
+await saveSnippet('html', '<p>zulu</p>', 'Zulu markup');
+await saveSnippet('css', '.alpha { color: teal; }', 'alpha styles');
+await check('snippets display alphabetically regardless of file type', async () => {
+  const names = await page.locator('#snippet-list .snippet-item .lib-name').allTextContents();
+  return JSON.stringify(names) === JSON.stringify(['alpha styles', 'my-snip', 'Zulu markup']);
+});
+
 await setJs('// cleared\n');
 await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).click();
 await page.waitForFunction(
@@ -375,18 +396,28 @@ await check('snippet inserts into the JS editor at the cursor', async () =>
     .replaceAll('\u00a0', ' ')
     .includes('SNIPPET_MARKER = 42'));
 
-// --- project file: save → modify → load round-trip ---
+// --- project name + project file: require name, save → load round-trip ---
 await setJs('console.log("round-trip-original");');
 await page.click('#btn-file');
+await page.click('#mi-save-project');
+await check('project JSON save requires an inline project name', async () =>
+  await page.locator('#project-name-form').isVisible()
+  && (await page.locator('#project-name-error').textContent()).includes('Name this project'));
+await page.fill('#project-name-input', 'This Is an Example');
 const [projDownload] = await Promise.all([
   page.waitForEvent('download'),
-  page.click('#mi-save-project'),
+  page.click('#project-name-save'),
 ]);
 const projPath = await projDownload.path();
 const projJson = JSON.parse(readFileSync(projPath, 'utf8'));
 await check('saved project file has the right shape', () =>
   projJson.kind === 'project' && projJson.docs.js.includes('round-trip-original')
-  && Array.isArray(projJson.libraries.enabled));
+  && Array.isArray(projJson.libraries.enabled) && projJson.name === 'This Is an Example');
+await check('project JSON uses the project slug and .dcspad.json extension', () =>
+  projDownload.suggestedFilename() === 'this-is-an-example.dcspad.json');
+await check('project import picker prefers .dcspad.json files', () =>
+  page.locator('#import-project-file').getAttribute('accept')
+    .then((accept) => accept.startsWith('.dcspad.json')));
 
 await setJs('console.log("changed after save");');
 await page.setInputFiles('#import-project-file', projPath);
@@ -394,6 +425,30 @@ await page.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('project loaded'));
 await check('loading the project file restores the JS pane', async () =>
   (await page.locator('#pane-editor .view-lines').textContent()).includes('round-trip-original'));
+await check('loading the project file restores its title', async () =>
+  (await page.locator('#project-name-text').textContent()) === 'This Is an Example');
+
+// Named pane exports share the title-derived base. Export-all skips the
+// deliberately emptied CSS pane and downloads the two remaining types.
+await setDoc('css', '');
+await page.click('#btn-file');
+const [namedJsDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#mi-export-js'),
+]);
+await check('named pane export uses the project slug', () =>
+  namedJsDownload.suggestedFilename() === 'this-is-an-example.js');
+
+const allDownloads = [];
+const captureAllDownload = (download) => allDownloads.push(download);
+page.on('download', captureAllDownload);
+await page.click('#btn-file');
+await page.click('#mi-export-all');
+await page.waitForTimeout(300);
+page.off('download', captureAllDownload);
+await check('export all downloads every non-empty pane and skips empty panes', () =>
+  JSON.stringify(allDownloads.map((d) => d.suggestedFilename()).sort())
+    === JSON.stringify(['this-is-an-example.html', 'this-is-an-example.js']));
 
 // A project referencing a framework missing from the catalog loads
 // tolerantly but warns by name.
@@ -417,7 +472,8 @@ const [jsDownload] = await Promise.all([
   page.click('#mi-export-js'),
 ]);
 await check('export JS pane downloads the pane contents', async () =>
-  readFileSync(await jsDownload.path(), 'utf8').includes('EXPORT_MARKER'));
+  readFileSync(await jsDownload.path(), 'utf8').includes('EXPORT_MARKER')
+  && jsDownload.suggestedFilename() === 'dcspad.js');
 
 // --- storage failure is surfaced, not silent ---
 // Stub setItem to throw (the only way to hit quota deterministically);
