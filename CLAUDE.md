@@ -145,6 +145,16 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
   messages, markup renders fine. Standalone pages have no nonce and the
   attribute is omitted.
 
+- **`app.css` styles the whole host page, not just the app.** Its unscoped
+  `html, body { height: 100% }` + `body { overflow: hidden }` (top of the
+  file) apply to the SharePoint page the moment a boot script injects the
+  stylesheet — so the host page stops scrolling. Anything hosted must
+  therefore pin itself over the viewport (`html.dcspad-hosted .app`, and
+  `html.dcspad-hosted .wb` in workbench.css) and hide itself on suspension.
+  Leaving a hosted root in normal document flow renders a **blank page** in
+  view mode that mysteriously appears in edit mode, where `.dcspad-suspended`
+  reverts those rules. Cost one live deploy; `tests/workbench-hosted.mjs`
+  now guards it.
 - **This machine is Windows ARM64 and has two Node installs.** Builds must run
   under the system Node (`C:\Program Files\nodejs\node.exe`, v24 arm64), not
   the nvm4w x64 one — esbuild ships a native per-arch binary, so an x64
