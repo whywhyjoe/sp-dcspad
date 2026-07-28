@@ -145,6 +145,15 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
   messages, markup renders fine. Standalone pages have no nonce and the
   attribute is omitted.
 
+- **This machine is Windows ARM64 and has two Node installs.** Builds must run
+  under the system Node (`C:\Program Files\nodejs\node.exe`, v24 arm64), not
+  the nvm4w x64 one — esbuild ships a native per-arch binary, so an x64
+  `node_modules` fails with "You installed esbuild for another platform" the
+  moment `Sync-Live.ps1` reaches `build-app.mjs`. `tools/node_modules` was
+  once committed to the repo (14 files, including the x64 `esbuild.exe`),
+  which made that mismatch travel with a clone; it is now untracked and
+  `.gitignore`d. If the build ever throws that error, reinstall with the
+  system Node: `cd tools && "C:\Program Files\nodejs\node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" install`.
 - `harness.js` token substitution must be `replaceAll` — the placeholder also appears in a comment, and `replace` once shipped a broken token check.
 - `app.css` has a global `[hidden] { display: none !important; }` guard: any element with a `display` rule plus the `hidden` attribute silently ignores `hidden` without it (an invisible splash overlay once ate every click).
 - Don't put interactive controls inside a `<label>` containing a disabled input — the browser treats the whole label as disabled (custom-library ✕ button bug).
