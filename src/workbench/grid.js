@@ -1,9 +1,13 @@
 // Workbench data grid: sortable, filterable table over plain row objects.
 //
 // Plain DOM, no framework. Columns declare how to read and format values;
-// the grid owns sorting, the filter box, the count badge, and per-cell
-// click-to-copy. Export and "copy as script" actions plug into the toolbar
-// actions slot so every view gets them uniformly.
+// the grid owns sorting, the filter box, the count badge, per-cell
+// click-to-copy, and the export menu (visible rows → CSV/JSON/Markdown).
+// "Copy as script" actions plug into the same toolbar actions slot (M4).
+
+import {
+  copyText, toCsv, toJson, toMarkdown, downloadCsv, downloadJson,
+} from './export.js';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -12,24 +16,7 @@ const el = (tag, cls, text) => {
   return n;
 };
 
-export function copyText(text, flashEl) {
-  const done = () => {
-    if (!flashEl) return;
-    flashEl.classList.add('copied');
-    setTimeout(() => flashEl.classList.remove('copied'), 900);
-  };
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).then(done, done);
-  } else {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); } catch { /* best effort */ }
-    ta.remove();
-    done();
-  }
-}
+export { copyText };
 
 const cellValue = (row, col) =>
   typeof col.value === 'function' ? col.value(row) : row[col.key];
@@ -43,12 +30,14 @@ function displayValue(row, col) {
 }
 
 // columns: [{ key, label, value?(row), format?(v,row), copyable?, mono?, width? }]
+// exportName enables the toolbar export menu; it's the download file stem.
 export function createGrid({
   columns,
   rowKey = 'Id',
   onOpen = null,
   emptyText = 'No rows.',
   filterPlaceholder = 'Filter…',
+  exportName = '',
 } = {}) {
   let rows = [];
   let visible = [];
@@ -65,6 +54,35 @@ export function createGrid({
   filter.setAttribute('aria-label', 'Filter rows');
   const actions = el('span', 'wb-grid-actions');
   toolbar.append(count, filter, actions);
+
+  if (exportName) {
+    const wrap = el('span', 'wb-menu-wrap');
+    const btn = el('button', 'btn btn-xs', 'Export ▾');
+    btn.type = 'button';
+    btn.title = 'Export the visible rows';
+    const menu = el('div', 'wb-menu');
+    menu.hidden = true;
+    const items = [
+      ['Download CSV', () => downloadCsv(exportName, visible, columns)],
+      ['Download JSON', () => downloadJson(exportName, visible, columns)],
+      ['Copy CSV', () => copyText(toCsv(visible, columns), btn)],
+      ['Copy JSON', () => copyText(toJson(visible, columns), btn)],
+      ['Copy Markdown', () => copyText(toMarkdown(visible, columns), btn)],
+    ];
+    for (const [label, run] of items) {
+      const item = el('button', 'wb-menu-item', label);
+      item.type = 'button';
+      item.addEventListener('click', () => { menu.hidden = true; run(); });
+      menu.append(item);
+    }
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = !menu.hidden;
+    });
+    document.addEventListener('click', () => { menu.hidden = true; });
+    wrap.append(btn, menu);
+    actions.append(wrap);
+  }
 
   const scroller = el('div', 'wb-grid-scroll');
   const table = el('table', 'wb-table');

@@ -55,6 +55,65 @@ await check('mock: route survives a reload via sessionStorage', async () => {
   return (await page.locator('.wb-rail-btn.active').count()) === 1;
 });
 
+// ---- drilldown (M2) ----
+
+await check('drill: opening a list shows the detail tabs', async () => {
+  await page.locator('.wb-table tbody tr', { hasText: 'Projects' }).locator('td').first().click();
+  await page.waitForSelector('.wb-tab');
+  const tabs = await page.locator('.wb-tab').allTextContents();
+  return tabs.join(',') === 'Fields,Views,Content types,Raw';
+});
+
+await check('drill: fields grid lists internal names and joined choices', async () => {
+  await page.waitForSelector('.wb-tab-pane .wb-table tbody tr');
+  const rows = await page.locator('.wb-tab-pane .wb-table tbody tr').count();
+  const text = await page.locator('.wb-tab-pane .wb-table').textContent();
+  return rows === 7 && text.includes('ProjectStatus') && text.includes('Planned | Active | Blocked | Done');
+});
+
+await check('drill: raw tab renders the SP.List smart view', async () => {
+  await page.locator('.wb-tab', { hasText: 'Raw' }).click();
+  await page.waitForSelector('.wb-raw');
+  const text = await page.locator('.wb-raw').textContent();
+  return text.includes('SP.List') && text.includes('Projects');
+});
+
+await check('drill: back returns to the lists grid', async () => {
+  await page.locator('.wb-back').click();
+  await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
+  return (await page.locator('.wb-pane:not([hidden]) .wb-table tbody tr').count()) === 8;
+});
+
+// ---- export (M2) ----
+
+await check('export: toolbar menu offers CSV/JSON/Markdown', async () => {
+  await page.locator('.wb-pane:not([hidden]) .wb-menu-wrap .btn').first().click();
+  const items = await page.locator('.wb-pane:not([hidden]) .wb-menu-item').allTextContents();
+  await page.keyboard.press('Escape');
+  await page.locator('body').click();
+  return items.join(',') === 'Download CSV,Download JSON,Copy CSV,Copy JSON,Copy Markdown';
+});
+
+await check('export: toCsv follows RFC 4180 with a BOM', async () =>
+  page.evaluate(async () => {
+    const { toCsv } = await import('/src/workbench/export.js');
+    const csv = toCsv(
+      [{ a: 'plain', b: 'has "quotes", commas' }, { a: 'x', b: null }],
+      [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }],
+    );
+    return csv.startsWith('﻿')
+      && csv.includes('A,B')
+      && csv.includes('"has ""quotes"", commas"')
+      && csv.endsWith('x,');
+  }));
+
+await check('export: toMarkdown escapes pipes', async () =>
+  page.evaluate(async () => {
+    const { toMarkdown } = await import('/src/workbench/export.js');
+    const md = toMarkdown([{ a: 'x|y' }], [{ key: 'a', label: 'A' }]);
+    return md.includes('| A |') && md.includes('x\\|y');
+  }));
+
 await page.close();
 
 // ---- live path (injected context + stubbed /_api) -------------------------

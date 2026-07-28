@@ -38,9 +38,9 @@ function serverRelativeUrl(absoluteUrl) {
 }
 function candidateWindows() {
   const candidates = [window];
-  for (const key of ["parent", "top"]) {
+  for (const key2 of ["parent", "top"]) {
     try {
-      const candidate = window[key];
+      const candidate = window[key2];
       if (candidate && !candidates.includes(candidate)) {
         void candidate.location.href;
         candidates.push(candidate);
@@ -101,15 +101,15 @@ function copyPageContext(found) {
     pageContext = JSON.parse(JSON.stringify(found.pageContext));
   } catch {
     pageContext = {};
-    for (const key of SERIALIZABLE_FIELDS) {
-      if (found.pageContext[key] !== void 0) {
-        pageContext[key] = found.pageContext[key];
+    for (const key2 of SERIALIZABLE_FIELDS) {
+      if (found.pageContext[key2] !== void 0) {
+        pageContext[key2] = found.pageContext[key2];
       }
     }
   }
-  for (const key of SERIALIZABLE_FIELDS) {
-    if (pageContext[key] === void 0 && found.raw[key] !== void 0) {
-      pageContext[key] = found.raw[key];
+  for (const key2 of SERIALIZABLE_FIELDS) {
+    if (pageContext[key2] === void 0 && found.raw[key2] !== void 0) {
+      pageContext[key2] = found.raw[key2];
     }
   }
   pageContext.webAbsoluteUrl = found.webAbsoluteUrl;
@@ -627,13 +627,21 @@ function createShell({ mount, deps, views }) {
   return { navigate, restore, getRoute: () => currentRoute };
 }
 
-// ../src/workbench/grid.js
-var el2 = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== void 0) n.textContent = text;
-  return n;
-};
+// ../src/io.js?v=2
+var MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+function downloadText(filename, text, type = "application/json") {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1e3);
+}
+
+// ../src/workbench/export.js
 function copyText(text, flashEl) {
   const done = () => {
     if (!flashEl) return;
@@ -656,8 +664,61 @@ function copyText(text, flashEl) {
   }
 }
 var cellValue = (row, col) => typeof col.value === "function" ? col.value(row) : row[col.key];
-function displayValue(row, col) {
+function cellText(row, col) {
   const v = cellValue(row, col);
+  if (typeof col.format === "function") return String(col.format(v, row) ?? "");
+  if (v === null || v === void 0) return "";
+  if (typeof v === "boolean") return v ? "Yes" : "";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+function toCsv(rows, columns) {
+  const quote = (s) => /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+  const lines = [columns.map((c) => quote(String(c.label ?? c.key))).join(",")];
+  for (const row of rows) {
+    lines.push(columns.map((c) => quote(cellText(row, c))).join(","));
+  }
+  return `\uFEFF${lines.join("\r\n")}`;
+}
+function toJson(rows, columns) {
+  const out = rows.map((row) => {
+    const record = {};
+    for (const c of columns) {
+      const v = cellValue(row, c);
+      record[c.key] = v === void 0 ? null : v;
+    }
+    return record;
+  });
+  return JSON.stringify(out, null, 2);
+}
+function toMarkdown(rows, columns) {
+  const esc = (s) => s.replaceAll("|", "\\|").replaceAll("\r", "").replaceAll("\n", " ");
+  const lines = [
+    `| ${columns.map((c) => esc(String(c.label ?? c.key))).join(" | ")} |`,
+    `| ${columns.map(() => "---").join(" | ")} |`
+  ];
+  for (const row of rows) {
+    lines.push(`| ${columns.map((c) => esc(cellText(row, c))).join(" | ")} |`);
+  }
+  return lines.join("\n");
+}
+function downloadCsv(name, rows, columns) {
+  downloadText(`${name}.csv`, toCsv(rows, columns), "text/csv;charset=utf-8");
+}
+function downloadJson(name, rows, columns) {
+  downloadText(`${name}.json`, toJson(rows, columns), "application/json");
+}
+
+// ../src/workbench/grid.js
+var el2 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var cellValue2 = (row, col) => typeof col.value === "function" ? col.value(row) : row[col.key];
+function displayValue(row, col) {
+  const v = cellValue2(row, col);
   if (typeof col.format === "function") return col.format(v, row);
   if (v === null || v === void 0) return "";
   if (typeof v === "boolean") return v ? "Yes" : "";
@@ -668,7 +729,8 @@ function createGrid({
   rowKey = "Id",
   onOpen = null,
   emptyText = "No rows.",
-  filterPlaceholder = "Filter\u2026"
+  filterPlaceholder = "Filter\u2026",
+  exportName = ""
 } = {}) {
   let rows = [];
   let visible = [];
@@ -684,6 +746,39 @@ function createGrid({
   filter.setAttribute("aria-label", "Filter rows");
   const actions = el2("span", "wb-grid-actions");
   toolbar.append(count, filter, actions);
+  if (exportName) {
+    const wrap = el2("span", "wb-menu-wrap");
+    const btn = el2("button", "btn btn-xs", "Export \u25BE");
+    btn.type = "button";
+    btn.title = "Export the visible rows";
+    const menu = el2("div", "wb-menu");
+    menu.hidden = true;
+    const items = [
+      ["Download CSV", () => downloadCsv(exportName, visible, columns)],
+      ["Download JSON", () => downloadJson(exportName, visible, columns)],
+      ["Copy CSV", () => copyText(toCsv(visible, columns), btn)],
+      ["Copy JSON", () => copyText(toJson(visible, columns), btn)],
+      ["Copy Markdown", () => copyText(toMarkdown(visible, columns), btn)]
+    ];
+    for (const [label, run] of items) {
+      const item = el2("button", "wb-menu-item", label);
+      item.type = "button";
+      item.addEventListener("click", () => {
+        menu.hidden = true;
+        run();
+      });
+      menu.append(item);
+    }
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.hidden = !menu.hidden;
+    });
+    document.addEventListener("click", () => {
+      menu.hidden = true;
+    });
+    wrap.append(btn, menu);
+    actions.append(wrap);
+  }
   const scroller = el2("div", "wb-grid-scroll");
   const table = el2("table", "wb-table");
   const thead = el2("thead");
@@ -732,8 +827,8 @@ function createGrid({
   function compare(a, b) {
     const col = columns.find((c) => c.key === sortKey);
     if (!col) return 0;
-    const va = cellValue(a, col);
-    const vb = cellValue(b, col);
+    const va = cellValue2(a, col);
+    const vb = cellValue2(b, col);
     if (va === vb) return 0;
     if (va === null || va === void 0) return 1;
     if (vb === null || vb === void 0) return -1;
@@ -814,6 +909,401 @@ function createGrid({
   };
 }
 
+// ../src/inspect/tree-view.js
+var el3 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+function renderValue(node, opts = {}) {
+  if (!node) return el3("span", "t-undef", "undefined");
+  switch (node.t) {
+    case "str": {
+      const s = el3("span", "t-str", opts.bare ? node.v : JSON.stringify(node.v));
+      if (node.trunc) s.append(el3("span", "t-truncated", ` \u2026(${node.trunc} chars)`));
+      return s;
+    }
+    case "num":
+      return el3("span", "t-num", String(node.v));
+    case "bool":
+      return el3("span", "t-bool", String(node.v));
+    case "null":
+      return el3("span", "t-null", "null");
+    case "undef":
+      return el3("span", "t-undef", "undefined");
+    case "sym":
+      return el3("span", "t-str", node.v);
+    case "fn":
+      return el3("span", "t-fn", `\u0192 ${node.v}()`);
+    case "date":
+      return el3("span", "t-node", node.v);
+    case "regex":
+      return el3("span", "t-str", node.v);
+    case "node":
+      return el3("span", "t-node", node.v);
+    case "circ":
+      return el3("span", "t-circular", "[circular]");
+    case "maxdepth":
+      return el3("span", "t-preview", node.v);
+    case "err":
+      return renderError(node);
+    case "arr":
+      return renderExpandable(node, `Array(${node.n})`, node.items.map((item, i) => [String(i), item]), opts);
+    case "obj":
+      return renderExpandable(node, node.cls === "Object" ? "" : node.cls, node.keys, opts);
+    default:
+      return el3("span", "t-preview", JSON.stringify(node));
+  }
+}
+function renderError(node) {
+  const wrap = el3("span");
+  let head = `${node.name}: ${node.msg}`;
+  if (node.status !== void 0) head += ` (HTTP ${node.status}${node.statusText ? " " + node.statusText : ""})`;
+  wrap.append(el3("span", "t-err", head));
+  if (node.stack) {
+    const stack = el3("div", "stack-frame");
+    stack.textContent = node.stack.split("\n").slice(1, 6).join("\n");
+    wrap.append(stack);
+  }
+  return wrap;
+}
+function previewOf(node) {
+  switch (node.t) {
+    case "str": {
+      const v = node.v.length > 24 ? node.v.slice(0, 24) + "\u2026" : node.v;
+      return JSON.stringify(v);
+    }
+    case "num":
+    case "bool":
+      return String(node.v);
+    case "null":
+      return "null";
+    case "undef":
+      return "undefined";
+    case "fn":
+      return "\u0192";
+    case "arr":
+      return `Array(${node.n})`;
+    case "obj":
+      return node.cls === "Object" ? "{\u2026}" : `${node.cls}`;
+    case "err":
+      return node.name;
+    case "node":
+      return node.v;
+    case "date":
+      return node.v;
+    case "maxdepth":
+      return node.v;
+    case "circ":
+      return "[circular]";
+    default:
+      return "\u2026";
+  }
+}
+function renderExpandable(node, label, entries, opts = {}) {
+  const wrap = el3("span", "tree-node");
+  const row = el3("span", "tree-row expandable");
+  row.append(el3("span", "twist", "\u25B6"));
+  if (label) row.append(el3("span", "", label + " "));
+  const parts = entries.slice(0, 5).map(([k, v]) => (node.t === "arr" ? "" : `${k}: `) + previewOf(v));
+  const openBrace = node.t === "arr" ? "[" : "{";
+  const closeBrace = node.t === "arr" ? "]" : "}";
+  const more = entries.length > 5 || node.trunc ? ", \u2026" : "";
+  row.append(el3("span", "t-preview", `${openBrace}${parts.join(", ")}${more}${closeBrace}`));
+  wrap.append(row);
+  const children = el3("div", "tree-children");
+  wrap.append(children);
+  let built = false;
+  row.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = row.classList.toggle("open");
+    if (open && !built) {
+      built = true;
+      for (const [key2, val] of entries) {
+        const line = el3("div");
+        const keySpan = el3("span", "tree-key" + (opts.dimKeys?.has?.(key2) ? " dim-key" : ""), key2);
+        line.append(keySpan, el3("span", "", ": "), renderValue(val, opts));
+        children.append(line);
+      }
+      if (node.trunc) children.append(el3("div", "t-truncated", "\u2026 truncated"));
+    }
+  });
+  return wrap;
+}
+function renderTable(dataNode, columns) {
+  if (!dataNode || dataNode.t !== "arr" && dataNode.t !== "obj") {
+    return renderValue(dataNode);
+  }
+  const rows = dataNode.t === "arr" ? dataNode.items.map((item, i) => [String(i), item]) : dataNode.keys;
+  let cols = columns ? [...columns] : [];
+  if (!cols.length) {
+    const seen = /* @__PURE__ */ new Set();
+    for (const [, v] of rows) {
+      if (v.t === "obj") for (const [k] of v.keys) seen.add(k);
+      else if (v.t === "arr") v.items.forEach((_, i) => seen.add(String(i)));
+      else seen.add("Value");
+    }
+    cols = [...seen].slice(0, 20);
+  }
+  const wrap = el3("div", "console-table-wrap");
+  const table = el3("table", "console-table");
+  const thead = el3("thead");
+  const hr = el3("tr");
+  hr.append(el3("th", "", "(index)"));
+  cols.forEach((c) => hr.append(el3("th", "", c)));
+  thead.append(hr);
+  table.append(thead);
+  const tbody = el3("tbody");
+  for (const [key2, v] of rows) {
+    const tr = el3("tr");
+    tr.append(el3("td", "", key2));
+    for (const c of cols) {
+      const td = el3("td");
+      let cell;
+      if (v.t === "obj") cell = v.keys.find(([k]) => k === c)?.[1];
+      else if (v.t === "arr") cell = v.items[Number(c)];
+      else if (c === "Value") cell = v;
+      td.textContent = cell ? previewOf(cell) : "";
+      tr.append(td);
+    }
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  wrap.append(table);
+  return wrap;
+}
+
+// ../src/inspect/sp-shapes.js
+var NOISE_KEYS = /* @__PURE__ */ new Set(["__metadata", "__deferred", "odata.metadata", "odata.type", "odata.id", "odata.etag", "odata.editLink", "@odata.context", "@odata.type", "@odata.id", "@odata.etag", "@odata.editLink", "FirstUniqueAncestorSecurableObject", "RoleAssignments"]);
+var key = (node, k) => node?.t === "obj" ? node.keys.find(([n]) => n === k)?.[1] : void 0;
+var keyNames = (node) => node?.t === "obj" ? node.keys.map(([n]) => n) : [];
+var str = (node) => node && (node.t === "str" || node.t === "num") ? String(node.v) : void 0;
+function enhance(node) {
+  if (!node || node.t !== "obj" && node.t !== "arr") return null;
+  const d = key(node, "d");
+  if (d && node.keys.length === 1) {
+    return envelope("OData verbose", d, node);
+  }
+  const value = key(node, "value");
+  if (value?.t === "arr" && keyNames(node).every((k) => k === "value" || k.startsWith("odata.") || k.startsWith("@odata."))) {
+    return envelope("OData", value, node);
+  }
+  const results = key(node, "results");
+  if (results?.t === "arr") {
+    return collection(results, node);
+  }
+  if (node.t === "arr" && node.items.length && node.items.every(looksLikeSpObject)) {
+    return collection(node, null);
+  }
+  if (looksLikeSpObject(node)) {
+    return entity(node);
+  }
+  return null;
+}
+function looksLikeSpObject(node) {
+  if (node?.t !== "obj") return false;
+  if (key(node, "__metadata")) return true;
+  const names = keyNames(node);
+  const has = (...ks) => ks.every((k) => names.includes(k));
+  return has("InternalName", "TypeAsString") || has("BaseTemplate", "EntityTypeName") || has("ServerRelativeUrl", "WebTemplate") || has("LoginName", "PrincipalType") || names.includes("odata.type") || names.includes("@odata.type");
+}
+function spType(node) {
+  const meta = key(node, "__metadata");
+  return str(key(meta, "type")) || str(key(node, "odata.type")) || str(key(node, "@odata.type")) || detectShape(node);
+}
+function detectShape(node) {
+  const names = keyNames(node);
+  const has = (...ks) => ks.every((k) => names.includes(k));
+  if (has("InternalName", "TypeAsString")) return "SP.Field";
+  if (has("BaseTemplate", "EntityTypeName")) return "SP.List";
+  if (has("ServerRelativeUrl", "WebTemplate")) return "SP.Web";
+  if (has("LoginName", "PrincipalType")) {
+    return str(key(node, "OwnerTitle")) !== void 0 ? "SP.Group" : "SP.User";
+  }
+  return null;
+}
+function envelope(label, inner, outer) {
+  const wrap = el3("div", "tree-node");
+  const head = el3("div");
+  head.append(badge(label));
+  wrap.append(head);
+  const enhanced = enhance(inner);
+  wrap.append(enhanced ?? renderValue(inner, { dimKeys: NOISE_KEYS }));
+  const metaKeys = outer.keys.filter(([k]) => k !== "d" && k !== "value");
+  if (metaKeys.length) {
+    const fold = el3("div", "sp-meta-fold");
+    fold.append(renderValue({ t: "obj", cls: "envelope metadata", keys: metaKeys }, { dimKeys: NOISE_KEYS }));
+    wrap.append(fold);
+  }
+  return wrap;
+}
+function collection(arrNode, parentNode) {
+  const wrap = el3("div", "tree-node");
+  const head = el3("div");
+  const type = arrNode.items.length ? spType(arrNode.items[0]) : null;
+  head.append(badge(`${arrNode.n} item${arrNode.n === 1 ? "" : "s"}`));
+  if (type) head.append(el3("span", "sp-entity-head", shortType(type)));
+  const toggle = el3("span", "table-toggle", "\u229E table view");
+  head.append(toggle);
+  wrap.append(head);
+  const treeEl = el3("div");
+  if (arrNode.items.length && arrNode.items.every((i) => i.t === "obj")) {
+    const list2 = el3("div");
+    arrNode.items.forEach((item, i) => {
+      const row = el3("div");
+      row.append(el3("span", "tree-key dim-key", `${i}: `));
+      row.append(enhance(item) ?? renderValue(item, { dimKeys: NOISE_KEYS }));
+      list2.append(row);
+    });
+    if (arrNode.trunc) list2.append(el3("div", "t-truncated", `\u2026 showing first ${arrNode.items.length} of ${arrNode.n}`));
+    treeEl.append(list2);
+  } else {
+    treeEl.append(renderValue(arrNode, { dimKeys: NOISE_KEYS }));
+  }
+  const tableEl = el3("div");
+  tableEl.hidden = true;
+  let tableBuilt = false;
+  toggle.addEventListener("click", () => {
+    const showTable = tableEl.hidden;
+    if (showTable && !tableBuilt) {
+      tableBuilt = true;
+      tableEl.append(renderTable(filterNoise(arrNode)));
+    }
+    tableEl.hidden = !showTable;
+    treeEl.hidden = showTable;
+    toggle.textContent = showTable ? "\u2261 tree view" : "\u229E table view";
+  });
+  wrap.append(treeEl, tableEl);
+  const next = str(key(parentNode, "__next")) || str(key(parentNode, "odata.nextLink")) || str(key(parentNode, "@odata.nextLink"));
+  if (next) {
+    const warn = el3("div", "sp-next-link");
+    warn.append(el3("span", "", "\u26A0 partial result set \u2014 next page: "));
+    warn.append(copySpan(next, next.length > 80 ? next.slice(0, 80) + "\u2026" : next));
+    wrap.append(warn);
+  }
+  return wrap;
+}
+function filterNoise(arrNode) {
+  return {
+    ...arrNode,
+    items: arrNode.items.map((item) => item.t === "obj" ? { ...item, keys: item.keys.filter(([k]) => !NOISE_KEYS.has(k)) } : item)
+  };
+}
+var ENTITY_FIELDS = {
+  "SP.List": [
+    ["Title", false],
+    ["Id", true],
+    ["EntityTypeName", true],
+    ["BaseTemplate", false],
+    ["ItemCount", false]
+  ],
+  "SP.Field": [
+    ["Title", false],
+    ["InternalName", true],
+    ["TypeAsString", false],
+    ["Required", false]
+  ],
+  "SP.Web": [
+    ["Title", false],
+    ["ServerRelativeUrl", true],
+    ["WebTemplate", false]
+  ],
+  "SP.User": [
+    ["Title", false],
+    ["LoginName", true],
+    ["Email", true]
+  ],
+  "SP.Group": [
+    ["Title", false],
+    ["Id", true],
+    ["OwnerTitle", false]
+  ],
+  "SP.ListItem": [
+    ["Title", false],
+    ["Id", false]
+  ]
+};
+function shortType(type) {
+  if (!type) return "";
+  if (type.startsWith("SP.Data.") && type.endsWith("Item")) return "SP.ListItem \xB7 " + type.slice(8);
+  return type;
+}
+function entityKind(type) {
+  if (!type) return null;
+  if (ENTITY_FIELDS[type]) return type;
+  for (const known of Object.keys(ENTITY_FIELDS)) {
+    if (type.startsWith(known)) return known;
+  }
+  if (type.startsWith("SP.Data.")) return "SP.ListItem";
+  return null;
+}
+function entity(node) {
+  const type = spType(node);
+  const kind = entityKind(type);
+  const wrap = el3("div", "tree-node");
+  const head = el3("div", "sp-entity-head");
+  head.append(badge(shortType(type) || "SP"));
+  if (kind) {
+    for (const [field2, copyable] of ENTITY_FIELDS[kind]) {
+      const v = key(node, field2);
+      if (v === void 0) continue;
+      const fieldEl = el3("span", "sp-field");
+      fieldEl.append(el3("span", "dim-key tree-key", `${field2}: `));
+      const text = v.t === "str" || v.t === "num" || v.t === "bool" ? String(v.v) : previewOf(v);
+      fieldEl.append(copyable ? copySpan(text, text) : el3("span", "", text));
+      head.append(fieldEl);
+    }
+  }
+  wrap.append(head);
+  wrap.append(renderValue(node, { dimKeys: NOISE_KEYS }));
+  return wrap;
+}
+function badge(text) {
+  return el3("span", "sp-badge", text);
+}
+function copySpan(copyText2, displayText) {
+  const s = el3("span", "sp-copy", displayText);
+  s.title = "Click to copy";
+  s.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(copyText2);
+      s.classList.add("copied");
+      setTimeout(() => s.classList.remove("copied"), 800);
+    } catch {
+    }
+  });
+  return s;
+}
+
+// ../src/inspect/to-node.js
+function toNode(v, depth = 0, { maxDepth = 6, maxItems = 100 } = {}) {
+  if (v === null) return { t: "null" };
+  switch (typeof v) {
+    case "string":
+      return { t: "str", v };
+    case "number":
+      return { t: "num", v };
+    case "boolean":
+      return { t: "bool", v };
+    case "undefined":
+      return { t: "undef" };
+  }
+  if (depth >= maxDepth) return { t: "maxdepth", v: Array.isArray(v) ? `Array(${v.length})` : "{\u2026}" };
+  const opts = { maxDepth, maxItems };
+  if (Array.isArray(v)) {
+    return { t: "arr", n: v.length, items: v.slice(0, maxItems).map((x) => toNode(x, depth + 1, opts)), trunc: v.length > maxItems };
+  }
+  const keys = Object.keys(v);
+  return {
+    t: "obj",
+    cls: "Object",
+    keys: keys.slice(0, maxItems).map((k) => [k, toNode(v[k], depth + 1, opts)]),
+    trunc: keys.length > maxItems
+  };
+}
+
 // ../src/workbench/views/lists.js
 var BASE_TEMPLATE_NAMES = {
   100: "Generic list",
@@ -850,12 +1340,51 @@ var LIST_SELECT = [
   "DefaultViewUrl",
   "RootFolder/ServerRelativeUrl"
 ];
+var FIELD_SELECT = [
+  "Id",
+  "Title",
+  "InternalName",
+  "TypeAsString",
+  "FieldTypeKind",
+  "Required",
+  "Hidden",
+  "ReadOnlyField",
+  "Group",
+  "DefaultValue",
+  "Choices",
+  "Description",
+  "EnforceUniqueValues",
+  "Indexed"
+];
+var VIEW_SELECT = [
+  "Id",
+  "Title",
+  "DefaultView",
+  "PersonalView",
+  "Hidden",
+  "ServerRelativeUrl",
+  "RowLimit",
+  "Paged",
+  "ViewQuery"
+];
+var CT_SELECT = ["Id", "Name", "Group", "Hidden", "ReadOnly", "Sealed", "Description"];
 var fmtDate = (v) => v ? String(v).slice(0, 10) : "";
+var choicesText = (v) => {
+  const arr = Array.isArray(v) ? v : v?.results;
+  return Array.isArray(arr) ? arr.join(" | ") : "";
+};
+var fileStem = (s) => String(s || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+var el4 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var guidPath = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function createListsView({ client: client2, navigate }) {
-  const root = document.createElement("section");
-  root.className = "wb-view wb-view-lists";
-  const head = document.createElement("div");
-  head.className = "wb-view-head";
+  const root = el4("section", "wb-view wb-view-lists");
+  const gridPane = el4("div", "wb-pane");
+  const head = el4("div", "wb-view-head");
   head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web, hidden ones included. Click a row for fields, views, and content types.</p>';
   const grid = createGrid({
     columns: [
@@ -869,13 +1398,17 @@ function createListsView({ client: client2, navigate }) {
     ],
     onOpen: (row) => navigate({ view: "lists", listId: row.Id, listTitle: row.Title }),
     emptyText: "No lists in this web.",
-    filterPlaceholder: "Filter lists\u2026"
+    filterPlaceholder: "Filter lists\u2026",
+    exportName: "sp-lists"
   });
-  root.append(head, grid.el);
-  let loaded = false;
-  async function load(route) {
-    void route;
-    if (loaded) return;
+  gridPane.append(head, grid.el);
+  const detailPane = el4("div", "wb-pane");
+  detailPane.hidden = true;
+  root.append(gridPane, detailPane);
+  let listsLoaded = false;
+  const tabCache = /* @__PURE__ */ new Map();
+  async function loadLists() {
+    if (listsLoaded) return;
     grid.setLoading("Loading lists\u2026");
     try {
       const { items, partial } = await client2.getAll("web/lists", {
@@ -885,9 +1418,155 @@ function createListsView({ client: client2, navigate }) {
         top: 5e3
       });
       grid.setRows(items, { partial });
-      loaded = true;
+      listsLoaded = true;
     } catch (err) {
       grid.setError(err);
+    }
+  }
+  function cached2(listId, tab, fetcher) {
+    const key2 = `${listId}::${tab}`;
+    if (!tabCache.has(key2)) {
+      tabCache.set(key2, fetcher().catch((err) => {
+        tabCache.delete(key2);
+        throw err;
+      }));
+    }
+    return tabCache.get(key2);
+  }
+  const TABS = [
+    {
+      id: "fields",
+      label: "Fields",
+      grid: (listId, title) => ({
+        columns: [
+          { key: "Title", label: "Title" },
+          { key: "InternalName", label: "Internal name", mono: true, copyable: true },
+          { key: "TypeAsString", label: "Type" },
+          { key: "Required", label: "Required" },
+          { key: "Hidden", label: "Hidden" },
+          { key: "ReadOnlyField", label: "Read-only" },
+          { key: "Choices", label: "Choices", format: choicesText },
+          { key: "DefaultValue", label: "Default" },
+          { key: "Group", label: "Group" }
+        ],
+        exportName: `fields-${fileStem(title)}`,
+        fetch: () => client2.getAll(guidPath(listId, "/fields"), { select: FIELD_SELECT })
+      })
+    },
+    {
+      id: "views",
+      label: "Views",
+      grid: (listId, title) => ({
+        columns: [
+          { key: "Title", label: "Title" },
+          { key: "DefaultView", label: "Default" },
+          { key: "Hidden", label: "Hidden" },
+          { key: "PersonalView", label: "Personal" },
+          { key: "RowLimit", label: "Row limit" },
+          { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true },
+          { key: "ViewQuery", label: "CAML query", mono: true, copyable: true }
+        ],
+        exportName: `views-${fileStem(title)}`,
+        fetch: () => client2.getAll(guidPath(listId, "/views"), { select: VIEW_SELECT })
+      })
+    },
+    {
+      id: "contenttypes",
+      label: "Content types",
+      grid: (listId, title) => ({
+        columns: [
+          { key: "Name", label: "Name" },
+          { key: "Id", label: "Id", value: (row) => row.Id?.StringValue || String(row.Id ?? ""), mono: true, copyable: true },
+          { key: "Group", label: "Group" },
+          { key: "Hidden", label: "Hidden" },
+          { key: "ReadOnly", label: "Read-only" },
+          { key: "Sealed", label: "Sealed" },
+          { key: "Description", label: "Description" }
+        ],
+        exportName: `contenttypes-${fileStem(title)}`,
+        fetch: () => client2.getAll(guidPath(listId, "/contenttypes"), { select: CT_SELECT })
+      })
+    },
+    { id: "raw", label: "Raw" }
+  ];
+  function showDetail(route) {
+    gridPane.hidden = true;
+    detailPane.hidden = false;
+    detailPane.textContent = "";
+    const listId = route.listId;
+    const back = el4("button", "btn btn-xs wb-back", "\u2190 All lists");
+    back.type = "button";
+    back.addEventListener("click", () => navigate({ view: "lists" }));
+    const title = el4("h2", "", route.listTitle || "List");
+    const sub = el4("span", "wb-detail-id sp-copy", listId);
+    sub.title = "Click to copy the list id";
+    sub.addEventListener("click", () => copyText(listId, sub));
+    const headRow = el4("div", "wb-detail-head");
+    headRow.append(back, title, sub);
+    const tabsBar = el4("div", "wb-tabs");
+    tabsBar.setAttribute("role", "tablist");
+    const body = el4("div", "wb-tab-body");
+    const panes = /* @__PURE__ */ new Map();
+    let activeTab = null;
+    function activate(tab) {
+      activeTab = tab.id;
+      for (const btn of tabsBar.children) {
+        btn.classList.toggle("active", btn.dataset.tab === tab.id);
+        btn.setAttribute("aria-selected", btn.dataset.tab === tab.id ? "true" : "false");
+      }
+      body.textContent = "";
+      body.append(pane(tab));
+    }
+    function pane(tab) {
+      if (panes.has(tab.id)) return panes.get(tab.id);
+      const wrap = el4("div", "wb-tab-pane");
+      panes.set(tab.id, wrap);
+      if (tab.id === "raw") {
+        const status = el4("div", "wb-grid-status", "Loading raw list entity\u2026");
+        wrap.append(status);
+        cached2(listId, "raw", () => client2.get(guidPath(listId))).then((json) => {
+          status.remove();
+          const node = toNode(json, 0, { maxDepth: 8, maxItems: 250 });
+          const inspector = el4("div", "wb-raw");
+          inspector.append(enhance(node) ?? renderValue(node));
+          wrap.append(inspector);
+        }).catch((err) => {
+          status.textContent = err?.message || String(err);
+          status.classList.add("wb-error");
+        });
+        return wrap;
+      }
+      const spec = tab.grid(listId, route.listTitle);
+      const tabGrid = createGrid({
+        columns: spec.columns,
+        emptyText: "Nothing here.",
+        filterPlaceholder: `Filter ${tab.label.toLowerCase()}\u2026`,
+        exportName: spec.exportName
+      });
+      wrap.append(tabGrid.el);
+      tabGrid.setLoading(`Loading ${tab.label.toLowerCase()}\u2026`);
+      cached2(listId, tab.id, spec.fetch).then(({ items, partial }) => tabGrid.setRows(items, { partial })).catch((err) => tabGrid.setError(err));
+      return wrap;
+    }
+    for (const tab of TABS) {
+      const btn = el4("button", "wb-tab", tab.label);
+      btn.type = "button";
+      btn.dataset.tab = tab.id;
+      btn.setAttribute("role", "tab");
+      btn.addEventListener("click", () => activate(tab));
+      tabsBar.append(btn);
+    }
+    detailPane.append(headRow, tabsBar, body);
+    activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
+    void activeTab;
+  }
+  function load(route) {
+    if (route?.listId) {
+      showDetail(route);
+    } else {
+      detailPane.hidden = true;
+      gridPane.hidden = false;
+      loadLists();
     }
   }
   return { el: root, load, grid };

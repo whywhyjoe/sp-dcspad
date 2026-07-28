@@ -1,7 +1,12 @@
 // Lists & libraries view: every list in the web (hidden ones included — the
-// thing the SP UI won't show), with drill-down detail arriving in M2.
+// thing the SP UI won't show), with drill-down into fields, views, content
+// types, and the raw entity rendered through the SP-aware inspector.
 
 import { createGrid } from '../grid.js';
+import { copyText } from '../export.js';
+import { enhance } from '../../inspect/sp-shapes.js';
+import { renderValue } from '../../inspect/tree-view.js';
+import { toNode } from '../../inspect/to-node.js';
 
 // Friendly names for the templates that actually show up in day-to-day work;
 // anything else renders as its number.
@@ -33,14 +38,42 @@ const LIST_SELECT = [
   'DefaultViewUrl', 'RootFolder/ServerRelativeUrl',
 ];
 
+const FIELD_SELECT = [
+  'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
+  'Hidden', 'ReadOnlyField', 'Group', 'DefaultValue', 'Choices', 'Description',
+  'EnforceUniqueValues', 'Indexed',
+];
+
+const VIEW_SELECT = [
+  'Id', 'Title', 'DefaultView', 'PersonalView', 'Hidden', 'ServerRelativeUrl',
+  'RowLimit', 'Paged', 'ViewQuery',
+];
+
+const CT_SELECT = ['Id', 'Name', 'Group', 'Hidden', 'ReadOnly', 'Sealed', 'Description'];
+
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
+const choicesText = (v) => {
+  const arr = Array.isArray(v) ? v : v?.results;
+  return Array.isArray(arr) ? arr.join(' | ') : '';
+};
+const fileStem = (s) =>
+  String(s || 'list').toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'list';
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 
 export function createListsView({ client, navigate }) {
-  const root = document.createElement('section');
-  root.className = 'wb-view wb-view-lists';
+  const root = el('section', 'wb-view wb-view-lists');
 
-  const head = document.createElement('div');
-  head.className = 'wb-view-head';
+  // ---- all-lists grid pane ----
+  const gridPane = el('div', 'wb-pane');
+  const head = el('div', 'wb-view-head');
   head.innerHTML = '<h2>Lists &amp; libraries</h2>'
     + '<p class="wb-view-hint">Every list in this web, hidden ones included. '
     + 'Click a row for fields, views, and content types.</p>';
@@ -58,16 +91,21 @@ export function createListsView({ client, navigate }) {
     onOpen: (row) => navigate({ view: 'lists', listId: row.Id, listTitle: row.Title }),
     emptyText: 'No lists in this web.',
     filterPlaceholder: 'Filter lists…',
+    exportName: 'sp-lists',
   });
+  gridPane.append(head, grid.el);
 
-  root.append(head, grid.el);
+  // ---- detail pane (rebuilt per list) ----
+  const detailPane = el('div', 'wb-pane');
+  detailPane.hidden = true;
 
-  let loaded = false;
+  root.append(gridPane, detailPane);
 
-  async function load(route) {
-    // M2 will route { listId } to a detail pane; for now always show the grid.
-    void route;
-    if (loaded) return;
+  let listsLoaded = false;
+  const tabCache = new Map();   // `${listId}::${tab}` -> Promise<rows|json>
+
+  async function loadLists() {
+    if (listsLoaded) return;
     grid.setLoading('Loading lists…');
     try {
       const { items, partial } = await client.getAll('web/lists', {
@@ -77,9 +115,174 @@ export function createListsView({ client, navigate }) {
         top: 5000,
       });
       grid.setRows(items, { partial });
-      loaded = true;
+      listsLoaded = true;
     } catch (err) {
       grid.setError(err);
+    }
+  }
+
+  function cached(listId, tab, fetcher) {
+    const key = `${listId}::${tab}`;
+    if (!tabCache.has(key)) {
+      tabCache.set(key, fetcher().catch((err) => {
+        tabCache.delete(key);   // allow retry after a failure
+        throw err;
+      }));
+    }
+    return tabCache.get(key);
+  }
+
+  const TABS = [
+    {
+      id: 'fields',
+      label: 'Fields',
+      grid: (listId, title) => ({
+        columns: [
+          { key: 'Title', label: 'Title' },
+          { key: 'InternalName', label: 'Internal name', mono: true, copyable: true },
+          { key: 'TypeAsString', label: 'Type' },
+          { key: 'Required', label: 'Required' },
+          { key: 'Hidden', label: 'Hidden' },
+          { key: 'ReadOnlyField', label: 'Read-only' },
+          { key: 'Choices', label: 'Choices', format: choicesText },
+          { key: 'DefaultValue', label: 'Default' },
+          { key: 'Group', label: 'Group' },
+        ],
+        exportName: `fields-${fileStem(title)}`,
+        fetch: () => client.getAll(guidPath(listId, '/fields'), { select: FIELD_SELECT }),
+      }),
+    },
+    {
+      id: 'views',
+      label: 'Views',
+      grid: (listId, title) => ({
+        columns: [
+          { key: 'Title', label: 'Title' },
+          { key: 'DefaultView', label: 'Default' },
+          { key: 'Hidden', label: 'Hidden' },
+          { key: 'PersonalView', label: 'Personal' },
+          { key: 'RowLimit', label: 'Row limit' },
+          { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true },
+          { key: 'ViewQuery', label: 'CAML query', mono: true, copyable: true },
+        ],
+        exportName: `views-${fileStem(title)}`,
+        fetch: () => client.getAll(guidPath(listId, '/views'), { select: VIEW_SELECT }),
+      }),
+    },
+    {
+      id: 'contenttypes',
+      label: 'Content types',
+      grid: (listId, title) => ({
+        columns: [
+          { key: 'Name', label: 'Name' },
+          { key: 'Id', label: 'Id', value: (row) => row.Id?.StringValue || String(row.Id ?? ''), mono: true, copyable: true },
+          { key: 'Group', label: 'Group' },
+          { key: 'Hidden', label: 'Hidden' },
+          { key: 'ReadOnly', label: 'Read-only' },
+          { key: 'Sealed', label: 'Sealed' },
+          { key: 'Description', label: 'Description' },
+        ],
+        exportName: `contenttypes-${fileStem(title)}`,
+        fetch: () => client.getAll(guidPath(listId, '/contenttypes'), { select: CT_SELECT }),
+      }),
+    },
+    { id: 'raw', label: 'Raw' },
+  ];
+
+  function showDetail(route) {
+    gridPane.hidden = true;
+    detailPane.hidden = false;
+    detailPane.textContent = '';
+
+    const listId = route.listId;
+    const back = el('button', 'btn btn-xs wb-back', '← All lists');
+    back.type = 'button';
+    back.addEventListener('click', () => navigate({ view: 'lists' }));
+
+    const title = el('h2', '', route.listTitle || 'List');
+    const sub = el('span', 'wb-detail-id sp-copy', listId);
+    sub.title = 'Click to copy the list id';
+    sub.addEventListener('click', () => copyText(listId, sub));
+
+    const headRow = el('div', 'wb-detail-head');
+    headRow.append(back, title, sub);
+
+    const tabsBar = el('div', 'wb-tabs');
+    tabsBar.setAttribute('role', 'tablist');
+    const body = el('div', 'wb-tab-body');
+
+    const panes = new Map();
+    let activeTab = null;
+
+    function activate(tab) {
+      activeTab = tab.id;
+      for (const btn of tabsBar.children) {
+        btn.classList.toggle('active', btn.dataset.tab === tab.id);
+        btn.setAttribute('aria-selected', btn.dataset.tab === tab.id ? 'true' : 'false');
+      }
+      body.textContent = '';
+      body.append(pane(tab));
+    }
+
+    function pane(tab) {
+      if (panes.has(tab.id)) return panes.get(tab.id);
+      const wrap = el('div', 'wb-tab-pane');
+      panes.set(tab.id, wrap);
+
+      if (tab.id === 'raw') {
+        const status = el('div', 'wb-grid-status', 'Loading raw list entity…');
+        wrap.append(status);
+        cached(listId, 'raw', () => client.get(guidPath(listId)))
+          .then((json) => {
+            status.remove();
+            const node = toNode(json, 0, { maxDepth: 8, maxItems: 250 });
+            const inspector = el('div', 'wb-raw');
+            inspector.append(enhance(node) ?? renderValue(node));
+            wrap.append(inspector);
+          })
+          .catch((err) => {
+            status.textContent = err?.message || String(err);
+            status.classList.add('wb-error');
+          });
+        return wrap;
+      }
+
+      const spec = tab.grid(listId, route.listTitle);
+      const tabGrid = createGrid({
+        columns: spec.columns,
+        emptyText: 'Nothing here.',
+        filterPlaceholder: `Filter ${tab.label.toLowerCase()}…`,
+        exportName: spec.exportName,
+      });
+      wrap.append(tabGrid.el);
+      tabGrid.setLoading(`Loading ${tab.label.toLowerCase()}…`);
+      cached(listId, tab.id, spec.fetch)
+        .then(({ items, partial }) => tabGrid.setRows(items, { partial }))
+        .catch((err) => tabGrid.setError(err));
+      return wrap;
+    }
+
+    for (const tab of TABS) {
+      const btn = el('button', 'wb-tab', tab.label);
+      btn.type = 'button';
+      btn.dataset.tab = tab.id;
+      btn.setAttribute('role', 'tab');
+      btn.addEventListener('click', () => activate(tab));
+      tabsBar.append(btn);
+    }
+
+    detailPane.append(headRow, tabsBar, body);
+    activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
+    void activeTab;
+  }
+
+  function load(route) {
+    if (route?.listId) {
+      showDetail(route);
+    } else {
+      detailPane.hidden = true;
+      gridPane.hidden = false;
+      loadLists();
     }
   }
 
