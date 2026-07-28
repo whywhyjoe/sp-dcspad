@@ -1,7 +1,7 @@
 // SharePoint document-library text transfer and Browser resource discovery.
 //
 // This module has no DOM or storage ownership. It operates only on HTML, CSS,
-// JavaScript, Markdown, and text files in a selected same-tenant SharePoint web
+// JavaScript, JSON, CSV, Markdown, and text files in a selected same-tenant SharePoint web
 // and keeps all paths inside that web's server-relative boundary.
 
 import { getSpContext } from './bridge/sp-context.js';
@@ -39,6 +39,10 @@ function browserTypeForFileName(fileName) {
   const name = String(fileName || '');
   if (/\.html?$/i.test(name)) return 'html';
   if (/\.(?:md|markdown)$/i.test(name)) return 'markdown';
+  if (/\.css$/i.test(name)) return 'css';
+  if (/\.js$/i.test(name)) return 'javascript';
+  if (/\.json$/i.test(name)) return 'json';
+  if (/\.csv$/i.test(name)) return 'csv';
   if (/\.txt$/i.test(name)) return 'text';
   return '';
 }

@@ -25,7 +25,7 @@ cd tests && python3 -m http.server 8643
 cd tests
 node smoke.mjs      # 50 checks: capture, isolation, Fluent preview runtime, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave
 node monaco.mjs     # 33 checks: models, diagnostics, PnPjs + Alpine + BMO + Fluent completion/hover, generated catalogs, isolated snippet undo/redo, assets and worker degradation
-node config.mjs     # 20 checks: config/Browser/Copilot behavior, same-tenant formats/history/refresh/rejection, framework/asset intelligence/runtime, and fallback
+node config.mjs     # 21 checks: config/Browser/Copilot behavior, same-tenant formats/history/refresh/rejection, framework/asset intelligence/runtime, and fallback
 node hosted.mjs     # 14 checks: early/delayed splash, SharePoint chrome reflow, exact boot/bundle/config path, hosted flag/base, versioned runtime/types/intelligence/Fluent bridge and same-origin worker
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle

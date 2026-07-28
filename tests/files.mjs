@@ -136,6 +136,26 @@ await page.route('**/_api/**', async (route) => {
             ServerRelativeUrl: '/sites/browser/Docs/styles.css',
             Length: 34,
           },
+          {
+            Name: 'helper.js',
+            ServerRelativeUrl: '/sites/browser/Docs/helper.js',
+            Length: 48,
+          },
+          {
+            Name: 'tokens.json',
+            ServerRelativeUrl: '/sites/browser/Docs/tokens.json',
+            Length: 63,
+          },
+          {
+            Name: 'data.csv',
+            ServerRelativeUrl: '/sites/browser/Docs/data.csv',
+            Length: 27,
+          },
+          {
+            Name: 'readme.pdf',
+            ServerRelativeUrl: '/sites/browser/Docs/readme.pdf',
+            Length: 128,
+          },
         ],
       } : browserSite ? {
         ServerRelativeUrl: '/sites/browser',
@@ -155,6 +175,21 @@ await page.route('**/_api/**', async (route) => {
             Name: 'app.js',
             ServerRelativeUrl: '/sites/browser/app.js',
             Length: 44,
+          },
+          {
+            Name: 'settings.json',
+            ServerRelativeUrl: '/sites/browser/settings.json',
+            Length: 54,
+          },
+          {
+            Name: 'report.csv',
+            ServerRelativeUrl: '/sites/browser/report.csv',
+            Length: 31,
+          },
+          {
+            Name: 'preview.png',
+            ServerRelativeUrl: '/sites/browser/preview.png',
+            Length: 256,
           },
         ],
       } : otherSite ? {
@@ -317,7 +352,7 @@ await check('Browser uses the shared SharePoint picker in resource mode', async 
   (await page.locator('#sp-files-title').textContent()) === 'Browse SharePoint'
   && (await page.locator('#sp-files-primary').textContent()) === 'Open file'
   && (await page.locator('#sp-files-empty').textContent())
-    === 'No HTML, Markdown, or text files in this folder.');
+    === 'No Browser-supported files in this folder.');
 
 await page.fill('#sp-site-url', `${origin}/sites/browser`);
 await page.click('#sp-site-open');
@@ -328,17 +363,24 @@ await check('Browser picker accepts a different same-tenant subsite and filters 
   return (await page.locator('#sp-site-url').inputValue()) === `${origin}/sites/browser`
     && text.includes('Docs')
     && text.includes('overview.html')
-    && !text.includes('app.js');
+    && text.includes('app.js')
+    && text.includes('settings.json')
+    && text.includes('report.csv')
+    && !text.includes('preview.png');
 });
 
 await page.locator('.sp-file-row', { hasText: 'Docs' }).click();
 await page.waitForFunction(() =>
   document.querySelector('#sp-folder-path')?.textContent === '/sites/browser/Docs');
-await check('Browser picker traverses folders and shows only HTML, Markdown, and text', async () => {
+await check('Browser picker traverses folders and shows all Browser-supported file types', async () => {
   const text = await page.locator('#sp-files-list').textContent();
   return text.includes('guide.md')
     && text.includes('notes.txt')
-    && !text.includes('styles.css');
+    && text.includes('styles.css')
+    && text.includes('helper.js')
+    && text.includes('tokens.json')
+    && text.includes('data.csv')
+    && !text.includes('readme.pdf');
 });
 
 await page.locator('.sp-file-row', { hasText: 'guide.md' }).click();

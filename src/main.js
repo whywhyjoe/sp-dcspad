@@ -571,6 +571,10 @@ let spTargetWebUrl = '';
 
 const FOLDER_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2h4l1.3 1.4h7.1v7.2H1.8z"/><path d="M1.8 4.2V2.8h4.4l1.2 1.4"/></svg>';
 const FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" aria-hidden="true"><path d="M3 1.8h6.2L13 5.6v8.6H3z"/><path d="M9.2 1.8v3.8H13"/></svg>';
+const browserFileLabel = (type) => ({
+  html: 'HTML', markdown: 'MD', css: 'CSS', javascript: 'JS',
+  json: 'JSON', csv: 'CSV', text: 'TXT',
+}[type] || 'FILE');
 
 function refreshSpMenuState(initial = null) {
   const ctx = initial || getSpContext({ refresh: true });
@@ -645,7 +649,7 @@ function renderSpFolder() {
     meta.textContent = entry.kind === 'folder'
       ? 'folder'
       : `${spFilesMode === 'browser'
-          ? entry.browserType === 'markdown' ? 'MD' : entry.browserType === 'text' ? 'TXT' : 'HTML'
+          ? browserFileLabel(entry.browserType)
           : entry.pane.toUpperCase()} · ${formatBytes(entry.length)}`;
     row.append(icon, name, meta);
 
@@ -771,11 +775,11 @@ async function openSpFiles(mode) {
   spFilesList.setAttribute(
     'aria-label',
     mode === 'browser'
-      ? 'SharePoint folders and HTML, Markdown, or text files'
+      ? 'SharePoint folders and Browser-supported files'
       : 'SharePoint folders and code files',
   );
   spFilesEmpty.textContent = mode === 'browser'
-    ? 'No HTML, Markdown, or text files in this folder.'
+    ? 'No Browser-supported files in this folder.'
     : 'No HTML, CSS, or JavaScript files in this folder.';
   spFilesPrimary.disabled = true;
 

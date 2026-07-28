@@ -132,18 +132,19 @@ inspector, REPL and network capture all work inside the web part; a live
 - The header globe opens configured Browser bookmarks; the left extras column
   switches between Resources and Browser without disturbing the editor/runtime
   columns. Browser can temporarily maximize and `Esc` restores the layout.
-- The address bar accepts `.html`, `.htm`, `.md`, `.markdown`, and `.txt`.
+- The address bar accepts `.html`, `.htm`, `.md`, `.markdown`, `.css`, `.js`,
+  `.json`, `.csv`, and `.txt`.
   Every configured, pasted, and followed URL must match `location.origin`,
   which is the current SharePoint tenant origin in hosted mode.
 - The address bar persists the 10 most recent unique URLs, provides a
   cache-bypassing refresh action, and opens the existing SharePoint file
   dialog in Browser mode. That mode retains the editable site URL, same-tenant
   enforcement, remembered folder, parent/refresh navigation, and folder
-  traversal used by import/export, while filtering to HTML/Markdown/text.
+  traversal used by import/export, while filtering to HTML/Markdown/code/text.
 - SharePoint HTML is fetched as text and rendered through `srcdoc` with a base
   URL so relative assets, links, and scripts work despite SharePoint download
-  MIME behavior. Tenant HTML is trusted to run scripts; Markdown and plain text
-  use built-in scriptless renderers.
+  MIME behavior. Tenant HTML is trusted to run scripts; Markdown, code, and
+  plain text use built-in scriptless renderers.
 - Microsoft 365 Copilot remains an external named-tab shortcut because its
   page blocks iframe embedding.
 - `src/sp-chrome.js` owns the hosted-only `SP: Live` button behavior and

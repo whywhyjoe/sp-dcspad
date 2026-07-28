@@ -119,10 +119,10 @@ function normalizeDocs(value, configUrl, warnings) {
     }
     ids.add(id);
     const requestedType = cleanString(raw.type).toLowerCase();
-    const type = ['html', 'markdown', 'md', 'text', 'txt'].includes(requestedType)
+    const type = ['html', 'markdown', 'md', 'text', 'txt', 'css', 'js', 'javascript', 'json', 'csv'].includes(requestedType)
       ? (requestedType === 'html'
           ? 'html'
-          : ['text', 'txt'].includes(requestedType) ? 'text' : 'markdown')
+          : ['markdown', 'md'].includes(requestedType) ? 'markdown' : 'text')
       : 'auto';
     docs.push({
       id,

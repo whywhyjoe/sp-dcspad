@@ -75,11 +75,13 @@ URLs without editing or rebuilding the application.
   preview-only `<fluent-icon>` adapter are injected on Run. Set
   `runtime.enabled` to `false` if the consuming page supplies those assets.
 - `docs` supplies the Browser menu bookmarks. Each entry has `id`, `title`,
-  `url`, and an optional `type` (`html`, `markdown`, `text`, or `auto`).
+  `url`, and an optional `type` (`html`, `markdown`, `text`, `css`, `js`,
+  `json`, `csv`, or `auto`).
   Relative URLs resolve from this configuration file. The Browser also accepts
-  pasted `.html`, `.htm`, `.md`, `.markdown`, and `.txt` URLs, but enforces the
-  exact origin hosting DCSPad. Same-tenant HTML runs its scripts; Markdown and
-  text are rendered without script execution. The address bar keeps the last
+  pasted `.html`, `.htm`, `.md`, `.markdown`, `.css`, `.js`, `.json`, `.csv`,
+  and `.txt` URLs, but enforces the exact origin hosting DCSPad. Same-tenant
+  HTML runs its scripts; Markdown, code, and text are rendered without script
+  execution. The address bar keeps the last
   10 unique URLs, can refresh the current resource without its text cache, and
   opens the shared SharePoint picker for same-tenant site/folder browsing.
 - `copilot` controls the external Microsoft 365 Copilot shortcut. It opens one
@@ -195,7 +197,7 @@ SharePoint session there.
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
 | Stack traces | Frames pointing into your JS are clickable → jumps the editor to that line |
 | Libraries | Left sidebar; checkbox = include on next run, ★ = pin to top; custom URLs (`.js`/`.css`) at the bottom |
-| Browser | Globe button for configured bookmarks; the left Browser tab accepts same-tenant HTML, Markdown, and text URLs, keeps 10 recent URLs, refreshes the current resource, browses any same-tenant subsite/folder, and can be maximized |
+| Browser | Globe button for configured bookmarks; the left Browser tab accepts same-tenant HTML, Markdown, CSS, JavaScript, JSON, CSV, and text URLs, keeps 10 recent URLs, refreshes the current resource, browses any same-tenant subsite/folder, and can be maximized |
 | SharePoint toolbar | In hosted mode, click the `SP: Live` chip to hide/show the suite bar and reclaim/restore its space |
 | Network | `_api only` filter; click a row for the response body rendered through the SP inspector |
 | Maximize | ⛶ on the preview or console panel; `Esc` restores |

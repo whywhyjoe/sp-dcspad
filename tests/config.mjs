@@ -26,6 +26,22 @@ await page.route('**/docs/history-*.txt', (route) => route.fulfill({
   contentType: 'text/plain',
   body: `History ${new URL(route.request().url()).pathname}`,
 }));
+await page.route('**/docs/browser.css', (route) => route.fulfill({
+  contentType: 'text/css',
+  body: '.browser-marker { color: teal; }',
+}));
+await page.route('**/docs/browser.js', (route) => route.fulfill({
+  contentType: 'text/javascript',
+  body: 'window.browserCodeExecuted = true;\nconst browserMarker = "js";',
+}));
+await page.route('**/docs/browser.json', (route) => route.fulfill({
+  contentType: 'application/json',
+  body: '{"browserMarker":"json"}',
+}));
+await page.route('**/docs/browser.csv', (route) => route.fulfill({
+  contentType: 'text/csv',
+  body: 'name,value\nbrowserMarker,csv',
+}));
 await page.route('**/dcspad.config.json*', (route) => route.fulfill({
   contentType: 'application/json',
   body: JSON.stringify({
@@ -66,6 +82,12 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
         title: 'Plain notes',
         url: './docs/notes.txt',
         type: 'txt',
+      },
+      {
+        id: 'token-data',
+        title: 'Token data',
+        url: './docs/browser.json',
+        type: 'json',
       },
     ],
     copilot: {
@@ -113,10 +135,11 @@ await check('Browser bookmarks and Copilot URLs normalize from dcspad.config.jso
   page.evaluate(async (expected) => {
     const { getAppConfig } = await import('/src/config.js');
     const config = getAppConfig();
-    return config.docs.length === 3
+    return config.docs.length === 4
       && config.docs[0].url === expected.doc
       && config.docs[1].type === 'markdown'
       && config.docs[2].type === 'text'
+      && config.docs[3].type === 'text'
       && config.copilot.enabled
       && config.copilot.url === 'https://m365.cloud.microsoft/chat';
   }, { doc: `${origin}/docs/design-reference.html` }));
@@ -209,6 +232,24 @@ await page.frameLocator('#docs-frame').locator('pre', { hasText: '/docs/history-
 await check('history dropdown reopens a selected recent URL', () =>
   page.locator('#browser-address-input').inputValue()
     .then((value) => value === `${origin}/docs/history-5.txt`));
+
+for (const resource of [
+  { url: `${origin}/docs/browser.css`, marker: '.browser-marker { color: teal; }' },
+  { url: `${origin}/docs/browser.js`, marker: 'window.browserCodeExecuted = true;' },
+  { url: `${origin}/docs/browser.json`, marker: '{"browserMarker":"json"}' },
+  { url: `${origin}/docs/browser.csv`, marker: 'browserMarker,csv' },
+]) {
+  await page.fill('#browser-address-input', resource.url);
+  await page.keyboard.press('Enter');
+  await page.frameLocator('#docs-frame').locator('pre', { hasText: resource.marker }).waitFor();
+}
+await check('CSS, JavaScript, JSON, and CSV resources render as safe source text', () =>
+  Promise.all([
+    page.frameLocator('#docs-frame').locator('pre').textContent()
+      .then((text) => text.includes('browserMarker,csv')),
+    page.locator('#docs-frame').getAttribute('sandbox')
+      .then((value) => !value.includes('allow-scripts')),
+  ]).then((values) => values.every(Boolean)));
 
 await page.fill('#browser-address-input', 'https://example.com/guide.html');
 await page.keyboard.press('Enter');

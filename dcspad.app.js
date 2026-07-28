@@ -2675,7 +2675,7 @@ function normalizeDocs(value, configUrl2, warnings) {
     }
     ids.add(id);
     const requestedType = cleanString(raw.type).toLowerCase();
-    const type = ["html", "markdown", "md", "text", "txt"].includes(requestedType) ? requestedType === "html" ? "html" : ["text", "txt"].includes(requestedType) ? "text" : "markdown" : "auto";
+    const type = ["html", "markdown", "md", "text", "txt", "css", "js", "javascript", "json", "csv"].includes(requestedType) ? requestedType === "html" ? "html" : ["markdown", "md"].includes(requestedType) ? "markdown" : "text" : "auto";
     docs.push({
       id,
       title,
@@ -3660,6 +3660,10 @@ function browserTypeForFileName(fileName) {
   const name = String(fileName || "");
   if (/\.html?$/i.test(name)) return "html";
   if (/\.(?:md|markdown)$/i.test(name)) return "markdown";
+  if (/\.css$/i.test(name)) return "css";
+  if (/\.js$/i.test(name)) return "javascript";
+  if (/\.json$/i.test(name)) return "json";
+  if (/\.csv$/i.test(name)) return "csv";
   if (/\.txt$/i.test(name)) return "text";
   return "";
 }
@@ -4048,6 +4052,8 @@ function showSplash() {
 }
 
 // ../src/docs.js
+var BROWSER_PATH_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)$/i;
+var BROWSER_LINK_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)(?:$|[?#])/i;
 var escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 function safeHref(value, { image = false } = {}) {
   const href = String(value || "").trim();
@@ -4253,10 +4259,20 @@ function prepareTextDocument(source, url, title) {
 </html>`;
 }
 function documentType(doc2) {
+  if (/\.(?:txt|css|js|json|csv)(?:$|[?#])/i.test(doc2.url)) return "text";
   if (doc2.type === "markdown" || doc2.type === "text" || doc2.type === "html") return doc2.type;
   if (/\.(?:md|markdown)(?:$|[?#])/i.test(doc2.url)) return "markdown";
-  if (/\.txt(?:$|[?#])/i.test(doc2.url)) return "text";
   return "html";
+}
+function resourceBadge(doc2) {
+  const path = new URL(doc2.url, location.href).pathname.toLowerCase();
+  if (/\.(?:md|markdown)$/.test(path)) return "MD";
+  if (/\.css$/.test(path)) return "CSS";
+  if (/\.js$/.test(path)) return "JS";
+  if (/\.json$/.test(path)) return "JSON";
+  if (/\.csv$/.test(path)) return "CSV";
+  if (/\.txt$/.test(path)) return "TXT";
+  return "HTML";
 }
 function resourceTitle(url) {
   const filename = decodeURIComponent(url.pathname.split("/").pop() || "").trim();
@@ -4338,7 +4354,7 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
           onError?.("Browser links are limited to this SharePoint tenant.");
           return;
         }
-        if (/\.(?:html?|md|markdown|txt)(?:$|[?#])/i.test(url.href)) {
+        if (BROWSER_LINK_RE.test(url.href)) {
           event.preventDefault();
           const configured = configuredDocs.find((entry) => entry.url === url.href);
           const title = configured?.title || resourceTitle(url);
@@ -4351,7 +4367,7 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
           return;
         }
         event.preventDefault();
-        onError?.("Browser supports same-tenant HTML, Markdown, and text files.");
+        onError?.("Browser supports same-tenant HTML, Markdown, code, and text files.");
       }, true);
     }, { once: true });
   }
@@ -4377,13 +4393,13 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
   }
   function normalizeTenantUrl(value) {
     const source = String(value || "").trim();
-    if (!source) throw new Error("Enter a SharePoint HTML, Markdown, or text URL.");
+    if (!source) throw new Error("Enter a SharePoint resource URL.");
     const url = new URL(source, location.href);
     if (url.origin !== location.origin) {
       throw new Error(`Browser is limited to ${location.origin}.`);
     }
-    if (!/\.(?:html?|md|markdown|txt)$/i.test(url.pathname)) {
-      throw new Error("Browser supports .html, .htm, .md, .markdown, and .txt files.");
+    if (!BROWSER_PATH_RE.test(url.pathname)) {
+      throw new Error("Browser supports .html, .htm, .md, .markdown, .css, .js, .json, .csv, and .txt files.");
     }
     return url;
   }
@@ -4474,15 +4490,14 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     button.className = "menu-item docs-menu-item";
     button.setAttribute("role", "menuitem");
     button.dataset.docId = doc2.id;
-    const type = documentType(doc2);
-    const badge2 = type === "markdown" ? "MD" : type === "text" ? "TXT" : "HTML";
+    const badge2 = resourceBadge(doc2);
     button.innerHTML = `<span class="docs-menu-icon" aria-hidden="true">${badge2}</span><span>${escapeHtml(doc2.title)}</span>`;
     button.addEventListener("click", () => loadDoc2(doc2));
     menuItems.append(button);
   }
   menuEmpty.hidden = configuredDocs.length > 0;
   if (!configuredDocs.length) {
-    showState("Paste a same-tenant HTML, Markdown, or text URL in the address bar.");
+    showState("Paste a same-tenant HTML, Markdown, code, or text URL in the address bar.");
   }
   aiGroup.hidden = !(copilot.enabled && copilot.url);
   document.getElementById("mi-open-copilot").addEventListener("click", () => {
@@ -5022,6 +5037,15 @@ var spOverwriteArmed = false;
 var spTargetWebUrl = "";
 var FOLDER_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2h4l1.3 1.4h7.1v7.2H1.8z"/><path d="M1.8 4.2V2.8h4.4l1.2 1.4"/></svg>';
 var FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" aria-hidden="true"><path d="M3 1.8h6.2L13 5.6v8.6H3z"/><path d="M9.2 1.8v3.8H13"/></svg>';
+var browserFileLabel = (type) => ({
+  html: "HTML",
+  markdown: "MD",
+  css: "CSS",
+  javascript: "JS",
+  json: "JSON",
+  csv: "CSV",
+  text: "TXT"
+})[type] || "FILE";
 function refreshSpMenuState(initial = null) {
   const ctx = initial || getSpContext({ refresh: true });
   const appliedContext = applyContextIndicators();
@@ -5084,7 +5108,7 @@ function renderSpFolder() {
     name.textContent = entry.name;
     const meta = document.createElement("span");
     meta.className = "sp-file-row__meta";
-    meta.textContent = entry.kind === "folder" ? "folder" : `${spFilesMode === "browser" ? entry.browserType === "markdown" ? "MD" : entry.browserType === "text" ? "TXT" : "HTML" : entry.pane.toUpperCase()} \xB7 ${formatBytes(entry.length)}`;
+    meta.textContent = entry.kind === "folder" ? "folder" : `${spFilesMode === "browser" ? browserFileLabel(entry.browserType) : entry.pane.toUpperCase()} \xB7 ${formatBytes(entry.length)}`;
     row.append(icon, name, meta);
     if (entry.kind === "folder") {
       row.addEventListener("click", () => loadSpFolder(entry.serverRelativeUrl));
@@ -5187,9 +5211,9 @@ async function openSpFiles(mode) {
   spFilesPrimary.textContent = mode === "import" ? "Continue" : mode === "browser" ? "Open file" : "Upload file";
   spFilesList.setAttribute(
     "aria-label",
-    mode === "browser" ? "SharePoint folders and HTML, Markdown, or text files" : "SharePoint folders and code files"
+    mode === "browser" ? "SharePoint folders and Browser-supported files" : "SharePoint folders and code files"
   );
-  spFilesEmpty.textContent = mode === "browser" ? "No HTML, Markdown, or text files in this folder." : "No HTML, CSS, or JavaScript files in this folder.";
+  spFilesEmpty.textContent = mode === "browser" ? "No Browser-supported files in this folder." : "No HTML, CSS, or JavaScript files in this folder.";
   spFilesPrimary.disabled = true;
   if (mode === "export") {
     const activePane = ["html", "css", "js"].includes(getState().layout.editorTab) ? getState().layout.editorTab : "html";

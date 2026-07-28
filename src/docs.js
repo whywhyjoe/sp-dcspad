@@ -1,8 +1,11 @@
 // Same-tenant resource Browser. SharePoint may return .html files as downloads,
-// so HTML, Markdown, and text resources are fetched and rendered through srcdoc.
+// so HTML, Markdown, code, and text resources are fetched and rendered through srcdoc.
 // A base URL preserves relative CSS, images, scripts, and cross-resource links.
 
 import { getState, updateNested } from './state.js';
+
+const BROWSER_PATH_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)$/i;
+const BROWSER_LINK_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)(?:$|[?#])/i;
 
 const escapeHtml = (value) => String(value)
   .replaceAll('&', '&amp;')
@@ -246,10 +249,21 @@ function prepareTextDocument(source, url, title) {
 }
 
 function documentType(doc) {
+  if (/\.(?:txt|css|js|json|csv)(?:$|[?#])/i.test(doc.url)) return 'text';
   if (doc.type === 'markdown' || doc.type === 'text' || doc.type === 'html') return doc.type;
   if (/\.(?:md|markdown)(?:$|[?#])/i.test(doc.url)) return 'markdown';
-  if (/\.txt(?:$|[?#])/i.test(doc.url)) return 'text';
   return 'html';
+}
+
+function resourceBadge(doc) {
+  const path = new URL(doc.url, location.href).pathname.toLowerCase();
+  if (/\.(?:md|markdown)$/.test(path)) return 'MD';
+  if (/\.css$/.test(path)) return 'CSS';
+  if (/\.js$/.test(path)) return 'JS';
+  if (/\.json$/.test(path)) return 'JSON';
+  if (/\.csv$/.test(path)) return 'CSV';
+  if (/\.txt$/.test(path)) return 'TXT';
+  return 'HTML';
 }
 
 function resourceTitle(url) {
@@ -335,7 +349,7 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
           onError?.('Browser links are limited to this SharePoint tenant.');
           return;
         }
-        if (/\.(?:html?|md|markdown|txt)(?:$|[?#])/i.test(url.href)) {
+        if (BROWSER_LINK_RE.test(url.href)) {
           event.preventDefault();
           const configured = configuredDocs.find((entry) => entry.url === url.href);
           const title = configured?.title || resourceTitle(url);
@@ -348,7 +362,7 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
           return;
         }
         event.preventDefault();
-        onError?.('Browser supports same-tenant HTML, Markdown, and text files.');
+        onError?.('Browser supports same-tenant HTML, Markdown, code, and text files.');
       }, true);
     }, { once: true });
   }
@@ -377,13 +391,13 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
 
   function normalizeTenantUrl(value) {
     const source = String(value || '').trim();
-    if (!source) throw new Error('Enter a SharePoint HTML, Markdown, or text URL.');
+    if (!source) throw new Error('Enter a SharePoint resource URL.');
     const url = new URL(source, location.href);
     if (url.origin !== location.origin) {
       throw new Error(`Browser is limited to ${location.origin}.`);
     }
-    if (!/\.(?:html?|md|markdown|txt)$/i.test(url.pathname)) {
-      throw new Error('Browser supports .html, .htm, .md, .markdown, and .txt files.');
+    if (!BROWSER_PATH_RE.test(url.pathname)) {
+      throw new Error('Browser supports .html, .htm, .md, .markdown, .css, .js, .json, .csv, and .txt files.');
     }
     return url;
   }
@@ -484,8 +498,7 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
     button.className = 'menu-item docs-menu-item';
     button.setAttribute('role', 'menuitem');
     button.dataset.docId = doc.id;
-    const type = documentType(doc);
-    const badge = type === 'markdown' ? 'MD' : type === 'text' ? 'TXT' : 'HTML';
+    const badge = resourceBadge(doc);
     button.innerHTML = `<span class="docs-menu-icon" aria-hidden="true">${badge}</span>`
       + `<span>${escapeHtml(doc.title)}</span>`;
     button.addEventListener('click', () => loadDoc(doc));
@@ -493,7 +506,7 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
   }
   menuEmpty.hidden = configuredDocs.length > 0;
   if (!configuredDocs.length) {
-    showState('Paste a same-tenant HTML, Markdown, or text URL in the address bar.');
+    showState('Paste a same-tenant HTML, Markdown, code, or text URL in the address bar.');
   }
 
   aiGroup.hidden = !(copilot.enabled && copilot.url);
