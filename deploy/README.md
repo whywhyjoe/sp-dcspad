@@ -24,9 +24,11 @@ The destination folder must already exist. `Sync-Live.ps1` then:
 
 1. validates the required Monaco runtime;
 2. regenerates design-system intelligence;
-3. rebuilds `dcspad.app.js`;
+3. rebuilds `dcspad.app.js` and `dcspad.workbench.js`;
 4. copies `index.html`, `boot.js`, `dcspad.webpart.html`,
-   `dcspad.config.json`, `src/`, `styles/`, and `vendor/`; and
+   `dcspad.config.json`, `workbench.html`, `boot-workbench.js`,
+   `workbench.webpart.html`, `dcspad.workbench.js`, `src/`, `styles/`,
+   and `vendor/`; and
 5. leaves publication to the OneDrive sync client.
 
 Re-running the command overwrites existing files. It does not generally remove
@@ -45,6 +47,26 @@ Before the first deployment, update the one site-specific URL in
 Then point the Modern Script Editor web part's external Script URL at the
 deployed `dcspad.webpart.html`. Bump the `?v=` value whenever `boot.js` itself
 changes because SharePoint may cache library files for a day.
+
+## Hosting the SP Workbench (second page)
+
+The SP Workbench (site inspector) is a second entry point in the same deployed
+folder. One-time setup, mirroring the pad's own hosting:
+
+1. update the site-specific URL inside `workbench.webpart.html` so its script
+   points at the hosted `boot-workbench.js` (same folder as `boot.js`);
+2. create a second modern page (e.g. `SPWorkbench.aspx`), add a **Modern
+   Script Editor** web part, and point its external Script URL at the deployed
+   `workbench.webpart.html`;
+3. bump that `?v=` value whenever `boot-workbench.js` itself changes — the
+   same cache rule as `boot.js`; everything else the workbench loads
+   (`workbench.html` no-store; `styles/app.css`, `styles/workbench.css`,
+   `dcspad.workbench.js` Last-Modified-versioned) self-busts on deploy.
+
+Verify after deploying: the workbench chip reads **SP: Live**, the Lists view
+shows this web's lists including hidden ones, a known list's Fields tab
+matches its real columns, Export ▸ CSV opens in Excel, and a "Copy as PnPjs 2"
+snippet pastes into the DCSPad JS pane and runs.
 
 ## Common first-deployment issues
 

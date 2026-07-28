@@ -82,6 +82,27 @@ src/bridge/harness.js     iframe-side instrumentation; plain classic script, no 
                           __DCSPAD_TOKEN__ placeholder replaced per run
 src/bridge/fluent-icon-font.js preview-only font-backed <fluent-icon> adapter
 src/bridge/sp-context.js  real _spPageContextInfo capture (live) or labeled mock
+src/sp-odata.js           shared OData plumbing (ACCEPT_JSON, SpFileError, requireOk…)
+                          used by sp-files.js and the workbench REST client
+src/sp-files.js           SharePoint document-library text transfer (digest cache,
+                          same-tenant site switching)
+src/inspect/to-node.js    JSON → serialized-node adapter for the inspector renderers
+workbench.html            SP Workbench shell (second entry point; standalone too)
+boot-workbench.js         workbench web-part bootstrap (trimmed boot.js sibling;
+                          own ?v= bump rule in workbench.webpart.html)
+workbench.webpart.html    2-line web-part entry for the workbench hosting page
+dcspad.workbench.js       generated workbench bundle (tools/build-workbench.mjs);
+                          rebuild on every deploy — Sync-Live.ps1 does it
+styles/workbench.css      workbench layout (loads after app.css, .wb-scoped)
+src/workbench/            SP Workbench, a read-only site inspector:
+                          main.js bootstrap · shell.js nav/routing (sessionStorage
+                          only — invariant 6 untouched) · sp-rest.js GET client on
+                          sp-odata helpers (nometadata, paging cap 5000, 429/503
+                          retry, mock resolver) · mock-data.js offline fixtures ·
+                          grid.js sort/filter/export/copy-as · export.js
+                          CSV/JSON/Markdown · scriptgen.js descriptor → PnPjs 2 /
+                          REST fetch / PnP.PowerShell · perm-kinds.js 64-bit
+                          SPBasePermissions decode · views/{lists,security,site}.js
 tests/                    Playwright verification suites — see tests/README.md
 REVIEW-LOG.md             external-review triage record + accepted low-priority backlog
 ```
@@ -97,7 +118,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (50 checks: capture, Fluent preview runtime, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (33: typed models, editor integration, PnPjs/Alpine/BMO/Fluent completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (8: runtime URL config, framework and asset intelligence/runtime, ordered fallback), `hosted.mjs` (11: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence/Fluent bridge and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3), `ux.mjs` (18: pane toggles incl. Ctrl+J through Monaco, editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence), and `files.mjs` (19: local import confirmation, SharePoint context fallbacks, same-tenant site switching, ResourcePath browsing, cross-site reads/digests, uploads, and overwrite consent). All 150 should pass; a `custom library` failure usually means the 8643 fixture server isn't running. The serving root must also expose `bsp-design-system/` and `bsp-fluent-icon-lib/` (sibling repos — junctions inside the repo root work).
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (50 checks: capture, Fluent preview runtime, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (33: typed models, editor integration, PnPjs/Alpine/BMO/Fluent completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (8: runtime URL config, framework and asset intelligence/runtime, ordered fallback), `hosted.mjs` (11: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence/Fluent bridge and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3), `ux.mjs` (18: pane toggles incl. Ctrl+J through Monaco, editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence), `files.mjs` (19: local import confirmation, SharePoint context fallbacks, same-tenant site switching, ResourcePath browsing, cross-site reads/digests, uploads, and overwrite consent), and `workbench.mjs` (35: SP Workbench mock grids/drilldown/security/site views, export formats, script generator, and the stubbed live path incl. Accept header + paging). All 194 should pass; a `custom library` failure usually means the 8643 fixture server isn't running. The serving root must also expose `bsp-design-system/` and `bsp-fluent-icon-lib/` (sibling repos — junctions inside the repo root work).
 
 ## Gotchas already paid for
 
@@ -131,6 +152,14 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Roadmap (seams already reserved — don't build without being asked)
 
-- **Site Inspector** sidebar section: enumerate lists/libraries (GUIDs, internal names), fields (display/internal/type), groups + members, content types; renders through `src/inspect/`; "copy as PnPjs call".
+- **Site Inspector** — v1 SHIPPED as the **SP Workbench** second entry point
+  (`src/workbench/`, own hosting page via `workbench.webpart.html`): lists +
+  fields/views/content types, groups/role definitions/assignments +
+  inheritance scan, site overview, exports, and "Copy as PnPjs 2 / REST /
+  PnP.PowerShell". Remaining seams: mounting the workbench views into the pad
+  sidebar (index.html "future: Site Inspector" comment), a modern-page
+  inspector (CanvasContent1 parse + text-web-part extraction), a quick query
+  builder (scriptgen descriptors are the exchange format), and edit tools
+  (reuse the sp-files.js digest cache for POSTs).
 - **SharePoint JSON storage** for snippets/projects/templates/shared team resources, replacing localStorage in `state.js`.
 - **Console remote handles** — lazy live-object expansion instead of eager capped serialization.

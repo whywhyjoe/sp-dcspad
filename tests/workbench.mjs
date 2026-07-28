@@ -87,8 +87,8 @@ await check('drill: back returns to the lists grid', async () => {
 // ---- export (M2) ----
 
 await check('export: toolbar menu offers CSV/JSON/Markdown', async () => {
-  await page.locator('.wb-pane:not([hidden]) .wb-menu-wrap .btn').first().click();
-  const items = await page.locator('.wb-pane:not([hidden]) .wb-menu-item').allTextContents();
+  await page.locator('.wb-pane:not([hidden]) .wb-menu-wrap .btn', { hasText: 'Export' }).first().click();
+  const items = await page.locator('.wb-pane:not([hidden]) .wb-menu:not([hidden]) .wb-menu-item').allTextContents();
   await page.keyboard.press('Escape');
   await page.locator('body').click();
   return items.join(',') === 'Download CSV,Download JSON,Copy CSV,Copy JSON,Copy Markdown';
@@ -163,6 +163,70 @@ await check('security: list detail has a Permissions tab', async () => {
   await page.waitForSelector('.wb-tab-pane .wb-table tbody tr');
   const text = await page.locator('.wb-tab-pane .wb-table').textContent();
   return text.includes('Mock Site Owners') && text.includes('Full Control');
+});
+
+// ---- site overview + script generator (M4) ----
+
+await check('site: tabs render and the web sheet loads', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Site' }).click();
+  await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
+  const tabs = await page.locator('.wb-tab').allTextContents();
+  const text = await page.locator('.wb-tab-body').textContent();
+  return tabs.join(',') === 'Web,Site collection,Features,Subwebs,Property bag'
+    && text.includes('WebTemplate') && text.includes('Regional settings') && text.includes('Current user');
+});
+
+await check('site: features merge site + web scope', async () => {
+  await page.locator('.wb-tab', { hasText: 'Features' }).click();
+  await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
+  const text = await page.locator('.wb-tab-body .wb-table').textContent();
+  return text.includes('Site') && text.includes('Web')
+    && text.includes('(no display name)') && text.includes('00bfea71-4ea5-48d4-a4ad-7ea5c011abe5');
+});
+
+await check('site: property bag decodes OData keys, keeps raw copyable', async () => {
+  await page.locator('.wb-tab', { hasText: 'Property bag' }).click();
+  await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
+  const text = await page.locator('.wb-tab-body .wb-table').textContent();
+  return text.includes('vti_defaultlanguage') && text.includes('vti_x005f_defaultlanguage');
+});
+
+await check('scriptgen: pnpjs2 output chains select/top on the fluent route', async () =>
+  page.evaluate(async () => {
+    const { toPnpjs2 } = await import('/src/workbench/scriptgen.js');
+    const code = toPnpjs2({ path: 'web/lists', options: { select: ['Id', 'Title'], top: 5000 } });
+    return code.includes('sp.web.lists') && code.includes('.select("Id", "Title")')
+      && code.includes('.top(5000)') && code.includes('.get()');
+  }));
+
+await check('scriptgen: guid paths route to getById', async () =>
+  page.evaluate(async () => {
+    const { toPnpjs2 } = await import('/src/workbench/scriptgen.js');
+    const code = toPnpjs2({ path: "web/lists(guid'5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03')/fields", options: {} });
+    return code.includes('sp.web.lists.getById("5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03").fields');
+  }));
+
+await check('scriptgen: REST output carries the nometadata header and query', async () =>
+  page.evaluate(async () => {
+    const { toRestFetch } = await import('/src/workbench/scriptgen.js');
+    const code = toRestFetch({ path: 'web/lists', options: { select: 'Id' } }, 'https://t.sharepoint.com/sites/x');
+    return code.includes('https://t.sharepoint.com/sites/x/_api/web/lists?$select=Id')
+      && code.includes('application/json;odata=nometadata');
+  }));
+
+await check('scriptgen: PowerShell falls back to Invoke-PnPSPRestMethod', async () =>
+  page.evaluate(async () => {
+    const { toPnpPowerShell } = await import('/src/workbench/scriptgen.js');
+    const mapped = toPnpPowerShell({ path: 'web/roledefinitions', options: {} }, 'https://t.sharepoint.com/sites/x');
+    const fallback = toPnpPowerShell({ path: 'web/regionalsettings', options: {} }, 'https://t.sharepoint.com/sites/x');
+    return mapped.includes('Get-PnPRoleDefinition') && fallback.includes('Invoke-PnPSPRestMethod');
+  }));
+
+await check('scriptgen: grids expose the Copy as menu', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
+  await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
+  const buttons = await page.locator('.wb-pane:not([hidden]) .wb-menu-wrap .btn').allTextContents();
+  return buttons.some((b) => b.includes('Copy as')) && buttons.some((b) => b.includes('Export'));
 });
 
 await page.close();

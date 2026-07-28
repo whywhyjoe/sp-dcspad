@@ -8,6 +8,7 @@
 import {
   copyText, toCsv, toJson, toMarkdown, downloadCsv, downloadJson,
 } from './export.js';
+import { toPnpjs2, toRestFetch, toPnpPowerShell } from './scriptgen.js';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -31,6 +32,7 @@ function displayValue(row, col) {
 
 // columns: [{ key, label, value?(row), format?(v,row), copyable?, mono?, width? }]
 // exportName enables the toolbar export menu; it's the download file stem.
+// descriptor { path, options, webUrl } enables the "Copy as…" script menu.
 export function createGrid({
   columns,
   rowKey = 'Id',
@@ -38,6 +40,7 @@ export function createGrid({
   emptyText = 'No rows.',
   filterPlaceholder = 'Filter…',
   exportName = '',
+  descriptor = null,
 } = {}) {
   let rows = [];
   let visible = [];
@@ -55,24 +58,17 @@ export function createGrid({
   const actions = el('span', 'wb-grid-actions');
   toolbar.append(count, filter, actions);
 
-  if (exportName) {
+  function menuButton(label, title, items) {
     const wrap = el('span', 'wb-menu-wrap');
-    const btn = el('button', 'btn btn-xs', 'Export ▾');
+    const btn = el('button', 'btn btn-xs', label);
     btn.type = 'button';
-    btn.title = 'Export the visible rows';
+    btn.title = title;
     const menu = el('div', 'wb-menu');
     menu.hidden = true;
-    const items = [
-      ['Download CSV', () => downloadCsv(exportName, visible, columns)],
-      ['Download JSON', () => downloadJson(exportName, visible, columns)],
-      ['Copy CSV', () => copyText(toCsv(visible, columns), btn)],
-      ['Copy JSON', () => copyText(toJson(visible, columns), btn)],
-      ['Copy Markdown', () => copyText(toMarkdown(visible, columns), btn)],
-    ];
-    for (const [label, run] of items) {
-      const item = el('button', 'wb-menu-item', label);
+    for (const [itemLabel, run] of items) {
+      const item = el('button', 'wb-menu-item', itemLabel);
       item.type = 'button';
-      item.addEventListener('click', () => { menu.hidden = true; run(); });
+      item.addEventListener('click', () => { menu.hidden = true; run(btn); });
       menu.append(item);
     }
     btn.addEventListener('click', (e) => {
@@ -82,6 +78,24 @@ export function createGrid({
     document.addEventListener('click', () => { menu.hidden = true; });
     wrap.append(btn, menu);
     actions.append(wrap);
+  }
+
+  if (descriptor) {
+    menuButton('Copy as ▾', 'Copy this query as a runnable script', [
+      ['PnPjs 2 (DCSPad pane)', (btn) => copyText(toPnpjs2(descriptor), btn)],
+      ['REST fetch', (btn) => copyText(toRestFetch(descriptor, descriptor.webUrl), btn)],
+      ['PnP.PowerShell', (btn) => copyText(toPnpPowerShell(descriptor, descriptor.webUrl), btn)],
+    ]);
+  }
+
+  if (exportName) {
+    menuButton('Export ▾', 'Export the visible rows', [
+      ['Download CSV', () => downloadCsv(exportName, visible, columns)],
+      ['Download JSON', () => downloadJson(exportName, visible, columns)],
+      ['Copy CSV', (btn) => copyText(toCsv(visible, columns), btn)],
+      ['Copy JSON', (btn) => copyText(toJson(visible, columns), btn)],
+      ['Copy Markdown', (btn) => copyText(toMarkdown(visible, columns), btn)],
+    ]);
   }
 
   const scroller = el('div', 'wb-grid-scroll');

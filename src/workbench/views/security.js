@@ -35,6 +35,10 @@ export function createSecurityView({ client }) {
   // ---- Groups + lazy membership ----
   function groupsPane() {
     const wrap = el('div', 'wb-tab-pane');
+    const groupsQuery = {
+      path: 'web/sitegroups',
+      options: { select: ['Id', 'Title', 'Description', 'OwnerTitle', 'PrincipalType', 'OnlyAllowMembersViewMembership'] },
+    };
     const grid = createGrid({
       columns: [
         { key: 'Title', label: 'Group' },
@@ -47,6 +51,7 @@ export function createSecurityView({ client }) {
       emptyText: 'No site groups.',
       filterPlaceholder: 'Filter groups…',
       exportName: 'sp-groups',
+      descriptor: { ...groupsQuery, webUrl: client.webUrl() },
     });
 
     const membersBox = el('div', 'wb-subpanel');
@@ -58,9 +63,7 @@ export function createSecurityView({ client }) {
     wrap.append(grid.el, membersBox);
 
     grid.setLoading('Loading site groups…');
-    client.getAll('web/sitegroups', {
-      select: ['Id', 'Title', 'Description', 'OwnerTitle', 'PrincipalType', 'OnlyAllowMembersViewMembership'],
-    })
+    client.getAll(groupsQuery.path, groupsQuery.options)
       .then(({ items, partial }) => grid.setRows(items, { partial }))
       .catch((err) => grid.setError(err));
 
@@ -68,6 +71,10 @@ export function createSecurityView({ client }) {
       membersBox.hidden = false;
       membersTitle.textContent = `Members of ${group.Title}`;
       membersHost.textContent = '';
+      const membersQuery = {
+        path: `web/sitegroups(${group.Id})/users`,
+        options: { select: ['Id', 'Title', 'LoginName', 'Email', 'IsSiteAdmin', 'PrincipalType'] },
+      };
       const membersGrid = createGrid({
         columns: [
           { key: 'Title', label: 'Name' },
@@ -79,12 +86,11 @@ export function createSecurityView({ client }) {
         emptyText: 'No members.',
         filterPlaceholder: 'Filter members…',
         exportName: `members-${group.Id}`,
+        descriptor: { ...membersQuery, webUrl: client.webUrl() },
       });
       membersHost.append(membersGrid.el);
       membersGrid.setLoading('Loading members…');
-      client.getAll(`web/sitegroups(${group.Id})/users`, {
-        select: ['Id', 'Title', 'LoginName', 'Email', 'IsSiteAdmin', 'PrincipalType'],
-      })
+      client.getAll(membersQuery.path, membersQuery.options)
         .then(({ items }) => membersGrid.setRows(items))
         // Locked-down groups 403 for non-owners: show it inline, don't fail the view.
         .catch((err) => membersGrid.setError(err));
@@ -118,6 +124,11 @@ export function createSecurityView({ client }) {
       emptyText: 'No role definitions.',
       filterPlaceholder: 'Filter roles…',
       exportName: 'sp-roledefinitions',
+      descriptor: {
+        path: 'web/roledefinitions',
+        options: { select: ['Id', 'Name', 'Description', 'RoleTypeKind', 'Hidden', 'BasePermissions'] },
+        webUrl: client.webUrl(),
+      },
     });
 
     const decodeBox = el('div', 'wb-subpanel');
@@ -160,6 +171,11 @@ export function createSecurityView({ client }) {
       emptyText: 'No role assignments.',
       filterPlaceholder: 'Filter assignments…',
       exportName: 'sp-roleassignments',
+      descriptor: {
+        path: 'web/roleassignments',
+        options: { expand: ['Member', 'RoleDefinitionBindings'] },
+        webUrl: client.webUrl(),
+      },
     });
     wrap.append(grid.el);
     grid.setLoading('Loading role assignments…');
@@ -196,6 +212,11 @@ export function createSecurityView({ client }) {
       emptyText: 'Run the scan to see results.',
       filterPlaceholder: 'Filter results…',
       exportName: 'sp-unique-permissions',
+      descriptor: {
+        path: 'web/lists',
+        options: { select: ['Id', 'Title', 'Hidden', 'BaseTemplate', 'HasUniqueRoleAssignments'], top: 5000 },
+        webUrl: client.webUrl(),
+      },
     });
     wrap.append(bar, grid.el);
     grid.setRows([]);   // show the "run the scan" empty state up front

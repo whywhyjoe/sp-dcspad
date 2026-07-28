@@ -215,11 +215,11 @@ var MAX_CONCURRENT = 3;
 var RETRY_STATUSES = /* @__PURE__ */ new Set([429, 503]);
 function buildQuery({ select, expand, filter, orderby, top } = {}) {
   const parts = [];
-  const join = (v) => Array.isArray(v) ? v.join(",") : String(v);
-  if (select) parts.push(`$select=${join(select)}`);
-  if (expand) parts.push(`$expand=${join(expand)}`);
+  const join2 = (v) => Array.isArray(v) ? v.join(",") : String(v);
+  if (select) parts.push(`$select=${join2(select)}`);
+  if (expand) parts.push(`$expand=${join2(expand)}`);
   if (filter) parts.push(`$filter=${encodeURIComponent(String(filter))}`);
-  if (orderby) parts.push(`$orderby=${join(orderby)}`);
+  if (orderby) parts.push(`$orderby=${join2(orderby)}`);
   if (top) parts.push(`$top=${top}`);
   return parts.length ? `?${parts.join("&")}` : "";
 }
@@ -709,6 +709,112 @@ function downloadJson(name, rows, columns) {
   downloadText(`${name}.json`, toJson(rows, columns), "application/json");
 }
 
+// ../src/workbench/scriptgen.js
+var join = (v) => Array.isArray(v) ? v.join(",") : String(v);
+function queryString({ select, expand, filter, orderby, top } = {}) {
+  const parts = [];
+  if (select) parts.push(`$select=${join(select)}`);
+  if (expand) parts.push(`$expand=${join(expand)}`);
+  if (filter) parts.push(`$filter=${encodeURIComponent(String(filter))}`);
+  if (orderby) parts.push(`$orderby=${join(orderby)}`);
+  if (top) parts.push(`$top=${top}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+var PNPJS_ROUTES = [
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/fields$/i, (id) => `sp.web.lists.getById("${id}").fields`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/views$/i, (id) => `sp.web.lists.getById("${id}").views`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/contenttypes$/i, (id) => `sp.web.lists.getById("${id}").contentTypes`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/roleassignments$/i, (id) => `sp.web.lists.getById("${id}").roleAssignments`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)$/i, (id) => `sp.web.lists.getById("${id}")`],
+  [/^web\/lists$/i, () => "sp.web.lists"],
+  [/^web\/sitegroups\((\d+)\)\/users$/i, (id) => `sp.web.siteGroups.getById(${id}).users`],
+  [/^web\/sitegroups$/i, () => "sp.web.siteGroups"],
+  [/^web\/roledefinitions$/i, () => "sp.web.roleDefinitions"],
+  [/^web\/roleassignments$/i, () => "sp.web.roleAssignments"],
+  [/^web\/webs$/i, () => "sp.web.webs"],
+  [/^web\/features$/i, () => "sp.web.features"],
+  [/^site\/features$/i, () => "sp.site.features"],
+  [/^web\/allproperties$/i, () => "sp.web.allProperties"],
+  [/^web\/regionalsettings$/i, () => "sp.web.regionalSettings"],
+  [/^web\/currentuser$/i, () => "sp.web.currentUser"],
+  [/^web$/i, () => "sp.web"],
+  [/^site$/i, () => "sp.site"]
+];
+function toPnpjs2({ path, options = {} }) {
+  const clean = String(path).replace(/^\/+/, "");
+  const route = PNPJS_ROUTES.find(([re2]) => re2.test(clean));
+  if (!route) {
+    return [
+      "// No direct PnPjs 2 fluent route for this endpoint; raw call:",
+      `const data = await sp.web.getParentWeb(); // placeholder \u2014 see REST tab`,
+      `// REST: /_api/${clean}${queryString(options)}`
+    ].join("\n");
+  }
+  const [re, root] = route;
+  const id = clean.match(re)?.[1];
+  let chain = root(id);
+  if (options.select) chain += `
+  .select(${join(options.select).split(",").map((s) => `"${s}"`).join(", ")})`;
+  if (options.expand) chain += `
+  .expand(${join(options.expand).split(",").map((s) => `"${s}"`).join(", ")})`;
+  if (options.filter) chain += `
+  .filter("${String(options.filter).replaceAll('"', '\\"')}")`;
+  if (options.orderby) chain += `
+  .orderBy("${join(options.orderby)}")`;
+  if (options.top) chain += `
+  .top(${options.top})`;
+  return [
+    "// PnPjs 2.x \u2014 paste into the DCSPad JS pane (pnpjs2 framework enabled)",
+    `const data = await ${chain}
+  .get();`,
+    "console.table(data);"
+  ].join("\n");
+}
+function toRestFetch({ path, options = {} }, webUrl = "") {
+  const clean = String(path).replace(/^\/+/, "");
+  const base = webUrl ? `"${webUrl}/_api/${clean}${queryString(options)}"` : `\`\${_spPageContextInfo.webAbsoluteUrl}/_api/${clean}${queryString(options)}\``;
+  return [
+    "// Raw SharePoint REST (GET) \u2014 same-origin cookies authenticate",
+    `const response = await fetch(${base}, {`,
+    "  credentials: 'same-origin',",
+    "  headers: { Accept: 'application/json;odata=nometadata' },",
+    "});",
+    "const data = await response.json();",
+    "console.table(data.value ?? data);"
+  ].join("\n");
+}
+var POWERSHELL_ROUTES = [
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/fields$/i, (id) => `Get-PnPField -List (Get-PnPList -Identity "${id}")`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/views$/i, (id) => `Get-PnPView -List (Get-PnPList -Identity "${id}")`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/contenttypes$/i, (id) => `Get-PnPContentType -List (Get-PnPList -Identity "${id}")`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)$/i, (id) => `Get-PnPList -Identity "${id}" -Includes HasUniqueRoleAssignments`],
+  [/^web\/lists$/i, () => "Get-PnPList -Includes Hidden, ItemCount"],
+  [/^web\/sitegroups\((\d+)\)\/users$/i, (id) => `Get-PnPGroupMember -Group (Get-PnPGroup -Identity ${id})`],
+  [/^web\/sitegroups$/i, () => "Get-PnPGroup"],
+  [/^web\/roledefinitions$/i, () => "Get-PnPRoleDefinition"],
+  [/^web\/webs$/i, () => "Get-PnPSubWeb"],
+  [/^web\/features$/i, () => "Get-PnPFeature -Scope Web"],
+  [/^site\/features$/i, () => "Get-PnPFeature -Scope Site"],
+  [/^web\/allproperties$/i, () => "Get-PnPPropertyBag"],
+  [/^web$/i, () => "Get-PnPWeb"],
+  [/^site$/i, () => "Get-PnPSite"]
+];
+function toPnpPowerShell({ path, options = {} }, webUrl = "") {
+  const clean = String(path).replace(/^\/+/, "");
+  const connect = `Connect-PnPOnline -Url "${webUrl || "https://tenant.sharepoint.com/sites/yoursite"}" -Interactive`;
+  const route = POWERSHELL_ROUTES.find(([re]) => re.test(clean));
+  if (route) {
+    const [re, cmd] = route;
+    const id = clean.match(re)?.[1];
+    return [`# PnP.PowerShell`, connect, cmd(id)].join("\n");
+  }
+  return [
+    "# PnP.PowerShell \u2014 no direct cmdlet; raw REST via Invoke-PnPSPRestMethod",
+    connect,
+    `Invoke-PnPSPRestMethod -Url "/_api/${clean}${queryString(options).replaceAll('"', '`"')}"`
+  ].join("\n");
+}
+
 // ../src/workbench/grid.js
 var el2 = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -730,7 +836,8 @@ function createGrid({
   onOpen = null,
   emptyText = "No rows.",
   filterPlaceholder = "Filter\u2026",
-  exportName = ""
+  exportName = "",
+  descriptor = null
 } = {}) {
   let rows = [];
   let visible = [];
@@ -746,26 +853,19 @@ function createGrid({
   filter.setAttribute("aria-label", "Filter rows");
   const actions = el2("span", "wb-grid-actions");
   toolbar.append(count, filter, actions);
-  if (exportName) {
+  function menuButton(label, title, items) {
     const wrap = el2("span", "wb-menu-wrap");
-    const btn = el2("button", "btn btn-xs", "Export \u25BE");
+    const btn = el2("button", "btn btn-xs", label);
     btn.type = "button";
-    btn.title = "Export the visible rows";
+    btn.title = title;
     const menu = el2("div", "wb-menu");
     menu.hidden = true;
-    const items = [
-      ["Download CSV", () => downloadCsv(exportName, visible, columns)],
-      ["Download JSON", () => downloadJson(exportName, visible, columns)],
-      ["Copy CSV", () => copyText(toCsv(visible, columns), btn)],
-      ["Copy JSON", () => copyText(toJson(visible, columns), btn)],
-      ["Copy Markdown", () => copyText(toMarkdown(visible, columns), btn)]
-    ];
-    for (const [label, run] of items) {
-      const item = el2("button", "wb-menu-item", label);
+    for (const [itemLabel, run] of items) {
+      const item = el2("button", "wb-menu-item", itemLabel);
       item.type = "button";
       item.addEventListener("click", () => {
         menu.hidden = true;
-        run();
+        run(btn);
       });
       menu.append(item);
     }
@@ -778,6 +878,22 @@ function createGrid({
     });
     wrap.append(btn, menu);
     actions.append(wrap);
+  }
+  if (descriptor) {
+    menuButton("Copy as \u25BE", "Copy this query as a runnable script", [
+      ["PnPjs 2 (DCSPad pane)", (btn) => copyText(toPnpjs2(descriptor), btn)],
+      ["REST fetch", (btn) => copyText(toRestFetch(descriptor, descriptor.webUrl), btn)],
+      ["PnP.PowerShell", (btn) => copyText(toPnpPowerShell(descriptor, descriptor.webUrl), btn)]
+    ]);
+  }
+  if (exportName) {
+    menuButton("Export \u25BE", "Export the visible rows", [
+      ["Download CSV", () => downloadCsv(exportName, visible, columns)],
+      ["Download JSON", () => downloadJson(exportName, visible, columns)],
+      ["Copy CSV", (btn) => copyText(toCsv(visible, columns), btn)],
+      ["Copy JSON", (btn) => copyText(toJson(visible, columns), btn)],
+      ["Copy Markdown", (btn) => copyText(toMarkdown(visible, columns), btn)]
+    ]);
   }
   const scroller = el2("div", "wb-grid-scroll");
   const table = el2("table", "wb-table");
@@ -1460,7 +1576,12 @@ function createListsView({ client: client2, navigate }) {
     onOpen: (row) => navigate({ view: "lists", listId: row.Id, listTitle: row.Title }),
     emptyText: "No lists in this web.",
     filterPlaceholder: "Filter lists\u2026",
-    exportName: "sp-lists"
+    exportName: "sp-lists",
+    descriptor: {
+      path: "web/lists",
+      options: { select: LIST_SELECT, expand: "RootFolder", orderby: "Title", top: 5e3 },
+      webUrl: client2.webUrl()
+    }
   });
   gridPane.append(head, grid.el);
   const detailPane = el4("div", "wb-pane");
@@ -1511,7 +1632,7 @@ function createListsView({ client: client2, navigate }) {
           { key: "Group", label: "Group" }
         ],
         exportName: `fields-${fileStem(title)}`,
-        fetch: () => client2.getAll(guidPath(listId, "/fields"), { select: FIELD_SELECT })
+        query: { path: guidPath(listId, "/fields"), options: { select: FIELD_SELECT } }
       })
     },
     {
@@ -1528,7 +1649,7 @@ function createListsView({ client: client2, navigate }) {
           { key: "ViewQuery", label: "CAML query", mono: true, copyable: true }
         ],
         exportName: `views-${fileStem(title)}`,
-        fetch: () => client2.getAll(guidPath(listId, "/views"), { select: VIEW_SELECT })
+        query: { path: guidPath(listId, "/views"), options: { select: VIEW_SELECT } }
       })
     },
     {
@@ -1545,7 +1666,7 @@ function createListsView({ client: client2, navigate }) {
           { key: "Description", label: "Description" }
         ],
         exportName: `contenttypes-${fileStem(title)}`,
-        fetch: () => client2.getAll(guidPath(listId, "/contenttypes"), { select: CT_SELECT })
+        query: { path: guidPath(listId, "/contenttypes"), options: { select: CT_SELECT } }
       })
     },
     {
@@ -1563,18 +1684,21 @@ function createListsView({ client: client2, navigate }) {
           }
         ],
         exportName: `permissions-${fileStem(title)}`,
-        fetch: () => client2.getAll(guidPath(listId, "/roleassignments"), {
-          expand: ["Member", "RoleDefinitionBindings"],
-          select: [
-            "PrincipalId",
-            "Member/Id",
-            "Member/Title",
-            "Member/LoginName",
-            "Member/PrincipalType",
-            "RoleDefinitionBindings/Id",
-            "RoleDefinitionBindings/Name"
-          ]
-        })
+        query: {
+          path: guidPath(listId, "/roleassignments"),
+          options: {
+            expand: ["Member", "RoleDefinitionBindings"],
+            select: [
+              "PrincipalId",
+              "Member/Id",
+              "Member/Title",
+              "Member/LoginName",
+              "Member/PrincipalType",
+              "RoleDefinitionBindings/Id",
+              "RoleDefinitionBindings/Name"
+            ]
+          }
+        }
       })
     },
     { id: "raw", label: "Raw" }
@@ -1631,11 +1755,12 @@ function createListsView({ client: client2, navigate }) {
         columns: spec.columns,
         emptyText: "Nothing here.",
         filterPlaceholder: `Filter ${tab.label.toLowerCase()}\u2026`,
-        exportName: spec.exportName
+        exportName: spec.exportName,
+        descriptor: { ...spec.query, webUrl: client2.webUrl() }
       });
       wrap.append(tabGrid.el);
       tabGrid.setLoading(`Loading ${tab.label.toLowerCase()}\u2026`);
-      cached2(listId, tab.id, spec.fetch).then(({ items, partial }) => tabGrid.setRows(items, { partial })).catch((err) => tabGrid.setError(err));
+      cached2(listId, tab.id, () => client2.getAll(spec.query.path, spec.query.options)).then(({ items, partial }) => tabGrid.setRows(items, { partial })).catch((err) => tabGrid.setError(err));
       return wrap;
     }
     for (const tab of TABS) {
@@ -1680,6 +1805,10 @@ function createSecurityView({ client: client2 }) {
   const panes = /* @__PURE__ */ new Map();
   function groupsPane() {
     const wrap = el5("div", "wb-tab-pane");
+    const groupsQuery = {
+      path: "web/sitegroups",
+      options: { select: ["Id", "Title", "Description", "OwnerTitle", "PrincipalType", "OnlyAllowMembersViewMembership"] }
+    };
     const grid = createGrid({
       columns: [
         { key: "Title", label: "Group" },
@@ -1691,7 +1820,8 @@ function createSecurityView({ client: client2 }) {
       onOpen: openMembers,
       emptyText: "No site groups.",
       filterPlaceholder: "Filter groups\u2026",
-      exportName: "sp-groups"
+      exportName: "sp-groups",
+      descriptor: { ...groupsQuery, webUrl: client2.webUrl() }
     });
     const membersBox = el5("div", "wb-subpanel");
     membersBox.hidden = true;
@@ -1700,13 +1830,15 @@ function createSecurityView({ client: client2 }) {
     membersBox.append(membersTitle, membersHost);
     wrap.append(grid.el, membersBox);
     grid.setLoading("Loading site groups\u2026");
-    client2.getAll("web/sitegroups", {
-      select: ["Id", "Title", "Description", "OwnerTitle", "PrincipalType", "OnlyAllowMembersViewMembership"]
-    }).then(({ items, partial }) => grid.setRows(items, { partial })).catch((err) => grid.setError(err));
+    client2.getAll(groupsQuery.path, groupsQuery.options).then(({ items, partial }) => grid.setRows(items, { partial })).catch((err) => grid.setError(err));
     function openMembers(group) {
       membersBox.hidden = false;
       membersTitle.textContent = `Members of ${group.Title}`;
       membersHost.textContent = "";
+      const membersQuery = {
+        path: `web/sitegroups(${group.Id})/users`,
+        options: { select: ["Id", "Title", "LoginName", "Email", "IsSiteAdmin", "PrincipalType"] }
+      };
       const membersGrid = createGrid({
         columns: [
           { key: "Title", label: "Name" },
@@ -1717,13 +1849,12 @@ function createSecurityView({ client: client2 }) {
         ],
         emptyText: "No members.",
         filterPlaceholder: "Filter members\u2026",
-        exportName: `members-${group.Id}`
+        exportName: `members-${group.Id}`,
+        descriptor: { ...membersQuery, webUrl: client2.webUrl() }
       });
       membersHost.append(membersGrid.el);
       membersGrid.setLoading("Loading members\u2026");
-      client2.getAll(`web/sitegroups(${group.Id})/users`, {
-        select: ["Id", "Title", "LoginName", "Email", "IsSiteAdmin", "PrincipalType"]
-      }).then(({ items }) => membersGrid.setRows(items)).catch((err) => membersGrid.setError(err));
+      client2.getAll(membersQuery.path, membersQuery.options).then(({ items }) => membersGrid.setRows(items)).catch((err) => membersGrid.setError(err));
     }
     return wrap;
   }
@@ -1750,7 +1881,12 @@ function createSecurityView({ client: client2 }) {
       onOpen: openDecode,
       emptyText: "No role definitions.",
       filterPlaceholder: "Filter roles\u2026",
-      exportName: "sp-roledefinitions"
+      exportName: "sp-roledefinitions",
+      descriptor: {
+        path: "web/roledefinitions",
+        options: { select: ["Id", "Name", "Description", "RoleTypeKind", "Hidden", "BasePermissions"] },
+        webUrl: client2.webUrl()
+      }
     });
     const decodeBox = el5("div", "wb-subpanel");
     decodeBox.hidden = true;
@@ -1784,7 +1920,12 @@ function createSecurityView({ client: client2 }) {
       ],
       emptyText: "No role assignments.",
       filterPlaceholder: "Filter assignments\u2026",
-      exportName: "sp-roleassignments"
+      exportName: "sp-roleassignments",
+      descriptor: {
+        path: "web/roleassignments",
+        options: { expand: ["Member", "RoleDefinitionBindings"] },
+        webUrl: client2.webUrl()
+      }
     });
     wrap.append(grid.el);
     grid.setLoading("Loading role assignments\u2026");
@@ -1823,7 +1964,12 @@ function createSecurityView({ client: client2 }) {
       ],
       emptyText: "Run the scan to see results.",
       filterPlaceholder: "Filter results\u2026",
-      exportName: "sp-unique-permissions"
+      exportName: "sp-unique-permissions",
+      descriptor: {
+        path: "web/lists",
+        options: { select: ["Id", "Title", "Hidden", "BaseTemplate", "HasUniqueRoleAssignments"], top: 5e3 },
+        webUrl: client2.webUrl()
+      }
     });
     wrap.append(bar, grid.el);
     grid.setRows([]);
@@ -1873,10 +2019,220 @@ function createSecurityView({ client: client2 }) {
   return { el: root, load };
 }
 
+// ../src/workbench/views/site.js
+var el6 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var decodeODataKey = (key2) => String(key2).replace(/_x([0-9a-f]{4})_/gi, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+var flatten = (v) => {
+  if (v === null || v === void 0) return "";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+};
+var entityRows = (entity2) => Object.entries(entity2 || {}).filter(([k]) => !k.startsWith("odata.") && !k.startsWith("@odata") && k !== "__metadata").map(([k, v]) => ({ Property: k, Value: flatten(v) }));
+var WEB_SELECT = [
+  "Id",
+  "Title",
+  "Description",
+  "Url",
+  "ServerRelativeUrl",
+  "WebTemplate",
+  "Configuration",
+  "Created",
+  "LastItemModifiedDate",
+  "Language",
+  "UIVersion",
+  "QuickLaunchEnabled",
+  "MembersCanShare"
+];
+var SITE_SELECT = ["Id", "Url", "ServerRelativeUrl", "ReadOnly", "ShareByEmailEnabled"];
+function createSiteView({ client: client2 }) {
+  const root = el6("section", "wb-view wb-view-site");
+  const head = el6("div", "wb-view-head");
+  head.innerHTML = '<h2>Site overview</h2><p class="wb-view-hint">Web and site collection properties, features, subwebs, and the property bag.</p>';
+  const tabsBar = el6("div", "wb-tabs");
+  const body = el6("div", "wb-tab-body");
+  root.append(head, tabsBar, body);
+  const panes = /* @__PURE__ */ new Map();
+  function sheetPane(query, extraSections = []) {
+    const wrap = el6("div", "wb-tab-pane");
+    const grid = createGrid({
+      rowKey: "Property",
+      columns: [
+        { key: "Property", label: "Property", mono: true, copyable: true },
+        { key: "Value", label: "Value", copyable: true }
+      ],
+      emptyText: "Nothing returned.",
+      filterPlaceholder: "Filter properties\u2026",
+      exportName: query.exportName,
+      descriptor: { path: query.path, options: query.options, webUrl: client2.webUrl() }
+    });
+    wrap.append(grid.el);
+    grid.setLoading("Loading\u2026");
+    client2.get(query.path, query.options).then((entity2) => grid.setRows(entityRows(entity2))).catch((err) => grid.setError(err));
+    for (const extra of extraSections) {
+      const box = el6("div", "wb-subpanel");
+      box.hidden = false;
+      box.append(el6("h3", "wb-subpanel-title", extra.title));
+      const hostEl = el6("div", "wb-subpanel-body");
+      box.append(hostEl);
+      const extraGrid = createGrid({
+        rowKey: "Property",
+        columns: [
+          { key: "Property", label: "Property", mono: true, copyable: true },
+          { key: "Value", label: "Value", copyable: true }
+        ],
+        emptyText: "Nothing returned.",
+        filterPlaceholder: "Filter\u2026",
+        exportName: extra.exportName
+      });
+      hostEl.append(extraGrid.el);
+      extraGrid.setLoading("Loading\u2026");
+      client2.get(extra.path, extra.options).then((entity2) => extraGrid.setRows(entityRows(extra.map ? extra.map(entity2) : entity2))).catch((err) => extraGrid.setError(err));
+      wrap.append(box);
+    }
+    return wrap;
+  }
+  function featuresPane() {
+    const wrap = el6("div", "wb-tab-pane");
+    const grid = createGrid({
+      rowKey: "DefinitionId",
+      columns: [
+        { key: "Scope", label: "Scope" },
+        { key: "DisplayName", label: "Feature", format: (v) => v || "(no display name)" },
+        { key: "DefinitionId", label: "Definition id", mono: true, copyable: true }
+      ],
+      emptyText: "No activated features.",
+      filterPlaceholder: "Filter features\u2026",
+      exportName: "sp-features",
+      descriptor: {
+        path: "web/features",
+        options: { select: ["DefinitionId", "DisplayName"] },
+        webUrl: client2.webUrl()
+      }
+    });
+    wrap.append(grid.el);
+    grid.setLoading("Loading features (site + web scope)\u2026");
+    const options = { select: ["DefinitionId", "DisplayName"] };
+    Promise.all([
+      client2.getAll("site/features", options),
+      client2.getAll("web/features", options)
+    ]).then(([site, web]) => {
+      const rows = [
+        ...site.items.map((f) => ({ ...f, Scope: "Site" })),
+        ...web.items.map((f) => ({ ...f, Scope: "Web" }))
+      ];
+      grid.setRows(rows, { partial: site.partial || web.partial });
+    }).catch((err) => grid.setError(err));
+    return wrap;
+  }
+  function subwebsPane() {
+    const wrap = el6("div", "wb-tab-pane");
+    const query = {
+      path: "web/webs",
+      options: { select: ["Id", "Title", "ServerRelativeUrl", "WebTemplate", "Created", "Language"] }
+    };
+    const grid = createGrid({
+      columns: [
+        { key: "Title", label: "Title" },
+        { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true },
+        { key: "WebTemplate", label: "Template" },
+        { key: "Language", label: "Language" },
+        { key: "Created", label: "Created", format: (v) => v ? String(v).slice(0, 10) : "" },
+        { key: "Id", label: "Id", mono: true, copyable: true }
+      ],
+      emptyText: "No subwebs.",
+      filterPlaceholder: "Filter subwebs\u2026",
+      exportName: "sp-subwebs",
+      descriptor: { ...query, webUrl: client2.webUrl() }
+    });
+    wrap.append(grid.el);
+    grid.setLoading("Loading subwebs\u2026");
+    client2.getAll(query.path, query.options).then(({ items, partial }) => grid.setRows(items, { partial })).catch((err) => grid.setError(err));
+    return wrap;
+  }
+  function propertyBagPane() {
+    const wrap = el6("div", "wb-tab-pane");
+    const grid = createGrid({
+      rowKey: "RawKey",
+      columns: [
+        { key: "Key", label: "Key (decoded)", mono: true },
+        { key: "RawKey", label: "Raw key", mono: true, copyable: true },
+        { key: "Value", label: "Value", copyable: true }
+      ],
+      emptyText: "Empty property bag.",
+      filterPlaceholder: "Filter keys\u2026",
+      exportName: "sp-propertybag",
+      descriptor: { path: "web/allproperties", options: {}, webUrl: client2.webUrl() }
+    });
+    wrap.append(grid.el);
+    grid.setLoading("Loading property bag\u2026");
+    client2.get("web/allproperties").then((bag) => {
+      const rows = Object.entries(bag || {}).filter(([k]) => !k.startsWith("odata.") && !k.startsWith("@odata") && k !== "__metadata").map(([k, v]) => ({ Key: decodeODataKey(k), RawKey: k, Value: flatten(v) }));
+      grid.setRows(rows);
+    }).catch((err) => grid.setError(err));
+    return wrap;
+  }
+  const TABS = [
+    {
+      id: "web",
+      label: "Web",
+      build: () => sheetPane(
+        { path: "web", options: { select: WEB_SELECT }, exportName: "sp-web" },
+        [
+          {
+            title: "Regional settings",
+            path: "web/regionalsettings",
+            options: { expand: "TimeZone" },
+            exportName: "sp-regionalsettings"
+          },
+          {
+            title: "Current user",
+            path: "web/currentuser",
+            options: {},
+            exportName: "sp-currentuser"
+          }
+        ]
+      )
+    },
+    {
+      id: "site",
+      label: "Site collection",
+      build: () => sheetPane({ path: "site", options: { select: SITE_SELECT }, exportName: "sp-site" })
+    },
+    { id: "features", label: "Features", build: featuresPane },
+    { id: "subwebs", label: "Subwebs", build: subwebsPane },
+    { id: "propertybag", label: "Property bag", build: propertyBagPane }
+  ];
+  function activate(tab) {
+    for (const btn of tabsBar.children) {
+      btn.classList.toggle("active", btn.dataset.tab === tab.id);
+    }
+    if (!panes.has(tab.id)) panes.set(tab.id, tab.build());
+    body.textContent = "";
+    body.append(panes.get(tab.id));
+  }
+  for (const tab of TABS) {
+    const btn = el6("button", "wb-tab", tab.label);
+    btn.type = "button";
+    btn.dataset.tab = tab.id;
+    btn.addEventListener("click", () => activate(tab));
+    tabsBar.append(btn);
+  }
+  function load() {
+    if (!tabsBar.querySelector(".wb-tab.active")) activate(TABS[0]);
+  }
+  return { el: root, load };
+}
+
 // ../src/workbench/main.js
 var GLYPHS = {
   lists: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.7" cy="4" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="12" r=".9" fill="currentColor" stroke="none"/></svg>',
-  security: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13 3.6v3.6c0 3.2-2.1 5.6-5 6.9-2.9-1.3-5-3.7-5-6.9V3.6z"/><path d="m5.8 7.8 1.6 1.6 2.9-3"/></svg>'
+  security: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13 3.6v3.6c0 3.2-2.1 5.6-5 6.9-2.9-1.3-5-3.7-5-6.9V3.6z"/><path d="m5.8 7.8 1.6 1.6 2.9-3"/></svg>',
+  site: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.2 13.3V6.5L8 2.3l5.8 4.2v6.8z"/><path d="M6.2 13.3V9.4h3.6v3.9"/></svg>'
 };
 function applyWorkbenchContext(ctx2) {
   const chip = document.getElementById("wb-chip");
@@ -1898,8 +2254,8 @@ var shell = createShell({
   deps: { client },
   views: [
     { id: "lists", label: "Lists", glyph: GLYPHS.lists, create: createListsView },
-    { id: "security", label: "Security", glyph: GLYPHS.security, create: createSecurityView }
-    // M4: { id: 'site', label: 'Site', ... }
+    { id: "security", label: "Security", glyph: GLYPHS.security, create: createSecurityView },
+    { id: "site", label: "Site", glyph: GLYPHS.site, create: createSiteView }
   ]
 });
 shell.restore();

@@ -93,6 +93,11 @@ export function createListsView({ client, navigate }) {
     emptyText: 'No lists in this web.',
     filterPlaceholder: 'Filter lists…',
     exportName: 'sp-lists',
+    descriptor: {
+      path: 'web/lists',
+      options: { select: LIST_SELECT, expand: 'RootFolder', orderby: 'Title', top: 5000 },
+      webUrl: client.webUrl(),
+    },
   });
   gridPane.append(head, grid.el);
 
@@ -150,7 +155,7 @@ export function createListsView({ client, navigate }) {
           { key: 'Group', label: 'Group' },
         ],
         exportName: `fields-${fileStem(title)}`,
-        fetch: () => client.getAll(guidPath(listId, '/fields'), { select: FIELD_SELECT }),
+        query: { path: guidPath(listId, '/fields'), options: { select: FIELD_SELECT } },
       }),
     },
     {
@@ -167,7 +172,7 @@ export function createListsView({ client, navigate }) {
           { key: 'ViewQuery', label: 'CAML query', mono: true, copyable: true },
         ],
         exportName: `views-${fileStem(title)}`,
-        fetch: () => client.getAll(guidPath(listId, '/views'), { select: VIEW_SELECT }),
+        query: { path: guidPath(listId, '/views'), options: { select: VIEW_SELECT } },
       }),
     },
     {
@@ -184,7 +189,7 @@ export function createListsView({ client, navigate }) {
           { key: 'Description', label: 'Description' },
         ],
         exportName: `contenttypes-${fileStem(title)}`,
-        fetch: () => client.getAll(guidPath(listId, '/contenttypes'), { select: CT_SELECT }),
+        query: { path: guidPath(listId, '/contenttypes'), options: { select: CT_SELECT } },
       }),
     },
     {
@@ -203,13 +208,16 @@ export function createListsView({ client, navigate }) {
           },
         ],
         exportName: `permissions-${fileStem(title)}`,
-        fetch: () => client.getAll(guidPath(listId, '/roleassignments'), {
-          expand: ['Member', 'RoleDefinitionBindings'],
-          select: [
-            'PrincipalId', 'Member/Id', 'Member/Title', 'Member/LoginName',
-            'Member/PrincipalType', 'RoleDefinitionBindings/Id', 'RoleDefinitionBindings/Name',
-          ],
-        }),
+        query: {
+          path: guidPath(listId, '/roleassignments'),
+          options: {
+            expand: ['Member', 'RoleDefinitionBindings'],
+            select: [
+              'PrincipalId', 'Member/Id', 'Member/Title', 'Member/LoginName',
+              'Member/PrincipalType', 'RoleDefinitionBindings/Id', 'RoleDefinitionBindings/Name',
+            ],
+          },
+        },
       }),
     },
     { id: 'raw', label: 'Raw' },
@@ -279,10 +287,11 @@ export function createListsView({ client, navigate }) {
         emptyText: 'Nothing here.',
         filterPlaceholder: `Filter ${tab.label.toLowerCase()}…`,
         exportName: spec.exportName,
+        descriptor: { ...spec.query, webUrl: client.webUrl() },
       });
       wrap.append(tabGrid.el);
       tabGrid.setLoading(`Loading ${tab.label.toLowerCase()}…`);
-      cached(listId, tab.id, spec.fetch)
+      cached(listId, tab.id, () => client.getAll(spec.query.path, spec.query.options))
         .then(({ items, partial }) => tabGrid.setRows(items, { partial }))
         .catch((err) => tabGrid.setError(err));
       return wrap;
