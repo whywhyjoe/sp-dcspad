@@ -9,8 +9,8 @@
   },
   "sources": {
     "colors_and_type.css": "dd83101a48f8f5740f35f5802d5b25cc351c37027a127011f1823d721c5dece1",
-    "components.css": "4fa9a99a434242d22a616ae28854b61b5f8b638e9df7856ce18cbf17cd31d6c6",
-    "editorial.css": "ba6454196c7a10e5e69df6e12d3c247c2eb770b079b9538f8db17ebabb85f139"
+    "components.css": "fd3649bf6bb4b5a7d7b021bf82390aae4dbedf8fd1fa9ec2566ca0cfedcd501e",
+    "editorial.css": "f2cda1d1a6a861e25c7b444efa763dc46f68694261d5bdbdce7b2d98d308e9bb"
   },
   "fluentIcons": {
     "artifact": "fluent-icons.json",
