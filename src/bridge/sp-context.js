@@ -213,7 +213,7 @@ export function applyContextIndicators() {
 
   chip.classList.toggle('sp-chip-live', ctx.live);
   chip.classList.toggle('sp-chip-mock', !ctx.live);
-  chipText.textContent = ctx.live ? 'SP: Live' : 'SP: Mock';
+  chipText.textContent = ctx.live ? 'SP' : 'SP: Mock';
   chip.dataset.context = ctx.live
     ? `Connected to ${ctx.label}${ctx.user ? ` as ${ctx.user}` : ''} · context: ${ctx.source}`
     : 'Not connected to a SharePoint web — SharePoint file actions are unavailable';

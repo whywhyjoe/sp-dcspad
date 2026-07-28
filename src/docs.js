@@ -278,7 +278,7 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
   const menu = document.getElementById('docs-menu');
   const menuItems = document.getElementById('docs-menu-items');
   const menuEmpty = document.getElementById('docs-menu-empty');
-  const aiGroup = document.getElementById('docs-ai-group');
+
   const addressForm = document.getElementById('browser-address-form');
   const addressInput = document.getElementById('browser-address-input');
   const historySelect = document.getElementById('browser-history');
@@ -498,9 +498,7 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
     button.className = 'menu-item docs-menu-item';
     button.setAttribute('role', 'menuitem');
     button.dataset.docId = doc.id;
-    const badge = resourceBadge(doc);
-    button.innerHTML = `<span class="docs-menu-icon" aria-hidden="true">${badge}</span>`
-      + `<span>${escapeHtml(doc.title)}</span>`;
+    button.innerHTML = escapeHtml(doc.title);
     button.addEventListener('click', () => loadDoc(doc));
     menuItems.append(button);
   }
@@ -509,14 +507,15 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
     showState('Paste a same-tenant HTML, Markdown, code, or text URL in the address bar.');
   }
 
-  aiGroup.hidden = !(copilot.enabled && copilot.url);
-  document.getElementById('mi-open-copilot').addEventListener('click', () => {
-    if (!copilot.enabled || !copilot.url) return;
-    menu.hidden = true;
-    document.getElementById('btn-docs').setAttribute('aria-expanded', 'false');
-    const opened = window.open(copilot.url, 'dcspad-copilot');
-    opened?.focus?.();
-  });
+  const copilotBtn = document.getElementById('btn-copilot');
+  if (copilotBtn) {
+    copilotBtn.hidden = !(copilot.enabled && copilot.url);
+    copilotBtn.addEventListener('click', () => {
+      if (!copilot.enabled || !copilot.url) return;
+      const opened = window.open(copilot.url, 'dcspad-copilot');
+      opened?.focus?.();
+    });
+  }
 
   document.getElementById('extras-tabs').addEventListener('click', (event) => {
     const tab = event.target.closest('.extras-tab');

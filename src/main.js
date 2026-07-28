@@ -116,6 +116,20 @@ const docsApi = initDocs({
   onError: (msg) => padWarn(msg),
 });
 
+const btnSp = document.getElementById('btn-sp');
+if (btnSp) {
+  if (!initialSpContext.live) {
+    btnSp.hidden = true;
+  } else {
+    btnSp.hidden = false;
+    btnSp.addEventListener('click', () => {
+      const url = configResult.config?.workbench?.url || initialSpContext.webAbsoluteUrl || '/';
+      const opened = window.open(url, 'dcspad-sp');
+      opened?.focus?.();
+    });
+  }
+}
+
 // ---------- runner ----------
 const statusRun = document.getElementById('status-run');
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

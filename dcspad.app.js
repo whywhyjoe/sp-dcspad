@@ -3020,6 +3020,13 @@ Fallback: ${effective.fallbackJs}`;
     moveWithinGroup(entry, pinned, e.key === "ArrowUp" ? -1 : 1);
   });
   wireDropTarget(item, entry, pinned);
+  item.addEventListener("click", (e) => {
+    if (e.target.tagName !== "INPUT" && !e.target.closest(".lib-tools") && !e.target.closest(".lib-drag")) {
+      e.preventDefault();
+      chk.checked = !chk.checked;
+      chk.dispatchEvent(new Event("change"));
+    }
+  });
   const tools = el("span", "lib-tools");
   const tool = (cls, icon, title, fn) => {
     const b = document.createElement("button");
@@ -3628,7 +3635,7 @@ function applyContextIndicators() {
   const statusCtx = document.getElementById("status-context");
   chip.classList.toggle("sp-chip-live", ctx.live);
   chip.classList.toggle("sp-chip-mock", !ctx.live);
-  chipText.textContent = ctx.live ? "SP: Live" : "SP: Mock";
+  chipText.textContent = ctx.live ? "SP" : "SP: Mock";
   chip.dataset.context = ctx.live ? `Connected to ${ctx.label}${ctx.user ? ` as ${ctx.user}` : ""} \xB7 context: ${ctx.source}` : "Not connected to a SharePoint web \u2014 SharePoint file actions are unavailable";
   statusCtx.textContent = ctx.live ? `SP: ${ctx.label}${ctx.user ? ` \xB7 ${ctx.user}` : ""}` : "SP: mock context (deploy to SharePoint for live APIs)";
   return ctx;
@@ -4269,16 +4276,6 @@ function documentType(doc2) {
   if (/\.(?:md|markdown)(?:$|[?#])/i.test(doc2.url)) return "markdown";
   return "html";
 }
-function resourceBadge(doc2) {
-  const path = new URL(doc2.url, location.href).pathname.toLowerCase();
-  if (/\.(?:md|markdown)$/.test(path)) return "MD";
-  if (/\.css$/.test(path)) return "CSS";
-  if (/\.js$/.test(path)) return "JS";
-  if (/\.json$/.test(path)) return "JSON";
-  if (/\.csv$/.test(path)) return "CSV";
-  if (/\.txt$/.test(path)) return "TXT";
-  return "HTML";
-}
 function resourceTitle(url) {
   const filename = decodeURIComponent(url.pathname.split("/").pop() || "").trim();
   return filename || "SharePoint resource";
@@ -4290,7 +4287,6 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
   const menu = document.getElementById("docs-menu");
   const menuItems = document.getElementById("docs-menu-items");
   const menuEmpty = document.getElementById("docs-menu-empty");
-  const aiGroup = document.getElementById("docs-ai-group");
   const addressForm = document.getElementById("browser-address-form");
   const addressInput = document.getElementById("browser-address-input");
   const historySelect = document.getElementById("browser-history");
@@ -4495,8 +4491,7 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     button.className = "menu-item docs-menu-item";
     button.setAttribute("role", "menuitem");
     button.dataset.docId = doc2.id;
-    const badge2 = resourceBadge(doc2);
-    button.innerHTML = `<span class="docs-menu-icon" aria-hidden="true">${badge2}</span><span>${escapeHtml(doc2.title)}</span>`;
+    button.innerHTML = escapeHtml(doc2.title);
     button.addEventListener("click", () => loadDoc2(doc2));
     menuItems.append(button);
   }
@@ -4504,14 +4499,15 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
   if (!configuredDocs.length) {
     showState("Paste a same-tenant HTML, Markdown, code, or text URL in the address bar.");
   }
-  aiGroup.hidden = !(copilot.enabled && copilot.url);
-  document.getElementById("mi-open-copilot").addEventListener("click", () => {
-    if (!copilot.enabled || !copilot.url) return;
-    menu.hidden = true;
-    document.getElementById("btn-docs").setAttribute("aria-expanded", "false");
-    const opened = window.open(copilot.url, "dcspad-copilot");
-    opened?.focus?.();
-  });
+  const copilotBtn = document.getElementById("btn-copilot");
+  if (copilotBtn) {
+    copilotBtn.hidden = !(copilot.enabled && copilot.url);
+    copilotBtn.addEventListener("click", () => {
+      if (!copilot.enabled || !copilot.url) return;
+      const opened = window.open(copilot.url, "dcspad-copilot");
+      opened?.focus?.();
+    });
+  }
   document.getElementById("extras-tabs").addEventListener("click", (event) => {
     const tab = event.target.closest(".extras-tab");
     if (!tab) return;
@@ -4660,6 +4656,19 @@ var docsApi = initDocs({
   onBrowse: () => openSpFiles("browser"),
   onError: (msg) => padWarn(msg)
 });
+var btnSp = document.getElementById("btn-sp");
+if (btnSp) {
+  if (!initialSpContext.live) {
+    btnSp.hidden = true;
+  } else {
+    btnSp.hidden = false;
+    btnSp.addEventListener("click", () => {
+      const url = configResult.config?.workbench?.url || initialSpContext.webAbsoluteUrl || "/";
+      const opened = window.open(url, "dcspad-sp");
+      opened?.focus?.();
+    });
+  }
+}
 var statusRun = document.getElementById("status-run");
 var SPINNER = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
 var spinnerTimer = null;

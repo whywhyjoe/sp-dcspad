@@ -254,6 +254,16 @@ function catalogItem(entry, libs, pinned) {
   });
   wireDropTarget(item, entry, pinned);
 
+  // Manual fallback toggle: clicking anywhere on the row should toggle the checkbox,
+  // unless clicking on an interactive tool or the drag handle.
+  item.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'INPUT' && !e.target.closest('.lib-tools') && !e.target.closest('.lib-drag')) {
+      e.preventDefault(); // Stop native label from firing twice if it happens to work
+      chk.checked = !chk.checked;
+      chk.dispatchEvent(new Event('change'));
+    }
+  });
+
   // Row tools — real buttons so keyboard focus can reach them (the hover
   // reveal is focus-within-aware). All live inside the <label>, so each
   // must preventDefault to stop the click from also toggling the checkbox.

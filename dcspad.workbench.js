@@ -2296,7 +2296,7 @@ function applyWorkbenchContext(ctx2, inspecting = "") {
   const statusCtx = document.getElementById("wb-status-context");
   chip.classList.toggle("sp-chip-live", ctx2.live);
   chip.classList.toggle("sp-chip-mock", !ctx2.live);
-  chipText.textContent = ctx2.live ? "SP: Live" : "SP: Mock";
+  chipText.textContent = ctx2.live ? "SP" : "SP: Mock";
   chip.title = ctx2.live ? `Connected to ${ctx2.label}${ctx2.user ? ` as ${ctx2.user}` : ""} \xB7 context: ${ctx2.source}` : "Not connected to a SharePoint web \u2014 showing built-in mock data";
   const inspectingNote = inspecting ? ` \xB7 inspecting ${inspecting}` : "";
   statusCtx.textContent = ctx2.live ? `SP: ${ctx2.label}${ctx2.user ? ` \xB7 ${ctx2.user}` : ""}${inspectingNote}` : `SP: mock data (deploy to SharePoint for live inspection)${inspectingNote}`;

@@ -40,6 +40,9 @@
     "enabled": true,
     "url": "https://m365.cloud.microsoft/chat"
   },
+  "workbench": {
+    "url": "https://tenant.sharepoint.com/sites/YourSite/_layouts/15/SPWorkbench.aspx"
+  },
   "assets": {
     "designSystem": {
       "prefer": "local",
