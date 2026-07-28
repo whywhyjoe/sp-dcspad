@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SP Workbench hosted-mode fixture</title>
+</head>
+<body>
+  <!-- Stands in for SharePoint's suite bar, page header and canvas wrappers:
+       the web part (and therefore the workbench mount) lands well below the
+       fold. That is the condition that broke the first hosted deploy — the
+       workbench rendered in normal flow on a page app.css had just made
+       unscrollable, so it was invisible until edit mode reverted the
+       overflow. Keep this filler taller than the test viewport. -->
+  <div style="height:1400px;background:#f3f2f1">SharePoint page chrome (fixture filler)</div>
+  <div data-wb-anchor></div>
+  <script src="/boot-workbench.js?v=hosted-test"></script>
+</body>
+</html>

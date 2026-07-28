@@ -48,10 +48,14 @@
   var hostNonce = (self && self.nonce) ||
     (document.querySelector('script[nonce]') && document.querySelector('script[nonce]').nonce);
 
+  // Pinned, not in flow: app.css (injected below) makes the host page
+  // unscrollable, so an in-flow note under SharePoint's chrome would sit
+  // below the fold where neither progress nor a boot failure can be seen.
   var loading = document.createElement('div');
   loading.id = 'wb-boot-note';
   loading.textContent = 'Loading SP Workbench…';
   loading.style.cssText =
+    'position:fixed;top:60px;left:12px;z-index:1000;' +
     'font:12px/1.5 Consolas,monospace;color:#a2a9b8;background:#14161b;' +
     'padding:14px;border-radius:6px';
   mount.appendChild(loading);

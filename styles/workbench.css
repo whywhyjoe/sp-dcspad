@@ -13,8 +13,35 @@
   font: 13px/1.5 var(--sans);
 }
 
-/* Hosted mode: the page provides the scroll context, not the viewport. */
-html.dcspad-hosted .wb { height: min(92vh, 980px); border: 1px solid var(--border); border-radius: var(--radius-l); overflow: hidden; }
+/* ---------- Web-part hosting ----------
+   Mirrors the pad's block at the end of app.css — keep the two in sync.
+   This is NOT optional styling: app.css sets unscoped
+   `html, body { height: 100% }` + `body { overflow: hidden }`, and
+   boot-workbench.js injects app.css into the host SharePoint page. So once
+   the workbench is hosted, the page can no longer scroll, and anything left
+   in normal document flow below SharePoint's chrome becomes unreachable —
+   the page renders blank. The pad escapes that by pinning `.app` over the
+   viewport; the workbench must pin `.wb` the same way.
+   (Regression: tests/workbench-hosted.mjs asserts .wb lands in-viewport.) */
+html.dcspad-hosted .wb {
+  position: fixed; inset: 53px 5px 5px; z-index: 999;
+  height: auto;
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  background: var(--bg-0);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  /* Paint the whole surround ourselves: SP wrappers behind the gap have
+     their own (white) backgrounds we can't chase class-by-class. */
+  box-shadow: 0 0 0 100vmax var(--surround);
+}
+
+/* SharePoint entered page-edit mode after the workbench booted
+   (boot-workbench.js toggles this). Hide the workbench and hand the page
+   back so the web part stays configurable — app.css's own suspension rules
+   only know about #dcspad-mount. */
+html.dcspad-suspended #wb-mount { display: none; }
 
 /* ---- topbar ---- */
 .wb-topbar {
