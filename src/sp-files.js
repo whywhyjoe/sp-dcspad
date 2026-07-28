@@ -240,9 +240,10 @@ export function createSpFilesClient({
     const path = checkedPath(serverRelativePath, rootPath);
     const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(`
       + `decodedUrl='${odataPathLiteral(path)}')`
-      + '?$select=Name,ServerRelativeUrl'
-      + '&$expand=Folders($select=Name,ServerRelativeUrl),'
-      + 'Files($select=Name,ServerRelativeUrl,Length,TimeLastModified)';
+      + '?$select=Name,ServerRelativeUrl,'
+      + 'Folders/Name,Folders/ServerRelativeUrl,'
+      + 'Files/Name,Files/ServerRelativeUrl,Files/Length,Files/TimeLastModified'
+      + '&$expand=Folders,Files';
     const response = await request(endpoint, {
       headers: { Accept: ACCEPT_JSON },
     });

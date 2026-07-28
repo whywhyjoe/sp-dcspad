@@ -182,6 +182,16 @@ await check('SharePoint picker filters out unsupported files', async () => {
   const text = await page.locator('#sp-files-list').textContent();
   return text.includes('sample.js') && text.includes('existing.css') && !text.includes('ignore.txt');
 });
+await check('SharePoint folder query uses supported expanded-property syntax', () => {
+  const requestUrl = apiRequests.find((url) =>
+    url.includes('/GetFolderByServerRelativePath('));
+  if (!requestUrl) return false;
+  const query = new URL(requestUrl).searchParams;
+  const select = query.get('$select') || '';
+  return query.get('$expand') === 'Folders,Files'
+    && select.includes('Folders/ServerRelativeUrl')
+    && select.includes('Files/TimeLastModified');
+});
 
 // ResourcePath folder URLs encode # rather than turning it into a fragment.
 await page.locator('.sp-file-row', { hasText: 'Code#One' }).click();

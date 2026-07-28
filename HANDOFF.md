@@ -31,8 +31,8 @@ inspector, REPL and network capture all work inside the web part; a live
 - **Deployment = file copy.** The doc library folder
   `…/SiteAssets/Code/dcspad-live/` is OneDrive-synced to
   `C:\Users\other\NERVE\NewNerve - Code\dcspad-live`; copying files there goes
-  live in seconds. `deploy/Deploy-DcsPad.ps1` exists but is unused.
-  **Deploy with `deploy/Sync-Live.ps1`** — it rebuilds `dcspad.app.js` (the
+  live in seconds. **Deploy with `deploy/Sync-Live.ps1`** — it rebuilds
+  `dcspad.app.js` (the
   single-file bundle the web part actually runs) and copies everything.
   ⚠ Never hand-copy `src/` changes without rebuilding the bundle: hosted
   mode won't see them. Why a bundle: SPO's `max-age=86400`, Chrome's
