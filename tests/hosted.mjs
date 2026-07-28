@@ -71,6 +71,28 @@ await check('hosted boot mounts one Monaco workbench', async () =>
 await check('hosted mode flag is applied', () =>
   page.evaluate(() => document.documentElement.classList.contains('dcspad-hosted')));
 
+await check('SP chip offers the hosted SharePoint toolbar action', async () =>
+  !(await page.locator('#sp-chip').isDisabled())
+  && (await page.locator('#sp-chip').getAttribute('title')) === 'Hide SharePoint toolbar');
+await page.click('#sp-chip');
+await page.waitForTimeout(700);
+await check('hiding SharePoint chrome slides the suite bar away and expands the app', () =>
+  page.evaluate(() => {
+    const suite = document.getElementById('SuiteNavWrapper');
+    const app = document.querySelector('.app');
+    return document.documentElement.classList.contains('dcspad-chrome-hidden')
+      && Number.parseFloat(getComputedStyle(suite).opacity) === 0
+      && Math.round(app.getBoundingClientRect().top) === 5
+      && document.getElementById('sp-chip').title === 'Show SharePoint toolbar';
+  }));
+await page.click('#sp-chip');
+await page.waitForTimeout(700);
+await check('showing SharePoint chrome restores the suite bar and seated app inset', () =>
+  page.evaluate(() =>
+    !document.documentElement.classList.contains('dcspad-chrome-hidden')
+    && Number.parseFloat(getComputedStyle(document.getElementById('SuiteNavWrapper')).opacity) === 1
+    && Math.round(document.querySelector('.app').getBoundingClientRect().top) === 53));
+
 await check('hosted runtime uses the boot script folder as its asset base', () =>
   page.evaluate((expected) => window.__DCSPAD_ASSET_BASE__ === expected, `${origin}/`));
 

@@ -9,6 +9,18 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 820 } });
 const primaryUrl = `${origin}/tests/fixtures/missing-local-framework.js`;
 const fallbackUrl = `${origin}/tests/fixtures/testlib.js`;
 
+await page.route('**/docs/design-reference.html', (route) => route.fulfill({
+  contentType: 'text/plain',
+  body: '<!doctype html><html><head><link rel="stylesheet" href="./docs.css"></head><body><h1>Design reference</h1><a href="guide.md">Guide</a><script>document.body.dataset.scriptReady = "yes";</script></body></html>',
+}));
+await page.route('**/docs/guide.md', (route) => route.fulfill({
+  contentType: 'text/plain',
+  body: '# Authoring guide\n\nUse **semantic HTML**.\n\n```js\nconsole.log("docs");\n```\n\n| Item | Value |\n| --- | --- |\n| Mode | Markdown |',
+}));
+await page.route('**/docs/notes.txt', (route) => route.fulfill({
+  contentType: 'text/plain',
+  body: 'Design tokens\n=============\nUse semantic aliases.',
+}));
 await page.route('**/dcspad.config.json*', (route) => route.fulfill({
   contentType: 'application/json',
   body: JSON.stringify({
@@ -30,6 +42,30 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
           intelligence: ['alpine-3'],
         },
       },
+    },
+    docs: [
+      {
+        id: 'design-reference',
+        title: 'Design reference',
+        url: './docs/design-reference.html',
+        type: 'html',
+      },
+      {
+        id: 'authoring-guide',
+        title: 'Authoring guide',
+        url: './docs/guide.md',
+        type: 'markdown',
+      },
+      {
+        id: 'plain-notes',
+        title: 'Plain notes',
+        url: './docs/notes.txt',
+        type: 'txt',
+      },
+    ],
+    copilot: {
+      enabled: true,
+      url: 'https://m365.cloud.microsoft/chat',
     },
     assets: {
       designSystem: {
@@ -67,6 +103,95 @@ await check('relative configured asset folders resolve from dcspad.config.json',
     const { getAppConfig } = await import('/src/config.js');
     return getAppConfig().assets.designSystem.localBaseUrl === expected;
   }, `${origin}/bsp-design-system/`));
+
+await check('Browser bookmarks and Copilot URLs normalize from dcspad.config.json', () =>
+  page.evaluate(async (expected) => {
+    const { getAppConfig } = await import('/src/config.js');
+    const config = getAppConfig();
+    return config.docs.length === 3
+      && config.docs[0].url === expected.doc
+      && config.docs[1].type === 'markdown'
+      && config.docs[2].type === 'text'
+      && config.copilot.enabled
+      && config.copilot.url === 'https://m365.cloud.microsoft/chat';
+  }, { doc: `${origin}/docs/design-reference.html` }));
+
+await page.click('#btn-docs');
+await page.click('#docs-menu-items [data-doc-id="design-reference"]');
+await page.waitForFunction(() =>
+  document.getElementById('docs-frame')?.srcdoc.includes('Design reference'));
+await page.frameLocator('#docs-frame').locator('h1').waitFor();
+await check('HTML docs are fetched as text and rendered through srcdoc with a base URL', () =>
+  Promise.all([
+    page.evaluate((expected) => {
+      const frame = document.getElementById('docs-frame');
+      return !frame.hidden && frame.srcdoc.includes(`<base href="${expected}">`);
+    }, `${origin}/docs/design-reference.html`),
+    page.frameLocator('#docs-frame').locator('h1').textContent()
+      .then((text) => text === 'Design reference'),
+    page.frameLocator('#docs-frame').locator('body').getAttribute('data-script-ready')
+      .then((value) => value === 'yes'),
+  ]).then((values) => values.every(Boolean)));
+
+await page.fill('#browser-address-input', `${origin}/docs/guide.md`);
+await page.click('#browser-address-go');
+await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Authoring guide' }).waitFor();
+await check('Markdown docs render headings, code fences, and tables in the same viewer', () =>
+  Promise.all([
+    page.frameLocator('#docs-frame').locator('strong').textContent()
+      .then((text) => text === 'semantic HTML'),
+    page.frameLocator('#docs-frame').locator('pre code').textContent()
+      .then((text) => text.includes('console.log')),
+    page.frameLocator('#docs-frame').locator('table tbody td').first().textContent()
+      .then((text) => text === 'Mode'),
+    page.locator('#docs-frame').getAttribute('sandbox')
+      .then((value) => !value.includes('allow-scripts')),
+  ]).then((values) => values.every(Boolean)));
+
+await page.fill('#browser-address-input', `${origin}/docs/notes.txt`);
+await page.keyboard.press('Enter');
+await page.frameLocator('#docs-frame').locator('pre', { hasText: 'Design tokens' }).waitFor();
+await check('plain-text resources render safely in the Browser pane', () =>
+  page.frameLocator('#docs-frame').locator('pre').textContent()
+    .then((text) => text.includes('Use semantic aliases.')));
+
+await page.fill('#browser-address-input', 'https://example.com/guide.html');
+await page.keyboard.press('Enter');
+await check('pasted URLs outside the current SharePoint tenant are rejected', async () =>
+  (await page.locator('#docs-state').textContent()).includes(`limited to ${origin}`));
+
+await page.fill('#browser-address-input', `${origin}/docs/guide.md`);
+await page.keyboard.press('Enter');
+await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Authoring guide' }).waitFor();
+await page.click('#btn-max-docs');
+await check('Browser can temporarily maximize over the development panes', async () => {
+  const box = await page.locator('#extras-docs').boundingBox();
+  return (await page.locator('#main').evaluate((element) =>
+    element.classList.contains('max-docs')))
+    && box.width > 1300;
+});
+await page.keyboard.press('Escape');
+await page.click('#extras-tabs [data-extra="resources"]');
+await check('Resources and Browser switch without disturbing the editor/runtime panes', async () =>
+  (await page.locator('#panel-frameworks').isVisible())
+  && (await page.locator('#extras-docs').isHidden())
+  && (await page.locator('#editors').isVisible())
+  && (await page.locator('#runtime').isVisible()));
+
+await page.evaluate(() => {
+  window.__docsOpened = null;
+  window.open = (url, target) => {
+    window.__docsOpened = { url, target };
+    return { focus() {} };
+  };
+});
+await page.click('#btn-docs');
+await page.click('#mi-open-copilot');
+await check('approved AI help opens in one reusable external tab rather than an iframe', () =>
+  page.evaluate(() =>
+    window.__docsOpened?.url === 'https://m365.cloud.microsoft/chat'
+    && window.__docsOpened?.target === 'dcspad-copilot'
+    && !document.querySelector('iframe[src*="m365.cloud.microsoft"]')));
 
 await check('asset intelligence packs activate independently of framework checkboxes', () =>
   page.evaluate(async () => {

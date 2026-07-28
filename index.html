@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DCSPad — SharePoint Developer Workbench</title>
-<link rel="stylesheet" href="styles/app.css?v=19">
+<link rel="stylesheet" href="styles/app.css?v=20">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⌘</text></svg>">
 </head>
 <body>
@@ -50,6 +50,25 @@
         </div>
       </div>
     </div>
+      <div class="settings-wrap">
+        <button id="btn-docs" class="btn btn-ghost btn-icon" title="Same-tenant resource browser and approved AI help" aria-haspopup="menu" aria-expanded="false">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M2.2 8h11.6M8 2c1.8 1.7 2.8 3.7 2.8 6S9.8 12.3 8 14M8 2C6.2 3.7 5.2 5.7 5.2 8s1 4.3 2.8 6"/></svg>
+          Browser
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".6" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg>
+        </button>
+        <div id="docs-menu" class="settings-menu docs-menu" role="menu" hidden>
+          <div class="menu-group-label">Resources</div>
+          <div id="docs-menu-items" class="docs-menu-items"></div>
+          <div id="docs-menu-empty" class="menu-note" hidden>No resource links are configured.</div>
+          <div id="docs-ai-group" class="docs-ai-group" hidden>
+            <div class="menu-group-label">AI help</div>
+            <button id="mi-open-copilot" class="menu-item" type="button" role="menuitem">
+              <span class="docs-menu-icon" aria-hidden="true">✦</span>
+              Open Microsoft 365 Copilot
+            </button>
+          </div>
+        </div>
+      </div>
     <div id="project-name" class="project-name">
       <span class="project-name__label">Project</span>
       <button id="project-name-display" class="project-name__display" type="button" title="Set project name">
@@ -77,9 +96,9 @@
       <button id="btn-run" class="btn btn-run" title="Run (Ctrl/Cmd+Enter)">
         <span class="btn-run-icon"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2 12.2 8 5 12.8z" fill="currentColor"/></svg></span> Run <span class="btn-run-hint">⌘↵</span>
       </button>
-      <div id="sp-chip" class="sp-chip sp-chip-mock" title="">
+      <button id="sp-chip" class="sp-chip sp-chip-mock" type="button" title="SharePoint toolbar unavailable outside hosted mode" aria-expanded="false" disabled>
         <span class="sp-chip-dot"></span><span id="sp-chip-text">SP: …</span>
-      </div>
+      </button>
     </div>
   </header>
 
@@ -89,7 +108,12 @@
     <!-- Left: Resources — two stacked panels with their own splitter.
          No RESOURCES header: the topbar pane toggles own show/hide. -->
     <aside class="sidebar" id="sidebar">
-      <div class="side-panel" id="panel-frameworks">
+      <div class="extras-tabs" id="extras-tabs" role="tablist" aria-label="Left pane">
+        <button class="extras-tab active" type="button" role="tab" aria-selected="true" aria-controls="extras-resources" data-extra="resources">Resources</button>
+        <button class="extras-tab" type="button" role="tab" aria-selected="false" aria-controls="extras-docs" data-extra="docs">Browser</button>
+      </div>
+      <div class="extras-view active" id="extras-resources" role="tabpanel">
+        <div class="side-panel" id="panel-frameworks">
         <div class="side-panel-head" id="frameworks-head">
           <svg class="panel-glyph" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.8 6 3.1-6 3.1-6-3.1z"/><path d="m2 8.1 6 3.1 6-3.1"/><path d="m2 11.2 6 3.1 6-3.1"/></svg>
           <span class="side-panel-title">Frameworks</span>
@@ -121,9 +145,9 @@
             </span>
           </form>
         </div>
-      </div>
-      <div class="splitter splitter-h" id="split-side" title="Drag to resize (double-click resets)"></div>
-      <div class="side-panel" id="panel-snippets">
+        </div>
+        <div class="splitter splitter-h" id="split-side" title="Drag to resize (double-click resets)"></div>
+        <div class="side-panel" id="panel-snippets">
         <div class="side-panel-head">
           <svg class="panel-glyph" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.6 2.6 8 6 12.4M10 3.6 13.4 8 10 12.4"/></svg>
           <span class="side-panel-title">Snippets</span>
@@ -138,7 +162,25 @@
           <div id="snippet-list" class="lib-group"></div>
           <div id="snippet-empty" class="side-hint">Select code in an editor, then ＋</div>
         </div>
+        </div>
       </div>
+      <section class="extras-view extras-docs" id="extras-docs" role="tabpanel" hidden>
+        <div class="side-panel-head extras-docs-head">
+          <svg class="panel-glyph" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M2.2 8h11.6M8 2c1.8 1.7 2.8 3.7 2.8 6S9.8 12.3 8 14M8 2C6.2 3.7 5.2 5.7 5.2 8s1 4.3 2.8 6"/></svg>
+          <form id="browser-address-form" class="browser-address">
+            <input id="browser-address-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" aria-label="Browser address" placeholder="Paste a SharePoint HTML, MD, or TXT URL">
+            <button id="browser-address-go" class="btn btn-ghost btn-xs" type="submit" title="Go"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h9M8.8 4.2 12.6 8l-3.8 3.8"/></svg></button>
+          </form>
+          <span class="side-tools">
+            <button id="btn-docs-open-source" class="btn btn-ghost btn-xs" type="button" title="Open source file in a new tab" disabled><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.8 2.5h4.7v4.7M13.2 2.8 7.5 8.5"/><path d="M12 9.2v3.3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.3"/></svg></button>
+            <button id="btn-max-docs" class="btn btn-ghost btn-xs" type="button" title="Maximize Browser (Esc restores)"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.5H2.5V6M10 13.5h3.5V10"/></svg></button>
+          </span>
+        </div>
+        <div class="docs-host" id="docs-host">
+          <div class="docs-state" id="docs-state">Choose a resource from the Browser menu or paste a same-tenant URL above.</div>
+          <iframe id="docs-frame" title="Browser" sandbox="allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" hidden></iframe>
+        </div>
+      </section>
       <!-- future: Site Inspector section mounts here -->
     </aside>
 
@@ -341,6 +383,6 @@
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js?v=18"></script>
+<script type="module" src="src/main.js?v=19"></script>
 </body>
 </html>

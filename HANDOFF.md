@@ -41,8 +41,10 @@ inspector, REPL and network capture all work inside the web part; a live
   CLAUDE.md). Bump `?v=` in `dcspad.webpart.html` when boot.js itself
   changes. SPO can also serve a just-uploaded file stale for ~15–30s —
   verify with a cache-busted fetch before debugging "my change didn't work".
-- Visual seating (deliberate, Joe's call): the SharePoint **suite bar stays
-  visible** (desaturated while the pad runs); hosted mode pins `.app` at
+- Visual seating (deliberate, Joe's call): the SharePoint suite bar is
+  **visible by default** (desaturated while the pad runs); clicking the
+  `SP: Live` chip slides it away and expands the app to the top edge. Hosted
+  mode otherwise pins `.app` at
   `inset: 53px 5px 5px`, borderless over a darker surround so it reads as
   part of the page (see "Web-part hosting" in `app.css`, activated by
   `boot.js` adding `.dcspad-hosted` to `<html>`). The earlier `env=WebView`
@@ -124,6 +126,25 @@ inspector, REPL and network capture all work inside the web part; a live
   runtime data is copied under `vendor/intelligence/`.
 - `tests/config.mjs` covers URL resolution, config-enabled asset intelligence,
   explicit PnP intelligence, and ordered primary/fallback loading.
+
+### Same-tenant Browser and SharePoint chrome toggle (2026-07-27)
+
+- The header globe opens configured Browser bookmarks; the left extras column
+  switches between Resources and Browser without disturbing the editor/runtime
+  columns. Browser can temporarily maximize and `Esc` restores the layout.
+- The address bar accepts `.html`, `.htm`, `.md`, `.markdown`, and `.txt`.
+  Every configured, pasted, and followed URL must match `location.origin`,
+  which is the current SharePoint tenant origin in hosted mode.
+- SharePoint HTML is fetched as text and rendered through `srcdoc` with a base
+  URL so relative assets, links, and scripts work despite SharePoint download
+  MIME behavior. Tenant HTML is trusted to run scripts; Markdown and plain text
+  use built-in scriptless renderers.
+- Microsoft 365 Copilot remains an external named-tab shortcut because its
+  page blocks iframe embedding.
+- `src/sp-chrome.js` owns the hosted-only `SP: Live` button behavior and
+  `src/docs.js` owns Browser rendering/navigation. `tests/hosted.mjs` covers
+  suite-bar reflow; `tests/config.mjs` covers Browser formats, scripts,
+  maximize, tenant rejection, and the Copilot launcher.
 
 ### Alpine intelligence (2026-07-26)
 

@@ -45,6 +45,7 @@ export function initLayout({ onEditorTabChange } = {}) {
 
   function setPaneVisible(name, on) {
     panes[name] = !!on;
+    if (name === 'resources' && !on) main.classList.remove('max-docs');
     applyPanes();
     updateNested('layout', { panes: { ...panes } });
   }
@@ -138,19 +139,22 @@ export function initLayout({ onEditorTabChange } = {}) {
 
   // ----- maximize toggles -----
   document.getElementById('btn-max-preview').addEventListener('click', () => {
-    main.classList.remove('max-diag', 'max-editor');
+    main.classList.remove('max-diag', 'max-editor', 'max-docs');
     main.classList.toggle('max-preview');
   });
   document.getElementById('btn-max-diag').addEventListener('click', () => {
-    main.classList.remove('max-preview', 'max-editor');
+    main.classList.remove('max-preview', 'max-editor', 'max-docs');
     main.classList.toggle('max-diag');
   });
   document.getElementById('btn-max-editor').addEventListener('click', () => {
-    main.classList.remove('max-preview', 'max-diag');
+    main.classList.remove('max-preview', 'max-diag', 'max-docs');
     main.classList.toggle('max-editor');
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { main.classList.remove('max-preview', 'max-diag', 'max-editor'); return; }
+    if (e.key === 'Escape') {
+      main.classList.remove('max-preview', 'max-diag', 'max-editor', 'max-docs');
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     // Monaco registers the same chords as editor actions — this listener
     // covers everywhere else.

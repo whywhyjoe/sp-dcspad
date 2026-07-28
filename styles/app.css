@@ -276,6 +276,13 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 #btn-file:hover { background: var(--border-mid); border-color: var(--fg-ghost); }
 #btn-settings { width: 28px; height: 28px; padding: 0; }
 #btn-settings:hover { border-color: var(--border-strong); }
+#btn-docs {
+  height: 28px; padding: 0 8px;
+  border-color: transparent; color: var(--fg-dim);
+}
+#btn-docs:hover, #btn-docs[aria-expanded="true"] {
+  color: var(--fg); background: var(--bg-3); border-color: var(--border-strong);
+}
 
 .btn-run {
   height: 28px; padding: 0 13px 0 11px;
@@ -335,6 +342,20 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 .settings-menu input[type=checkbox] { accent-color: var(--accent); color-scheme: dark; }
 .size-stepper { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
 .size-val { font-family: var(--mono); font-size: 11px; min-width: 2ch; text-align: center; color: var(--fg-dim); }
+.docs-menu { width: 280px; padding: 8px; gap: 5px; }
+.docs-menu-items { display: grid; gap: 2px; }
+.docs-menu-item { display: grid; grid-template-columns: 36px 1fr; }
+.docs-menu-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 31px; height: 19px; padding: 0 5px;
+  color: var(--accent-soft-fg); background: var(--accent-soft);
+  border: 1px solid var(--accent-soft-line); border-radius: var(--radius-s);
+  font: 600 8px/1 var(--mono); letter-spacing: .04em;
+}
+.docs-ai-group {
+  display: grid; gap: 5px; margin-top: 5px; padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
 
 /* ---------- SP context chip ---------- */
 .sp-chip {
@@ -342,7 +363,12 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
   font-family: var(--mono); font-size: 11px; letter-spacing: .04em; font-weight: 500;
   height: 24px; padding: 0 9px 0 8px; border-radius: 12px;
   border: 1px solid var(--border-strong); background: var(--bg-1); color: var(--fg-dim);
+  cursor: pointer; appearance: none;
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
 }
+.sp-chip:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.12); }
+.sp-chip:not(:disabled):focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+.sp-chip:disabled { cursor: default; opacity: .82; }
 .sp-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-faint); }
 .sp-chip-live { border-color: var(--ok-soft-line); background: var(--ok-soft); color: var(--ok); }
 .sp-chip-live .sp-chip-dot { background: var(--ok); }
@@ -391,6 +417,10 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 .main.max-editor .splitter-v, .main.max-editor .splitter-h { display: none !important; }
 .main.max-editor { grid-template-columns: 1fr; }
 
+.main.max-docs .editors, .main.max-docs .runtime,
+.main.max-docs > .splitter { display: none !important; }
+.main.max-docs { grid-template-columns: 1fr; }
+
 
 /* ---------- Splitters ----------
    Quiet 5px tracks on the app ground with a centered 26×1 handle; the full
@@ -416,6 +446,61 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
   background: var(--bg-1); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; overflow: hidden; min-width: 0;
 }
+.extras-tabs {
+  display: grid; grid-template-columns: 1fr 1fr; flex: none;
+  min-height: 32px; padding: 4px;
+  background: var(--bg-0); border-bottom: 1px solid var(--border);
+}
+.extras-tab {
+  height: 24px; padding: 0 8px;
+  color: var(--fg-faint); background: transparent; border: 0;
+  border-radius: var(--radius-m); cursor: pointer;
+  font: 600 10px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase;
+  transition: color .12s ease, background .12s ease;
+}
+.extras-tab:hover { color: var(--fg); background: var(--bg-2); }
+.extras-tab.active { color: var(--accent-soft-fg); background: var(--accent-soft); }
+.extras-tab:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
+.extras-view { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
+#extras-resources { display: flex; flex-direction: column; }
+.extras-docs { display: flex; flex-direction: column; background: var(--bg-0); }
+.extras-docs-head { padding-left: 9px; }
+.browser-address {
+  display: flex; flex: 1 1 auto; min-width: 0; height: 22px;
+  color: var(--fg-row); background: var(--bg-1);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-m);
+  overflow: hidden; transition: border-color .12s, box-shadow .12s;
+}
+.browser-address:focus-within {
+  border-color: var(--accent-soft-line);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+.browser-address input {
+  flex: 1 1 auto; min-width: 0; padding: 0 7px;
+  color: var(--fg-row); background: transparent; border: 0; outline: 0;
+  font: 500 10.5px/1 var(--mono);
+}
+.browser-address input::placeholder { color: var(--fg-faint); }
+.browser-address .btn {
+  flex: none; width: 23px; height: 20px; padding: 0;
+  border: 0; border-left: 1px solid var(--border);
+  border-radius: 0;
+}
+.docs-host { position: relative; flex: 1 1 auto; min-height: 0; background: #16191f; }
+.docs-host iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+.docs-state {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  padding: 28px; color: var(--fg-faint); text-align: center;
+  font: 12px/1.55 var(--sans);
+}
+.docs-state.loading::before {
+  content: ""; width: 17px; height: 17px; margin-bottom: 10px;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  border-radius: 50%; animation: docs-spin .75s linear infinite;
+}
+.docs-state.loading { align-content: center; }
+.docs-state.error { color: var(--error-fg); }
+@keyframes docs-spin { to { transform: rotate(360deg); } }
 /* Two stacked panels: Frameworks flexes, Snippets holds a set height
    (--snippets-h, persisted). Each scrolls independently. */
 .side-panel { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
@@ -1149,7 +1234,15 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 html.dcspad-hosted { background: var(--surround); }
 html.dcspad-hosted body,
 html.dcspad-hosted #SPPageChrome { background: var(--surround); }
-html.dcspad-hosted #SuiteNavWrapper { filter: grayscale(1) brightness(0.6); }
+html.dcspad-hosted #SuiteNavWrapper {
+  filter: grayscale(1) brightness(0.6);
+  transition: transform .22s ease, opacity .16s ease, filter .16s ease;
+  will-change: transform;
+}
+html.dcspad-hosted.dcspad-chrome-hidden #SuiteNavWrapper {
+  transform: translateY(calc(-100% - 2px));
+  opacity: 0; pointer-events: none;
+}
 
 /* Keep a solid dark layer below both the curtain and the workbench. The app
    is fully painted beneath the opaque splash; readiness then fades only the
@@ -1168,7 +1261,9 @@ html.dcspad-hosted #dcspad-mount::before {
    back — including the global html/body rules at the top of this file,
    which would otherwise darken and un-scroll the edit canvas. */
 html.dcspad-suspended #dcspad-mount { display: none; }
-html.dcspad-suspended #SuiteNavWrapper { filter: none; }
+html.dcspad-suspended #SuiteNavWrapper {
+  filter: none; transform: none !important; opacity: 1 !important; pointer-events: auto !important;
+}
 html.dcspad-suspended, html.dcspad-suspended body { height: revert !important; }
 html.dcspad-suspended body,
 html.dcspad-suspended #SPPageChrome {
@@ -1188,4 +1283,6 @@ html.dcspad-hosted .app {
   /* Paint the whole surround ourselves: SP wrappers behind the gap have
      their own (white) backgrounds we can't chase class-by-class. */
   box-shadow: 0 0 0 100vmax var(--surround);
+  transition: top .22s ease;
 }
+html.dcspad-hosted.dcspad-chrome-hidden .app { top: 5px; }

@@ -10,6 +10,11 @@ const EMPTY_CONFIG = Object.freeze({
     items: Object.freeze({}),
   }),
   assets: Object.freeze({}),
+  docs: Object.freeze([]),
+  copilot: Object.freeze({
+    enabled: false,
+    url: '',
+  }),
 });
 
 let activeConfig = EMPTY_CONFIG;
@@ -87,6 +92,56 @@ function normalizeAssetGroup(raw, configUrl, defaultPreference) {
   };
 }
 
+function normalizeDocs(value, configUrl, warnings) {
+  const docs = [];
+  const ids = new Set();
+  for (const [index, raw] of (Array.isArray(value) ? value : []).entries()) {
+    if (!isRecord(raw)) {
+      warnings.push(`docs entry ${index + 1} was ignored because it is not an object`);
+      continue;
+    }
+    const title = cleanString(raw.title);
+    const url = resolveUrl(raw.url, configUrl);
+    if (!title || !url) {
+      warnings.push(`docs entry ${index + 1} was ignored because title and url are required`);
+      continue;
+    }
+    const inferredId = title.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || `doc-${index + 1}`;
+    let id = cleanString(raw.id) || inferredId;
+    if (ids.has(id)) {
+      const base = id;
+      let suffix = 2;
+      while (ids.has(`${base}-${suffix}`)) suffix += 1;
+      id = `${base}-${suffix}`;
+      warnings.push(`duplicate docs id "${base}" was renamed to "${id}"`);
+    }
+    ids.add(id);
+    const requestedType = cleanString(raw.type).toLowerCase();
+    const type = ['html', 'markdown', 'md', 'text', 'txt'].includes(requestedType)
+      ? (requestedType === 'html'
+          ? 'html'
+          : ['text', 'txt'].includes(requestedType) ? 'text' : 'markdown')
+      : 'auto';
+    docs.push({
+      id,
+      title,
+      url,
+      type,
+    });
+  }
+  return docs;
+}
+
+function normalizeCopilot(value, configUrl) {
+  const source = isRecord(value) ? value : {};
+  return {
+    enabled: source.enabled === true,
+    url: resolveUrl(source.url, configUrl),
+  };
+}
+
 function normalizeConfig(raw, configUrl) {
   const warnings = [];
   if (!isRecord(raw)) {
@@ -107,6 +162,8 @@ function normalizeConfig(raw, configUrl) {
       version: 1,
       frameworks: normalizeFrameworks(raw.frameworks, configUrl, warnings),
       assets,
+      docs: normalizeDocs(raw.docs, configUrl, warnings),
+      copilot: normalizeCopilot(raw.copilot, configUrl),
     },
     warnings,
   };

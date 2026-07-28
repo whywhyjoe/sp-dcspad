@@ -74,6 +74,14 @@ URLs without editing or rebuilding the application.
   Its `runtime` block controls which configured font CSS files and the
   preview-only `<fluent-icon>` adapter are injected on Run. Set
   `runtime.enabled` to `false` if the consuming page supplies those assets.
+- `docs` supplies the Browser menu bookmarks. Each entry has `id`, `title`,
+  `url`, and an optional `type` (`html`, `markdown`, `text`, or `auto`).
+  Relative URLs resolve from this configuration file. The Browser also accepts
+  pasted `.html`, `.htm`, `.md`, `.markdown`, and `.txt` URLs, but enforces the
+  exact origin hosting DCSPad. Same-tenant HTML runs its scripts; Markdown and
+  text are rendered without script execution.
+- `copilot` controls the external Microsoft 365 Copilot shortcut. It opens one
+  reusable named tab because the service does not permit iframe embedding.
 
 Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
 their existing CDN URLs until local copies are filled in. Hosted mode versions
@@ -185,6 +193,8 @@ SharePoint session there.
 | REPL | Input line under the console — evaluates *inside the current run's iframe*; `↑`/`↓` history; promises are awaited |
 | Stack traces | Frames pointing into your JS are clickable → jumps the editor to that line |
 | Libraries | Left sidebar; checkbox = include on next run, ★ = pin to top; custom URLs (`.js`/`.css`) at the bottom |
+| Browser | Globe button for configured bookmarks; the left Browser tab accepts same-tenant HTML, Markdown, and text URLs and can be maximized |
+| SharePoint toolbar | In hosted mode, click the `SP: Live` chip to hide/show the suite bar and reclaim/restore its space |
 | Network | `_api only` filter; click a row for the response body rendered through the SP inspector |
 | Maximize | ⛶ on the preview or console panel; `Esc` restores |
 | Preview dark mode | ☀/🌙 on the preview header (default dark). Pad-only canvas color injected *before* your CSS, so anything you style wins — flip to light to see how it renders on a typical SharePoint page |

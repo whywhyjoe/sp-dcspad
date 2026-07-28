@@ -173,7 +173,7 @@ await page.waitForSelector('.monaco-editor');
 await check('explicit host adapter enables SharePoint file actions', async () =>
   (await page.locator('#sp-chip-text').textContent()) === 'SP: Live'
   && !(await page.locator('#mi-sp-import').isDisabled())
-  && (await page.locator('#sp-chip').getAttribute('title')).includes('context: host'));
+  && (await page.locator('#sp-chip').getAttribute('data-context')).includes('context: host'));
 
 await page.click('#btn-file');
 await page.click('#mi-sp-import');
@@ -263,7 +263,7 @@ await page.reload();
 await page.waitForSelector('.monaco-editor');
 await check('guarded Modern legacyPageContext works when globals are absent', async () =>
   (await page.locator('#sp-chip-text').textContent()) === 'SP: Live'
-  && (await page.locator('#sp-chip').getAttribute('title')).includes('context: modern-legacy'));
+  && (await page.locator('#sp-chip').getAttribute('data-context')).includes('context: modern-legacy'));
 
 await browser.close();
 exitWithResult();

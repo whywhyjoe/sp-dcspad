@@ -18,12 +18,15 @@ import {
 } from './sp-files.js?v=3';
 import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js';
+import { initDocs } from './docs.js';
+import { initSpChromeToggle } from './sp-chrome.js';
 
 const splashApi = showSplash();
 splashApi.status('Restoring workspace…');
 const configReady = loadAppConfig();
 const state = getState();
 const initialSpContext = applyContextIndicators();
+const spChromeApi = initSpChromeToggle(initialSpContext);
 
 // ---------- layout ----------
 let editorsApi = null;
@@ -105,6 +108,11 @@ initSnippets({
   insertAtCursor: (name, text) => editorsApi.insertAtCursor(name, text),
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
   onStorageError: (msg) => reportStorageError(msg),
+});
+initDocs({
+  config: configResult.config,
+  layoutApi,
+  onError: (msg) => padWarn(msg),
 });
 
 // ---------- runner ----------
@@ -241,25 +249,36 @@ function scheduleAutorun() {
   autorunTimer = setTimeout(run, AUTORUN_DEBOUNCE_MS);
 }
 
-// ---------- dropdown menus (settings, file) ----------
+// ---------- dropdown menus (settings, file, docs) ----------
 const menus = [
   { btn: document.getElementById('btn-settings'), menu: document.getElementById('settings-menu') },
   { btn: document.getElementById('btn-file'), menu: document.getElementById('file-menu') },
+  { btn: document.getElementById('btn-docs'), menu: document.getElementById('docs-menu') },
 ];
 for (const { btn, menu } of menus) {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = menu.hidden;
-    for (const m of menus) m.menu.hidden = true;
+    for (const item of menus) {
+      item.menu.hidden = true;
+      item.btn.setAttribute('aria-expanded', 'false');
+    }
     menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
   });
 }
 document.addEventListener('click', (e) => {
-  for (const { menu } of menus) {
-    if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true;
+  for (const { btn, menu } of menus) {
+    if (!menu.hidden && !menu.contains(e.target)) {
+      menu.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+    }
   }
 });
-const closeFileMenu = () => { document.getElementById('file-menu').hidden = true; };
+const closeFileMenu = () => {
+  document.getElementById('file-menu').hidden = true;
+  document.getElementById('btn-file').setAttribute('aria-expanded', 'false');
+};
 
 // ---------- project save/load + pane exports ----------
 
@@ -553,7 +572,8 @@ const FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" s
 
 function refreshSpMenuState(initial = null) {
   const ctx = initial || getSpContext({ refresh: true });
-  applyContextIndicators();
+  const appliedContext = applyContextIndicators();
+  spChromeApi.setContext(appliedContext);
   for (const item of [spImportMenuItem, spExportMenuItem]) {
     item.disabled = !ctx.live;
     item.title = ctx.live ? '' : 'Requires SP: Live';

@@ -22,6 +22,24 @@
       }
     }
   },
+  "docs": [
+    {
+      "id": "design-system-reference",
+      "title": "Design system reference",
+      "url": "../bsp-design-system/examples/design-system-reference.html",
+      "type": "html"
+    },
+    {
+      "id": "illustration-library",
+      "title": "Illustration library",
+      "url": "../bsp-design-system/bmo-illustration-library/gallery.html",
+      "type": "html"
+    }
+  ],
+  "copilot": {
+    "enabled": true,
+    "url": "https://m365.cloud.microsoft/chat"
+  },
   "assets": {
     "designSystem": {
       "prefer": "local",
