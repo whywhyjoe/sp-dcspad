@@ -108,6 +108,20 @@ await check('hosted: a page loaded directly in edit mode never boots', async () 
   return !result.booted && result.note.includes('inactive while the page is in edit mode');
 });
 
+// The fixture above stands in for the deployed entry file, so assert the
+// real one keeps the same shape — the guard styles the anchor as a block and
+// a bare <a> would pick up SharePoint's link theming and sanitizers.
+await check('hosted: the shipped web-part entry matches the fixture shape', () =>
+  page.evaluate(async () => {
+    const html = await (await fetch('/workbench.webpart.html')).text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const anchor = doc.querySelector('[data-wb-anchor]');
+    const script = doc.querySelector('script[src]');
+    return anchor?.tagName === 'DIV'
+      && !anchor.textContent.trim()
+      && /boot-workbench\.js\?v=\d+/.test(script?.getAttribute('src') || '');
+  }));
+
 await check('hosted: no page errors during the hosted boot', () => pageErrors.length === 0);
 
 await browser.close();

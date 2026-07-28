@@ -1,2 +1,18 @@
-<a data-wb-anchor></a>
+<!-- SP Workbench web-part entry.
+     The Modern Script Editor web part's "Script URL" points at this file
+     (its external mode fetches an HTML file and injects it, re-creating
+     script tags). It should never need to change: all boot logic lives in
+     boot-workbench.js, which resolves the library folder from its own src
+     URL. The one absolute URL below is the only site-specific line.
+
+     The anchor is a plain <div>, matching dcspad.webpart.html: the
+     edit-mode guard in boot-workbench.js writes its "inactive" note into
+     this element with block padding, and a <div> also keeps SharePoint's
+     global link theming and sanitizers away from it.
+-->
+<!-- The ?v= on boot-workbench.js exists because SharePoint serves library
+     files with max-age=86400: bump it whenever boot-workbench.js changes,
+     or browsers keep the old boot for up to a day. Everything below
+     boot-workbench.js self-versions. -->
+<div data-wb-anchor></div>
 <script src="https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/Code/dcspad-live/boot-workbench.js?v=2"></script>
