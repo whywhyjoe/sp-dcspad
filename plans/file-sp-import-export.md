@@ -225,6 +225,10 @@ focus ring, and native `<dialog>` behavior. It has no framework dependency.
 
 - `src/sp-files.js`
   - no DOM and no storage;
+  - shared OData plumbing (`ACCEPT_JSON`, `SpFileError`, `odataPathLiteral`,
+    `resultArray`, `unwrapJson`, `responseMessage`, `requireOk`) now lives in
+    `src/sp-odata.js` (extracted for reuse by the SP Workbench; sp-files.js
+    re-imports it with no behavior change);
   - `listFolder(serverRelativePath)`;
   - `readTextFile(serverRelativePath)`;
   - `writeTextFile(folderPath, fileName, text, { overwrite })`;

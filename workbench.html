@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SP Workbench — SharePoint Site Inspector</title>
+<link rel="stylesheet" href="styles/app.css?v=19">
+<link rel="stylesheet" href="styles/workbench.css?v=1">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🔍</text></svg>">
+</head>
+<body>
+
+<div id="wb-app" class="wb">
+
+  <header class="wb-topbar">
+    <div class="wb-logo" title="SP Workbench">
+      <span class="wb-logo-text">SP<b>WORKBENCH</b></span>
+    </div>
+    <form id="wb-site-form" class="wb-site-form" title="Inspect a different site on this tenant">
+      <label class="wb-site-label" for="wb-site-input">Site</label>
+      <input id="wb-site-input" type="text" autocomplete="url" spellcheck="false"
+             placeholder="/sites/ProjectName — blank = this site">
+      <button id="wb-site-open" class="btn btn-xs" type="submit">Inspect</button>
+      <span id="wb-site-error" class="wb-site-error" role="alert" hidden></span>
+    </form>
+    <div class="wb-topbar-right">
+      <span id="wb-chip" class="sp-chip" title="SharePoint context">
+        <span class="sp-chip-dot"></span>
+        <span id="wb-chip-text">SP: …</span>
+      </span>
+    </div>
+  </header>
+
+  <div id="wb-main" class="wb-main"></div>
+
+  <footer class="wb-statusbar">
+    <span id="wb-status-context" class="status-item">SP: detecting context…</span>
+  </footer>
+
+</div>
+
+<script type="module" src="src/workbench/main.js"></script>
+</body>
+</html>

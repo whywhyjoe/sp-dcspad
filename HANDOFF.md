@@ -234,11 +234,16 @@ inspector, REPL and network capture all work inside the web part; a live
 
 - **Framework/snippet row action icons only on hover** (currently always
   visible at 60% opacity).
-- **Site Inspector / SP diagnostics tools** — already in the roadmap below;
-  explicitly wanted.
+- **Site Inspector / SP diagnostics tools** — v1 SHIPPED as the SP Workbench
+  (below).
 
 ## Roadmap (seams reserved)
 
-- **Site Inspector** sidebar section (renders through `src/inspect/`).
+- **Site Inspector** — v1 shipped as the **SP Workbench** second entry point
+  (`workbench.html` + `boot-workbench.js` + `src/workbench/`, hosted on its
+  own page via `workbench.webpart.html`; see deploy/README.md). v2 seams:
+  mount its views into the pad sidebar, modern-page inspector
+  (CanvasContent1 / text-web-part extraction), quick query builder, edit
+  tools reusing the sp-files.js digest cache.
 - **SharePoint JSON storage** replacing localStorage via the `state.js` seam.
 - **Console remote handles** — lazy live-object expansion.

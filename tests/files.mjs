@@ -265,6 +265,11 @@ await check('explicit host adapter enables SharePoint file actions', async () =>
 await page.click('#btn-file');
 await page.click('#mi-sp-import');
 await page.waitForSelector('#sp-files-dialog[open]');
+// The dialog opens before its folder fetch resolves; assert only once the
+// list has swapped its "Loading SharePoint folder…" placeholder for content,
+// or these checks race the stub under load.
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
 await check('SharePoint picker filters out unsupported files', async () => {
   const text = await page.locator('#sp-files-list').textContent();
   return text.includes('sample.js') && text.includes('existing.css') && !text.includes('ignore.txt');
@@ -330,6 +335,11 @@ await page.click('#pane-replace-confirm');
 await page.click('#btn-file');
 await page.click('#mi-sp-export');
 await page.waitForSelector('#sp-files-dialog[open]');
+// The dialog opens before its folder fetch resolves; assert only once the
+// list has swapped its "Loading SharePoint folder…" placeholder for content,
+// or these checks race the stub under load.
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
 await page.selectOption('#sp-export-pane', 'css');
 await page.fill('#sp-export-name', 'existing.css');
 await page.click('#sp-files-primary');
