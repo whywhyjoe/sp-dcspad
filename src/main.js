@@ -109,9 +109,10 @@ initSnippets({
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
   onStorageError: (msg) => reportStorageError(msg),
 });
-initDocs({
+const docsApi = initDocs({
   config: configResult.config,
   layoutApi,
+  onBrowse: () => openSpFiles('browser'),
   onError: (msg) => padWarn(msg),
 });
 
@@ -545,6 +546,7 @@ document.getElementById('mi-export-all').addEventListener('click', () => {
 // ---------- SharePoint document-library transfer ----------
 const spImportMenuItem = document.getElementById('mi-sp-import');
 const spExportMenuItem = document.getElementById('mi-sp-export');
+const browserBrowse = document.getElementById('browser-browse');
 const spFilesDialog = document.getElementById('sp-files-dialog');
 const spFilesTitle = document.getElementById('sp-files-title');
 const spSiteForm = document.getElementById('sp-site-form');
@@ -578,6 +580,8 @@ function refreshSpMenuState(initial = null) {
     item.disabled = !ctx.live;
     item.title = ctx.live ? '' : 'Requires SP: Live';
   }
+  browserBrowse.disabled = !ctx.live;
+  browserBrowse.title = ctx.live ? 'Browse SharePoint' : 'Requires SP: Live';
   return ctx.live;
 }
 refreshSpMenuState(initialSpContext);
@@ -640,7 +644,9 @@ function renderSpFolder() {
     meta.className = 'sp-file-row__meta';
     meta.textContent = entry.kind === 'folder'
       ? 'folder'
-      : `${entry.pane.toUpperCase()} · ${formatBytes(entry.length)}`;
+      : `${spFilesMode === 'browser'
+          ? entry.browserType === 'markdown' ? 'MD' : entry.browserType === 'text' ? 'TXT' : 'HTML'
+          : entry.pane.toUpperCase()} · ${formatBytes(entry.length)}`;
     row.append(icon, name, meta);
 
     if (entry.kind === 'folder') {
@@ -653,7 +659,7 @@ function renderSpFolder() {
           other.classList.toggle('selected', selected);
           other.setAttribute('aria-selected', String(selected));
         }
-        if (spFilesMode === 'import') {
+        if (spFilesMode === 'import' || spFilesMode === 'browser') {
           spFilesPrimary.disabled = false;
         } else {
           spExportPane.value = entry.pane;
@@ -676,7 +682,10 @@ async function loadSpFolder(path) {
   spFilesEmpty.hidden = true;
   spFilesList.innerHTML = '<div class="sp-files-empty">Loading SharePoint folder…</div>';
   try {
-    spFolder = await listFolder(path, { webUrl: spTargetWebUrl });
+    spFolder = await listFolder(path, {
+      webUrl: spTargetWebUrl,
+      purpose: spFilesMode === 'browser' ? 'browser' : 'code',
+    });
     updateNested('settings', { spFilesFolder: spFolder.path });
     renderSpFolder();
     if (spFilesMode === 'export') spFilesPrimary.disabled = false;
@@ -753,9 +762,21 @@ async function openSpFiles(mode) {
   setSpError('');
   resetOverwriteConfirmation();
   spExportControls.hidden = mode !== 'export';
-  spFilesTitle.textContent =
-    mode === 'import' ? 'Import from SharePoint' : 'Export to SharePoint';
-  spFilesPrimary.textContent = mode === 'import' ? 'Continue' : 'Upload file';
+  spFilesTitle.textContent = mode === 'import'
+    ? 'Import from SharePoint'
+    : mode === 'browser' ? 'Browse SharePoint' : 'Export to SharePoint';
+  spFilesPrimary.textContent = mode === 'import'
+    ? 'Continue'
+    : mode === 'browser' ? 'Open file' : 'Upload file';
+  spFilesList.setAttribute(
+    'aria-label',
+    mode === 'browser'
+      ? 'SharePoint folders and HTML, Markdown, or text files'
+      : 'SharePoint folders and code files',
+  );
+  spFilesEmpty.textContent = mode === 'browser'
+    ? 'No HTML, Markdown, or text files in this folder.'
+    : 'No HTML, CSS, or JavaScript files in this folder.';
   spFilesPrimary.disabled = true;
 
   if (mode === 'export') {
@@ -805,6 +826,7 @@ spSiteUrl.addEventListener('input', () => {
     setSpNotice('');
     if (spFilesMode === 'export' && spFolder) spFilesPrimary.disabled = false;
     if (spFilesMode === 'import' && spSelectedFile) spFilesPrimary.disabled = false;
+    if (spFilesMode === 'browser' && spSelectedFile) spFilesPrimary.disabled = false;
   }
 });
 spExportPane.addEventListener('change', () => {
@@ -818,6 +840,20 @@ spExportName.addEventListener('input', () => {
 
 spFilesPrimary.addEventListener('click', async () => {
   if (spFilesBusy || !spFolder) return;
+
+  if (spFilesMode === 'browser') {
+    if (!spSelectedFile) return;
+    const url = new URL(spTargetWebUrl);
+    // Assign the server-relative path as a pathname so SharePoint-valid
+    // characters such as # stay part of the file path rather than becoming
+    // a URL fragment.
+    url.pathname = spSelectedFile.serverRelativeUrl;
+    url.search = '';
+    url.hash = '';
+    spFilesDialog.close();
+    await docsApi.loadAddress(url.href);
+    return;
+  }
 
   if (spFilesMode === 'import') {
     if (!spSelectedFile) return;

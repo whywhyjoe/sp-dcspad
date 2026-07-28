@@ -8,6 +8,7 @@ const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1400, height: 820 } });
 const primaryUrl = `${origin}/tests/fixtures/missing-local-framework.js`;
 const fallbackUrl = `${origin}/tests/fixtures/testlib.js`;
+let notesFetches = 0;
 
 await page.route('**/docs/design-reference.html', (route) => route.fulfill({
   contentType: 'text/plain',
@@ -19,7 +20,11 @@ await page.route('**/docs/guide.md', (route) => route.fulfill({
 }));
 await page.route('**/docs/notes.txt', (route) => route.fulfill({
   contentType: 'text/plain',
-  body: 'Design tokens\n=============\nUse semantic aliases.',
+  body: `Design tokens\n=============\nUse semantic aliases.\nRefresh ${++notesFetches}`,
+}));
+await page.route('**/docs/history-*.txt', (route) => route.fulfill({
+  contentType: 'text/plain',
+  body: `History ${new URL(route.request().url()).pathname}`,
 }));
 await page.route('**/dcspad.config.json*', (route) => route.fulfill({
   contentType: 'application/json',
@@ -154,6 +159,56 @@ await page.frameLocator('#docs-frame').locator('pre', { hasText: 'Design tokens'
 await check('plain-text resources render safely in the Browser pane', () =>
   page.frameLocator('#docs-frame').locator('pre').textContent()
     .then((text) => text.includes('Use semantic aliases.')));
+await check('Browser history records unique URLs most-recent-first', () =>
+  page.evaluate(async (expected) => {
+    const { getState } = await import('/src/state.js');
+    const history = getState().settings.browserHistory;
+    return history.length === 3
+      && history[0] === expected.notes
+      && history[1] === expected.guide
+      && history[2] === expected.design;
+  }, {
+    notes: `${origin}/docs/notes.txt`,
+    guide: `${origin}/docs/guide.md`,
+    design: `${origin}/docs/design-reference.html`,
+  }));
+
+await page.click('#browser-refresh');
+await page.frameLocator('#docs-frame').locator('pre', { hasText: 'Refresh 2' }).waitFor();
+await check('refresh bypasses the Browser cache without duplicating history', () =>
+  page.evaluate(async (expected) => {
+    const { getState } = await import('/src/state.js');
+    const history = getState().settings.browserHistory;
+    return history.length === 3 && history[0] === expected;
+  }, `${origin}/docs/notes.txt`).then((result) => result && notesFetches === 2));
+
+for (let index = 0; index < 11; index += 1) {
+  const url = `${origin}/docs/history-${index}.txt`;
+  await page.fill('#browser-address-input', url);
+  await page.keyboard.press('Enter');
+  await page.frameLocator('#docs-frame').locator('pre', { hasText: `/docs/history-${index}.txt` }).waitFor();
+}
+await check('Browser history persists only the last 10 URLs', () =>
+  page.evaluate(async (expected) => {
+    const { getState, saveNow } = await import('/src/state.js');
+    saveNow();
+    const history = getState().settings.browserHistory;
+    const stored = JSON.parse(localStorage.getItem('dcspad.v2.workspace')).settings.browserHistory;
+    return history.length === 10
+      && history[0] === expected.first
+      && history[9] === expected.last
+      && stored.length === 10
+      && document.querySelectorAll('#browser-history option').length === 11;
+  }, {
+    first: `${origin}/docs/history-10.txt`,
+    last: `${origin}/docs/history-1.txt`,
+  }));
+
+await page.selectOption('#browser-history', `${origin}/docs/history-5.txt`);
+await page.frameLocator('#docs-frame').locator('pre', { hasText: '/docs/history-5.txt' }).waitFor();
+await check('history dropdown reopens a selected recent URL', () =>
+  page.locator('#browser-address-input').inputValue()
+    .then((value) => value === `${origin}/docs/history-5.txt`));
 
 await page.fill('#browser-address-input', 'https://example.com/guide.html');
 await page.keyboard.press('Enter');

@@ -2,6 +2,8 @@
 // so HTML, Markdown, and text resources are fetched and rendered through srcdoc.
 // A base URL preserves relative CSS, images, scripts, and cross-resource links.
 
+import { getState, updateNested } from './state.js';
+
 const escapeHtml = (value) => String(value)
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -255,7 +257,7 @@ function resourceTitle(url) {
   return filename || 'SharePoint resource';
 }
 
-export function initDocs({ config, layoutApi, onError } = {}) {
+export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
   const configuredDocs = Array.isArray(config?.docs) ? config.docs : [];
   const copilot = config?.copilot || {};
   const main = document.getElementById('main');
@@ -265,12 +267,55 @@ export function initDocs({ config, layoutApi, onError } = {}) {
   const aiGroup = document.getElementById('docs-ai-group');
   const addressForm = document.getElementById('browser-address-form');
   const addressInput = document.getElementById('browser-address-input');
+  const historySelect = document.getElementById('browser-history');
+  const refreshButton = document.getElementById('browser-refresh');
+  const browseButton = document.getElementById('browser-browse');
   let frame = document.getElementById('docs-frame');
   const state = document.getElementById('docs-state');
   const openSource = document.getElementById('btn-docs-open-source');
   const cache = new Map();
   let current = null;
   let loadController = null;
+  let history = [];
+
+  function readHistory() {
+    const values = Array.isArray(getState().settings.browserHistory)
+      ? getState().settings.browserHistory
+      : [];
+    const seen = new Set();
+    history = [];
+    for (const value of values) {
+      try {
+        const href = normalizeTenantUrl(value).href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        history.push(href);
+      } catch { /* Ignore stale or no-longer-supported history entries. */ }
+      if (history.length === 10) break;
+    }
+  }
+
+  function renderHistory() {
+    historySelect.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = history.length ? 'Recent URLs' : 'No recent URLs';
+    historySelect.append(placeholder);
+    for (const url of history) {
+      const option = document.createElement('option');
+      option.value = url;
+      option.textContent = url;
+      historySelect.append(option);
+    }
+    historySelect.value = '';
+    historySelect.disabled = history.length === 0;
+  }
+
+  function recordHistory(url) {
+    history = [url, ...history.filter((item) => item !== url)].slice(0, 10);
+    updateNested('settings', { browserHistory: [...history] });
+    renderHistory();
+  }
 
   function wireFrameLinks(targetFrame) {
     targetFrame.addEventListener('load', () => {
@@ -343,7 +388,7 @@ export function initDocs({ config, layoutApi, onError } = {}) {
     return url;
   }
 
-  function loadAddress(value) {
+  function loadAddress(value, options) {
     try {
       const url = normalizeTenantUrl(value);
       const configured = configuredDocs.find((entry) => entry.url === url.href);
@@ -352,7 +397,7 @@ export function initDocs({ config, layoutApi, onError } = {}) {
         title: resourceTitle(url),
         url: url.href,
         type: 'auto',
-      });
+      }, options);
     } catch (error) {
       setMode('docs');
       showState(error.message || String(error), 'error');
@@ -361,7 +406,7 @@ export function initDocs({ config, layoutApi, onError } = {}) {
     }
   }
 
-  async function loadDoc(doc) {
+  async function loadDoc(doc, { force = false, record = true } = {}) {
     if (!doc?.url) return;
     let url;
     try {
@@ -379,12 +424,14 @@ export function initDocs({ config, layoutApi, onError } = {}) {
     menu.hidden = true;
     document.getElementById('btn-docs').setAttribute('aria-expanded', 'false');
     openSource.disabled = false;
+    refreshButton.disabled = false;
     openSource.title = `Open ${doc.title} source in a new tab`;
     showState(`Loading ${doc.title}…`, 'loading');
     loadController?.abort();
     loadController = new AbortController();
 
     try {
+      if (force) cache.delete(doc.url);
       let source = cache.get(doc.url);
       if (source === undefined) {
         const response = await fetch(doc.url, {
@@ -423,6 +470,7 @@ export function initDocs({ config, layoutApi, onError } = {}) {
       frame = nextFrame;
       frame.srcdoc = srcdoc;
       state.hidden = true;
+      if (record) recordHistory(doc.url);
     } catch (error) {
       if (error.name === 'AbortError') return;
       showState(`Could not load ${doc.title}: ${error.message || error}`, 'error');
@@ -469,6 +517,15 @@ export function initDocs({ config, layoutApi, onError } = {}) {
     event.preventDefault();
     loadAddress(addressInput.value);
   });
+  historySelect.addEventListener('change', () => {
+    const url = historySelect.value;
+    historySelect.value = '';
+    if (url) loadAddress(url);
+  });
+  refreshButton.addEventListener('click', () => {
+    if (current) loadDoc(current, { force: true, record: false });
+  });
+  browseButton.addEventListener('click', () => onBrowse?.());
   openSource.addEventListener('click', () => {
     if (current?.url) window.open(current.url, '_blank', 'noopener,noreferrer');
   });
@@ -476,5 +533,13 @@ export function initDocs({ config, layoutApi, onError } = {}) {
     main.classList.remove('max-preview', 'max-diag', 'max-editor');
     main.classList.toggle('max-docs');
   });
-  return { loadDoc, loadAddress, setMode };
+  readHistory();
+  renderHistory();
+
+  return {
+    loadDoc,
+    loadAddress,
+    refresh: () => current && loadDoc(current, { force: true, record: false }),
+    setMode,
+  };
 }

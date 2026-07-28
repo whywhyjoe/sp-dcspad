@@ -19,7 +19,8 @@ var DEFAULTS = {
     editorFontSize: 13,
     wordWrap: false,
     spFilesWebUrl: "",
-    spFilesFolder: ""
+    spFilesFolder: "",
+    browserHistory: []
   },
   layout: {
     sidebarW: 230,
@@ -3655,6 +3656,13 @@ function pathFromWebUrl(webUrl) {
     return "/";
   }
 }
+function browserTypeForFileName(fileName) {
+  const name = String(fileName || "");
+  if (/\.html?$/i.test(name)) return "html";
+  if (/\.(?:md|markdown)$/i.test(name)) return "markdown";
+  if (/\.txt$/i.test(name)) return "text";
+  return "";
+}
 function odataPathLiteral(value) {
   return encodeURIComponent(String(value)).replaceAll("'", "''");
 }
@@ -3827,7 +3835,7 @@ function createSpFilesClient({
     }
     return (await fetchContextInfo(target.webUrl)).value;
   }
-  async function listFolder2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+  async function listFolder2(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
     const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/Length,Files/TimeLastModified&$expand=Folders,Files`;
@@ -3845,10 +3853,11 @@ function createSpFilesClient({
       kind: "file",
       name: String(item.Name || ""),
       pane: paneForFileName(item.Name),
+      browserType: browserTypeForFileName(item.Name),
       serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
       length: Number(item.Length) || 0,
       modified: item.TimeLastModified || ""
-    })).filter((item) => item.name && item.pane).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    })).filter((item) => item.name && (purpose === "browser" ? item.browserType : item.pane)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
     return {
       path: checkedPath(data.ServerRelativeUrl || path, rootPath),
       rootPath,
@@ -4253,7 +4262,7 @@ function resourceTitle(url) {
   const filename = decodeURIComponent(url.pathname.split("/").pop() || "").trim();
   return filename || "SharePoint resource";
 }
-function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
+function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
   const configuredDocs = Array.isArray(config?.docs) ? config.docs : [];
   const copilot = config?.copilot || {};
   const main = document.getElementById("main");
@@ -4263,12 +4272,51 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
   const aiGroup = document.getElementById("docs-ai-group");
   const addressForm = document.getElementById("browser-address-form");
   const addressInput = document.getElementById("browser-address-input");
+  const historySelect = document.getElementById("browser-history");
+  const refreshButton = document.getElementById("browser-refresh");
+  const browseButton = document.getElementById("browser-browse");
   let frame = document.getElementById("docs-frame");
   const state3 = document.getElementById("docs-state");
   const openSource = document.getElementById("btn-docs-open-source");
   const cache = /* @__PURE__ */ new Map();
   let current = null;
   let loadController = null;
+  let history = [];
+  function readHistory() {
+    const values = Array.isArray(getState().settings.browserHistory) ? getState().settings.browserHistory : [];
+    const seen = /* @__PURE__ */ new Set();
+    history = [];
+    for (const value of values) {
+      try {
+        const href = normalizeTenantUrl(value).href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        history.push(href);
+      } catch {
+      }
+      if (history.length === 10) break;
+    }
+  }
+  function renderHistory() {
+    historySelect.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = history.length ? "Recent URLs" : "No recent URLs";
+    historySelect.append(placeholder);
+    for (const url of history) {
+      const option = document.createElement("option");
+      option.value = url;
+      option.textContent = url;
+      historySelect.append(option);
+    }
+    historySelect.value = "";
+    historySelect.disabled = history.length === 0;
+  }
+  function recordHistory(url) {
+    history = [url, ...history.filter((item) => item !== url)].slice(0, 10);
+    updateNested("settings", { browserHistory: [...history] });
+    renderHistory();
+  }
   function wireFrameLinks(targetFrame) {
     targetFrame.addEventListener("load", () => {
       const doc2 = targetFrame.contentDocument;
@@ -4339,7 +4387,7 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
     }
     return url;
   }
-  function loadAddress(value) {
+  function loadAddress(value, options) {
     try {
       const url = normalizeTenantUrl(value);
       const configured = configuredDocs.find((entry) => entry.url === url.href);
@@ -4348,7 +4396,7 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
         title: resourceTitle(url),
         url: url.href,
         type: "auto"
-      });
+      }, options);
     } catch (error) {
       setMode("docs");
       showState(error.message || String(error), "error");
@@ -4356,7 +4404,7 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
       return Promise.resolve();
     }
   }
-  async function loadDoc2(doc2) {
+  async function loadDoc2(doc2, { force = false, record = true } = {}) {
     if (!doc2?.url) return;
     let url;
     try {
@@ -4374,11 +4422,13 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
     menu.hidden = true;
     document.getElementById("btn-docs").setAttribute("aria-expanded", "false");
     openSource.disabled = false;
+    refreshButton.disabled = false;
     openSource.title = `Open ${doc2.title} source in a new tab`;
     showState(`Loading ${doc2.title}\u2026`, "loading");
     loadController?.abort();
     loadController = new AbortController();
     try {
+      if (force) cache.delete(doc2.url);
       let source = cache.get(doc2.url);
       if (source === void 0) {
         const response = await fetch(doc2.url, {
@@ -4411,6 +4461,7 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
       frame = nextFrame;
       frame.srcdoc = srcdoc;
       state3.hidden = true;
+      if (record) recordHistory(doc2.url);
     } catch (error) {
       if (error.name === "AbortError") return;
       showState(`Could not load ${doc2.title}: ${error.message || error}`, "error");
@@ -4453,6 +4504,15 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
     event.preventDefault();
     loadAddress(addressInput.value);
   });
+  historySelect.addEventListener("change", () => {
+    const url = historySelect.value;
+    historySelect.value = "";
+    if (url) loadAddress(url);
+  });
+  refreshButton.addEventListener("click", () => {
+    if (current) loadDoc2(current, { force: true, record: false });
+  });
+  browseButton.addEventListener("click", () => onBrowse?.());
   openSource.addEventListener("click", () => {
     if (current?.url) window.open(current.url, "_blank", "noopener,noreferrer");
   });
@@ -4460,7 +4520,14 @@ function initDocs({ config, layoutApi: layoutApi2, onError } = {}) {
     main.classList.remove("max-preview", "max-diag", "max-editor");
     main.classList.toggle("max-docs");
   });
-  return { loadDoc: loadDoc2, loadAddress, setMode };
+  readHistory();
+  renderHistory();
+  return {
+    loadDoc: loadDoc2,
+    loadAddress,
+    refresh: () => current && loadDoc2(current, { force: true, record: false }),
+    setMode
+  };
 }
 
 // ../src/sp-chrome.js
@@ -4567,9 +4634,10 @@ initSnippets({
   selectEditorTab: (name) => layoutApi.selectEditorTab(name),
   onStorageError: (msg) => reportStorageError(msg)
 });
-initDocs({
+var docsApi = initDocs({
   config: configResult.config,
   layoutApi,
+  onBrowse: () => openSpFiles("browser"),
   onError: (msg) => padWarn(msg)
 });
 var statusRun = document.getElementById("status-run");
@@ -4930,6 +4998,7 @@ document.getElementById("mi-export-all").addEventListener("click", () => {
 });
 var spImportMenuItem = document.getElementById("mi-sp-import");
 var spExportMenuItem = document.getElementById("mi-sp-export");
+var browserBrowse = document.getElementById("browser-browse");
 var spFilesDialog = document.getElementById("sp-files-dialog");
 var spFilesTitle = document.getElementById("sp-files-title");
 var spSiteForm = document.getElementById("sp-site-form");
@@ -4961,6 +5030,8 @@ function refreshSpMenuState(initial = null) {
     item.disabled = !ctx.live;
     item.title = ctx.live ? "" : "Requires SP: Live";
   }
+  browserBrowse.disabled = !ctx.live;
+  browserBrowse.title = ctx.live ? "Browse SharePoint" : "Requires SP: Live";
   return ctx.live;
 }
 refreshSpMenuState(initialSpContext);
@@ -5013,7 +5084,7 @@ function renderSpFolder() {
     name.textContent = entry.name;
     const meta = document.createElement("span");
     meta.className = "sp-file-row__meta";
-    meta.textContent = entry.kind === "folder" ? "folder" : `${entry.pane.toUpperCase()} \xB7 ${formatBytes(entry.length)}`;
+    meta.textContent = entry.kind === "folder" ? "folder" : `${spFilesMode === "browser" ? entry.browserType === "markdown" ? "MD" : entry.browserType === "text" ? "TXT" : "HTML" : entry.pane.toUpperCase()} \xB7 ${formatBytes(entry.length)}`;
     row.append(icon, name, meta);
     if (entry.kind === "folder") {
       row.addEventListener("click", () => loadSpFolder(entry.serverRelativeUrl));
@@ -5025,7 +5096,7 @@ function renderSpFolder() {
           other.classList.toggle("selected", selected);
           other.setAttribute("aria-selected", String(selected));
         }
-        if (spFilesMode === "import") {
+        if (spFilesMode === "import" || spFilesMode === "browser") {
           spFilesPrimary.disabled = false;
         } else {
           spExportPane.value = entry.pane;
@@ -5047,7 +5118,10 @@ async function loadSpFolder(path) {
   spFilesEmpty.hidden = true;
   spFilesList.innerHTML = '<div class="sp-files-empty">Loading SharePoint folder\u2026</div>';
   try {
-    spFolder = await listFolder(path, { webUrl: spTargetWebUrl });
+    spFolder = await listFolder(path, {
+      webUrl: spTargetWebUrl,
+      purpose: spFilesMode === "browser" ? "browser" : "code"
+    });
     updateNested("settings", { spFilesFolder: spFolder.path });
     renderSpFolder();
     if (spFilesMode === "export") spFilesPrimary.disabled = false;
@@ -5109,8 +5183,13 @@ async function openSpFiles(mode) {
   setSpError("");
   resetOverwriteConfirmation();
   spExportControls.hidden = mode !== "export";
-  spFilesTitle.textContent = mode === "import" ? "Import from SharePoint" : "Export to SharePoint";
-  spFilesPrimary.textContent = mode === "import" ? "Continue" : "Upload file";
+  spFilesTitle.textContent = mode === "import" ? "Import from SharePoint" : mode === "browser" ? "Browse SharePoint" : "Export to SharePoint";
+  spFilesPrimary.textContent = mode === "import" ? "Continue" : mode === "browser" ? "Open file" : "Upload file";
+  spFilesList.setAttribute(
+    "aria-label",
+    mode === "browser" ? "SharePoint folders and HTML, Markdown, or text files" : "SharePoint folders and code files"
+  );
+  spFilesEmpty.textContent = mode === "browser" ? "No HTML, Markdown, or text files in this folder." : "No HTML, CSS, or JavaScript files in this folder.";
   spFilesPrimary.disabled = true;
   if (mode === "export") {
     const activePane = ["html", "css", "js"].includes(getState().layout.editorTab) ? getState().layout.editorTab : "html";
@@ -5152,6 +5231,7 @@ spSiteUrl.addEventListener("input", () => {
     setSpNotice("");
     if (spFilesMode === "export" && spFolder) spFilesPrimary.disabled = false;
     if (spFilesMode === "import" && spSelectedFile) spFilesPrimary.disabled = false;
+    if (spFilesMode === "browser" && spSelectedFile) spFilesPrimary.disabled = false;
   }
 });
 spExportPane.addEventListener("change", () => {
@@ -5164,6 +5244,16 @@ spExportName.addEventListener("input", () => {
 });
 spFilesPrimary.addEventListener("click", async () => {
   if (spFilesBusy || !spFolder) return;
+  if (spFilesMode === "browser") {
+    if (!spSelectedFile) return;
+    const url = new URL(spTargetWebUrl);
+    url.pathname = spSelectedFile.serverRelativeUrl;
+    url.search = "";
+    url.hash = "";
+    spFilesDialog.close();
+    await docsApi.loadAddress(url.href);
+    return;
+  }
   if (spFilesMode === "import") {
     if (!spSelectedFile) return;
     spFilesBusy = true;

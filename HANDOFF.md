@@ -135,6 +135,11 @@ inspector, REPL and network capture all work inside the web part; a live
 - The address bar accepts `.html`, `.htm`, `.md`, `.markdown`, and `.txt`.
   Every configured, pasted, and followed URL must match `location.origin`,
   which is the current SharePoint tenant origin in hosted mode.
+- The address bar persists the 10 most recent unique URLs, provides a
+  cache-bypassing refresh action, and opens the existing SharePoint file
+  dialog in Browser mode. That mode retains the editable site URL, same-tenant
+  enforcement, remembered folder, parent/refresh navigation, and folder
+  traversal used by import/export, while filtering to HTML/Markdown/text.
 - SharePoint HTML is fetched as text and rendered through `srcdoc` with a base
   URL so relative assets, links, and scripts work despite SharePoint download
   MIME behavior. Tenant HTML is trusted to run scripts; Markdown and plain text
@@ -144,7 +149,9 @@ inspector, REPL and network capture all work inside the web part; a live
 - `src/sp-chrome.js` owns the hosted-only `SP: Live` button behavior and
   `src/docs.js` owns Browser rendering/navigation. `tests/hosted.mjs` covers
   suite-bar reflow; `tests/config.mjs` covers Browser formats, scripts,
-  maximize, tenant rejection, and the Copilot launcher.
+  history, refresh, maximize, tenant rejection, and the Copilot launcher.
+  `tests/files.mjs` covers Browser-mode subsite switching, folder traversal,
+  resource filtering, and selection.
 
 ### Alpine intelligence (2026-07-26)
 

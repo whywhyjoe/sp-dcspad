@@ -1,8 +1,8 @@
-// SharePoint document-library text transfer.
+// SharePoint document-library text transfer and Browser resource discovery.
 //
 // This module has no DOM or storage ownership. It operates only on HTML, CSS,
-// and JavaScript files in a selected same-tenant SharePoint web and keeps all
-// paths inside that web's server-relative boundary.
+// JavaScript, Markdown, and text files in a selected same-tenant SharePoint web
+// and keeps all paths inside that web's server-relative boundary.
 
 import { getSpContext } from './bridge/sp-context.js';
 import { MAX_IMPORT_BYTES, paneForFileName } from './io.js?v=2';
@@ -33,6 +33,14 @@ function pathFromWebUrl(webUrl) {
   } catch {
     return '/';
   }
+}
+
+function browserTypeForFileName(fileName) {
+  const name = String(fileName || '');
+  if (/\.html?$/i.test(name)) return 'html';
+  if (/\.(?:md|markdown)$/i.test(name)) return 'markdown';
+  if (/\.txt$/i.test(name)) return 'text';
+  return '';
 }
 
 function odataPathLiteral(value) {
@@ -235,7 +243,10 @@ export function createSpFilesClient({
     return (await fetchContextInfo(target.webUrl)).value;
   }
 
-  async function listFolder(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+  async function listFolder(
+    serverRelativePath,
+    { webUrl: targetWebUrl = '', purpose = 'code' } = {},
+  ) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
     const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(`
@@ -262,11 +273,13 @@ export function createSpFilesClient({
         kind: 'file',
         name: String(item.Name || ''),
         pane: paneForFileName(item.Name),
+        browserType: browserTypeForFileName(item.Name),
         serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
         length: Number(item.Length) || 0,
         modified: item.TimeLastModified || '',
       }))
-      .filter((item) => item.name && item.pane)
+      .filter((item) =>
+        item.name && (purpose === 'browser' ? item.browserType : item.pane))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     return {
       path: checkedPath(data.ServerRelativeUrl || path, rootPath),

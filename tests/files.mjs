@@ -68,13 +68,18 @@ await page.route('**/_api/**', async (route) => {
   apiRequests.push(url);
   if (url.includes('/_api/contextinfo')) {
     const otherSite = url.includes('/sites/other/_api/contextinfo');
+    const browserSite = url.includes('/sites/browser/_api/contextinfo');
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        FormDigestValue: otherSite ? 'OTHER-DIGEST' : 'TEST-DIGEST',
+        FormDigestValue: otherSite
+          ? 'OTHER-DIGEST'
+          : browserSite ? 'BROWSER-DIGEST' : 'TEST-DIGEST',
         FormDigestTimeoutSeconds: 1800,
-        WebFullUrl: otherSite ? `${origin}/sites/other` : origin,
+        WebFullUrl: otherSite
+          ? `${origin}/sites/other`
+          : browserSite ? `${origin}/sites/browser` : origin,
         SiteFullUrl: origin,
       }),
     });
@@ -106,11 +111,53 @@ await page.route('**/_api/**', async (route) => {
   }
   if (url.includes('/GetFolderByServerRelativePath(')) {
     const otherSite = url.includes('/sites/other/_api/');
+    const browserSite = url.includes('/sites/browser/_api/');
+    const browserDocsFolder = /sites%2Fbrowser%2FDocs/i.test(url);
     const hashFolder = /Code%23One/i.test(url);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(otherSite ? {
+      body: JSON.stringify(browserDocsFolder ? {
+        ServerRelativeUrl: '/sites/browser/Docs',
+        Folders: [],
+        Files: [
+          {
+            Name: 'guide.md',
+            ServerRelativeUrl: '/sites/browser/Docs/guide.md',
+            Length: 72,
+          },
+          {
+            Name: 'notes.txt',
+            ServerRelativeUrl: '/sites/browser/Docs/notes.txt',
+            Length: 28,
+          },
+          {
+            Name: 'styles.css',
+            ServerRelativeUrl: '/sites/browser/Docs/styles.css',
+            Length: 34,
+          },
+        ],
+      } : browserSite ? {
+        ServerRelativeUrl: '/sites/browser',
+        Folders: [
+          {
+            Name: 'Docs',
+            ServerRelativeUrl: '/sites/browser/Docs',
+          },
+        ],
+        Files: [
+          {
+            Name: 'overview.html',
+            ServerRelativeUrl: '/sites/browser/overview.html',
+            Length: 112,
+          },
+          {
+            Name: 'app.js',
+            ServerRelativeUrl: '/sites/browser/app.js',
+            Length: 44,
+          },
+        ],
+      } : otherSite ? {
         ServerRelativeUrl: '/sites/other',
         Folders: [],
         Files: [
@@ -143,6 +190,11 @@ await page.route('**/_api/**', async (route) => {
   }
   await route.fulfill({ status: 404, body: 'not stubbed' });
 });
+await page.route('**/sites/browser/Docs/guide.md', (route) => route.fulfill({
+  status: 200,
+  contentType: 'text/plain',
+  body: '# Browser-picked guide\n\nOpened from a different SharePoint subsite.',
+}));
 await page.addInitScript(() => {
   if (sessionStorage.getItem('dcspad-context-test') === 'modern') {
     window.spModuleLoader = {
@@ -257,6 +309,49 @@ await check('confirmed SharePoint upload sends pane text and a digest', () =>
   && upload?.digest === 'OTHER-DIGEST'
   && upload?.url.includes('/sites/other/_api/')
   && /overwrite=true/i.test(upload.url));
+
+await page.click('#extras-tabs [data-extra="docs"]');
+await page.click('#browser-browse');
+await page.waitForSelector('#sp-files-dialog[open]');
+await check('Browser uses the shared SharePoint picker in resource mode', async () =>
+  (await page.locator('#sp-files-title').textContent()) === 'Browse SharePoint'
+  && (await page.locator('#sp-files-primary').textContent()) === 'Open file'
+  && (await page.locator('#sp-files-empty').textContent())
+    === 'No HTML, Markdown, or text files in this folder.');
+
+await page.fill('#sp-site-url', `${origin}/sites/browser`);
+await page.click('#sp-site-open');
+await page.waitForFunction(() =>
+  document.querySelector('#sp-folder-path')?.textContent === '/sites/browser');
+await check('Browser picker accepts a different same-tenant subsite and filters its files', async () => {
+  const text = await page.locator('#sp-files-list').textContent();
+  return (await page.locator('#sp-site-url').inputValue()) === `${origin}/sites/browser`
+    && text.includes('Docs')
+    && text.includes('overview.html')
+    && !text.includes('app.js');
+});
+
+await page.locator('.sp-file-row', { hasText: 'Docs' }).click();
+await page.waitForFunction(() =>
+  document.querySelector('#sp-folder-path')?.textContent === '/sites/browser/Docs');
+await check('Browser picker traverses folders and shows only HTML, Markdown, and text', async () => {
+  const text = await page.locator('#sp-files-list').textContent();
+  return text.includes('guide.md')
+    && text.includes('notes.txt')
+    && !text.includes('styles.css');
+});
+
+await page.locator('.sp-file-row', { hasText: 'guide.md' }).click();
+await page.click('#sp-files-primary');
+await page.frameLocator('#docs-frame')
+  .locator('h1', { hasText: 'Browser-picked guide' }).waitFor();
+await check('picked SharePoint resource opens in Browser and joins URL history', () =>
+  page.evaluate(async (expected) => {
+    const { getState } = await import('/src/state.js');
+    return !document.getElementById('sp-files-dialog').open
+      && document.getElementById('browser-address-input').value === expected
+      && getState().settings.browserHistory[0] === expected;
+  }, `${origin}/sites/browser/Docs/guide.md`));
 
 await page.evaluate(() => sessionStorage.setItem('dcspad-context-test', 'modern'));
 await page.reload();
