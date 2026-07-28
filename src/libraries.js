@@ -37,6 +37,7 @@ let appConfig = null;
 let onChangeCb = null;
 let onStorageErrorCb = null;
 let filterText = '';
+let draggedEntryId = null;
 
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 const entryFromUrl = (url, name) => ({
@@ -187,8 +188,7 @@ function render() {
 }
 
 const TOOL_ICONS = {
-  up: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg>',
-  down: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/></svg>',
+  drag: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="3.5" r="1" fill="currentColor"/><circle cx="11" cy="3.5" r="1" fill="currentColor"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="11" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12.5" r="1" fill="currentColor"/><circle cx="11" cy="12.5" r="1" fill="currentColor"/></svg>',
   pin: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z"/></svg>',
   pinFilled: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z" fill="currentColor"/></svg>',
   del: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>',
@@ -197,6 +197,7 @@ const TOOL_ICONS = {
 function catalogItem(entry, libs, pinned) {
   const effective = applyFrameworkConfig(entry, appConfig);
   const item = el('label', 'lib-item');
+  item.dataset.libraryId = entry.id;
   const chk = document.createElement('input');
   chk.type = 'checkbox';
   chk.checked = libs.enabled.includes(entry.id);
@@ -226,6 +227,33 @@ function catalogItem(entry, libs, pinned) {
     onChangeCb?.();
   });
 
+  // A visible drag handle replaces the old up/down buttons. Native drag and
+  // drop handles pointer ordering; Ctrl/Cmd+Arrow keeps the same operation
+  // available to keyboard users. Pinned and unpinned groups reorder within
+  // themselves so the visual grouping remains truthful.
+  const dragHandle = document.createElement('button');
+  dragHandle.type = 'button';
+  dragHandle.className = 'lib-drag';
+  dragHandle.draggable = true;
+  dragHandle.innerHTML = TOOL_ICONS.drag;
+  dragHandle.title = 'Drag to reorder (injection order); Ctrl/⌘ + ↑/↓ also moves';
+  dragHandle.setAttribute('aria-label', `Reorder ${effective.name}`);
+  dragHandle.addEventListener('click', (e) => e.preventDefault());
+  dragHandle.addEventListener('dragstart', (e) => {
+    draggedEntryId = entry.id;
+    item.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', entry.id);
+    e.dataTransfer.setDragImage(item, 12, item.offsetHeight / 2);
+  });
+  dragHandle.addEventListener('dragend', clearDragState);
+  dragHandle.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    moveWithinGroup(entry, pinned, e.key === 'ArrowUp' ? -1 : 1);
+  });
+  wireDropTarget(item, entry, pinned);
+
   // Row tools — real buttons so keyboard focus can reach them (the hover
   // reveal is focus-within-aware). All live inside the <label>, so each
   // must preventDefault to stop the click from also toggling the checkbox.
@@ -245,8 +273,6 @@ function catalogItem(entry, libs, pinned) {
   // must never splice by a stale position.
   const liveIdx = () => catalog.items.indexOf(entry);
   tools.append(
-    tool('lib-move', TOOL_ICONS.up, 'Move up (injection order)', () => moveEntry(liveIdx(), -1)),
-    tool('lib-move', TOOL_ICONS.down, 'Move down (injection order)', () => moveEntry(liveIdx(), +1)),
     tool('lib-pin' + (pinned ? ' pinned' : ''), pinned ? TOOL_ICONS.pinFilled : TOOL_ICONS.pin, pinned ? 'Unpin' : 'Pin to top', () => {
       const pins = new Set(getState().libraries.pinned);
       pinned ? pins.delete(entry.id) : pins.add(entry.id);
@@ -269,18 +295,67 @@ function catalogItem(entry, libs, pinned) {
     }),
   );
 
-  item.append(chk, name, tools);
+  item.append(dragHandle, chk, name, tools);
   return item;
 }
 
-function moveEntry(idx, delta) {
-  const to = idx + delta;
-  if (idx < 0 || to < 0 || to >= catalog.items.length) return;
-  const [entry] = catalog.items.splice(idx, 1);
-  catalog.items.splice(to, 0, entry);
+function clearDragState() {
+  draggedEntryId = null;
+  document.querySelectorAll('.lib-item.dragging, .lib-item.drop-before, .lib-item.drop-after')
+    .forEach((row) => row.classList.remove('dragging', 'drop-before', 'drop-after'));
+}
+
+function entryIsPinned(entryId) {
+  return getState().libraries.pinned.includes(entryId);
+}
+
+function wireDropTarget(item, entry, pinned) {
+  item.addEventListener('dragover', (e) => {
+    if (!draggedEntryId || draggedEntryId === entry.id || entryIsPinned(draggedEntryId) !== pinned) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const after = e.clientY >= item.getBoundingClientRect().top + item.offsetHeight / 2;
+    item.classList.toggle('drop-before', !after);
+    item.classList.toggle('drop-after', after);
+  });
+  item.addEventListener('dragleave', (e) => {
+    if (!item.contains(e.relatedTarget)) item.classList.remove('drop-before', 'drop-after');
+  });
+  item.addEventListener('drop', (e) => {
+    if (!draggedEntryId || entryIsPinned(draggedEntryId) !== pinned) return;
+    e.preventDefault();
+    const after = item.classList.contains('drop-after');
+    const sourceId = draggedEntryId;
+    clearDragState();
+    reorderEntry(sourceId, entry.id, after);
+  });
+}
+
+function reorderEntry(sourceId, targetId, after) {
+  if (sourceId === targetId) return;
+  const sourceIdx = catalog.items.findIndex((it) => it.id === sourceId);
+  if (sourceIdx === -1) return;
+  const [entry] = catalog.items.splice(sourceIdx, 1);
+  const targetIdx = catalog.items.findIndex((it) => it.id === targetId);
+  if (targetIdx === -1) {
+    catalog.items.splice(sourceIdx, 0, entry);
+    return;
+  }
+  catalog.items.splice(targetIdx + (after ? 1 : 0), 0, entry);
   persistCatalog();
   render();
   onChangeCb?.();   // injection order changed — rerun matters
+}
+
+function moveWithinGroup(entry, pinned, delta) {
+  const pinnedIds = new Set(getState().libraries.pinned);
+  const peers = catalog.items.filter((it) => pinnedIds.has(it.id) === pinned);
+  const idx = peers.indexOf(entry);
+  const target = peers[idx + delta];
+  if (!target) return;
+  reorderEntry(entry.id, target.id, delta > 0);
+  requestAnimationFrame(() =>
+    document.querySelector(`.lib-item[data-library-id="${CSS.escape(entry.id)}"] .lib-drag`)?.focus());
 }
 
 // Ordered list for the runner: enabled entries in catalog order.

@@ -55,6 +55,8 @@ vendor/monaco/            generated Monaco runtime, workers, CSS/font + PnPjs ty
 vendor/intelligence/      generated BMO design-token/class + Fluent icon data
 tools/build-monaco.mjs    reproducible Monaco/PnPjs vendor build; never hand-edit its output
 tools/build-design-intelligence.mjs deterministic BMO CSS/class + Fluent icon generator
+tools/build-starter-snippets.mjs generates and catalog-validates examples/dcspad-starter-snippets.json
+examples/                 import-ready starter snippet library + usage/prerequisite notes
 src/main.js               bootstrap; wires every module; run() lives here
 src/layout.js             splitters, tabs, collapse/maximize; persists via state.layout
 src/editors.js            Monaco adapter; 3 models, Mod-Enter, PnPjs types, stack jumps

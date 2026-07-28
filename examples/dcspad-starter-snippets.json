@@ -1,0 +1,227 @@
+{
+  "v": 1,
+  "items": [
+    {
+      "id": "starter_pnp_context",
+      "name": "PnP · Context + current web",
+      "lang": "js",
+      "code": "(async () => {\n  const { sp } = pnp;\n  const ctx = window._spPageContextInfo;\n\n  if (!ctx?.webAbsoluteUrl) {\n    throw new Error(\"SharePoint context is unavailable. Run this from the hosted DCSPad.\");\n  }\n\n  // DCSPad already injects _spPageContextInfo and <base>, so PnPjs normally\n  // works without setup. Keeping baseUrl explicit makes this snippet portable.\n  sp.setup({ sp: { baseUrl: ctx.webAbsoluteUrl } });\n\n  const web = await sp.web.select(\"Id\", \"Title\", \"Url\").get();\n  console.log({\n    siteId: ctx.siteId,\n    webId: ctx.webId,\n    serverRelativeUrl: ctx.webServerRelativeUrl,\n    web,\n  });\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_current_user",
+      "name": "PnP · Current user + groups",
+      "lang": "js",
+      "code": "(async () => {\n  const { sp } = pnp;\n  const user = await sp.web.currentUser\n    .select(\"Id\", \"Title\", \"Email\", \"LoginName\", \"IsSiteAdmin\")\n    .get();\n  const groups = await sp.web.currentUser.groups\n    .select(\"Id\", \"Title\", \"LoginName\")\n    .orderBy(\"Title\")\n    .get();\n\n  console.log({ user, groups });\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_lists",
+      "name": "PnP · Discover visible lists",
+      "lang": "js",
+      "code": "(async () => {\n  const lists = await pnp.sp.web.lists\n    .filter(\"Hidden eq false\")\n    .select(\"Id\", \"Title\", \"BaseTemplate\", \"ItemCount\", \"RootFolder/ServerRelativeUrl\")\n    .expand(\"RootFolder\")\n    .orderBy(\"Title\")\n    .get();\n\n  console.table(lists.map((list) => ({\n    title: list.Title,\n    id: list.Id,\n    template: list.BaseTemplate,\n    items: list.ItemCount,\n    url: list.RootFolder?.ServerRelativeUrl,\n  })));\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_fields",
+      "name": "PnP · Discover list fields",
+      "lang": "js",
+      "code": "(async () => {\n  const listTitle = \"YOUR LIST TITLE\";\n  const fields = await pnp.sp.web.lists.getByTitle(listTitle).fields\n    .filter(\"Hidden eq false\")\n    .select(\n      \"Id\",\n      \"Title\",\n      \"InternalName\",\n      \"TypeAsString\",\n      \"Required\",\n      \"ReadOnlyField\"\n    )\n    .orderBy(\"Title\")\n    .get();\n\n  console.table(fields);\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_items_query",
+      "name": "PnP · Query list items",
+      "lang": "js",
+      "code": "(async () => {\n  const listTitle = \"YOUR LIST TITLE\";\n  const items = await pnp.sp.web.lists.getByTitle(listTitle).items\n    .select(\"Id\", \"Title\", \"Modified\", \"Editor/Title\", \"Editor/Email\")\n    .expand(\"Editor\")\n    .filter(\"Id gt 0\")\n    .orderBy(\"Modified\", false)\n    .top(50)\n    .get();\n\n  console.table(items);\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_item_crud",
+      "name": "PnP · Add, update, and optionally delete item",
+      "lang": "js",
+      "code": "(async () => {\n  // Use a disposable list while testing writes.\n  const list = pnp.sp.web.lists.getByTitle(\"DCSPad Sandbox\");\n\n  const added = await list.items.add({\n    Title: \"Created from DCSPad\",\n  });\n  const itemId = added.data.Id;\n  console.log(\"Added\", added.data);\n\n  await list.items.getById(itemId).update({\n    Title: \"Updated from DCSPad\",\n  });\n  console.log(\"Updated\", await list.items.getById(itemId).select(\"Id\", \"Title\").get());\n\n  // Destructive: uncomment only when you intend to remove the test item.\n  // await list.items.getById(itemId).delete();\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_paging",
+      "name": "PnP · Read every paged item",
+      "lang": "js",
+      "code": "(async () => {\n  const list = pnp.sp.web.lists.getByTitle(\"YOUR LIST TITLE\");\n  let page = await list.items\n    .select(\"Id\", \"Title\")\n    .orderBy(\"Id\")\n    .top(100)\n    .getPaged();\n  const allItems = [...page.results];\n\n  while (page.hasNext) {\n    page = await page.getNext();\n    allItems.push(...page.results);\n    console.log(\"Loaded\", allItems.length);\n  }\n\n  console.table(allItems);\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_batch",
+      "name": "PnP · Batch independent reads",
+      "lang": "js",
+      "code": "(async () => {\n  const { sp } = pnp;\n  const batch = sp.web.createBatch();\n\n  const webRequest = sp.web\n    .select(\"Id\", \"Title\", \"Url\")\n    .inBatch(batch)\n    .get();\n  const listsRequest = sp.web.lists\n    .filter(\"Hidden eq false\")\n    .select(\"Id\", \"Title\", \"ItemCount\")\n    .top(25)\n    .inBatch(batch)\n    .get();\n\n  await batch.execute();\n  const [web, lists] = await Promise.all([webRequest, listsRequest]);\n  console.log({ web, lists });\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_search",
+      "name": "PnP · SharePoint search",
+      "lang": "js",
+      "code": "(async () => {\n  const results = await pnp.sp.search({\n    Querytext: \"YOUR SEARCH TERMS\",\n    RowLimit: 25,\n    TrimDuplicates: false,\n    SelectProperties: [\n      \"Title\",\n      \"Path\",\n      \"FileType\",\n      \"Author\",\n      \"LastModifiedTime\",\n    ],\n  });\n\n  console.table(results.PrimarySearchResults);\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_ensure_user",
+      "name": "PnP · Ensure a user",
+      "lang": "js",
+      "code": "(async () => {\n  const loginOrEmail = \"person@example.com\";\n  const ensured = await pnp.sp.web.ensureUser(loginOrEmail);\n  console.log(\"Ensured user\", ensured.data);\n\n  // Optional: add the ensured login to a site group.\n  // await pnp.sp.web.siteGroups\n  //   .getByName(\"YOUR SHAREPOINT GROUP\")\n  //   .users.add(ensured.data.LoginName);\n})().catch(console.error);\n"
+    },
+    {
+      "id": "starter_pnp_upload_html",
+      "name": "PnP upload · File picker (HTML)",
+      "lang": "html",
+      "code": "<div class=\"field\">\n  <label class=\"field__label\" for=\"file-upload\">Choose a file</label>\n  <input class=\"input\" id=\"file-upload\" type=\"file\">\n  <p class=\"field__hint\">The paired JS snippet uploads this file to the configured folder.</p>\n</div>\n<button class=\"btn btn--primary\" id=\"upload-file\" type=\"button\">Upload</button>\n<div id=\"upload-status\" role=\"status\" aria-live=\"polite\"></div>\n"
+    },
+    {
+      "id": "starter_pnp_upload_js",
+      "name": "PnP upload · Upload selected file (JS)",
+      "lang": "js",
+      "code": "document.getElementById(\"upload-file\").addEventListener(\"click\", async () => {\n  const input = document.getElementById(\"file-upload\");\n  const status = document.getElementById(\"upload-status\");\n  const file = input.files?.[0];\n  if (!file) {\n    status.textContent = \"Choose a file first.\";\n    return;\n  }\n\n  try {\n    status.textContent = \"Uploading…\";\n    const folderUrl = \"/sites/YOUR-SITE/Shared Documents\";\n    const result = await pnp.sp.web\n      .getFolderByServerRelativeUrl(folderUrl)\n      .files.add(file.name, file, true);\n    status.textContent = \"Uploaded: \" + result.data.ServerRelativeUrl;\n    console.log(result);\n  } catch (error) {\n    status.textContent = \"Upload failed: \" + error.message;\n    console.error(error);\n  }\n});\n"
+    },
+    {
+      "id": "starter_alpine_disclosure",
+      "name": "Alpine · Accessible disclosure",
+      "lang": "html",
+      "code": "<section x-data=\"{ open: false }\">\n  <button\n    type=\"button\"\n    class=\"btn btn--secondary\"\n    :aria-expanded=\"open\"\n    aria-controls=\"disclosure-panel\"\n    @click=\"open = !open\">\n    <fluent-icon name=\"chevron-down-20-regular\" aria-hidden=\"true\"></fluent-icon>\n    Details\n  </button>\n\n  <div id=\"disclosure-panel\" x-show=\"open\" @keydown.escape.window=\"open = false\">\n    <p>This content is controlled entirely by Alpine state.</p>\n  </div>\n</section>\n"
+    },
+    {
+      "id": "starter_alpine_counter_html",
+      "name": "Alpine component · Counter (HTML)",
+      "lang": "html",
+      "code": "<section x-data=\"counter\">\n  <p>Count: <strong x-text=\"count\"></strong></p>\n  <div class=\"toolbar\">\n    <button class=\"btn btn--secondary\" type=\"button\" @click=\"decrement\">−</button>\n    <button class=\"btn btn--primary\" type=\"button\" @click=\"increment\">＋</button>\n    <button class=\"btn btn--subtle\" type=\"button\" @click=\"reset\">Reset</button>\n  </div>\n</section>\n"
+    },
+    {
+      "id": "starter_alpine_counter_js",
+      "name": "Alpine component · Counter (JS)",
+      "lang": "js",
+      "code": "Alpine.data(\"counter\", () => ({\n  count: 0,\n  increment() {\n    this.count += 1;\n  },\n  decrement() {\n    this.count -= 1;\n  },\n  reset() {\n    this.count = 0;\n  },\n}));\n"
+    },
+    {
+      "id": "starter_alpine_filter",
+      "name": "Alpine · Filter a local collection",
+      "lang": "html",
+      "code": "<section\n  x-data=\"{\n    query: '',\n    people: [\n      { id: 1, name: 'Ada Lovelace', team: 'Engineering' },\n      { id: 2, name: 'Grace Hopper', team: 'Research' },\n      { id: 3, name: 'Katherine Johnson', team: 'Operations' }\n    ],\n    get filtered() {\n      const q = this.query.trim().toLowerCase();\n      return q\n        ? this.people.filter((person) =>\n            (person.name + ' ' + person.team).toLowerCase().includes(q))\n        : this.people;\n    }\n  }\">\n  <label class=\"field\">\n    <span class=\"field__label\">Filter people</span>\n    <input class=\"input\" type=\"search\" x-model.debounce.200ms=\"query\">\n  </label>\n\n  <ul>\n    <template x-for=\"person in filtered\" :key=\"person.id\">\n      <li>\n        <strong x-text=\"person.name\"></strong>\n        <span x-text=\"person.team\"></span>\n      </li>\n    </template>\n  </ul>\n  <p x-show=\"filtered.length === 0\">No matching people.</p>\n</section>\n"
+    },
+    {
+      "id": "starter_alpine_store_js",
+      "name": "Alpine store · Shared filters (JS)",
+      "lang": "js",
+      "code": "Alpine.store(\"filters\", {\n  query: \"\",\n  status: \"all\",\n  reset() {\n    this.query = \"\";\n    this.status = \"all\";\n  },\n});\n"
+    },
+    {
+      "id": "starter_alpine_store_html",
+      "name": "Alpine store · Shared filters (HTML)",
+      "lang": "html",
+      "code": "<div class=\"filterbar\">\n  <label class=\"field\">\n    <span class=\"field__label\">Search</span>\n    <input class=\"input\" type=\"search\" x-model.debounce.250ms=\"$store.filters.query\">\n  </label>\n  <label class=\"field\">\n    <span class=\"field__label\">Status</span>\n    <select class=\"select\" x-model=\"$store.filters.status\">\n      <option value=\"all\">All</option>\n      <option value=\"active\">Active</option>\n      <option value=\"closed\">Closed</option>\n    </select>\n  </label>\n  <button class=\"btn btn--subtle\" type=\"button\" @click=\"$store.filters.reset()\">Reset</button>\n</div>\n"
+    },
+    {
+      "id": "starter_alpine_sp_lists_html",
+      "name": "Alpine + PnP · List browser (HTML)",
+      "lang": "html",
+      "code": "<section x-data=\"spListBrowser\" x-init=\"load()\">\n  <div class=\"section-head section-head--flex\">\n    <div>\n      <p class=\"section-head__eyebrow\">SharePoint</p>\n      <h2 class=\"section-head__title\">Visible lists</h2>\n    </div>\n    <button class=\"btn btn--secondary\" type=\"button\" @click=\"load()\" :disabled=\"loading\">\n      Refresh\n    </button>\n  </div>\n\n  <p x-show=\"loading\" role=\"status\">Loading lists…</p>\n  <div class=\"msgbar msgbar--danger\" x-show=\"error\" role=\"alert\">\n    <div class=\"msgbar__body\" x-text=\"error\"></div>\n  </div>\n  <table class=\"grid\" x-show=\"!loading && !error\">\n    <thead><tr><th>Title</th><th class=\"num\">Items</th></tr></thead>\n    <tbody>\n      <template x-for=\"list in lists\" :key=\"list.Id\">\n        <tr><td x-text=\"list.Title\"></td><td class=\"num\" x-text=\"list.ItemCount\"></td></tr>\n      </template>\n    </tbody>\n  </table>\n</section>\n"
+    },
+    {
+      "id": "starter_alpine_sp_lists_js",
+      "name": "Alpine + PnP · List browser (JS)",
+      "lang": "js",
+      "code": "Alpine.data(\"spListBrowser\", () => ({\n  lists: [],\n  loading: false,\n  error: \"\",\n  async load() {\n    this.loading = true;\n    this.error = \"\";\n    try {\n      this.lists = await pnp.sp.web.lists\n        .filter(\"Hidden eq false\")\n        .select(\"Id\", \"Title\", \"ItemCount\")\n        .orderBy(\"Title\")\n        .get();\n    } catch (error) {\n      this.error = error.message || String(error);\n      console.error(error);\n    } finally {\n      this.loading = false;\n    }\n  },\n}));\n"
+    },
+    {
+      "id": "starter_bsp_form",
+      "name": "BSP · Accessible form",
+      "lang": "html",
+      "code": "<form class=\"l-section\" @submit.prevent=\"console.log('submit')\">\n  <header class=\"section-head\">\n    <p class=\"section-head__eyebrow\">Request</p>\n    <h2 class=\"section-head__title\">Tell us what you need</h2>\n    <p class=\"section-head__lede\">Fields marked with an asterisk are required.</p>\n  </header>\n\n  <div class=\"l-grid l-grid--2\">\n    <div class=\"field\">\n      <label class=\"field__label\" for=\"request-title\">\n        Subject <span class=\"field__req\" aria-hidden=\"true\">*</span>\n      </label>\n      <input class=\"input\" id=\"request-title\" name=\"title\" required>\n      <p class=\"field__hint\">Use a short, specific description.</p>\n    </div>\n\n    <div class=\"field\">\n      <label class=\"field__label\" for=\"request-type\">Request type</label>\n      <select class=\"select\" id=\"request-type\" name=\"type\">\n        <option>Question</option>\n        <option>Service request</option>\n        <option>Incident</option>\n      </select>\n    </div>\n  </div>\n\n  <div class=\"field\">\n    <label class=\"field__label\" for=\"request-details\">Details</label>\n    <textarea class=\"textarea\" id=\"request-details\" name=\"details\" rows=\"5\"></textarea>\n  </div>\n\n  <div class=\"toolbar\">\n    <button class=\"btn btn--primary\" type=\"submit\">Submit request</button>\n    <button class=\"btn btn--secondary\" type=\"reset\">Reset</button>\n  </div>\n</form>\n"
+    },
+    {
+      "id": "starter_bsp_tabs",
+      "name": "BSP + Alpine · Tab bar",
+      "lang": "html",
+      "code": "<section x-data=\"{ active: 'overview' }\">\n  <div class=\"tabs\" role=\"tablist\" aria-label=\"Request details\">\n    <button\n      class=\"tab\"\n      :class=\"{ 'is-active': active === 'overview' }\"\n      :aria-selected=\"active === 'overview'\"\n      role=\"tab\"\n      type=\"button\"\n      @click=\"active = 'overview'\">Overview</button>\n    <button\n      class=\"tab\"\n      :class=\"{ 'is-active': active === 'activity' }\"\n      :aria-selected=\"active === 'activity'\"\n      role=\"tab\"\n      type=\"button\"\n      @click=\"active = 'activity'\">Activity</button>\n    <button\n      class=\"tab\"\n      :class=\"{ 'is-active': active === 'files' }\"\n      :aria-selected=\"active === 'files'\"\n      role=\"tab\"\n      type=\"button\"\n      @click=\"active = 'files'\">Files</button>\n  </div>\n\n  <section role=\"tabpanel\" x-show=\"active === 'overview'\"><h3>Overview</h3><p>Summary content.</p></section>\n  <section role=\"tabpanel\" x-show=\"active === 'activity'\"><h3>Activity</h3><p>Recent changes.</p></section>\n  <section role=\"tabpanel\" x-show=\"active === 'files'\"><h3>Files</h3><p>Related documents.</p></section>\n</section>\n"
+    },
+    {
+      "id": "starter_bsp_table",
+      "name": "BSP · Data table",
+      "lang": "html",
+      "code": "<div class=\"l-section\">\n  <header class=\"section-head section-head--flex\">\n    <div>\n      <p class=\"section-head__eyebrow\">Portfolio</p>\n      <h2 class=\"section-head__title\">Active requests</h2>\n    </div>\n    <button class=\"btn btn--primary\" type=\"button\">\n      <fluent-icon name=\"add-24-regular\" aria-hidden=\"true\"></fluent-icon>\n      New request\n    </button>\n  </header>\n\n  <table class=\"grid\">\n    <thead>\n      <tr>\n        <th><button class=\"grid__sort\" type=\"button\">Title</button></th>\n        <th>Owner</th>\n        <th>Status</th>\n        <th class=\"num\">Items</th>\n      </tr>\n    </thead>\n    <tbody>\n      <tr class=\"is-selected\"><td>Quarterly review</td><td>Alex</td><td><span class=\"tag\">Active</span></td><td class=\"num\">12</td></tr>\n      <tr><td>Policy refresh</td><td>Jamie</td><td><span class=\"tag\">Draft</span></td><td class=\"num\">7</td></tr>\n      <tr><td>Site launch</td><td>Morgan</td><td><span class=\"tag\">Blocked</span></td><td class=\"num\">3</td></tr>\n    </tbody>\n  </table>\n</div>\n"
+    },
+    {
+      "id": "starter_bsp_chips",
+      "name": "BSP + Alpine · Choice chip bar",
+      "lang": "html",
+      "code": "<div x-data=\"{ selected: 'all' }\">\n  <div class=\"chip-row\" role=\"group\" aria-label=\"Filter by status\">\n    <button class=\"chip\" :class=\"{ 'is-active': selected === 'all' }\" :aria-pressed=\"selected === 'all'\" type=\"button\" @click=\"selected = 'all'\">All</button>\n    <button class=\"chip\" :class=\"{ 'is-active': selected === 'active' }\" :aria-pressed=\"selected === 'active'\" type=\"button\" @click=\"selected = 'active'\">Active</button>\n    <button class=\"chip\" :class=\"{ 'is-active': selected === 'draft' }\" :aria-pressed=\"selected === 'draft'\" type=\"button\" @click=\"selected = 'draft'\">Draft</button>\n    <button class=\"chip\" :class=\"{ 'is-active': selected === 'closed' }\" :aria-pressed=\"selected === 'closed'\" type=\"button\" @click=\"selected = 'closed'\">Closed</button>\n  </div>\n  <p>Selected: <strong x-text=\"selected\"></strong></p>\n</div>\n"
+    },
+    {
+      "id": "starter_bsp_filterbar",
+      "name": "BSP + Alpine · Filter bar",
+      "lang": "html",
+      "code": "<div x-data=\"{ query: '', type: 'all' }\" class=\"filterbar\">\n  <div class=\"input-group\">\n    <fluent-icon class=\"input-group__icon\" name=\"search-20-regular\" aria-hidden=\"true\"></fluent-icon>\n    <input\n      class=\"input input-group__field\"\n      type=\"search\"\n      placeholder=\"Search items\"\n      aria-label=\"Search items\"\n      x-model.debounce.250ms=\"query\">\n  </div>\n\n  <div class=\"filterbar__group\">\n    <label class=\"filterbar__label\" for=\"filter-type\">Type</label>\n    <select class=\"select\" id=\"filter-type\" x-model=\"type\">\n      <option value=\"all\">All types</option>\n      <option value=\"document\">Documents</option>\n      <option value=\"page\">Pages</option>\n      <option value=\"list\">Lists</option>\n    </select>\n  </div>\n\n  <span class=\"filterbar__spacer\"></span>\n  <button class=\"btn btn--subtle\" type=\"button\" @click=\"query = ''; type = 'all'\">Clear</button>\n</div>\n"
+    },
+    {
+      "id": "starter_bsp_hero",
+      "name": "BSP · Standard hero",
+      "lang": "html",
+      "code": "<section class=\"band band--sky\">\n  <div class=\"band__inner\">\n    <div class=\"hero\">\n      <div class=\"hero__copy\">\n        <p class=\"hero__eyebrow\">Employee experience</p>\n        <h1 class=\"hero__title\">Build useful SharePoint experiences faster</h1>\n        <p class=\"hero__lede\">\n          Start with approved patterns, connect live site data, and validate\n          the result in the same environment where it will run.\n        </p>\n        <div class=\"hero__cta\">\n          <button class=\"btn btn--primary\" type=\"button\">Get started</button>\n          <button class=\"btn btn--secondary\" type=\"button\">View guidance</button>\n        </div>\n      </div>\n      <div class=\"hero__media\" aria-label=\"Replace with approved hero media\">\n        <div class=\"empty\">\n          <fluent-icon name=\"image-24-regular\" aria-hidden=\"true\"></fluent-icon>\n          <p class=\"empty__title\">Hero media</p>\n          <p class=\"empty__hint\">Replace with licensed photography or an approved illustration.</p>\n        </div>\n      </div>\n    </div>\n  </div>\n</section>\n"
+    },
+    {
+      "id": "starter_bsp_card_grid",
+      "name": "BSP · Responsive card grid",
+      "lang": "html",
+      "code": "<section class=\"l-section\">\n  <header class=\"section-head\">\n    <p class=\"section-head__eyebrow\">Resources</p>\n    <h2 class=\"section-head__title\">Popular destinations</h2>\n    <p class=\"section-head__lede\">A responsive three-column layout that collapses at narrower widths.</p>\n  </header>\n\n  <div class=\"l-grid l-grid--3\">\n    <article class=\"card lift\">\n      <div class=\"card__body\">\n        <p class=\"card__eyebrow\">Guide</p>\n        <h3 class=\"card__title\">Getting started</h3>\n        <div class=\"card__content\"><p>Core concepts and first steps.</p></div>\n        <footer class=\"card__footer\"><a class=\"card__cta\" href=\"#\">Read the guide</a></footer>\n      </div>\n    </article>\n    <article class=\"card lift\">\n      <div class=\"card__body\">\n        <p class=\"card__eyebrow\">Reference</p>\n        <h3 class=\"card__title\">Design patterns</h3>\n        <div class=\"card__content\"><p>Reusable interaction and content patterns.</p></div>\n        <footer class=\"card__footer\"><a class=\"card__cta\" href=\"#\">Browse patterns</a></footer>\n      </div>\n    </article>\n    <article class=\"card lift\">\n      <div class=\"card__body\">\n        <p class=\"card__eyebrow\">Support</p>\n        <h3 class=\"card__title\">Ask for help</h3>\n        <div class=\"card__content\"><p>Find the right team and escalation path.</p></div>\n        <footer class=\"card__footer\"><a class=\"card__cta\" href=\"#\">Contact support</a></footer>\n      </div>\n    </article>\n  </div>\n</section>\n"
+    },
+    {
+      "id": "starter_bsp_editorial",
+      "name": "BSP Editorial · Article starter",
+      "lang": "html",
+      "code": "<main class=\"editorial\">\n  <section class=\"band band--white\">\n    <div class=\"band__inner\">\n      <header class=\"section-head\">\n        <p class=\"section-head__eyebrow\">Leadership perspective</p>\n        <h1 class=\"section-head__title\">A clear, editorial page title</h1>\n        <p class=\"section-head__lede\">\n          Use the Editorial layer for story-led pages with a warmer type and spacing register.\n        </p>\n      </header>\n\n      <div class=\"l-grid l-grid--2\">\n        <article class=\"card card--quiet\">\n          <div class=\"card__body\">\n            <h2 class=\"card__title\">Lead story</h2>\n            <div class=\"card__content\">\n              <p>Open with the central idea, then give readers a useful next step.</p>\n            </div>\n            <footer class=\"card__footer\"><a class=\"card__cta\" href=\"#\">Continue reading</a></footer>\n          </div>\n        </article>\n        <aside class=\"msgbar msgbar--info\" role=\"note\">\n          <fluent-icon class=\"msgbar__icon\" name=\"info-24-regular\" aria-hidden=\"true\"></fluent-icon>\n          <div class=\"msgbar__body\"><strong>Editorial CSS required.</strong> Include editorial.css after the regular BSP styles.</div>\n        </aside>\n      </div>\n    </div>\n  </section>\n</main>\n"
+    },
+    {
+      "id": "starter_bsp_message",
+      "name": "BSP · Message bar",
+      "lang": "html",
+      "code": "<div class=\"msgbar msgbar--success\" role=\"status\">\n  <fluent-icon class=\"msgbar__icon\" name=\"checkmark-20-regular\" aria-hidden=\"true\"></fluent-icon>\n  <div class=\"msgbar__body\">\n    <strong>Saved.</strong> Your changes are available to the team.\n  </div>\n  <button class=\"icon-btn msgbar__close\" type=\"button\" aria-label=\"Dismiss\">\n    <fluent-icon name=\"dismiss-20-regular\" aria-hidden=\"true\"></fluent-icon>\n  </button>\n</div>\n"
+    },
+    {
+      "id": "starter_fluent_icons",
+      "name": "Fluent · Custom element icon set",
+      "lang": "html",
+      "code": "<div class=\"toolbar\" aria-label=\"Document actions\">\n  <button class=\"icon-btn\" type=\"button\" aria-label=\"Home\">\n    <fluent-icon name=\"home-24-regular\" aria-hidden=\"true\"></fluent-icon>\n  </button>\n  <button class=\"icon-btn\" type=\"button\" aria-label=\"Edit\">\n    <fluent-icon name=\"edit-24-regular\" aria-hidden=\"true\"></fluent-icon>\n  </button>\n  <button class=\"icon-btn\" type=\"button\" aria-label=\"Save\">\n    <fluent-icon name=\"save-24-regular\" aria-hidden=\"true\"></fluent-icon>\n  </button>\n  <button class=\"icon-btn\" type=\"button\" aria-label=\"Delete\">\n    <fluent-icon name=\"delete-24-regular\" aria-hidden=\"true\"></fluent-icon>\n  </button>\n</div>\n\n<p>\n  Direct generated font class:\n  <i class=\"icon-ic_fluent_home_24_regular\" aria-hidden=\"true\"></i>\n</p>\n\n<!-- A <use href=\"#ic_fluent_home_24_regular\"> form requires the consuming\n     project to provide a combined symbol sprite. The imported Fluent package\n     contains individual SVG files, so the custom element is the local default. -->\n"
+    },
+    {
+      "id": "starter_fluent_button",
+      "name": "Fluent · Icon + labeled button",
+      "lang": "html",
+      "code": "<button class=\"btn btn--primary\" type=\"button\">\n  <fluent-icon name=\"add-24-regular\" aria-hidden=\"true\"></fluent-icon>\n  Create item\n</button>\n"
+    },
+    {
+      "id": "starter_general_async",
+      "name": "JS · Safe async task state",
+      "lang": "js",
+      "code": "async function runTask() {\n  const status = document.getElementById(\"task-status\");\n  const button = document.getElementById(\"task-run\");\n  button.disabled = true;\n  status.textContent = \"Working…\";\n\n  try {\n    const result = await Promise.resolve({ ok: true });\n    status.textContent = \"Complete.\";\n    console.log(result);\n  } catch (error) {\n    status.textContent = \"Failed: \" + (error.message || error);\n    console.error(error);\n  } finally {\n    button.disabled = false;\n  }\n}\n\ndocument.getElementById(\"task-run\").addEventListener(\"click\", runTask);\n"
+    },
+    {
+      "id": "starter_general_async_html",
+      "name": "HTML · Async task controls",
+      "lang": "html",
+      "code": "<button class=\"btn btn--primary\" id=\"task-run\" type=\"button\">Run task</button>\n<span id=\"task-status\" role=\"status\" aria-live=\"polite\">Ready.</span>\n"
+    },
+    {
+      "id": "starter_general_debounce",
+      "name": "JS · Debounce helper",
+      "lang": "js",
+      "code": "function debounce(fn, delay = 250) {\n  let timer;\n  return (...args) => {\n    clearTimeout(timer);\n    timer = setTimeout(() => fn(...args), delay);\n  };\n}\n\nconst onSearch = debounce((value) => {\n  console.log(\"Search for\", value);\n}, 300);\n\ndocument.getElementById(\"search\").addEventListener(\"input\", (event) => {\n  onSearch(event.target.value);\n});\n"
+    },
+    {
+      "id": "starter_general_delegation",
+      "name": "JS · Delegated click handler",
+      "lang": "js",
+      "code": "document.addEventListener(\"click\", (event) => {\n  const action = event.target.closest(\"[data-action]\");\n  if (!action) return;\n\n  const item = action.closest(\"[data-item-id]\");\n  console.log({\n    action: action.dataset.action,\n    itemId: item?.dataset.itemId,\n  });\n});\n"
+    },
+    {
+      "id": "starter_general_download_json",
+      "name": "JS · Download data as JSON",
+      "lang": "js",
+      "code": "function downloadJson(filename, value) {\n  const blob = new Blob([JSON.stringify(value, null, 2)], {\n    type: \"application/json\",\n  });\n  const url = URL.createObjectURL(blob);\n  const link = document.createElement(\"a\");\n  link.href = url;\n  link.download = filename;\n  link.click();\n  URL.revokeObjectURL(url);\n}\n\ndownloadJson(\"dcspad-data.json\", {\n  exportedAt: new Date().toISOString(),\n  items: [],\n});\n"
+    },
+    {
+      "id": "starter_general_css",
+      "name": "CSS · Alpine cloak + accessible utility",
+      "lang": "css",
+      "code": "[x-cloak] {\n  display: none !important;\n}\n\n.visually-hidden {\n  position: absolute !important;\n  width: 1px !important;\n  height: 1px !important;\n  padding: 0 !important;\n  margin: -1px !important;\n  overflow: hidden !important;\n  clip: rect(0 0 0 0) !important;\n  white-space: nowrap !important;\n  border: 0 !important;\n}\n"
+    }
+  ]
+}

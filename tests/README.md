@@ -30,10 +30,10 @@ node hosted.mjs     # 11 checks: early/delayed splash, exact boot/bundle/config 
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle
 node ux.mjs         # 18 checks: pane toggles (visibility/persistence/Ctrl+J via Monaco), editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence
+node files.mjs      # local import confirmation plus explicit/Modern SP context, same-tenant site switching, ResourcePath browsing, cross-site import/digest upload, and overwrite confirmation
 ```
 
-`npm test` runs all 131 checks in that order. Exit code is non-zero on any
-failure. Override endpoints with `DCSPAD_URL` / `DCSPAD_FIXTURES` if you serve
-on different ports.
+Exit code is non-zero on any failure. Override endpoints with
+`DCSPAD_URL` / `DCSPAD_FIXTURES` if you serve on different ports.
 
 Known quirk: a failing `custom library loads` check almost always means the fixtures server (8643) isn't running. Public-CDN library presets can't be exercised from the Claude sandbox (egress proxy blocks CDNs) — the fixture covers the identical injection mechanism.

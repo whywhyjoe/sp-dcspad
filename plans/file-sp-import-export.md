@@ -1,90 +1,275 @@
-# Plan: per-pane import/export — file system + SharePoint
+# Plan: single-file import and SharePoint pane transfer
 
-Status: **planned, not started** (written 2026-07-25). Project JSON save/load
-stays exactly as it is — this adds *per-pane* (HTML / CSS / JS) import and
-export, each against two targets: the local file system and SharePoint
-document libraries. Import replaces the matching pane's content.
+Status: **implemented and browser-verified** (2026-07-27).
 
-## Answer to "SP should be doable with the HTTP API, no?"
+This plan covers two related additions:
 
-Yes, cleanly. The pad runs same-origin on the tenant with session cookies, so:
+1. one local **Import file…** action that accepts HTML, CSS, or JavaScript
+   and replaces the matching editor pane; and
+2. HTML/CSS/JS import and export against a SharePoint document library.
 
-- **Read** — `GET /_api/web/GetFileByServerRelativeUrl('<path>')/$value`
-  returns the raw file bytes. No digest needed for GETs.
-- **Write (new or overwrite)** —
-  `POST /_api/web/GetFolderByServerRelativeUrl('<folder>')/Files/add(url='<name>',overwrite=true)`
-  with the content as the POST body, plus an `X-RequestDigest` header from
-  `POST /_api/contextinfo` (cache the digest, it carries an expiry).
-- **Browse (picker)** —
-  `GET /_api/web/GetFolderByServerRelativeUrl('<folder>')?$expand=Folders,Files&$select=…`
-  gives everything a minimal folder picker needs.
+Project saves (`*.dcspad.json`) stay local-only. Catalog and snippet JSON files
+also remain unchanged.
 
-No Graph, no app registration, no CORS. Permissions are simply the signed-in
-user's own. The only precondition is live SP context (already true in the web
-part; standalone-on-localhost falls back to file-system-only with the SP
-options disabled — same policy as the SP chip).
+## 1. Local single-file import
 
-## UI shape
+### User flow
 
-Extend the existing File menu (`index.html` file-menu):
+Add one item to the File menu:
 
-```
-Save project (.json)          ← unchanged
-Load project (.json)…         ← unchanged
-──────────────
-Export HTML ▸   to file · to SharePoint…
-Export CSS ▸    to file · to SharePoint…
-Export JS ▸     to file · to SharePoint…
-──────────────
-Import HTML ▸   from file… · from SharePoint…
-Import CSS ▸    from file… · from SharePoint…
-Import JS ▸     from file… · from SharePoint…
+```text
+Project
+  Save project (.dcspad.json)
+  Load project (.dcspad.json)…
+Import
+  Import HTML, CSS, or JS…
+Export
+  Export all non-empty
+  Export HTML
+  Export CSS
+  Export JS
 ```
 
-(Exact affordance — submenu vs. six flat rows vs. a small dialog with a
-pane selector — decide at build time; the menu is already getting tall.)
+`Import HTML, CSS, or JS file…` opens one hidden picker with:
+```html
+accept=".html,.htm,.css,.js,text/html,text/css,text/javascript,application/javascript"
+```
 
-- **to/from file** — reuse `io.js` download + a per-type file input
-  (`accept=".html,.htm"` / `".css"` / `".js,.mjs"`). Import reads the file and
-  replaces the pane via the editors API; autosave persists it.
-- **to/from SharePoint…** — opens a small picker dialog: server-relative path
-  input + a folder browser (REST `$expand` above), file list filtered by the
-  pane's extensions. Export asks for target folder + file name (prefilled);
-  import selects an existing file. Remember the last-used folder per pane in
-  `state.settings` so round-tripping is one click after the first time.
+After selection:
 
-## Module seams (respect CLAUDE.md invariant 6)
+- inspect the final extension case-insensitively;
+- map `.html` and `.htm` to the HTML pane, `.css` to CSS, and `.js` to JS;
+- reject renamed/unsupported files with an in-app error and make no edits;
+- reject files above the existing 5 MB import ceiling before calling
+  `file.text()`;
+- show an in-app confirmation before changing the editor:
 
-- `src/io.js` — stays local-only: grows `pickTextFile(accept)` and keeps
-  `download()`. Moves bytes, stores nothing.
-- **New `src/sp-files.js`** — all SharePoint HTTP: digest fetch + cache,
-  `readFile(serverRelPath)`, `writeFile(folder, name, content)`,
-  `listFolder(serverRelPath)`. Talks `fetch` only; no DOM, no storage. Uses
-  `getSpContext()` for the web URL and refuses politely when context is mock.
-- `src/main.js` — wires menu items: get/set pane content via the editors API,
-  route to `io.js` or `sp-files.js`. Confirmation prompt before an import
-  replaces a non-empty pane (same pattern as the framework-remove confirm).
-- Picker dialog markup in `index.html` + styles in `app.css` (reuse
-  `.settings-menu` / dialog conventions; no framework, plain DOM).
+  > Replace CSS code?
+  >
+  > `site-theme.css` will replace all code in the CSS editor.
 
-## Sequenced steps
+- on confirmation, call `editorsApi.setDocs({ [pane]: text })`, select that
+  editor tab, mark it unsaved, and let the normal workspace autosave persist
+  it;
+- on cancel, leave editor content, selection, and active tab unchanged.
 
-1. `src/sp-files.js` with digest handling + the three REST calls; unit-test
-   the URL building (escaping apostrophes in paths: `'` → `''`).
-2. Local per-pane import/export (file system) — no SP dependency; testable in
-   `smoke.mjs` today alongside the existing export checks.
-3. Picker dialog + SP wiring behind a `spContext.live` gate.
-4. Per-pane last-used-path memory in `state.settings`.
-5. Tests: smoke covers local import/export + dialog opens/validates in mock
-   mode (SP calls stubbed with a fetch shim); live SP round-trip goes on the
-   tenant verification checklist in README/deploy docs (like PnPjs checks).
+The confirmation is shown even when the target pane is empty. That keeps the
+replacement behavior explicit, as requested, and avoids two subtly different
+flows.
 
-## Open questions / later
+### Code seams
 
-- **Linked panes** (phase 2?): after an SP export/import, keep the file
-  "linked" and show a one-click re-export (and maybe a modified-on-server
-  warning via the file's `TimeLastModified`). Skip for v1.
-- Whether Export JS should offer `.mjs` — no: SharePoint serves `.mjs` as
-  `application/octet-stream` (see CLAUDE.md gotcha), always default `.js`.
-- Large-file guard on import (a pane full of megabytes will hurt the
-  autosave debounce) — probably just a size confirm at ~1 MB.
+- `src/io.js`
+  - export `MAX_IMPORT_BYTES` (or add a shared text-file guard);
+  - add `wirePaneImport(inputId, onCandidate)` that returns
+    `{ fileName, pane, text }`;
+  - keep this module storage-free.
+- `index.html`
+  - add the File menu item, one hidden file input, and a confirmation dialog
+    using the existing `.app-dialog*` component family.
+- `src/main.js`
+  - own confirmation, editor replacement, tab selection, unsaved state, and
+    status text.
+- `styles/app.css`
+  - only add a compact file-name/type row if the existing dialog styles are
+    insufficient.
+
+### Local-import tests
+
+Add Playwright coverage for:
+
+1. each supported extension maps to the correct pane;
+2. mixed-case extensions work;
+3. the confirmation names the file and destination pane;
+4. cancel preserves the current content;
+5. confirm replaces only the mapped pane and makes the change undoable as one
+   Monaco action;
+6. unsupported and oversized files are rejected without mutation;
+7. selecting the same file twice still fires because the input is reset.
+
+## 2. SharePoint document-library transfer
+
+### Scope
+
+The SharePoint feature moves plain HTML, CSS, and JS text only:
+
+- **Export to SharePoint** uploads/overwrites one selected pane.
+- **Import from SharePoint** downloads one selected file, infers its pane from
+  the extension, shows the same replacement confirmation, and replaces that
+  pane.
+- Project JSON, snippet JSON, and framework-catalog JSON never appear in this
+  picker.
+- Standalone/mock mode keeps these actions visible but disabled with a
+  “Requires SP: Live” explanation.
+
+### REST feasibility
+
+This can use same-origin SharePoint REST with the signed-in user's existing
+permissions; it needs no Graph application or separate login.
+
+- Browse a folder with
+  `GET /_api/web/GetFolderByServerRelativePath(decodedUrl='…')`
+  and select its `Folders` and `Files` collections.
+- Download bytes with
+  `GET /_api/web/GetFileByServerRelativePath(decodedUrl='…')/$value`.
+- Upload a small text file with the documented
+  `POST /_api/web/GetFolderByServerRelativeUrl('…')/Files/add(url='…',overwrite=true)`
+  endpoint and the UTF-8 text as the request body.
+- Every non-GET request carries a fresh `X-RequestDigest`. Prefer the digest
+  already captured by `getSpContext({ refresh: true })`; if it is missing or
+  stale, refresh it with `POST /_api/contextinfo`.
+
+Use the ResourcePath-based read/browse endpoints so decoded paths containing
+`#` or `%` are unambiguous. For the first upload implementation, constrain the
+new file name to the existing safe project slug plus `.html`, `.css`, or `.js`;
+that keeps the documented `Files/add` leaf-name parameter safe. A later tenant
+spike can promote upload to the ResourcePath `AddUsingPath` family if arbitrary
+leaf names are needed.
+
+### SharePoint context acquisition
+
+Do not make the file-transfer feature depend solely on
+`window._spPageContextInfo`. The HTML/CSS/JS transfer needs only the current
+web URL and a fresh request digest, not the complete legacy page-context
+object.
+
+Resolve context through this ordered, guarded ladder:
+
+1. **Explicit DCSPad host context.** Accept a small
+   `window.__DCSPAD_SP_CONTEXT__` object containing `webAbsoluteUrl` and
+   optional display/user fields. This is the stable integration seam for a
+   custom script editor or a future SPFx application customizer.
+2. **Classic/global context.** Read `window._spPageContextInfo` as today.
+3. **Modern-page legacy context.** Best-effort read
+   `legacyPageContext` from the Modern page's internal `PageManager`:
+
+   ```js
+   window.spModuleLoader
+     ?._bundledComponents
+     ?.[MODERN_SITE_PAGES_FEATURE_ID]
+     ?.PageManager
+     ?._instance
+     ?.pageContext
+     ?.legacyPageContext
+   ```
+
+   Use feature ID `b6917cb1-93a0-4b97-a84d-7cf49975d4ec`. Probe the current
+   window and then same-origin `parent`/`top` windows inside `try/catch`, since
+   a custom script editor may render DCSPad inside an iframe. Treat this route
+   as optional: `spModuleLoader`, `_bundledComponents`, `PageManager`, and
+   `_instance` are undocumented implementation details and can change.
+4. **REST bootstrap.** When a candidate SharePoint web URL is known but no
+   usable legacy object or digest exists, call
+   `POST {webUrl}/_api/contextinfo`. Its response supplies `WebFullUrl`,
+   `SiteFullUrl`, `FormDigestValue`, and the digest timeout. Use this endpoint
+   to refresh the digest before writes regardless of which page-context route
+   initially succeeded.
+5. **Explicit setup or Mock mode.** If no candidate web URL is available,
+   remain in Mock mode and let the SharePoint-files dialog accept/configure a
+   same-origin web URL rather than guessing a site boundary from arbitrary URL
+   path segments. Validate it with `/_api/contextinfo` before enabling file
+   actions.
+
+Normalize all successful routes into the existing `getSpContext()` result
+shape and record a `source` such as `host`, `global`, `modern-legacy`, or
+`rest`. Only the explicit host object and REST response are treated as stable
+contracts. A failure in the Modern internal lookup must silently fall through,
+not mark SharePoint unavailable or prevent the REST bootstrap.
+
+This also means the custom script editor does **not** have to emit the complete
+`_spPageContextInfo`. If it can run same-origin code, it can either expose only
+`webAbsoluteUrl` through the DCSPad host object or allow the guarded parent-page
+probe. If neither is possible, the configured web URL plus `/_api/contextinfo`
+is sufficient for the planned file operations.
+
+Microsoft references:
+
+- [Working with folders and files with REST](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/working-with-folders-and-files-with-rest)
+- [Supporting `%` and `#` with ResourcePath APIs](https://learn.microsoft.com/en-us/sharepoint/dev/solution-guidance/supporting-and-in-file-and-folder-with-the-resourcepath-api)
+- [Working with `__REQUESTDIGEST`](https://learn.microsoft.com/en-us/sharepoint/dev/spfx/web-parts/basics/working-with-requestdigest)
+- [Navigate SharePoint REST data with `/_api/contextinfo`](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/navigate-the-sharepoint-data-structure-represented-in-the-rest-service)
+- [SPFx `PageContext.legacyPageContext`](https://learn.microsoft.com/en-us/javascript/api/sp-page-context/pagecontext?view=sp-typescript-latest)
+
+Community reference for the guarded Modern-page lookup:
+
+- [Get `legacyPageContext` in the JS console](https://sharepoint.stackexchange.com/questions/267389/get-legacypagecontext-in-js-console)
+
+### Picker design
+
+Add a single reusable **SharePoint files** dialog rather than nested File-menu
+submenus:
+
+- mode heading: “Export CSS to SharePoint” or “Import from SharePoint”;
+- persisted **SharePoint site** URL field, validated with `/_api/contextinfo`;
+- breadcrumb/path field beginning at the selected web;
+- folder list with parent navigation;
+- file list filtered to `.html`, `.htm`, `.css`, and `.js`;
+- import mode: select one file, then Continue to the replacement confirmation;
+- export mode: pane selector (HTML/CSS/JS), safe file-name field prefilled from
+  the project slug, explicit **Overwrite existing file** confirmation when a
+  matching file exists;
+- loading, empty, permission-denied, stale-digest retry, and network-error
+  states inside the dialog;
+- remember the selected web and last folder path in
+  `state.settings.spFilesWebUrl` and `state.settings.spFilesFolder`.
+
+The dialog should reuse the current dark surfaces, compact rows, file-type
+badges, focus ring, and native `<dialog>` behavior. No framework dependency is
+needed.
+
+### Module design
+
+- New `src/sp-files.js`
+  - no DOM and no storage;
+  - `listFolder(serverRelativePath)`;
+  - `readTextFile(serverRelativePath)`;
+  - `writeTextFile(folderPath, fileName, text, { overwrite })`;
+  - `getDigest()` with expiry-aware caching and a single retry after a
+    digest-related 403;
+  - OData literal escaping (`'` → `''`) and decoded ResourcePath handling;
+  - normalized error objects for 401/403, 404, conflict, invalid path, and
+    network failures.
+- `src/main.js`
+  - gate by live SharePoint context;
+  - connect picker state to the editor adapter;
+  - reuse the local replacement confirmation;
+  - persist the last folder through `state.js`.
+- `index.html` / `styles/app.css`
+  - reusable picker dialog and its list/breadcrumb states.
+- `src/io.js`
+  - remains local-file-only.
+
+### Delivery sequence
+
+1. Implement and ship the local single-file import independently.
+2. Extend `sp-context.js` with the context ladder above and unit-test every
+   route, including inaccessible cross-origin parents and missing/changing
+   Modern internals.
+3. Build `sp-files.js` plus URL/digest unit tests with stubbed `fetch`.
+4. Build the picker in mock mode against fixture data.
+5. Wire live context, import confirmation, upload overwrite confirmation, and
+   last-folder persistence.
+6. Run standalone Playwright suites with REST stubs.
+7. Deploy to a test library and verify all supported context routes plus real
+   read/write behavior under a user
+   with contribute permission and a user with read-only permission.
+
+### Acceptance checks
+
+- No SharePoint action is callable in Mock mode.
+- SharePoint file actions work when `_spPageContextInfo` is absent but the
+  explicit host object, guarded Modern context, or configured REST bootstrap
+  succeeds.
+- A change or absence in the private Modern-page lookup falls through safely.
+- Folder browsing never leaves the currently selected web/site boundary.
+- Same-origin sites elsewhere on the tenant can be selected, browsed, imported
+  from, and exported to without reusing the host web's digest.
+- Only HTML/CSS/JS files are shown or accepted.
+- Import never mutates a pane before explicit confirmation.
+- Export never silently overwrites an existing SharePoint file.
+- A 403 explains whether the likely issue is permissions or digest refresh
+  failure.
+- Project `.dcspad.json` files remain local-only.
+- Paths with spaces, apostrophes, `#`, and `%` are covered by URL-building
+  tests and a live-tenant smoke check.
+- The hosted bundle is rebuilt after source changes.

@@ -4,6 +4,7 @@ var CATALOG_KEY = "dcspad.v2.catalog";
 var SNIPPETS_KEY = "dcspad.v2.snippets";
 var SAVE_DEBOUNCE_MS = 600;
 var DEFAULTS = {
+  projectName: "",
   html: '<div id="app">\n  <h2>Hello from DCSPad</h2>\n  <p>Edit HTML, CSS and JS, then press Run.</p>\n</div>\n',
   css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
   js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
@@ -16,7 +17,9 @@ var DEFAULTS = {
     previewDark: true,
     diagFontSize: 12,
     editorFontSize: 13,
-    wordWrap: false
+    wordWrap: false,
+    spFilesWebUrl: "",
+    spFilesFolder: ""
   },
   layout: {
     sidebarW: 230,
@@ -2760,6 +2763,7 @@ var appConfig = null;
 var onChangeCb = null;
 var onStorageErrorCb = null;
 var filterText = "";
+var draggedEntryId = null;
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 var entryFromUrl = (url, name) => ({
   id: newId("lib"),
@@ -2902,8 +2906,7 @@ function render() {
   }
 }
 var TOOL_ICONS = {
-  up: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg>',
-  down: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/></svg>',
+  drag: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="3.5" r="1" fill="currentColor"/><circle cx="11" cy="3.5" r="1" fill="currentColor"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="11" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12.5" r="1" fill="currentColor"/><circle cx="11" cy="12.5" r="1" fill="currentColor"/></svg>',
   pin: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z"/></svg>',
   pinFilled: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z" fill="currentColor"/></svg>',
   del: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>'
@@ -2911,6 +2914,7 @@ var TOOL_ICONS = {
 function catalogItem(entry, libs, pinned) {
   const effective = applyFrameworkConfig(entry, appConfig);
   const item = el("label", "lib-item");
+  item.dataset.libraryId = entry.id;
   const chk = document.createElement("input");
   chk.type = "checkbox";
   chk.checked = libs.enabled.includes(entry.id);
@@ -2940,6 +2944,28 @@ Fallback: ${effective.fallbackJs}`;
     updateNested("libraries", { enabled: [...enabled] });
     onChangeCb?.();
   });
+  const dragHandle = document.createElement("button");
+  dragHandle.type = "button";
+  dragHandle.className = "lib-drag";
+  dragHandle.draggable = true;
+  dragHandle.innerHTML = TOOL_ICONS.drag;
+  dragHandle.title = "Drag to reorder (injection order); Ctrl/\u2318 + \u2191/\u2193 also moves";
+  dragHandle.setAttribute("aria-label", `Reorder ${effective.name}`);
+  dragHandle.addEventListener("click", (e) => e.preventDefault());
+  dragHandle.addEventListener("dragstart", (e) => {
+    draggedEntryId = entry.id;
+    item.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", entry.id);
+    e.dataTransfer.setDragImage(item, 12, item.offsetHeight / 2);
+  });
+  dragHandle.addEventListener("dragend", clearDragState);
+  dragHandle.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+    e.preventDefault();
+    moveWithinGroup(entry, pinned, e.key === "ArrowUp" ? -1 : 1);
+  });
+  wireDropTarget(item, entry, pinned);
   const tools = el("span", "lib-tools");
   const tool = (cls, icon, title, fn) => {
     const b = document.createElement("button");
@@ -2955,8 +2981,6 @@ Fallback: ${effective.fallbackJs}`;
   };
   const liveIdx = () => catalog.items.indexOf(entry);
   tools.append(
-    tool("lib-move", TOOL_ICONS.up, "Move up (injection order)", () => moveEntry(liveIdx(), -1)),
-    tool("lib-move", TOOL_ICONS.down, "Move down (injection order)", () => moveEntry(liveIdx(), 1)),
     tool("lib-pin" + (pinned ? " pinned" : ""), pinned ? TOOL_ICONS.pinFilled : TOOL_ICONS.pin, pinned ? "Unpin" : "Pin to top", () => {
       const pins = new Set(getState().libraries.pinned);
       pinned ? pins.delete(entry.id) : pins.add(entry.id);
@@ -2978,17 +3002,60 @@ Fallback: ${effective.fallbackJs}`;
       onChangeCb?.();
     })
   );
-  item.append(chk, name, tools);
+  item.append(dragHandle, chk, name, tools);
   return item;
 }
-function moveEntry(idx, delta) {
-  const to = idx + delta;
-  if (idx < 0 || to < 0 || to >= catalog.items.length) return;
-  const [entry] = catalog.items.splice(idx, 1);
-  catalog.items.splice(to, 0, entry);
+function clearDragState() {
+  draggedEntryId = null;
+  document.querySelectorAll(".lib-item.dragging, .lib-item.drop-before, .lib-item.drop-after").forEach((row) => row.classList.remove("dragging", "drop-before", "drop-after"));
+}
+function entryIsPinned(entryId) {
+  return getState().libraries.pinned.includes(entryId);
+}
+function wireDropTarget(item, entry, pinned) {
+  item.addEventListener("dragover", (e) => {
+    if (!draggedEntryId || draggedEntryId === entry.id || entryIsPinned(draggedEntryId) !== pinned) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const after = e.clientY >= item.getBoundingClientRect().top + item.offsetHeight / 2;
+    item.classList.toggle("drop-before", !after);
+    item.classList.toggle("drop-after", after);
+  });
+  item.addEventListener("dragleave", (e) => {
+    if (!item.contains(e.relatedTarget)) item.classList.remove("drop-before", "drop-after");
+  });
+  item.addEventListener("drop", (e) => {
+    if (!draggedEntryId || entryIsPinned(draggedEntryId) !== pinned) return;
+    e.preventDefault();
+    const after = item.classList.contains("drop-after");
+    const sourceId = draggedEntryId;
+    clearDragState();
+    reorderEntry(sourceId, entry.id, after);
+  });
+}
+function reorderEntry(sourceId, targetId, after) {
+  if (sourceId === targetId) return;
+  const sourceIdx = catalog.items.findIndex((it) => it.id === sourceId);
+  if (sourceIdx === -1) return;
+  const [entry] = catalog.items.splice(sourceIdx, 1);
+  const targetIdx = catalog.items.findIndex((it) => it.id === targetId);
+  if (targetIdx === -1) {
+    catalog.items.splice(sourceIdx, 0, entry);
+    return;
+  }
+  catalog.items.splice(targetIdx + (after ? 1 : 0), 0, entry);
   persistCatalog();
   render();
   onChangeCb?.();
+}
+function moveWithinGroup(entry, pinned, delta) {
+  const pinnedIds = new Set(getState().libraries.pinned);
+  const peers = catalog.items.filter((it) => pinnedIds.has(it.id) === pinned);
+  const idx = peers.indexOf(entry);
+  const target = peers[idx + delta];
+  if (!target) return;
+  reorderEntry(entry.id, target.id, delta > 0);
+  requestAnimationFrame(() => document.querySelector(`.lib-item[data-library-id="${CSS.escape(entry.id)}"] .lib-drag`)?.focus());
 }
 function getEnabledLibraries() {
   const libs = getState().libraries;
@@ -3160,6 +3227,10 @@ function wireJsonImport(inputId, onDoc) {
 // ../src/snippets.js?v=2
 var doc = null;
 var deps3 = {};
+var snippetNameCollator = new Intl.Collator(void 0, {
+  sensitivity: "base",
+  numeric: true
+});
 function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
   deps3 = { getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError };
   doc = loadDoc(SNIPPETS_KEY) || { v: 1, items: [] };
@@ -3230,7 +3301,8 @@ function render2() {
   document.getElementById("snippet-empty").hidden = doc.items.length > 0;
   const countEl = document.getElementById("snippets-count");
   if (countEl) countEl.textContent = String(doc.items.length);
-  for (const snip of doc.items) {
+  const sortedItems = [...doc.items].sort((a, b) => snippetNameCollator.compare(a.name, b.name) || a.id.localeCompare(b.id));
+  for (const snip of sortedItems) {
     const item = el("div", "lib-item snippet-item");
     const lang = el("span", "snippet-lang", snip.lang);
     lang.dataset.lang = snip.lang;
@@ -3259,34 +3331,220 @@ ${snip.code.slice(0, 400)}`;
   }
 }
 
-// ../src/bridge/sp-context.js
-var cached = null;
-function getSpContext({ refresh = false } = {}) {
-  if (cached && !refresh) return cached;
-  const real = window._spPageContextInfo;
-  if (real && real.webAbsoluteUrl) {
-    let pageContext;
+// ../src/io.js?v=2
+var MAX_IMPORT_BYTES2 = 5 * 1024 * 1024;
+function downloadText2(filename, text, type = "application/json") {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1e3);
+}
+function wireJsonImport2(inputId, onDoc) {
+  const input = document.getElementById(inputId);
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES2) {
+      alert(`"${file.name}" is ${(file.size / 1048576).toFixed(1)} MB \u2014 too large to be a DCSPad file.`);
+      return;
+    }
+    let doc2;
     try {
-      pageContext = JSON.parse(JSON.stringify(real));
+      doc2 = JSON.parse(await file.text());
     } catch {
-      pageContext = {};
-      for (const k of ["webAbsoluteUrl", "webServerRelativeUrl", "siteAbsoluteUrl", "siteServerRelativeUrl", "webTitle", "userId", "userLoginName", "userDisplayName", "currentLanguage", "currentCultureName", "layoutsUrl", "webUIVersion", "siteClientTag", "formDigestValue", "formDigestTimeoutSeconds"]) {
-        if (real[k] !== void 0) pageContext[k] = real[k];
+      alert(`"${file.name}" isn't valid JSON.`);
+      return;
+    }
+    onDoc(doc2, file.name);
+  });
+  return input;
+}
+function paneForFileName(fileName) {
+  const match = /\.([^.]+)$/i.exec(String(fileName || "").trim());
+  const extension = match?.[1]?.toLowerCase();
+  if (extension === "html" || extension === "htm") return "html";
+  if (extension === "css") return "css";
+  if (extension === "js") return "js";
+  return "";
+}
+function wirePaneImport(inputId, onCandidate, onError = () => {
+}) {
+  const input = document.getElementById(inputId);
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    const pane = paneForFileName(file.name);
+    if (!pane) {
+      onError(`"${file.name}" is not an HTML, CSS, or JavaScript file.`);
+      return;
+    }
+    if (file.size > MAX_IMPORT_BYTES2) {
+      onError(
+        `"${file.name}" is ${(file.size / 1048576).toFixed(1)} MB \u2014 HTML, CSS, and JavaScript imports are limited to 5 MB.`
+      );
+      return;
+    }
+    try {
+      await onCandidate({ fileName: file.name, pane, text: await file.text() });
+    } catch (error) {
+      onError(`"${file.name}" could not be read (${error.message || error}).`);
+    }
+  });
+  return input;
+}
+
+// ../src/bridge/sp-context.js
+var MODERN_SITE_PAGES_FEATURE_ID = "b6917cb1-93a0-4b97-a84d-7cf49975d4ec";
+var SERIALIZABLE_FIELDS = [
+  "webAbsoluteUrl",
+  "webServerRelativeUrl",
+  "siteAbsoluteUrl",
+  "siteServerRelativeUrl",
+  "webTitle",
+  "userId",
+  "userLoginName",
+  "userDisplayName",
+  "currentLanguage",
+  "currentCultureName",
+  "layoutsUrl",
+  "webUIVersion",
+  "siteClientTag",
+  "formDigestValue",
+  "formDigestTimeoutSeconds"
+];
+var cached = null;
+var isRecord2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function safeSameOriginUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const url = new URL(value.trim(), location.href);
+    if (url.origin !== location.origin) return "";
+    return url.href.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+function serverRelativeUrl(absoluteUrl) {
+  try {
+    return decodeURIComponent(new URL(absoluteUrl).pathname).replace(/\/+$/, "") || "/";
+  } catch {
+    return "/";
+  }
+}
+function candidateWindows() {
+  const candidates = [window];
+  for (const key2 of ["parent", "top"]) {
+    try {
+      const candidate = window[key2];
+      if (candidate && !candidates.includes(candidate)) {
+        void candidate.location.href;
+        candidates.push(candidate);
+      }
+    } catch {
+    }
+  }
+  return candidates;
+}
+function hostContext(candidate) {
+  try {
+    const host = candidate.__DCSPAD_SP_CONTEXT__;
+    if (!isRecord2(host)) return null;
+    const pageContext = isRecord2(host.pageContext) ? host.pageContext : host;
+    const webAbsoluteUrl = safeSameOriginUrl(
+      host.webAbsoluteUrl || pageContext.webAbsoluteUrl
+    );
+    return webAbsoluteUrl ? { raw: host, pageContext, webAbsoluteUrl } : null;
+  } catch {
+    return null;
+  }
+}
+function globalContext(candidate) {
+  try {
+    const pageContext = candidate._spPageContextInfo;
+    const webAbsoluteUrl = safeSameOriginUrl(pageContext?.webAbsoluteUrl);
+    return webAbsoluteUrl ? { raw: pageContext, pageContext, webAbsoluteUrl } : null;
+  } catch {
+    return null;
+  }
+}
+function modernLegacyContext(candidate) {
+  try {
+    const pageContext = candidate.spModuleLoader?._bundledComponents?.[MODERN_SITE_PAGES_FEATURE_ID]?.PageManager?._instance?.pageContext?.legacyPageContext;
+    const webAbsoluteUrl = safeSameOriginUrl(pageContext?.webAbsoluteUrl);
+    return webAbsoluteUrl ? { raw: pageContext, pageContext, webAbsoluteUrl } : null;
+  } catch {
+    return null;
+  }
+}
+function findContext() {
+  const windows = candidateWindows();
+  for (const [source, reader] of [
+    ["host", hostContext],
+    ["global", globalContext],
+    ["modern-legacy", modernLegacyContext]
+  ]) {
+    for (const candidate of windows) {
+      const found = reader(candidate);
+      if (found) return { ...found, source, ownerWindow: candidate };
+    }
+  }
+  return null;
+}
+function copyPageContext(found) {
+  let pageContext;
+  try {
+    pageContext = JSON.parse(JSON.stringify(found.pageContext));
+  } catch {
+    pageContext = {};
+    for (const key2 of SERIALIZABLE_FIELDS) {
+      if (found.pageContext[key2] !== void 0) {
+        pageContext[key2] = found.pageContext[key2];
       }
     }
-    const digestEl = document.getElementById("__REQUESTDIGEST");
-    if (digestEl?.value) pageContext.formDigestValue = digestEl.value;
+  }
+  for (const key2 of SERIALIZABLE_FIELDS) {
+    if (pageContext[key2] === void 0 && found.raw[key2] !== void 0) {
+      pageContext[key2] = found.raw[key2];
+    }
+  }
+  pageContext.webAbsoluteUrl = found.webAbsoluteUrl;
+  pageContext.webServerRelativeUrl ||= serverRelativeUrl(found.webAbsoluteUrl);
+  pageContext.siteAbsoluteUrl ||= found.webAbsoluteUrl;
+  pageContext.siteServerRelativeUrl ||= serverRelativeUrl(pageContext.siteAbsoluteUrl);
+  try {
+    const digest = found.ownerWindow.document.getElementById("__REQUESTDIGEST")?.value;
+    if (digest) pageContext.formDigestValue = digest;
+  } catch {
+  }
+  return pageContext;
+}
+function getSpContext({ refresh = false } = {}) {
+  if (cached && !refresh) return cached;
+  const found = findContext();
+  if (found) {
+    const pageContext = copyPageContext(found);
     cached = {
       live: true,
+      source: found.source,
+      capturedAt: Date.now(),
       pageContext,
-      baseHref: real.webAbsoluteUrl.replace(/\/$/, "") + "/",
-      label: real.webAbsoluteUrl,
-      user: real.userDisplayName || real.userLoginName || ""
+      baseHref: `${pageContext.webAbsoluteUrl.replace(/\/$/, "")}/`,
+      label: pageContext.webAbsoluteUrl,
+      user: pageContext.userDisplayName || pageContext.userLoginName || ""
     };
     return cached;
   }
   cached = {
     live: false,
+    source: "mock",
+    capturedAt: Date.now(),
     pageContext: {
       isDcsPadMock: true,
       webAbsoluteUrl: location.origin,
@@ -3304,7 +3562,6 @@ function getSpContext({ refresh = false } = {}) {
       formDigestTimeoutSeconds: 1800
     },
     baseHref: null,
-    // keep relative URLs pointed at the local server
     label: "mock (not in SharePoint)",
     user: "Mock Developer"
   };
@@ -3318,10 +3575,322 @@ function applyContextIndicators() {
   chip.classList.toggle("sp-chip-live", ctx.live);
   chip.classList.toggle("sp-chip-mock", !ctx.live);
   chipText.textContent = ctx.live ? "SP: Live" : "SP: Mock";
-  chip.title = ctx.live ? `Connected to ${ctx.label} as ${ctx.user} \u2014 _spPageContextInfo is injected into every run` : "Not hosted in SharePoint \u2014 a mock _spPageContextInfo (correct shape) is injected; _api calls will fail here";
-  statusCtx.textContent = ctx.live ? `SP: ${ctx.label} \xB7 ${ctx.user}` : "SP: mock context (deploy to SharePoint for live APIs)";
+  chip.title = ctx.live ? `Connected to ${ctx.label}${ctx.user ? ` as ${ctx.user}` : ""} \xB7 context: ${ctx.source}` : "Not connected to a SharePoint web \u2014 SharePoint file actions are unavailable";
+  statusCtx.textContent = ctx.live ? `SP: ${ctx.label}${ctx.user ? ` \xB7 ${ctx.user}` : ""}` : "SP: mock context (deploy to SharePoint for live APIs)";
   return ctx;
 }
+
+// ../src/sp-files.js?v=3
+var ACCEPT_JSON = "application/json;odata=nometadata";
+var DIGEST_SAFETY_MS = 6e4;
+var SpFileError = class extends Error {
+  constructor(message, { code = "sharepoint", status = 0, cause } = {}) {
+    super(message, { cause });
+    this.name = "SpFileError";
+    this.code = code;
+    this.status = status;
+  }
+};
+function normalizedPath(value) {
+  let path = String(value || "").trim().replaceAll("\\", "/");
+  if (!path.startsWith("/")) path = `/${path}`;
+  path = path.replace(/\/{2,}/g, "/");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
+  return path;
+}
+function pathFromWebUrl(webUrl) {
+  try {
+    return normalizedPath(decodeURIComponent(new URL(webUrl).pathname));
+  } catch {
+    return "/";
+  }
+}
+function odataPathLiteral(value) {
+  return encodeURIComponent(String(value)).replaceAll("'", "''");
+}
+function resultArray(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.results)) return value.results;
+  return [];
+}
+function unwrapJson(data) {
+  return data?.d?.GetContextWebInformation || data?.GetContextWebInformation || data?.d || data;
+}
+async function responseMessage(response) {
+  try {
+    const body = await response.clone().json();
+    return body?.error?.message?.value || body?.error?.message || body?.["odata.error"]?.message?.value || "";
+  } catch {
+    try {
+      return (await response.text()).trim();
+    } catch {
+      return "";
+    }
+  }
+}
+async function requireOk(response, fallback, code) {
+  if (response.ok) return response;
+  const detail = await responseMessage(response);
+  let message = detail || `${fallback} (HTTP ${response.status})`;
+  let normalizedCode = code;
+  if (response.status === 401 || response.status === 403) {
+    message = detail || "SharePoint denied this request. Check library permissions and try again.";
+    normalizedCode = "permission";
+  } else if (response.status === 404) {
+    message = detail || "The SharePoint file or folder was not found.";
+    normalizedCode = "not-found";
+  } else if (response.status === 409) {
+    message = detail || "A SharePoint file with that name already exists.";
+    normalizedCode = "conflict";
+  }
+  throw new SpFileError(message, {
+    code: normalizedCode,
+    status: response.status
+  });
+}
+function createSpFilesClient({
+  fetchImpl = (...args) => fetch(...args),
+  getContext = getSpContext
+} = {}) {
+  const digestCache = /* @__PURE__ */ new Map();
+  function context({ refresh = false } = {}) {
+    const ctx = getContext({ refresh });
+    if (!ctx?.live || !ctx.pageContext?.webAbsoluteUrl) {
+      throw new SpFileError(
+        "SharePoint file transfer requires an SP: Live context.",
+        { code: "not-live" }
+      );
+    }
+    return ctx;
+  }
+  function webInfo(targetWebUrl = "") {
+    const ctx = context({ refresh: true });
+    const hostWebUrl = ctx.pageContext.webAbsoluteUrl.replace(/\/+$/, "");
+    let webUrl = hostWebUrl;
+    if (targetWebUrl) {
+      try {
+        const candidate = new URL(String(targetWebUrl).trim(), hostWebUrl);
+        if (!/^https?:$/.test(candidate.protocol) || candidate.origin !== new URL(hostWebUrl).origin) {
+          throw new Error("origin");
+        }
+        candidate.hash = "";
+        candidate.search = "";
+        webUrl = candidate.href.replace(/\/+$/, "");
+      } catch {
+        throw new SpFileError(
+          "Enter a SharePoint site URL on this tenant, such as /sites/ProjectName.",
+          { code: "invalid-web-url" }
+        );
+      }
+    }
+    const rootPath = normalizedPath(
+      webUrl === hostWebUrl && ctx.pageContext.webServerRelativeUrl ? ctx.pageContext.webServerRelativeUrl : pathFromWebUrl(webUrl)
+    );
+    return { ctx, webUrl, rootPath, hostWebUrl };
+  }
+  function checkedPath(path, rootPath) {
+    const normalized = normalizedPath(path || rootPath);
+    if (rootPath !== "/" && normalized !== rootPath && !normalized.startsWith(`${rootPath}/`)) {
+      throw new SpFileError(
+        "That path is outside the current SharePoint web.",
+        { code: "outside-web" }
+      );
+    }
+    return normalized;
+  }
+  async function request(url, options = {}) {
+    try {
+      return await fetchImpl(url, {
+        credentials: "same-origin",
+        ...options
+      });
+    } catch (cause) {
+      throw new SpFileError(
+        `Could not reach SharePoint (${cause.message || cause}).`,
+        { code: "network", cause }
+      );
+    }
+  }
+  async function fetchContextInfo(targetWebUrl = "") {
+    const requested = webInfo(targetWebUrl);
+    const { webUrl } = requested;
+    const response = await request(`${webUrl}/_api/contextinfo`, {
+      method: "POST",
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(response, "Could not obtain SharePoint request context", "context");
+    const info = unwrapJson(await response.json()) || {};
+    const value = info.FormDigestValue || info.formDigestValue;
+    if (!value) {
+      throw new SpFileError(
+        "SharePoint contextinfo did not return a request digest.",
+        { code: "context" }
+      );
+    }
+    const timeoutSeconds = Number(info.FormDigestTimeoutSeconds || info.formDigestTimeoutSeconds) || 1800;
+    const canonicalWebUrl = webInfo(
+      info.WebFullUrl || info.webFullUrl || webUrl
+    ).webUrl;
+    const cached2 = {
+      value,
+      expiresAt: Date.now() + timeoutSeconds * 1e3,
+      webFullUrl: canonicalWebUrl,
+      siteFullUrl: info.SiteFullUrl || info.siteFullUrl || ""
+    };
+    digestCache.set(webUrl.toLowerCase(), cached2);
+    digestCache.set(canonicalWebUrl.toLowerCase(), cached2);
+    return {
+      ...cached2,
+      webUrl: canonicalWebUrl,
+      rootPath: pathFromWebUrl(canonicalWebUrl)
+    };
+  }
+  async function connectWeb(targetWebUrl = "") {
+    const info = await fetchContextInfo(targetWebUrl);
+    return {
+      webUrl: info.webUrl,
+      rootPath: info.rootPath,
+      siteFullUrl: info.siteFullUrl
+    };
+  }
+  async function getDigest({ force = false, webUrl: targetWebUrl = "" } = {}) {
+    const target = webInfo(targetWebUrl);
+    const cacheKey = target.webUrl.toLowerCase();
+    const cached2 = digestCache.get(cacheKey);
+    if (!force && cached2?.expiresAt - DIGEST_SAFETY_MS > Date.now()) {
+      return cached2.value;
+    }
+    if (!force && !cached2 && target.webUrl === target.hostWebUrl) {
+      const ctx = context({ refresh: true });
+      const value = ctx.pageContext.formDigestValue;
+      const timeoutSeconds = Number(ctx.pageContext.formDigestTimeoutSeconds) || 0;
+      if (value && !ctx.pageContext.isDcsPadMock && timeoutSeconds > 0) {
+        const pageDigest = {
+          value,
+          expiresAt: (ctx.capturedAt || Date.now()) + timeoutSeconds * 1e3,
+          webFullUrl: ctx.pageContext.webAbsoluteUrl,
+          siteFullUrl: ctx.pageContext.siteAbsoluteUrl || ""
+        };
+        digestCache.set(cacheKey, pageDigest);
+        if (pageDigest.expiresAt - DIGEST_SAFETY_MS > Date.now()) return value;
+      }
+    }
+    return (await fetchContextInfo(target.webUrl)).value;
+  }
+  async function listFolder2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=Name,ServerRelativeUrl&$expand=Folders($select=Name,ServerRelativeUrl),Files($select=Name,ServerRelativeUrl,Length,TimeLastModified)`;
+    const response = await request(endpoint, {
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(response, "Could not list the SharePoint folder", "list");
+    const data = unwrapJson(await response.json()) || {};
+    const folders = resultArray(data.Folders).map((item) => ({
+      kind: "folder",
+      name: String(item.Name || ""),
+      serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath)
+    })).filter((item) => item.name).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    const files = resultArray(data.Files).map((item) => ({
+      kind: "file",
+      name: String(item.Name || ""),
+      pane: paneForFileName(item.Name),
+      serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
+      length: Number(item.Length) || 0,
+      modified: item.TimeLastModified || ""
+    })).filter((item) => item.name && item.pane).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    return {
+      path: checkedPath(data.ServerRelativeUrl || path, rootPath),
+      rootPath,
+      folders,
+      files
+    };
+  }
+  async function readTextFile2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const pane = paneForFileName(path);
+    if (!pane) {
+      throw new SpFileError(
+        "Only HTML, CSS, and JavaScript files can be imported.",
+        { code: "unsupported-file" }
+      );
+    }
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/$value`;
+    const response = await request(endpoint);
+    await requireOk(response, "Could not download the SharePoint file", "read");
+    const length = Number(response.headers.get("content-length")) || 0;
+    if (length > MAX_IMPORT_BYTES2) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the 5 MB import limit.",
+        { code: "too-large" }
+      );
+    }
+    const text = await response.text();
+    if (new Blob([text]).size > MAX_IMPORT_BYTES2) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the 5 MB import limit.",
+        { code: "too-large" }
+      );
+    }
+    return {
+      fileName: path.slice(path.lastIndexOf("/") + 1),
+      pane,
+      text,
+      serverRelativeUrl: path
+    };
+  }
+  async function writeTextFile2(folderPath, fileName, text, { overwrite = false, webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const folder = checkedPath(folderPath, rootPath);
+    const safeName = String(fileName || "").trim();
+    if (!/^[a-z0-9][a-z0-9._-]*\.(?:html?|css|js)$/i.test(safeName)) {
+      throw new SpFileError(
+        "Use a safe HTML, CSS, or JS file name containing letters, numbers, dots, hyphens, or underscores.",
+        { code: "invalid-name" }
+      );
+    }
+    const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')/Files/AddUsingPath(decodedUrl='${odataPathLiteral(safeName)}',overwrite=${overwrite ? "true" : "false"})`;
+    const upload = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: ACCEPT_JSON,
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-RequestDigest": digest
+        },
+        body: text
+      });
+    };
+    let response = await upload(false);
+    if (response.status === 403) response = await upload(true);
+    await requireOk(response, "Could not upload the SharePoint file", "write");
+    let result = {};
+    try {
+      result = unwrapJson(await response.json()) || {};
+    } catch {
+    }
+    return {
+      fileName: safeName,
+      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`
+    };
+  }
+  return {
+    webInfo,
+    connectWeb,
+    getDigest,
+    listFolder: listFolder2,
+    readTextFile: readTextFile2,
+    writeTextFile: writeTextFile2
+  };
+}
+var defaultClient = createSpFilesClient();
+var getSpWebInfo = (webUrl) => defaultClient.webInfo(webUrl);
+var connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
+var listFolder = (path, options) => defaultClient.listFolder(path, options);
+var readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+var writeTextFile = (folder, name, text, options) => defaultClient.writeTextFile(folder, name, text, options);
 
 // ../src/splash.js
 var LOGO = String.raw`
@@ -3424,7 +3993,7 @@ var splashApi = showSplash();
 splashApi.status("Restoring workspace\u2026");
 var configReady = loadAppConfig();
 var state2 = getState();
-applyContextIndicators();
+var initialSpContext = applyContextIndicators();
 var editorsApi = null;
 var layoutApi = initLayout({
   onEditorTabChange: (name) => {
@@ -3626,31 +4195,165 @@ function padWarn(msg) {
   consoleApi.handlers.console({ level: "warn", args: [{ t: "str", v: `DCSPad: ${msg}` }] });
 }
 for (const warning of configResult.warnings) padWarn(warning);
-document.getElementById("mi-save-project").addEventListener("click", () => {
-  closeFileMenu();
+var appToast = document.getElementById("app-toast");
+var toastTimer = null;
+function showToast(message, tone = "") {
+  clearTimeout(toastTimer);
+  appToast.textContent = message;
+  appToast.className = `app-toast${tone ? ` ${tone}` : ""}`;
+  appToast.hidden = false;
+  toastTimer = setTimeout(() => {
+    appToast.hidden = true;
+  }, 4200);
+}
+var paneReplaceDialog = document.getElementById("pane-replace-dialog");
+var paneReplaceTitle = document.getElementById("pane-replace-title");
+var paneReplaceContext = document.getElementById("pane-replace-context");
+var paneReplaceFile = document.getElementById("pane-replace-file");
+var paneReplaceBadge = document.getElementById("pane-replace-badge");
+var pendingPaneReplacement = null;
+function cancelPaneReplacement() {
+  pendingPaneReplacement = null;
+  if (paneReplaceDialog.open) paneReplaceDialog.close();
+}
+function confirmPaneReplacement(candidate, onReplaced = () => {
+}) {
+  pendingPaneReplacement = { ...candidate, onReplaced };
+  const label = candidate.pane.toUpperCase();
+  paneReplaceTitle.textContent = `Replace ${label} code?`;
+  paneReplaceContext.textContent = `${candidate.fileName} will replace all code in the ${label} editor.`;
+  paneReplaceFile.textContent = candidate.fileName;
+  paneReplaceBadge.textContent = candidate.pane;
+  paneReplaceBadge.dataset.lang = candidate.pane;
+  if (!paneReplaceDialog.open) paneReplaceDialog.showModal();
+  document.getElementById("pane-replace-confirm").focus();
+}
+document.getElementById("pane-replace-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const pending = pendingPaneReplacement;
+  if (!pending) return;
+  editorsApi.setDocs({ [pending.pane]: pending.text });
+  layoutApi.selectEditorTab(pending.pane);
+  markUnsaved(pending.pane);
+  pendingPaneReplacement = null;
+  paneReplaceDialog.close();
+  statusRun.textContent = `${pending.fileName} imported into ${pending.pane.toUpperCase()}`;
+  statusRun.className = "status-item";
+  showToast(`${pending.fileName} replaced the ${pending.pane.toUpperCase()} editor.`, "success");
+  pending.onReplaced();
+});
+document.getElementById("pane-replace-cancel").addEventListener("click", cancelPaneReplacement);
+document.getElementById("pane-replace-close").addEventListener("click", cancelPaneReplacement);
+paneReplaceDialog.addEventListener("cancel", () => {
+  pendingPaneReplacement = null;
+});
+var projectNameDisplay = document.getElementById("project-name-display");
+var projectNameText = document.getElementById("project-name-text");
+var projectNameForm = document.getElementById("project-name-form");
+var projectNameInput = document.getElementById("project-name-input");
+var projectNameError = document.getElementById("project-name-error");
+var saveProjectAfterNaming = false;
+function projectName() {
+  return typeof getState().projectName === "string" ? getState().projectName.trim() : "";
+}
+function filenameBase() {
+  const normalized = projectName().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80).replace(/-+$/g, "");
+  return normalized || "dcspad";
+}
+function renderProjectName() {
+  const name = projectName();
+  projectNameText.textContent = name || "(untitled)";
+  projectNameDisplay.classList.toggle("is-empty", !name);
+  projectNameDisplay.title = name ? "Edit project name" : "Set project name";
+  document.title = name ? `${name} \u2014 DCSPad` : "DCSPad \u2014 SharePoint Developer Workbench";
+}
+function showProjectNameError(message = "") {
+  projectNameError.textContent = message;
+  projectNameError.hidden = !message;
+  projectNameInput.classList.toggle("invalid", Boolean(message));
+  projectNameInput.setAttribute("aria-invalid", String(Boolean(message)));
+}
+function startProjectNameEdit({ requiredForProjectSave = false } = {}) {
+  saveProjectAfterNaming = requiredForProjectSave;
+  projectNameInput.value = projectName();
+  projectNameDisplay.hidden = true;
+  projectNameForm.hidden = false;
+  showProjectNameError(requiredForProjectSave && !projectName() ? "Name this project to save a project file." : "");
+  requestAnimationFrame(() => {
+    projectNameInput.focus();
+    projectNameInput.select();
+  });
+}
+function finishProjectNameEdit() {
+  projectNameForm.hidden = true;
+  projectNameDisplay.hidden = false;
+  showProjectNameError("");
+}
+function cancelProjectNameEdit() {
+  saveProjectAfterNaming = false;
+  finishProjectNameEdit();
+}
+function downloadProject() {
   const s = getState();
   const file = {
     app: "dcspad",
     kind: "project",
     v: 1,
+    name: projectName(),
     savedAt: (/* @__PURE__ */ new Date()).toISOString(),
     docs: editorsApi.getDocs(),
     libraries: { enabled: s.libraries.enabled, dcsUrl: s.libraries.dcsUrl },
     jsAsModule: s.settings.jsAsModule
   };
-  downloadText("dcspad-project.json", JSON.stringify(file, null, 2));
+  downloadText2(`${filenameBase()}.dcspad.json`, JSON.stringify(file, null, 2));
+}
+renderProjectName();
+projectNameDisplay.addEventListener("click", () => startProjectNameEdit());
+projectNameInput.addEventListener("input", () => showProjectNameError(""));
+projectNameInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelProjectNameEdit();
+  }
+});
+document.getElementById("project-name-cancel").addEventListener("click", cancelProjectNameEdit);
+projectNameForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = projectNameInput.value.trim();
+  if (!name) {
+    showProjectNameError("Enter a project name.");
+    projectNameInput.focus();
+    return;
+  }
+  update({ projectName: name });
+  renderProjectName();
+  finishProjectNameEdit();
+  if (saveProjectAfterNaming) {
+    saveProjectAfterNaming = false;
+    downloadProject();
+  }
+});
+document.getElementById("mi-save-project").addEventListener("click", () => {
+  closeFileMenu();
+  if (!projectName()) {
+    startProjectNameEdit({ requiredForProjectSave: true });
+    return;
+  }
+  downloadProject();
 });
 document.getElementById("mi-load-project").addEventListener("click", () => {
   closeFileMenu();
   document.getElementById("import-project-file").click();
 });
-wireJsonImport("import-project-file", (doc2) => {
+wireJsonImport2("import-project-file", (doc2) => {
   if (!doc2 || doc2.kind !== "project" || typeof doc2.docs !== "object" || doc2.docs === null) {
     alert("Not a DCSPad project file.");
     return;
   }
   const str2 = (v) => typeof v === "string" ? v : "";
   editorsApi.setDocs({ html: str2(doc2.docs.html), css: str2(doc2.docs.css), js: str2(doc2.docs.js) });
+  update({ projectName: str2(doc2.name || doc2.projectName).trim() });
+  renderProjectName();
   const libs = doc2.libraries || {};
   const enabled = Array.isArray(libs.enabled) ? libs.enabled.filter((id) => typeof id === "string") : [];
   updateNested("libraries", {
@@ -3671,24 +4374,350 @@ wireJsonImport("import-project-file", (doc2) => {
   statusRun.textContent = "project loaded \u2014 press Run";
   statusRun.className = "status-item";
 });
+document.getElementById("mi-import-pane").addEventListener("click", () => {
+  closeFileMenu();
+  document.getElementById("import-pane-file").click();
+});
+wirePaneImport(
+  "import-pane-file",
+  (candidate) => confirmPaneReplacement(candidate),
+  (message) => {
+    padWarn(message);
+    showToast(message, "error");
+  }
+);
 var PANE_EXPORTS = [
-  ["mi-export-html", "html", "dcspad.html", "text/html"],
-  ["mi-export-css", "css", "dcspad.css", "text/css"],
-  ["mi-export-js", "js", "dcspad.js", "text/javascript"]
+  ["mi-export-html", "html", "html", "text/html"],
+  ["mi-export-css", "css", "css", "text/css"],
+  ["mi-export-js", "js", "js", "text/javascript"]
 ];
-for (const [id, pane, filename, type] of PANE_EXPORTS) {
+for (const [id, pane, extension, type] of PANE_EXPORTS) {
   document.getElementById(id).addEventListener("click", () => {
     closeFileMenu();
-    downloadText(filename, editorsApi.getDocs()[pane], type);
+    downloadText2(`${filenameBase()}.${extension}`, editorsApi.getDocs()[pane], type);
   });
 }
+document.getElementById("mi-export-all").addEventListener("click", () => {
+  closeFileMenu();
+  const docs = editorsApi.getDocs();
+  const exports = PANE_EXPORTS.filter(([, pane]) => docs[pane].trim());
+  if (!exports.length) {
+    alert("The HTML, CSS and JS panes are empty.");
+    return;
+  }
+  for (const [, pane, extension, type] of exports) {
+    downloadText2(`${filenameBase()}.${extension}`, docs[pane], type);
+  }
+});
+var spImportMenuItem = document.getElementById("mi-sp-import");
+var spExportMenuItem = document.getElementById("mi-sp-export");
+var spFilesDialog = document.getElementById("sp-files-dialog");
+var spFilesTitle = document.getElementById("sp-files-title");
+var spSiteForm = document.getElementById("sp-site-form");
+var spSiteUrl = document.getElementById("sp-site-url");
+var spSiteOpen = document.getElementById("sp-site-open");
+var spExportControls = document.getElementById("sp-export-controls");
+var spExportPane = document.getElementById("sp-export-pane");
+var spExportName = document.getElementById("sp-export-name");
+var spFolderPath = document.getElementById("sp-folder-path");
+var spFolderUp = document.getElementById("sp-folder-up");
+var spFilesList = document.getElementById("sp-files-list");
+var spFilesEmpty = document.getElementById("sp-files-empty");
+var spFilesError = document.getElementById("sp-files-error");
+var spFilesNotice = document.getElementById("sp-files-notice");
+var spFilesPrimary = document.getElementById("sp-files-primary");
+var spFilesMode = "import";
+var spFolder = null;
+var spSelectedFile = null;
+var spFilesBusy = false;
+var spOverwriteArmed = false;
+var spTargetWebUrl = "";
+var FOLDER_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2h4l1.3 1.4h7.1v7.2H1.8z"/><path d="M1.8 4.2V2.8h4.4l1.2 1.4"/></svg>';
+var FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" aria-hidden="true"><path d="M3 1.8h6.2L13 5.6v8.6H3z"/><path d="M9.2 1.8v3.8H13"/></svg>';
+function refreshSpMenuState(initial = null) {
+  const ctx = initial || getSpContext({ refresh: true });
+  applyContextIndicators();
+  for (const item of [spImportMenuItem, spExportMenuItem]) {
+    item.disabled = !ctx.live;
+    item.title = ctx.live ? "" : "Requires SP: Live";
+  }
+  return ctx.live;
+}
+refreshSpMenuState(initialSpContext);
+document.getElementById("btn-file").addEventListener("click", () => {
+  refreshSpMenuState(getSpContext({ refresh: true }));
+});
+function setSpError(message = "") {
+  spFilesError.textContent = message;
+  spFilesError.hidden = !message;
+}
+function setSpNotice(message = "") {
+  spFilesNotice.textContent = message;
+  spFilesNotice.hidden = !message;
+}
+function resetOverwriteConfirmation() {
+  spOverwriteArmed = false;
+  setSpNotice("");
+  if (spFilesMode === "export") spFilesPrimary.textContent = "Upload file";
+}
+function formatBytes(bytes) {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+function parentSpPath(path, root) {
+  if (!path || path === root) return root;
+  const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+  return parent.length < root.length ? root : parent;
+}
+function renderSpFolder() {
+  spFilesList.replaceChildren();
+  const entries = [...spFolder.folders, ...spFolder.files];
+  spFilesEmpty.hidden = entries.length > 0;
+  spFolderPath.textContent = spFolder.path;
+  spFolderPath.title = spFolder.path;
+  spFolderUp.disabled = spFolder.path === spFolder.rootPath;
+  for (const entry of entries) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "sp-file-row";
+    row.dataset.kind = entry.kind;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", "false");
+    const icon = document.createElement("span");
+    icon.className = "sp-file-row__icon";
+    icon.innerHTML = entry.kind === "folder" ? FOLDER_ICON : FILE_ICON;
+    const name = document.createElement("span");
+    name.className = "sp-file-row__name";
+    name.textContent = entry.name;
+    const meta = document.createElement("span");
+    meta.className = "sp-file-row__meta";
+    meta.textContent = entry.kind === "folder" ? "folder" : `${entry.pane.toUpperCase()} \xB7 ${formatBytes(entry.length)}`;
+    row.append(icon, name, meta);
+    if (entry.kind === "folder") {
+      row.addEventListener("click", () => loadSpFolder(entry.serverRelativeUrl));
+    } else {
+      row.addEventListener("click", () => {
+        spSelectedFile = entry;
+        for (const other of spFilesList.querySelectorAll(".sp-file-row")) {
+          const selected = other === row;
+          other.classList.toggle("selected", selected);
+          other.setAttribute("aria-selected", String(selected));
+        }
+        if (spFilesMode === "import") {
+          spFilesPrimary.disabled = false;
+        } else {
+          spExportPane.value = entry.pane;
+          spExportName.value = entry.name;
+          resetOverwriteConfirmation();
+        }
+      });
+    }
+    spFilesList.append(row);
+  }
+}
+async function loadSpFolder(path) {
+  if (spFilesBusy) return;
+  spFilesBusy = true;
+  spSelectedFile = null;
+  spFilesPrimary.disabled = true;
+  setSpError("");
+  resetOverwriteConfirmation();
+  spFilesEmpty.hidden = true;
+  spFilesList.innerHTML = '<div class="sp-files-empty">Loading SharePoint folder\u2026</div>';
+  try {
+    spFolder = await listFolder(path, { webUrl: spTargetWebUrl });
+    updateNested("settings", { spFilesFolder: spFolder.path });
+    renderSpFolder();
+    if (spFilesMode === "export") spFilesPrimary.disabled = false;
+  } catch (error) {
+    spFilesList.replaceChildren();
+    setSpError(error.message || String(error));
+  } finally {
+    spFilesBusy = false;
+  }
+}
+async function connectSpSite(candidateWebUrl, { restoreFolder = true } = {}) {
+  if (spFilesBusy) return;
+  spFilesBusy = true;
+  spSelectedFile = null;
+  spFolder = null;
+  spFilesPrimary.disabled = true;
+  spSiteOpen.disabled = true;
+  setSpError("");
+  setSpNotice("");
+  spFilesEmpty.hidden = true;
+  spFilesList.innerHTML = '<div class="sp-files-empty">Connecting to SharePoint site\u2026</div>';
+  let startPath = "";
+  try {
+    const previousWebUrl = getState().settings.spFilesWebUrl;
+    const connected = await connectSpWeb(candidateWebUrl);
+    spTargetWebUrl = connected.webUrl;
+    spSiteUrl.value = connected.webUrl;
+    const rememberedFolder = getState().settings.spFilesFolder;
+    const sameRememberedWeb = previousWebUrl.replace(/\/+$/, "").toLowerCase() === connected.webUrl.replace(/\/+$/, "").toLowerCase();
+    startPath = restoreFolder && sameRememberedWeb && rememberedFolder && (rememberedFolder === connected.rootPath || rememberedFolder.startsWith(`${connected.rootPath}/`)) ? rememberedFolder : connected.rootPath;
+    updateNested("settings", {
+      spFilesWebUrl: connected.webUrl,
+      spFilesFolder: startPath
+    });
+  } catch (error) {
+    spFilesList.replaceChildren();
+    setSpError(error.message || String(error));
+  } finally {
+    spFilesBusy = false;
+    spSiteOpen.disabled = false;
+  }
+  if (startPath) await loadSpFolder(startPath);
+}
+function exportExtension(pane) {
+  return pane === "js" ? "js" : pane;
+}
+function defaultSpExportName() {
+  return `${filenameBase()}.${exportExtension(spExportPane.value)}`;
+}
+async function openSpFiles(mode) {
+  closeFileMenu();
+  if (!refreshSpMenuState()) {
+    showToast("SharePoint file transfer requires SP: Live.", "error");
+    return;
+  }
+  spFilesMode = mode;
+  spSelectedFile = null;
+  spFolder = null;
+  setSpError("");
+  resetOverwriteConfirmation();
+  spExportControls.hidden = mode !== "export";
+  spFilesTitle.textContent = mode === "import" ? "Import from SharePoint" : "Export to SharePoint";
+  spFilesPrimary.textContent = mode === "import" ? "Continue" : "Upload file";
+  spFilesPrimary.disabled = true;
+  if (mode === "export") {
+    const activePane = ["html", "css", "js"].includes(getState().layout.editorTab) ? getState().layout.editorTab : "html";
+    spExportPane.value = activePane;
+    spExportName.value = defaultSpExportName();
+  }
+  if (!spFilesDialog.open) spFilesDialog.showModal();
+  try {
+    const defaultWebUrl = getState().settings.spFilesWebUrl || getSpWebInfo().webUrl;
+    spSiteUrl.value = defaultWebUrl;
+    await connectSpSite(defaultWebUrl);
+  } catch (error) {
+    setSpError(error.message || String(error));
+  }
+}
+function closeSpFiles() {
+  if (!spFilesBusy && spFilesDialog.open) spFilesDialog.close();
+}
+spImportMenuItem.addEventListener("click", () => openSpFiles("import"));
+spExportMenuItem.addEventListener("click", () => openSpFiles("export"));
+document.getElementById("sp-files-close").addEventListener("click", closeSpFiles);
+document.getElementById("sp-files-cancel").addEventListener("click", closeSpFiles);
+document.getElementById("sp-folder-refresh").addEventListener("click", () => {
+  if (spFolder) loadSpFolder(spFolder.path);
+});
+spFolderUp.addEventListener("click", () => {
+  if (spFolder) loadSpFolder(parentSpPath(spFolder.path, spFolder.rootPath));
+});
+spSiteForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  connectSpSite(spSiteUrl.value, { restoreFolder: false });
+});
+spSiteUrl.addEventListener("input", () => {
+  const changed = spSiteUrl.value.trim().replace(/\/+$/, "").toLowerCase() !== spTargetWebUrl.replace(/\/+$/, "").toLowerCase();
+  if (changed) {
+    spFilesPrimary.disabled = true;
+    setSpNotice("Choose Open site to browse this SharePoint site.");
+  } else {
+    setSpNotice("");
+    if (spFilesMode === "export" && spFolder) spFilesPrimary.disabled = false;
+    if (spFilesMode === "import" && spSelectedFile) spFilesPrimary.disabled = false;
+  }
+});
+spExportPane.addEventListener("change", () => {
+  spExportName.value = defaultSpExportName();
+  resetOverwriteConfirmation();
+});
+spExportName.addEventListener("input", () => {
+  setSpError("");
+  resetOverwriteConfirmation();
+});
+spFilesPrimary.addEventListener("click", async () => {
+  if (spFilesBusy || !spFolder) return;
+  if (spFilesMode === "import") {
+    if (!spSelectedFile) return;
+    spFilesBusy = true;
+    spFilesPrimary.disabled = true;
+    setSpError("");
+    try {
+      const candidate = await readTextFile(
+        spSelectedFile.serverRelativeUrl,
+        { webUrl: spTargetWebUrl }
+      );
+      confirmPaneReplacement(candidate, () => {
+        if (spFilesDialog.open) spFilesDialog.close();
+      });
+    } catch (error) {
+      setSpError(error.message || String(error));
+    } finally {
+      spFilesBusy = false;
+      spFilesPrimary.disabled = !spSelectedFile;
+    }
+    return;
+  }
+  const pane = spExportPane.value;
+  const name = spExportName.value.trim();
+  const expected = pane === "html" ? /\.(?:html|htm)$/i : new RegExp(`\\.${pane}$`, "i");
+  if (!/^[a-z0-9][a-z0-9._-]*\.(?:html?|css|js)$/i.test(name)) {
+    setSpError(
+      "Use a safe file name containing letters, numbers, dots, hyphens, or underscores."
+    );
+    return;
+  }
+  if (!expected.test(name)) {
+    setSpError(`The file extension must match the ${pane.toUpperCase()} editor.`);
+    return;
+  }
+  const text = editorsApi.getDocs()[pane];
+  if (!text.trim()) {
+    setSpError(`The ${pane.toUpperCase()} editor is empty.`);
+    return;
+  }
+  const existing = spFolder.files.find(
+    (file) => file.name.localeCompare(name, void 0, { sensitivity: "base" }) === 0
+  );
+  if (existing && !spOverwriteArmed) {
+    spOverwriteArmed = true;
+    setSpNotice(`${existing.name} already exists. Choose Overwrite to replace it.`);
+    spFilesPrimary.textContent = "Overwrite";
+    return;
+  }
+  spFilesBusy = true;
+  spFilesPrimary.disabled = true;
+  setSpError("");
+  try {
+    await writeTextFile(spFolder.path, name, text, {
+      overwrite: Boolean(existing),
+      webUrl: spTargetWebUrl
+    });
+    showToast(`${name} uploaded to SharePoint.`, "success");
+    statusRun.textContent = `${name} uploaded to SharePoint`;
+    statusRun.className = "status-item";
+    spFilesDialog.close();
+  } catch (error) {
+    setSpError(error.message || String(error));
+    spFilesPrimary.disabled = false;
+  } finally {
+    spFilesBusy = false;
+  }
+});
 document.getElementById("btn-catalog-export").addEventListener("click", () => {
-  downloadText("dcspad-catalog.json", JSON.stringify(getCatalogDoc(), null, 2));
+  downloadText2("dcspad-catalog.json", JSON.stringify(getCatalogDoc(), null, 2));
 });
 document.getElementById("btn-catalog-import").addEventListener("click", () => {
   document.getElementById("import-catalog-file").click();
 });
-wireJsonImport("import-catalog-file", (doc2) => {
+wireJsonImport2("import-catalog-file", (doc2) => {
   if (!doc2 || !Array.isArray(doc2.items)) {
     alert("Not a DCSPad catalog file.");
     return;

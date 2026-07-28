@@ -5,7 +5,8 @@
   "scripts": {
     "build:app": "node build-app.mjs",
     "build:monaco": "node build-monaco.mjs",
-    "build:intelligence": "node build-design-intelligence.mjs"
+    "build:intelligence": "node build-design-intelligence.mjs",
+    "build:snippets": "node build-starter-snippets.mjs"
   },
   "keywords": [],
   "author": "",

@@ -10,6 +10,7 @@ export const SNIPPETS_KEY = 'dcspad.v2.snippets';
 const SAVE_DEBOUNCE_MS = 600;
 
 const DEFAULTS = {
+  projectName: '',
   html: '<div id="app">\n  <h2>Hello from DCSPad</h2>\n  <p>Edit HTML, CSS and JS, then press Run.</p>\n</div>\n',
   css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
   js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
@@ -17,6 +18,7 @@ const DEFAULTS = {
   settings: {
     autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false,
     previewDark: true, diagFontSize: 12, editorFontSize: 13, wordWrap: false,
+    spFilesWebUrl: '', spFilesFolder: '',
   },
   layout: {
     sidebarW: 230, sidebarCollapsed: false,
