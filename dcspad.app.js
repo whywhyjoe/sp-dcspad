@@ -2406,6 +2406,33 @@ function scrollIfPinned(force) {
   if (nearBottom || force) out.scrollTop = out.scrollHeight;
 }
 
+// ../src/inspect/to-node.js
+function toNode(v, depth = 0, { maxDepth = 6, maxItems = 100 } = {}) {
+  if (v === null) return { t: "null" };
+  switch (typeof v) {
+    case "string":
+      return { t: "str", v };
+    case "number":
+      return { t: "num", v };
+    case "boolean":
+      return { t: "bool", v };
+    case "undefined":
+      return { t: "undef" };
+  }
+  if (depth >= maxDepth) return { t: "maxdepth", v: Array.isArray(v) ? `Array(${v.length})` : "{\u2026}" };
+  const opts = { maxDepth, maxItems };
+  if (Array.isArray(v)) {
+    return { t: "arr", n: v.length, items: v.slice(0, maxItems).map((x) => toNode(x, depth + 1, opts)), trunc: v.length > maxItems };
+  }
+  const keys = Object.keys(v);
+  return {
+    t: "obj",
+    cls: "Object",
+    keys: keys.slice(0, maxItems).map((k) => [k, toNode(v[k], depth + 1, opts)]),
+    trunc: keys.length > maxItems
+  };
+}
+
 // ../src/network-panel.js
 var requests = /* @__PURE__ */ new Map();
 var selectedId = null;
@@ -2515,30 +2542,6 @@ function renderDetail(data) {
   const pre = el("pre", "", data.preview.slice(0, 5e3));
   pre.style.whiteSpace = "pre-wrap";
   detail.append(pre);
-}
-function toNode(v, depth) {
-  if (v === null) return { t: "null" };
-  switch (typeof v) {
-    case "string":
-      return { t: "str", v };
-    case "number":
-      return { t: "num", v };
-    case "boolean":
-      return { t: "bool", v };
-    case "undefined":
-      return { t: "undef" };
-  }
-  if (depth >= 6) return { t: "maxdepth", v: Array.isArray(v) ? `Array(${v.length})` : "{\u2026}" };
-  if (Array.isArray(v)) {
-    return { t: "arr", n: v.length, items: v.slice(0, 100).map((x) => toNode(x, depth + 1)), trunc: v.length > 100 };
-  }
-  const keys = Object.keys(v);
-  return {
-    t: "obj",
-    cls: "Object",
-    keys: keys.slice(0, 100).map((k) => [k, toNode(v[k], depth + 1)]),
-    trunc: keys.length > 100
-  };
 }
 function clear2() {
   requests.clear();
@@ -3580,9 +3583,8 @@ function applyContextIndicators() {
   return ctx;
 }
 
-// ../src/sp-files.js?v=3
+// ../src/sp-odata.js
 var ACCEPT_JSON = "application/json;odata=nometadata";
-var DIGEST_SAFETY_MS = 6e4;
 var SpFileError = class extends Error {
   constructor(message, { code = "sharepoint", status = 0, cause } = {}) {
     super(message, { cause });
@@ -3591,20 +3593,6 @@ var SpFileError = class extends Error {
     this.status = status;
   }
 };
-function normalizedPath(value) {
-  let path = String(value || "").trim().replaceAll("\\", "/");
-  if (!path.startsWith("/")) path = `/${path}`;
-  path = path.replace(/\/{2,}/g, "/");
-  if (path.length > 1) path = path.replace(/\/+$/, "");
-  return path;
-}
-function pathFromWebUrl(webUrl) {
-  try {
-    return normalizedPath(decodeURIComponent(new URL(webUrl).pathname));
-  } catch {
-    return "/";
-  }
-}
 function odataPathLiteral(value) {
   return encodeURIComponent(String(value)).replaceAll("'", "''");
 }
@@ -3647,6 +3635,23 @@ async function requireOk(response, fallback, code) {
     code: normalizedCode,
     status: response.status
   });
+}
+
+// ../src/sp-files.js?v=3
+var DIGEST_SAFETY_MS = 6e4;
+function normalizedPath(value) {
+  let path = String(value || "").trim().replaceAll("\\", "/");
+  if (!path.startsWith("/")) path = `/${path}`;
+  path = path.replace(/\/{2,}/g, "/");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
+  return path;
+}
+function pathFromWebUrl(webUrl) {
+  try {
+    return normalizedPath(decodeURIComponent(new URL(webUrl).pathname));
+  } catch {
+    return "/";
+  }
 }
 function createSpFilesClient({
   fetchImpl = (...args) => fetch(...args),

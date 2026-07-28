@@ -6,18 +6,13 @@
 
 import { getSpContext } from './bridge/sp-context.js';
 import { MAX_IMPORT_BYTES, paneForFileName } from './io.js?v=2';
+import {
+  ACCEPT_JSON, SpFileError, odataPathLiteral, resultArray, unwrapJson, requireOk,
+} from './sp-odata.js';
 
-const ACCEPT_JSON = 'application/json;odata=nometadata';
 const DIGEST_SAFETY_MS = 60_000;
 
-export class SpFileError extends Error {
-  constructor(message, { code = 'sharepoint', status = 0, cause } = {}) {
-    super(message, { cause });
-    this.name = 'SpFileError';
-    this.code = code;
-    this.status = status;
-  }
-}
+export { SpFileError };
 
 function normalizedPath(value) {
   let path = String(value || '').trim().replaceAll('\\', '/');
@@ -33,60 +28,6 @@ function pathFromWebUrl(webUrl) {
   } catch {
     return '/';
   }
-}
-
-function odataPathLiteral(value) {
-  // Encode URL-significant characters such as # and %, but retain OData's
-  // doubled-apostrophe escaping inside the surrounding string literal.
-  return encodeURIComponent(String(value)).replaceAll("'", "''");
-}
-
-function resultArray(value) {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value?.results)) return value.results;
-  return [];
-}
-
-function unwrapJson(data) {
-  return data?.d?.GetContextWebInformation
-    || data?.GetContextWebInformation
-    || data?.d
-    || data;
-}
-
-async function responseMessage(response) {
-  try {
-    const body = await response.clone().json();
-    return body?.error?.message?.value
-      || body?.error?.message
-      || body?.['odata.error']?.message?.value
-      || '';
-  } catch {
-    try { return (await response.text()).trim(); }
-    catch { return ''; }
-  }
-}
-
-async function requireOk(response, fallback, code) {
-  if (response.ok) return response;
-  const detail = await responseMessage(response);
-  let message = detail || `${fallback} (HTTP ${response.status})`;
-  let normalizedCode = code;
-  if (response.status === 401 || response.status === 403) {
-    message = detail
-      || 'SharePoint denied this request. Check library permissions and try again.';
-    normalizedCode = 'permission';
-  } else if (response.status === 404) {
-    message = detail || 'The SharePoint file or folder was not found.';
-    normalizedCode = 'not-found';
-  } else if (response.status === 409) {
-    message = detail || 'A SharePoint file with that name already exists.';
-    normalizedCode = 'conflict';
-  }
-  throw new SpFileError(message, {
-    code: normalizedCode,
-    status: response.status,
-  });
 }
 
 export function createSpFilesClient({
