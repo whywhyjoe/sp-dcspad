@@ -65,14 +65,22 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; throw "design-system intelligence build
 Write-Host "Building dcspad.app.js…" -ForegroundColor Cyan
 node build-app.mjs
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "bundle build failed" }
+
+Write-Host "Building dcspad.workbench.js…" -ForegroundColor Cyan
+node build-workbench.mjs
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "workbench bundle build failed" }
 Pop-Location
 
 Write-Host "Copying runtime files to $LivePath" -ForegroundColor Cyan
-Copy-Item (Join-Path $repo 'index.html')          $LivePath -Force
-Copy-Item (Join-Path $repo 'boot.js')             $LivePath -Force
-Copy-Item (Join-Path $repo 'dcspad.webpart.html') $LivePath -Force
-Copy-Item (Join-Path $repo 'dcspad.app.js')       $LivePath -Force
-Copy-Item (Join-Path $repo 'dcspad.config.json')  $LivePath -Force
+Copy-Item (Join-Path $repo 'index.html')            $LivePath -Force
+Copy-Item (Join-Path $repo 'boot.js')               $LivePath -Force
+Copy-Item (Join-Path $repo 'dcspad.webpart.html')   $LivePath -Force
+Copy-Item (Join-Path $repo 'dcspad.app.js')         $LivePath -Force
+Copy-Item (Join-Path $repo 'dcspad.config.json')    $LivePath -Force
+Copy-Item (Join-Path $repo 'workbench.html')        $LivePath -Force
+Copy-Item (Join-Path $repo 'boot-workbench.js')     $LivePath -Force
+Copy-Item (Join-Path $repo 'workbench.webpart.html') $LivePath -Force
+Copy-Item (Join-Path $repo 'dcspad.workbench.js')   $LivePath -Force
 Copy-DirectoryContents (Join-Path $repo 'src')    (Join-Path $LivePath 'src')
 Copy-DirectoryContents (Join-Path $repo 'styles') (Join-Path $LivePath 'styles')
 Copy-DirectoryContents (Join-Path $repo 'vendor') (Join-Path $LivePath 'vendor')

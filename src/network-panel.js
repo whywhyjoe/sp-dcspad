@@ -4,6 +4,7 @@
 
 import { renderValue, el } from './inspect/tree-view.js';
 import { enhance } from './inspect/sp-shapes.js';
+import { toNode } from './inspect/to-node.js';
 import { getState } from './state.js';
 
 const requests = new Map();   // id -> { row, data }
@@ -135,28 +136,6 @@ function renderDetail(data) {
   const pre = el('pre', '', data.preview.slice(0, 5000));
   pre.style.whiteSpace = 'pre-wrap';
   detail.append(pre);
-}
-
-// Convert a parsed JSON value into the harness's serialized-node format
-// so the inspector/tree renderer can be reused on network bodies.
-function toNode(v, depth) {
-  if (v === null) return { t: 'null' };
-  switch (typeof v) {
-    case 'string': return { t: 'str', v };
-    case 'number': return { t: 'num', v };
-    case 'boolean': return { t: 'bool', v };
-    case 'undefined': return { t: 'undef' };
-  }
-  if (depth >= 6) return { t: 'maxdepth', v: Array.isArray(v) ? `Array(${v.length})` : '{…}' };
-  if (Array.isArray(v)) {
-    return { t: 'arr', n: v.length, items: v.slice(0, 100).map((x) => toNode(x, depth + 1)), trunc: v.length > 100 };
-  }
-  const keys = Object.keys(v);
-  return {
-    t: 'obj', cls: 'Object',
-    keys: keys.slice(0, 100).map((k) => [k, toNode(v[k], depth + 1)]),
-    trunc: keys.length > 100,
-  };
 }
 
 function clear() {
