@@ -185,25 +185,30 @@ inspector, REPL and network capture all work inside the web part; a live
   pad; nothing visibly broken, but scope properly if oddities appear.
 - Low-priority backlog lives in `REVIEW-LOG.md`.
 
-## Feature backlog (Joe, 2026-07-25)
+## Completed feature work (2026-07-27)
 
-- **UI design pass** — handoff package ready in `design/DESIGN-BRIEF.md` +
-  `design/screenshots/` (captured via `tests/capture-design-shots.mjs`).
-  Joe attaches his old-DCSPad reference screenshot as
-  `design/reference-old-dcspad.png` when submitting. Claude Design returns
-  a comp + token sheet; we implement (tokens are plain CSS vars + a Monaco
-  theme, so implementation is mechanical).
+- The Claude Design visual pass is implemented. `design/DESIGN-BRIEF.md` and
+  the integration notes remain as historical design inputs.
+- Projects start unnamed, expose an inline top-bar name editor, and save as
+  required-name `.dcspad.json` files. Local HTML/CSS/JS imports use one
+  extension-aware picker with replacement confirmation; exports support one
+  pane or all non-empty panes.
+- SharePoint HTML/CSS/JS import and export are implemented through
+  `src/sp-files.js`, including explicit/global/Modern context resolution,
+  selectable same-tenant sites, per-web digest handling, ResourcePath
+  browsing/reads/uploads, replacement confirmation, and overwrite consent.
+  See `plans/file-sp-import-export.md`, which is now an implementation record.
+- Framework rows use drag-and-drop ordering without up/down controls; snippets
+  are always displayed alphabetically regardless of file type.
 
-- **Per-pane import/export (file system + SharePoint)** — plan written, not
-  started: `plans/file-sp-import-export.md` (REST `$value`/`Files/add` +
-  contextinfo digest; new `src/sp-files.js` seam).
-- **Drag-and-drop reordering** for the frameworks list (replaces/augments ↑↓).
+## Feature backlog
+
 - **Framework/snippet row action icons only on hover** (currently always
   visible at 60% opacity).
 - **Site Inspector / SP diagnostics tools** — already in the roadmap below;
   explicitly wanted.
 
-## Roadmap (unchanged, seams reserved)
+## Roadmap (seams reserved)
 
 - **Site Inspector** sidebar section (renders through `src/inspect/`).
 - **SharePoint JSON storage** replacing localStorage via the `state.js` seam.

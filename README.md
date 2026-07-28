@@ -18,15 +18,32 @@ This version:
 
 ## Saving, loading, exporting
 
-Everything lives in your browser's localStorage plus plain files you keep wherever you like — no backend.
+Workspace state lives in your browser's localStorage. Project files and local
+code exports are ordinary downloads; HTML/CSS/JS panes can also be transferred
+to SharePoint. There is no DCSPad backend.
 
-- **Current project** — autosaved continuously. **File ▸ Save project (.dcspad.json)** downloads it as a named project file; **File ▸ Load project (.dcspad.json)** restores one. Project JSON remains local-only.
-- **Local code files** — import one `.html`, `.htm`, `.css`, or `.js` file into its matching editor after confirmation. Export one pane or all non-empty panes; project names become safe default file names.
+- **Project name and project file** — a new workspace starts as
+  **Project (untitled)**. Click the title to set or edit it; the name is
+  autosaved and becomes a safe lowercase filename slug. Saving project JSON
+  requires a non-empty project name and downloads
+  `<project-name>.dcspad.json`; choosing Save while untitled opens the name
+  editor and resumes the download after a valid name is entered. Loading a
+  `.dcspad.json` file restores its name, panes, enabled frameworks, DCS URL,
+  and module setting. Project JSON remains local-only.
+- **Local code files** — **Import HTML, CSS, or JS…** accepts one `.html`,
+  `.htm`, `.css`, or `.js` file, infers its pane from the extension, and asks
+  before replacing that pane. Export one pane or choose **Export all
+  non-empty** to trigger a separate download for every non-empty pane. A named
+  project supplies the filename slug; an untitled project falls back to
+  `dcspad.html`, `dcspad.css`, and `dcspad.js`.
 - **SharePoint code files** — when the chip reads **SP: Live**, enter any
   SharePoint site URL on the same tenant origin, then browse that web's
   libraries/folders to import or upload HTML, CSS, and JavaScript. The selected
   site and last folder persist. Imports require replacement confirmation and
-  uploads require explicit overwrite confirmation.
+  uploads require explicit overwrite confirmation. These operations use the
+  signed-in user's SharePoint REST permissions—no Graph app, PnP.PowerShell,
+  or separate login. Project, framework-catalog, and snippet JSON never use
+  this picker.
 - **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and drag rows to reorder them. Order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
 - **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file. A maintained, import-ready 37-entry starter pack lives at [`examples/dcspad-starter-snippets.json`](examples/dcspad-starter-snippets.json), with usage notes in [`examples/README.md`](examples/README.md).
 
@@ -149,6 +166,12 @@ SharePoint session there.
 4. Try the REPL line at the bottom of the console while the run is alive:
    `sp.web.lists.get()` — the promise is awaited and the list collection renders with a table-view toggle and copyable GUIDs/EntityTypeNames.
 5. Paste the same code into a real page (script editor / custom script) and confirm identical behavior. That's the point.
+6. Choose **File ▸ Import from SharePoint…**, browse the current web, select
+   an HTML/CSS/JS file, and confirm that DCSPad asks before replacing the
+   matching editor. Repeat with another site URL on the same tenant.
+7. In a disposable document-library folder, choose **File ▸ Export to
+   SharePoint…** and verify a new upload succeeds. Repeat with the same name
+   and confirm that the second action requires explicit overwrite consent.
 
 ## Using the pad
 

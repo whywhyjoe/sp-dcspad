@@ -100,4 +100,10 @@ After OneDrive completes the upload:
 4. enable **PnPjs v2**, type `pnp.sp.w` in the JS editor, and confirm `web`
    appears in suggestions; and
 5. run `pnp.sp.web.get().then(w => console.log(w))` and confirm the Network
-   panel shows a successful `_api/web` request.
+   panel shows a successful `_api/web` request;
+6. choose **File ▸ Import from SharePoint…**, browse the current web, select
+   an HTML/CSS/JS file, and verify the replacement confirmation appears;
+7. enter another site URL on the same tenant, choose **Open site**, and confirm
+   its document-library boundary can be browsed; and
+8. in a disposable folder, export one pane to SharePoint, then repeat with the
+   same name and confirm overwrite requires a second explicit action.

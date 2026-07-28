@@ -1,12 +1,20 @@
-# Plan: single-file import and SharePoint pane transfer
+# Implementation record: project files, local code files, and SharePoint transfer
 
-Status: **implemented and browser-verified** (2026-07-27).
+Status: **implemented** (2026-07-27).
 
-This plan covers two related additions:
+Automated browser coverage verifies local import/export, project naming and
+`.dcspad.json` behavior, explicit/global/Modern SharePoint context, safe
+ResourcePath browsing, same-tenant site switching, cross-site reads and digest
+selection, upload payloads, and overwrite confirmation. Live-tenant browser
+validation has confirmed current-site browsing and import/read behavior.
+Live upload and another-site browsing remain deployment-checklist items.
 
-1. one local **Import file…** action that accepts HTML, CSS, or JavaScript
+This record covers three related additions:
+
+1. inline project naming and required-name `.dcspad.json` saves;
+2. one local **Import file…** action that accepts HTML, CSS, or JavaScript
    and replaces the matching editor pane; and
-2. HTML/CSS/JS import and export against a SharePoint document library.
+3. HTML/CSS/JS import and export against a SharePoint document library.
 
 Project saves (`*.dcspad.json`) stay local-only. Catalog and snippet JSON files
 also remain unchanged.
@@ -15,7 +23,7 @@ also remain unchanged.
 
 ### User flow
 
-Add one item to the File menu:
+The File menu provides:
 
 ```text
 Project
@@ -57,26 +65,25 @@ The confirmation is shown even when the target pane is empty. That keeps the
 replacement behavior explicit, as requested, and avoids two subtly different
 flows.
 
-### Code seams
+### Implementation seams
 
 - `src/io.js`
-  - export `MAX_IMPORT_BYTES` (or add a shared text-file guard);
-  - add `wirePaneImport(inputId, onCandidate)` that returns
+  - exports the shared `MAX_IMPORT_BYTES` guard;
+  - provides `wirePaneImport(inputId, onCandidate)`, returning
     `{ fileName, pane, text }`;
-  - keep this module storage-free.
+  - remains storage-free.
 - `index.html`
-  - add the File menu item, one hidden file input, and a confirmation dialog
+  - owns the File menu item, one hidden file input, and a confirmation dialog
     using the existing `.app-dialog*` component family.
 - `src/main.js`
-  - own confirmation, editor replacement, tab selection, unsaved state, and
+  - owns confirmation, editor replacement, tab selection, unsaved state, and
     status text.
 - `styles/app.css`
-  - only add a compact file-name/type row if the existing dialog styles are
-    insufficient.
+  - styles the compact file-name/type and dialog states.
 
-### Local-import tests
+### Local-import coverage
 
-Add Playwright coverage for:
+`tests/files.mjs` and `tests/smoke.mjs` cover:
 
 1. each supported extension maps to the correct pane;
 2. mixed-case extensions work;
@@ -112,19 +119,17 @@ permissions; it needs no Graph application or separate login.
   and select its `Folders` and `Files` collections.
 - Download bytes with
   `GET /_api/web/GetFileByServerRelativePath(decodedUrl='…')/$value`.
-- Upload a small text file with the documented
-  `POST /_api/web/GetFolderByServerRelativeUrl('…')/Files/add(url='…',overwrite=true)`
-  endpoint and the UTF-8 text as the request body.
+- Upload a small text file with
+  `POST /_api/web/GetFolderByServerRelativePath(decodedUrl='…')/Files/AddUsingPath(decodedUrl='…',overwrite=…)`
+  and the UTF-8 text as the request body.
 - Every non-GET request carries a fresh `X-RequestDigest`. Prefer the digest
   already captured by `getSpContext({ refresh: true })`; if it is missing or
   stale, refresh it with `POST /_api/contextinfo`.
 
-Use the ResourcePath-based read/browse endpoints so decoded paths containing
-`#` or `%` are unambiguous. For the first upload implementation, constrain the
-new file name to the existing safe project slug plus `.html`, `.css`, or `.js`;
-that keeps the documented `Files/add` leaf-name parameter safe. A later tenant
-spike can promote upload to the ResourcePath `AddUsingPath` family if arbitrary
-leaf names are needed.
+Read, browse, and upload all use ResourcePath-based endpoints so decoded paths
+containing `#` or `%` are unambiguous. Upload names are still constrained to a
+safe HTML/CSS/JS leaf name containing letters, numbers, dots, hyphens, and
+underscores.
 
 ### SharePoint context acquisition
 
@@ -176,11 +181,11 @@ shape and record a `source` such as `host`, `global`, `modern-legacy`, or
 contracts. A failure in the Modern internal lookup must silently fall through,
 not mark SharePoint unavailable or prevent the REST bootstrap.
 
-This also means the custom script editor does **not** have to emit the complete
+The custom script editor does **not** have to emit the complete
 `_spPageContextInfo`. If it can run same-origin code, it can either expose only
 `webAbsoluteUrl` through the DCSPad host object or allow the guarded parent-page
 probe. If neither is possible, the configured web URL plus `/_api/contextinfo`
-is sufficient for the planned file operations.
+is sufficient for the file operations.
 
 Microsoft references:
 
@@ -194,10 +199,10 @@ Community reference for the guarded Modern-page lookup:
 
 - [Get `legacyPageContext` in the JS console](https://sharepoint.stackexchange.com/questions/267389/get-legacypagecontext-in-js-console)
 
-### Picker design
+### Picker implementation
 
-Add a single reusable **SharePoint files** dialog rather than nested File-menu
-submenus:
+The app uses one reusable **SharePoint files** dialog rather than nested
+File-menu submenus:
 
 - mode heading: “Export CSS to SharePoint” or “Import from SharePoint”;
 - persisted **SharePoint site** URL field, validated with `/_api/contextinfo`;
@@ -213,13 +218,12 @@ submenus:
 - remember the selected web and last folder path in
   `state.settings.spFilesWebUrl` and `state.settings.spFilesFolder`.
 
-The dialog should reuse the current dark surfaces, compact rows, file-type
-badges, focus ring, and native `<dialog>` behavior. No framework dependency is
-needed.
+The dialog reuses the current dark surfaces, compact rows, file-type badges,
+focus ring, and native `<dialog>` behavior. It has no framework dependency.
 
-### Module design
+### Module implementation
 
-- New `src/sp-files.js`
+- `src/sp-files.js`
   - no DOM and no storage;
   - `listFolder(serverRelativePath)`;
   - `readTextFile(serverRelativePath)`;
@@ -239,20 +243,20 @@ needed.
 - `src/io.js`
   - remains local-file-only.
 
-### Delivery sequence
+### Delivery record
 
-1. Implement and ship the local single-file import independently.
-2. Extend `sp-context.js` with the context ladder above and unit-test every
+1. Shipped local single-file import independently.
+2. Extended `sp-context.js` with the context ladder above and tested every
    route, including inaccessible cross-origin parents and missing/changing
    Modern internals.
-3. Build `sp-files.js` plus URL/digest unit tests with stubbed `fetch`.
-4. Build the picker in mock mode against fixture data.
-5. Wire live context, import confirmation, upload overwrite confirmation, and
+3. Built `sp-files.js` plus URL/digest coverage with stubbed REST responses.
+4. Built the picker and its loading/error/empty states.
+5. Wired live context, import confirmation, upload overwrite confirmation, and
    last-folder persistence.
-6. Run standalone Playwright suites with REST stubs.
-7. Deploy to a test library and verify all supported context routes plus real
-   read/write behavior under a user
-   with contribute permission and a user with read-only permission.
+6. Ran the standalone Playwright suites with REST stubs.
+7. Deployed to NewNerve and verified current-site browsing and import/read
+   behavior. Live upload, another-site browsing, contribute-only access, and
+   read-only access remain explicit deployment checks.
 
 ### Acceptance checks
 
@@ -270,6 +274,7 @@ needed.
 - A 403 explains whether the likely issue is permissions or digest refresh
   failure.
 - Project `.dcspad.json` files remain local-only.
-- Paths with spaces, apostrophes, `#`, and `%` are covered by URL-building
-  tests and a live-tenant smoke check.
+- `#` in a ResourcePath folder is covered by automated URL-building/browser
+  coverage. Spaces, apostrophes, `%`, and those path cases on a live tenant
+  remain deployment-checklist cases.
 - The hosted bundle is rebuilt after source changes.
