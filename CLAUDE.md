@@ -95,10 +95,12 @@ dcspad.workbench.js       generated workbench bundle (tools/build-workbench.mjs)
                           rebuild on every deploy — Sync-Live.ps1 does it
 styles/workbench.css      workbench layout (loads after app.css, .wb-scoped)
 src/workbench/            SP Workbench, a read-only site inspector:
-                          main.js bootstrap · shell.js nav/routing (sessionStorage
-                          only — invariant 6 untouched) · sp-rest.js GET client on
-                          sp-odata helpers (nometadata, paging cap 5000, 429/503
-                          retry, mock resolver) · mock-data.js offline fixtures ·
+                          main.js bootstrap + same-tenant site switcher · shell.js
+                          nav/routing (sessionStorage only — invariant 6 untouched) ·
+                          sp-rest.js GET client on sp-odata helpers (nometadata,
+                          paging cap 5000, 429/503 retry, mock resolver,
+                          connectWeb target-web switching with origin guard) ·
+                          mock-data.js offline fixtures ·
                           grid.js sort/filter/export/copy-as · export.js
                           CSV/JSON/Markdown · scriptgen.js descriptor → PnPjs 2 /
                           REST fetch / PnP.PowerShell · perm-kinds.js 64-bit
@@ -118,7 +120,7 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
 
 ## Tests
 
-`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (50 checks: capture, Fluent preview runtime, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (33: typed models, editor integration, PnPjs/Alpine/BMO/Fluent completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (8: runtime URL config, framework and asset intelligence/runtime, ordered fallback), `hosted.mjs` (11: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence/Fluent bridge and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3), `ux.mjs` (18: pane toggles incl. Ctrl+J through Monaco, editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence), `files.mjs` (19: local import confirmation, SharePoint context fallbacks, same-tenant site switching, ResourcePath browsing, cross-site reads/digests, uploads, and overwrite consent), and `workbench.mjs` (35: SP Workbench mock grids/drilldown/security/site views, export formats, script generator, and the stubbed live path incl. Accept header + paging). All 194 should pass; a `custom library` failure usually means the 8643 fixture server isn't running. The serving root must also expose `bsp-design-system/` and `bsp-fluent-icon-lib/` (sibling repos — junctions inside the repo root work).
+`tests/README.md` has the two-server setup (app on 8642, fixtures on 8643) and how Chromium is resolved. Suites: `smoke.mjs` (50 checks: capture, Fluent preview runtime, isolation, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave), `monaco.mjs` (33: typed models, editor integration, PnPjs/Alpine/BMO/Fluent completion and hover, generated-data coverage, migration-safe runtime detection, false-diagnostic coverage, composable declaration lifecycle, isolated snippet undo/redo, persistent worker failure behavior), `config.mjs` (8: runtime URL config, framework and asset intelligence/runtime, ordered fallback), `hosted.mjs` (11: early/delayed splash, exact boot/bundle/config path, versioned hosted assets/intelligence/Fluent bridge and same-origin worker), `darkmode.mjs` (8), `splash.mjs` (3), `ux.mjs` (18: pane toggles incl. Ctrl+J through Monaco, editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence), `files.mjs` (19: local import confirmation, SharePoint context fallbacks, same-tenant site switching, ResourcePath browsing, cross-site reads/digests, uploads, and overwrite consent), and `workbench.mjs` (39: SP Workbench mock grids/drilldown/security/site views, export formats, script generator, same-tenant site switching, and the stubbed live path incl. Accept header + paging + re-targeted requests). All 198 should pass; a `custom library` failure usually means the 8643 fixture server isn't running. The serving root must also expose `bsp-design-system/` and `bsp-fluent-icon-lib/` (sibling repos — junctions inside the repo root work).
 
 ## Gotchas already paid for
 

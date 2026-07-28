@@ -75,5 +75,14 @@ export function createShell({ mount, deps, views }) {
     navigate(saved || { view: views[0].id });
   }
 
-  return { navigate, restore, getRoute: () => currentRoute };
+  // Drop every cached view instance and reland on the current section with
+  // no route params. Used when the inspected web changes: everything a view
+  // cached belongs to the old web.
+  function reset() {
+    for (const inst of instances.values()) inst.destroy?.();
+    instances.clear();
+    navigate({ view: currentRoute?.view || views[0].id });
+  }
+
+  return { navigate, restore, reset, getRoute: () => currentRoute };
 }

@@ -64,6 +64,8 @@ export function createSpRestClient({
     }
   }
 
+  let targetWebUrl = '';   // '' = the host web the workbench runs on
+
   function context() {
     const ctx = getContext();
     if (!ctx?.live && !mockResolver) {
@@ -75,8 +77,57 @@ export function createSpRestClient({
     return ctx;
   }
 
-  function webUrl() {
+  function hostWebUrl() {
     return context().pageContext.webAbsoluteUrl.replace(/\/+$/, '');
+  }
+
+  function webUrl() {
+    return targetWebUrl || hostWebUrl();
+  }
+
+  // Same-tenant only: a server-relative path ("/sites/Project") or an
+  // absolute URL on the host's origin. Anything else is rejected — the
+  // workbench authenticates with the page's own cookies, which don't
+  // travel cross-origin.
+  function normalizeTarget(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return '';
+    const host = hostWebUrl();
+    let candidate;
+    try {
+      candidate = new URL(raw, host);
+    } catch {
+      throw new SpFileError(
+        'Enter a site URL on this tenant, such as /sites/ProjectName.',
+        { code: 'invalid-web-url' },
+      );
+    }
+    if (!/^https?:$/.test(candidate.protocol)
+        || candidate.origin !== new URL(host).origin) {
+      throw new SpFileError(
+        'That URL is on a different tenant — the workbench can only inspect sites on its own origin.',
+        { code: 'invalid-web-url' },
+      );
+    }
+    candidate.hash = '';
+    candidate.search = '';
+    return candidate.href.replace(/\/+$/, '');
+  }
+
+  // Validate a target web by asking it for /_api/web, then make it the web
+  // every later call inspects. Empty input returns to the host web.
+  // Resolves to the web entity ({ Title, Url, ServerRelativeUrl, ... }).
+  async function connectWeb(input) {
+    const candidate = normalizeTarget(input);
+    if (!candidate) {
+      targetWebUrl = '';
+      return entityOf(await rawGet(`${hostWebUrl()}/_api/web?$select=Id,Title,Url,ServerRelativeUrl`));
+    }
+    const web = entityOf(await rawGet(`${candidate}/_api/web?$select=Id,Title,Url,ServerRelativeUrl`));
+    // Prefer the canonical URL SharePoint reports (fixes casing, trailing
+    // segments); fall back to the candidate for mocks that omit Url.
+    targetWebUrl = normalizeTarget(web?.Url) || candidate;
+    return web;
   }
 
   function apiUrl(path, opts) {
@@ -147,5 +198,5 @@ export function createSpRestClient({
     return { items, partial };
   }
 
-  return { context, webUrl, apiUrl, get, getAll };
+  return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
 }

@@ -65,8 +65,10 @@ folder. One-time setup, mirroring the pad's own hosting:
 
 Verify after deploying: the workbench chip reads **SP: Live**, the Lists view
 shows this web's lists including hidden ones, a known list's Fields tab
-matches its real columns, Export ▸ CSV opens in Excel, and a "Copy as PnPjs 2"
-snippet pastes into the DCSPad JS pane and runs.
+matches its real columns, Export ▸ CSV opens in Excel, a "Copy as PnPjs 2"
+snippet pastes into the DCSPad JS pane and runs, and entering another
+same-tenant site in the **Site** box (e.g. `/sites/ProjectName`) reloads every
+view against that web (the status bar shows "inspecting …").
 
 ## Common first-deployment issues
 

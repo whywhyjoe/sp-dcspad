@@ -255,6 +255,7 @@ function createSpRestClient({
       waiters.shift()?.();
     }
   }
+  let targetWebUrl = "";
   function context() {
     const ctx2 = getContext();
     if (!ctx2?.live && !mockResolver2) {
@@ -265,8 +266,44 @@ function createSpRestClient({
     }
     return ctx2;
   }
-  function webUrl() {
+  function hostWebUrl() {
     return context().pageContext.webAbsoluteUrl.replace(/\/+$/, "");
+  }
+  function webUrl() {
+    return targetWebUrl || hostWebUrl();
+  }
+  function normalizeTarget(input) {
+    const raw = String(input || "").trim();
+    if (!raw) return "";
+    const host = hostWebUrl();
+    let candidate;
+    try {
+      candidate = new URL(raw, host);
+    } catch {
+      throw new SpFileError(
+        "Enter a site URL on this tenant, such as /sites/ProjectName.",
+        { code: "invalid-web-url" }
+      );
+    }
+    if (!/^https?:$/.test(candidate.protocol) || candidate.origin !== new URL(host).origin) {
+      throw new SpFileError(
+        "That URL is on a different tenant \u2014 the workbench can only inspect sites on its own origin.",
+        { code: "invalid-web-url" }
+      );
+    }
+    candidate.hash = "";
+    candidate.search = "";
+    return candidate.href.replace(/\/+$/, "");
+  }
+  async function connectWeb(input) {
+    const candidate = normalizeTarget(input);
+    if (!candidate) {
+      targetWebUrl = "";
+      return entityOf(await rawGet(`${hostWebUrl()}/_api/web?$select=Id,Title,Url,ServerRelativeUrl`));
+    }
+    const web = entityOf(await rawGet(`${candidate}/_api/web?$select=Id,Title,Url,ServerRelativeUrl`));
+    targetWebUrl = normalizeTarget(web?.Url) || candidate;
+    return web;
   }
   function apiUrl(path, opts) {
     const clean = String(path).replace(/^\/+/, "");
@@ -331,7 +368,7 @@ function createSpRestClient({
     }
     return { items, partial };
   }
-  return { context, webUrl, apiUrl, get, getAll };
+  return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
 }
 
 // ../src/workbench/mock-data.js
@@ -558,7 +595,20 @@ function mockResolver(rawUrl) {
   if (path.startsWith("web/features")) return { value: FEATURES.web };
   if (path.startsWith("site/features")) return { value: FEATURES.site };
   if (path.startsWith("site")) return SITE;
-  if (path.startsWith("web")) return WEB;
+  if (path.startsWith("web")) {
+    const base = url.slice(0, url.indexOf("/_api/")).replace(/\/+$/, "");
+    let rel = "/";
+    try {
+      rel = decodeURIComponent(new URL(base).pathname) || "/";
+    } catch {
+    }
+    return {
+      ...WEB,
+      Url: base || WEB.Url,
+      ServerRelativeUrl: rel,
+      Title: rel === "/" ? WEB.Title : `Mock Web (${rel})`
+    };
+  }
   return null;
 }
 
@@ -624,7 +674,12 @@ function createShell({ mount, deps, views }) {
     }
     navigate(saved || { view: views[0].id });
   }
-  return { navigate, restore, getRoute: () => currentRoute };
+  function reset() {
+    for (const inst of instances.values()) inst.destroy?.();
+    instances.clear();
+    navigate({ view: currentRoute?.view || views[0].id });
+  }
+  return { navigate, restore, reset, getRoute: () => currentRoute };
 }
 
 // ../src/io.js?v=2
@@ -2234,7 +2289,8 @@ var GLYPHS = {
   security: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 13 3.6v3.6c0 3.2-2.1 5.6-5 6.9-2.9-1.3-5-3.7-5-6.9V3.6z"/><path d="m5.8 7.8 1.6 1.6 2.9-3"/></svg>',
   site: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.2 13.3V6.5L8 2.3l5.8 4.2v6.8z"/><path d="M6.2 13.3V9.4h3.6v3.9"/></svg>'
 };
-function applyWorkbenchContext(ctx2) {
+var SITE_KEY = "dcspad.workbench.site";
+function applyWorkbenchContext(ctx2, inspecting = "") {
   const chip = document.getElementById("wb-chip");
   const chipText = document.getElementById("wb-chip-text");
   const statusCtx = document.getElementById("wb-status-context");
@@ -2242,7 +2298,8 @@ function applyWorkbenchContext(ctx2) {
   chip.classList.toggle("sp-chip-mock", !ctx2.live);
   chipText.textContent = ctx2.live ? "SP: Live" : "SP: Mock";
   chip.title = ctx2.live ? `Connected to ${ctx2.label}${ctx2.user ? ` as ${ctx2.user}` : ""} \xB7 context: ${ctx2.source}` : "Not connected to a SharePoint web \u2014 showing built-in mock data";
-  statusCtx.textContent = ctx2.live ? `SP: ${ctx2.label}${ctx2.user ? ` \xB7 ${ctx2.user}` : ""}` : "SP: mock data (deploy to SharePoint for live inspection)";
+  const inspectingNote = inspecting ? ` \xB7 inspecting ${inspecting}` : "";
+  statusCtx.textContent = ctx2.live ? `SP: ${ctx2.label}${ctx2.user ? ` \xB7 ${ctx2.user}` : ""}${inspectingNote}` : `SP: mock data (deploy to SharePoint for live inspection)${inspectingNote}`;
 }
 var ctx = getSpContext();
 applyWorkbenchContext(ctx);
@@ -2258,4 +2315,59 @@ var shell = createShell({
     { id: "site", label: "Site", glyph: GLYPHS.site, create: createSiteView }
   ]
 });
-shell.restore();
+var siteForm = document.getElementById("wb-site-form");
+var siteInput = document.getElementById("wb-site-input");
+var siteOpen = document.getElementById("wb-site-open");
+var siteError = document.getElementById("wb-site-error");
+function rememberSite(value) {
+  try {
+    if (value) sessionStorage.setItem(SITE_KEY, value);
+    else sessionStorage.removeItem(SITE_KEY);
+  } catch {
+  }
+}
+async function inspectSite(input, { reset = true } = {}) {
+  siteError.hidden = true;
+  siteOpen.disabled = true;
+  siteOpen.textContent = "Opening\u2026";
+  try {
+    const web = await client.connectWeb(input);
+    const inspectingHost = client.webUrl() === client.hostWebUrl();
+    siteInput.value = inspectingHost ? "" : client.webUrl();
+    rememberSite(inspectingHost ? "" : client.webUrl());
+    applyWorkbenchContext(ctx, inspectingHost ? "" : `${web?.Title || "web"} (${client.webUrl()})`);
+    if (reset) shell.reset();
+    return true;
+  } catch (err) {
+    siteError.textContent = err?.message || String(err);
+    siteError.hidden = false;
+    return false;
+  } finally {
+    siteOpen.disabled = false;
+    siteOpen.textContent = "Inspect";
+  }
+}
+siteForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  inspectSite(siteInput.value);
+});
+(async () => {
+  let saved = "";
+  try {
+    saved = sessionStorage.getItem(SITE_KEY) || "";
+  } catch {
+  }
+  if (saved) {
+    siteInput.value = saved;
+    const ok = await inspectSite(saved, { reset: false });
+    if (!ok) {
+      rememberSite("");
+      siteInput.value = "";
+      try {
+        sessionStorage.removeItem("dcspad.workbench.route");
+      } catch {
+      }
+    }
+  }
+  shell.restore();
+})();

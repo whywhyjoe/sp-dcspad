@@ -16,6 +16,13 @@
     <div class="wb-logo" title="SP Workbench">
       <span class="wb-logo-text">SP<b>WORKBENCH</b></span>
     </div>
+    <form id="wb-site-form" class="wb-site-form" title="Inspect a different site on this tenant">
+      <label class="wb-site-label" for="wb-site-input">Site</label>
+      <input id="wb-site-input" type="text" autocomplete="url" spellcheck="false"
+             placeholder="/sites/ProjectName — blank = this site">
+      <button id="wb-site-open" class="btn btn-xs" type="submit">Inspect</button>
+      <span id="wb-site-error" class="wb-site-error" role="alert" hidden></span>
+    </form>
     <div class="wb-topbar-right">
       <span id="wb-chip" class="sp-chip" title="SharePoint context">
         <span class="sp-chip-dot"></span>

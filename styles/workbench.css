@@ -26,6 +26,17 @@ html.dcspad-hosted .wb { height: min(92vh, 980px); border: 1px solid var(--borde
 .wb-logo-text b { color: var(--accent); font-weight: 600; }
 .wb-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
+.wb-site-form { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.wb-site-label { color: var(--fg-dim); font: 500 12px/1 var(--sans); }
+#wb-site-input {
+  width: clamp(180px, 30vw, 380px); height: 26px; padding: 0 9px;
+  background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--radius-m);
+  color: var(--fg); font: 12px/1 var(--mono);
+}
+#wb-site-input:focus { outline: none; border-color: var(--accent-soft-line); box-shadow: 0 0 0 3px var(--accent-ring); }
+#wb-site-input::placeholder { color: var(--fg-faint); font-family: var(--sans); }
+.wb-site-error { color: var(--error-fg); font-size: 11.5px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* ---- main area: rail + host ---- */
 .wb-main { display: grid; grid-template-columns: 168px 1fr; min-height: 0; }
 

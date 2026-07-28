@@ -165,6 +165,37 @@ await check('security: list detail has a Permissions tab', async () => {
   return text.includes('Mock Site Owners') && text.includes('Full Control');
 });
 
+// ---- site switcher ----
+
+await check('switch: inspecting another same-tenant site reloads the views', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
+  await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
+  await page.fill('#wb-site-input', '/sites/OtherSite');
+  await page.locator('#wb-site-open').click();
+  await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
+  const status = await page.locator('#wb-status-context').textContent();
+  const saved = await page.evaluate(() => sessionStorage.getItem('dcspad.workbench.site'));
+  return status.includes('inspecting') && status.includes('/sites/OtherSite')
+    && saved.includes('/sites/OtherSite');
+});
+
+await check('switch: cross-tenant URLs are rejected inline', async () => {
+  await page.fill('#wb-site-input', 'https://evil.example.com/sites/x');
+  await page.locator('#wb-site-open').click();
+  await page.waitForSelector('#wb-site-error:not([hidden])');
+  const text = await page.locator('#wb-site-error').textContent();
+  return text.includes('different tenant');
+});
+
+await check('switch: blank input returns to the host web', async () => {
+  await page.fill('#wb-site-input', '');
+  await page.locator('#wb-site-open').click();
+  await page.waitForFunction(() =>
+    !document.getElementById('wb-status-context').textContent.includes('inspecting'));
+  const saved = await page.evaluate(() => sessionStorage.getItem('dcspad.workbench.site'));
+  return saved === null;
+});
+
 // ---- site overview + script generator (M4) ----
 
 await check('site: tabs render and the web sheet loads', async () => {
@@ -286,6 +317,24 @@ await check('live: paging links are followed across pages', async () =>
 
 await check('live: rows from the second page render', async () =>
   (await live.locator('.wb-table tbody tr', { hasText: 'Gamma' }).count()) === 1);
+
+await check('live: switching sites re-targets every /_api request', async () => {
+  seenHeaders.length = 0;
+  const seenUrls = [];
+  await live.route('**/sites/other/_api/**', async (route) => {
+    const url = route.request().url();
+    seenUrls.push(url);
+    if (url.includes('/_api/web/lists')) return route.fulfill({ json: listPage2 });
+    return route.fulfill({ json: { Title: 'Other Site', Url: `${new URL(url).origin}/sites/other` } });
+  });
+  await live.fill('#wb-site-input', '/sites/other');
+  await live.locator('#wb-site-open').click();
+  await live.waitForFunction(() =>
+    document.getElementById('wb-status-context').textContent.includes('/sites/other'));
+  await live.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
+  return seenUrls.some((u) => u.includes('/sites/other/_api/web?'))
+    && seenUrls.some((u) => u.includes('/sites/other/_api/web/lists'));
+});
 
 await live.close();
 await browser.close();

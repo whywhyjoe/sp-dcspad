@@ -251,7 +251,19 @@ export function mockResolver(rawUrl) {
   if (path.startsWith('web/features')) return { value: FEATURES.web };
   if (path.startsWith('site/features')) return { value: FEATURES.site };
   if (path.startsWith('site')) return SITE;
-  if (path.startsWith('web')) return WEB;
+  if (path.startsWith('web')) {
+    // Echo the requested web base back so mock site-switching behaves like
+    // the real thing (connectWeb canonicalizes on the returned Url).
+    const base = url.slice(0, url.indexOf('/_api/')).replace(/\/+$/, '');
+    let rel = '/';
+    try { rel = decodeURIComponent(new URL(base).pathname) || '/'; } catch { /* keep '/' */ }
+    return {
+      ...WEB,
+      Url: base || WEB.Url,
+      ServerRelativeUrl: rel,
+      Title: rel === '/' ? WEB.Title : `Mock Web (${rel})`,
+    };
+  }
 
   return null;
 }

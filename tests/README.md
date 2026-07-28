@@ -31,7 +31,7 @@ node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle
 node ux.mjs         # 18 checks: pane toggles (visibility/persistence/Ctrl+J via Monaco), editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence
 node files.mjs      # 19 checks: local import confirmation plus explicit/Modern SP context, same-tenant site switching, ResourcePath browsing, cross-site import/digest upload, and overwrite confirmation
-node workbench.mjs  # 35 checks: SP Workbench — mock grids, list drilldown, security + site views, export formats, script generator, and the stubbed live path (Accept header, paging)
+node workbench.mjs  # 39 checks: SP Workbench — mock grids, list drilldown, security + site views, export formats, script generator, same-tenant site switching, and the stubbed live path (Accept header, paging, re-targeted requests)
 ```
 
 Exit code is non-zero on any failure. Override endpoints with
