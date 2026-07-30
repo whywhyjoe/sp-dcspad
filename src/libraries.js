@@ -17,10 +17,10 @@ import { applyFrameworkConfig, selectedAssetBase } from './config.js';
 export const PRESETS = [
   { id: 'dcs-standard', name: 'DCS Standard Include', needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
-  { id: 'pnpjs2', name: 'PnPjs v2 (classic)', js: 'https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js',
+  { id: 'pnpjs2', name: 'PnPjs 2.15 (pnp2 bundle)', js: './lib-mirror/pnp2.bundle.js',
     intelligence: ['pnpjs-2.15.0'],
-    hint: 'Exposes global pnp — use const { sp } = pnp;' },
-  { id: 'alpine', name: 'Alpine.js', js: 'https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js',
+    hint: 'Exposes compatible globals pnp2 and pnp — use const { sp } = pnp;' },
+  { id: 'alpine', name: 'Alpine.js 3.15.2', js: './lib-mirror/alpine.js',
     intelligence: ['alpine-3'] },
   { id: 'chartjs', name: 'Chart.js', js: 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js' },
   { id: 'lodash', name: 'Lodash', js: 'https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js' },

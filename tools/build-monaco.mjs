@@ -53,8 +53,10 @@ import type * as PnPjs from "@pnp/pnpjs";
 
 declare global {
   const pnp: typeof PnPjs;
+  const pnp2: typeof PnPjs;
   interface Window {
     pnp: typeof PnPjs;
+    pnp2: typeof PnPjs;
     _spPageContextInfo?: {
       webAbsoluteUrl?: string;
       webServerRelativeUrl?: string;
@@ -120,7 +122,9 @@ const webTitle: PromiseLike<unknown> = pnp.sp.web.select("Title").get();
 const listItems = pnp.sp.web.lists.getByTitle("Documents").items.select("Id", "Title");
 const { sp } = pnp;
 const explicitWeb = pnp.SPNS.Web("https://contoso.sharepoint.com/sites/dev");
-void webTitle; void listItems; void sp; void explicitWeb;
+const pnp2WebTitle: PromiseLike<unknown> = pnp2.sp.web.select("Title").get();
+const pnp2ListItems = window.pnp2.sp.web.lists.getByTitle("Documents").items.select("Id", "Title");
+void webTitle; void listItems; void sp; void explicitWeb; void pnp2WebTitle; void pnp2ListItems;
 `);
     const program = ts.createProgram([globalsPath, probePath], {
       target: ts.ScriptTarget.ES2020,

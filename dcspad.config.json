@@ -2,19 +2,19 @@
   "version": 1,
   "frameworks": {
     "prefer": "local",
-    "fallbackToCdn": true,
+    "fallbackToCdn": false,
     "items": {
       "pnpjs2": {
-        "localUrl": "",
-        "cdnUrl": "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js",
-        "probeGlobal": "pnp",
+        "localUrl": "./lib-mirror/pnp2.bundle.js",
+        "cdnUrl": "",
+        "probeGlobal": "pnp2",
         "intelligence": [
           "pnpjs-2.15.0"
         ]
       },
       "alpine": {
-        "localUrl": "",
-        "cdnUrl": "https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js",
+        "localUrl": "./lib-mirror/alpine.js",
+        "cdnUrl": "",
         "probeGlobal": "Alpine",
         "intelligence": [
           "alpine-3"

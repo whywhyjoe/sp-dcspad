@@ -313,14 +313,14 @@ await check('configured Fluent runtime resolves all local CSS and bridge URLs', 
     js: `${origin}/src/bridge/fluent-icon-font.js`,
   }));
 
-const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs v2 (classic)' });
+const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs 2.15 (pnp2 bundle)' });
 await pnpRow.locator('input[type="checkbox"]').check();
 await check('explicit PnP intelligence survives an opaque custom rollup URL', () =>
   page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'ready')
     .then(() => true, () => false));
 await pnpRow.locator('input[type="checkbox"]').uncheck();
 
-const alpineRow = page.locator('.lib-item', { hasText: 'Alpine.js' });
+const alpineRow = page.locator('.lib-item', { hasText: 'Alpine.js 3.15.2' });
 await check('framework tooltip shows primary and fallback sources', async () => {
   const title = await alpineRow.locator('.lib-name').getAttribute('title');
   return title?.includes(primaryUrl) && title.includes(`Fallback: ${fallbackUrl}`);

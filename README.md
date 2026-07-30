@@ -62,6 +62,12 @@ URLs without editing or rebuilding the application.
 - `intelligence` explicitly associates editor metadata with the runtime. The
   custom PnPjs rollup can therefore keep `["pnpjs-2.15.0"]` even when its URL
   does not contain a recognizable package/version path.
+- The maintained PnPjs and Alpine entries are pinned to
+  `lib-mirror/pnp2.bundle.js` (PnPjs 2.15.0) and
+  `lib-mirror/alpine.js` (Alpine 3.15.2), with no CDN fallback. The PnPjs
+  intelligence pack types both the rollup's `pnp2` global and its standardized
+  `pnp` alias. Keep `pnp2.bundle.js.map` beside the bundle for browser
+  debugging.
 - `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
   hosted base folders. Relative local paths resolve from `dcspad.config.json`;
   hosted locations may be absolute SharePoint URLs.
@@ -209,8 +215,9 @@ Work-in-progress (editors, libraries, settings, layout) autosaves to `localStora
 
 Framework intelligence follows the enabled runtime checkbox.
 
-- **PnPjs:** enable **PnPjs v2**, type `pnp.sp.w` in JavaScript, then press
-  `Ctrl+Space`; `web` should be offered.
+- **PnPjs:** enable **PnPjs 2.15 (pnp2 bundle)**, type either `pnp.sp.w` or
+  `pnp2.sp.w` in JavaScript, then press `Ctrl+Space`; `web` should be offered
+  for both globals.
 - **Alpine JavaScript:** enable **Alpine.js**, type `Alpine.d`, then press
   `Ctrl+Space`; `data` should be offered. `Alpine.s` and `Alpine.p` offer
   `store` and `plugin`.

@@ -28,7 +28,7 @@ The destination folder must already exist. `Sync-Live.ps1` then:
 4. copies `index.html`, `boot.js`, `dcspad.webpart.html`,
    `dcspad.config.json`, `workbench.html`, `boot-workbench.js`,
    `workbench.webpart.html`, `dcspad.workbench.js`, `src/`, `styles/`,
-   and `vendor/`; and
+   `vendor/`, and `lib-mirror/`; and
 5. leaves publication to the OneDrive sync client.
 
 Re-running the command overwrites existing files. It does not generally remove

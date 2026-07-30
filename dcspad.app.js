@@ -2792,15 +2792,15 @@ var PRESETS = [
   },
   {
     id: "pnpjs2",
-    name: "PnPjs v2 (classic)",
-    js: "https://cdnjs.cloudflare.com/ajax/libs/pnp-pnpjs/2.15.0/pnp.js",
+    name: "PnPjs 2.15 (pnp2 bundle)",
+    js: "./lib-mirror/pnp2.bundle.js",
     intelligence: ["pnpjs-2.15.0"],
-    hint: "Exposes global pnp \u2014 use const { sp } = pnp;"
+    hint: "Exposes compatible globals pnp2 and pnp \u2014 use const { sp } = pnp;"
   },
   {
     id: "alpine",
-    name: "Alpine.js",
-    js: "https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js",
+    name: "Alpine.js 3.15.2",
+    js: "./lib-mirror/alpine.js",
     intelligence: ["alpine-3"]
   },
   { id: "chartjs", name: "Chart.js", js: "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" },

@@ -92,6 +92,23 @@ await check('Alpine v3 intelligence survives catalogs saved before pack metadata
     });
   }));
 
+await check('maintained PnPjs and Alpine frameworks resolve only to lib-mirror', () =>
+  page.evaluate(async () => {
+    const [{ getAppConfig, applyFrameworkConfig }, { PRESETS }] = await Promise.all([
+      import('/src/config.js'),
+      import('/src/libraries.js'),
+    ]);
+    const config = getAppConfig();
+    const pnp = applyFrameworkConfig(PRESETS.find((entry) => entry.id === 'pnpjs2'), config);
+    const alpine = applyFrameworkConfig(PRESETS.find((entry) => entry.id === 'alpine'), config);
+    return pnp.js.endsWith('/lib-mirror/pnp2.bundle.js')
+      && alpine.js.endsWith('/lib-mirror/alpine.js')
+      && !pnp.fallbackJs
+      && !alpine.fallbackJs
+      && pnp.configuredSources.cdn === ''
+      && alpine.configuredSources.cdn === '';
+  }));
+
 await setDoc('html', '<main>HTML_MODEL_MARKER</main>');
 await setDoc('css', 'body { color: papayawhip; } /* CSS_MODEL_MARKER */');
 await setDoc('js', 'console.log("JS_MODEL_MARKER");');
@@ -276,6 +293,14 @@ await check('Alpine global has no false JavaScript diagnostics', async () => {
   }
   return markers.length === 0;
 });
+await check('mirrored Alpine runtime is exactly 3.15.2', async () => {
+  await setDoc('js', 'console.log("alpine-version", Alpine.version);');
+  await focusEditor();
+  await page.keyboard.press('Control+Enter');
+  await page.waitForFunction(() =>
+    document.querySelector('#console-out')?.textContent.includes('alpine-version'));
+  return (await page.locator('#console-out').textContent()).includes('alpine-version 3.15.2');
+});
 await check('Alpine JavaScript completion includes data/store/plugin', async () => {
   for (const [prefix, name] of [['d', 'data'], ['s', 'store'], ['p', 'plugin']]) {
     await setDoc('js', `Alpine.${prefix}`);
@@ -290,17 +315,29 @@ await check('Alpine JavaScript completion includes data/store/plugin', async () 
   return true;
 });
 
-const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs v2 (classic)' });
+const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs 2.15 (pnp2 bundle)' });
 await pnpRow.locator('input[type="checkbox"]').check();
 await page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'ready');
-await setDoc('js', 'pnp.sp.w');
-await page.waitForTimeout(500);
-await page.keyboard.press('Control+Space');
-await page.waitForSelector('.suggest-widget.visible');
-await check('PnPjs fluent completion includes web', async () =>
-  (await page.locator('.suggest-widget .monaco-list-row').allTextContents())
-    .some((text) => /^web(?:\b|\s|\()/.test(text)));
-await page.keyboard.press('Escape');
+await check('mirrored PnPjs 2.15 bundle exposes pnp2 and the pnp alias', async () => {
+  await setDoc('js', 'console.log("pnp-aliases", pnp === pnp2, pnp2.version);');
+  await focusEditor();
+  await page.keyboard.press('Control+Enter');
+  await page.waitForFunction(() =>
+    document.querySelector('#console-out')?.textContent.includes('pnp-aliases'));
+  return (await page.locator('#console-out').textContent()).includes('pnp-aliases true v2');
+});
+await check('PnPjs fluent completion includes web for pnp and pnp2', async () => {
+  for (const globalName of ['pnp', 'pnp2']) {
+    await setDoc('js', `${globalName}.sp.w`);
+    await page.waitForTimeout(500);
+    await page.keyboard.press('Control+Space');
+    await page.waitForSelector('.suggest-widget.visible');
+    const suggestions = await page.locator('.suggest-widget .monaco-list-row').allTextContents();
+    await page.keyboard.press('Escape');
+    if (!suggestions.some((text) => /^web(?:\b|\s|\()/.test(text))) return false;
+  }
+  return true;
+});
 await pnpRow.locator('input[type="checkbox"]').uncheck();
 await check('PnPjs declarations unload with the runtime library', () =>
   page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'disabled')

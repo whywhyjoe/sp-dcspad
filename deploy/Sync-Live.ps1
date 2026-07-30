@@ -84,6 +84,7 @@ Copy-Item (Join-Path $repo 'dcspad.workbench.js')   $LivePath -Force
 Copy-DirectoryContents (Join-Path $repo 'src')    (Join-Path $LivePath 'src')
 Copy-DirectoryContents (Join-Path $repo 'styles') (Join-Path $LivePath 'styles')
 Copy-DirectoryContents (Join-Path $repo 'vendor') (Join-Path $LivePath 'vendor')
+Copy-DirectoryContents (Join-Path $repo 'lib-mirror') (Join-Path $LivePath 'lib-mirror')
 
 $obsoleteCodeMirror = Join-Path $LivePath 'vendor\codemirror.js'
 if (Test-Path -LiteralPath $obsoleteCodeMirror) {
