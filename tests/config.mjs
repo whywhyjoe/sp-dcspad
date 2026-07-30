@@ -12,7 +12,15 @@ let notesFetches = 0;
 
 await page.route('**/docs/design-reference.html', (route) => route.fulfill({
   contentType: 'text/plain',
-  body: '<!doctype html><html><head><link rel="stylesheet" href="./docs.css"></head><body><h1>Design reference</h1><a href="guide.md">Guide</a><script>document.body.dataset.scriptReady = "yes";</script></body></html>',
+  body: '<!doctype html><html><head><link rel="stylesheet" href="./docs.css"></head><body><h1>Design reference</h1><a href="guide.md">Guide</a><script src="./page-script.js"></script><script>document.body.dataset.scriptReady = "yes";</script></body></html>',
+}));
+await page.route('**/docs/page-script.js', (route) => route.fulfill({
+  contentType: 'application/octet-stream',
+  headers: {
+    'Content-Disposition': 'attachment; filename="page-script.js"',
+    'X-Content-Type-Options': 'nosniff',
+  },
+  body: 'document.body.dataset.externalScriptReady = "yes";',
 }));
 await page.route('**/docs/guide.md', (route) => route.fulfill({
   contentType: 'text/plain',
@@ -149,6 +157,8 @@ await page.click('#docs-menu-items [data-doc-id="design-reference"]');
 await page.waitForFunction(() =>
   document.getElementById('docs-frame')?.srcdoc.includes('Design reference'));
 await page.frameLocator('#docs-frame').locator('h1').waitFor();
+await page.frameLocator('#docs-frame').locator('body[data-script-ready="yes"]').waitFor();
+await page.frameLocator('#docs-frame').locator('body[data-external-script-ready="yes"]').waitFor();
 await check('HTML docs are fetched as text and rendered through srcdoc with a base URL', () =>
   Promise.all([
     page.evaluate((expected) => {
@@ -159,11 +169,19 @@ await check('HTML docs are fetched as text and rendered through srcdoc with a ba
       .then((text) => text === 'Design reference'),
     page.frameLocator('#docs-frame').locator('body').getAttribute('data-script-ready')
       .then((value) => value === 'yes'),
+    page.frameLocator('#docs-frame').locator('body').getAttribute('data-external-script-ready')
+      .then((value) => value === 'yes'),
   ]).then((values) => values.every(Boolean)));
 
-await page.fill('#browser-address-input', `${origin}/docs/guide.md`);
-await page.click('#browser-address-go');
+await page.frameLocator('#docs-frame').getByRole('link', { name: 'Guide' }).click();
 await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Authoring guide' }).waitFor();
+await check('Browser links reuse the fetch-and-srcdoc loader instead of navigating to a download', () =>
+  Promise.all([
+    page.locator('#browser-address-input').inputValue()
+      .then((value) => value === `${origin}/docs/guide.md`),
+    page.evaluate(() =>
+      document.getElementById('docs-frame').srcdoc.includes('Authoring guide')),
+  ]).then((values) => values.every(Boolean)));
 await check('Markdown docs render headings, code fences, and tables in the same viewer', () =>
   Promise.all([
     page.frameLocator('#docs-frame').locator('strong').textContent()
@@ -281,8 +299,7 @@ await page.evaluate(() => {
     return { focus() {} };
   };
 });
-await page.click('#btn-docs');
-await page.click('#mi-open-copilot');
+await page.click('#btn-copilot');
 await check('approved AI help opens in one reusable external tab rather than an iframe', () =>
   page.evaluate(() =>
     window.__docsOpened?.url === 'https://m365.cloud.microsoft/chat'

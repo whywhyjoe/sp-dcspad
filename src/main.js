@@ -18,7 +18,7 @@ import {
 } from './sp-files.js?v=3';
 import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js';
-import { initDocs } from './docs.js';
+import { initDocs } from './docs.js?v=2';
 import { initSpChromeToggle } from './sp-chrome.js';
 
 const splashApi = showSplash();

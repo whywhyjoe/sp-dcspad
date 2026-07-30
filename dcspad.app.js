@@ -4063,9 +4063,10 @@ function showSplash() {
   return standaloneController(splash);
 }
 
-// ../src/docs.js
+// ../src/docs.js?v=2
 var BROWSER_PATH_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)$/i;
 var BROWSER_LINK_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)(?:$|[?#])/i;
+var BROWSER_NAVIGATION_MESSAGE = "dcspad:browser-navigate";
 var escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 function safeHref(value, { image = false } = {}) {
   const href = String(value || "").trim();
@@ -4189,7 +4190,66 @@ function markdownToHtml(markdown) {
 function hostNonce2() {
   return document.querySelector("script[nonce]")?.nonce || document.querySelector("style[nonce]")?.nonce || "";
 }
-function prepareHtmlDocument(source, url, { allowScripts = false } = {}) {
+async function inlineSameTenantScripts(doc2, documentUrl, signal) {
+  const documentOrigin = new URL(documentUrl, location.href).origin;
+  const scripts = [...doc2.querySelectorAll("script[src]")];
+  await Promise.all(scripts.map(async (script) => {
+    const type = (script.getAttribute("type") || "").trim().toLowerCase();
+    if (type && !/^(?:module|text\/javascript|application\/javascript)$/.test(type)) return;
+    let scriptUrl;
+    try {
+      scriptUrl = new URL(script.getAttribute("src"), documentUrl);
+    } catch {
+      return;
+    }
+    if (!/^https?:$/.test(scriptUrl.protocol) || scriptUrl.origin !== documentOrigin) return;
+    try {
+      const response = await fetch(scriptUrl.href, {
+        credentials: "same-origin",
+        cache: "no-cache",
+        signal
+      });
+      if (!response.ok) return;
+      const source = await response.text();
+      script.removeAttribute("src");
+      script.removeAttribute("integrity");
+      script.removeAttribute("crossorigin");
+      script.removeAttribute("referrerpolicy");
+      const embeddableSource = source.replace(/<\/script/gi, "<\\/script");
+      script.textContent = `${embeddableSource}
+//# sourceURL=${scriptUrl.href}`;
+    } catch (error) {
+      if (error.name === "AbortError") throw error;
+    }
+  }));
+}
+function addNavigationBridge(doc2) {
+  const bridge = doc2.createElement("script");
+  bridge.dataset.dcspadBrowserBridge = "";
+  bridge.textContent = `(function () {
+  document.addEventListener('click', function (event) {
+    if (event.defaultPrevented || event.button !== 0
+        || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var path = event.composedPath ? event.composedPath() : [event.target];
+    var link = null;
+    for (var index = 0; index < path.length; index += 1) {
+      if (path[index] && path[index].matches && path[index].matches('a[href]')) {
+        link = path[index];
+        break;
+      }
+    }
+    if (!link) return;
+    var raw = link.getAttribute('href') || '';
+    if (!raw || raw.charAt(0) === '#') return;
+    var href;
+    try { href = new URL(raw, document.baseURI).href; } catch (_) { return; }
+    event.preventDefault();
+    parent.postMessage({ type: '${BROWSER_NAVIGATION_MESSAGE}', href: href }, '*');
+  }, true);
+}());`;
+  (doc2.head || doc2.documentElement).prepend(bridge);
+}
+async function prepareHtmlDocument(source, url, { allowScripts = false, signal } = {}) {
   const doc2 = new DOMParser().parseFromString(source, "text/html");
   const nonce = hostNonce2();
   let base = doc2.querySelector("base");
@@ -4206,6 +4266,9 @@ function prepareHtmlDocument(source, url, { allowScripts = false } = {}) {
   }
   if (!allowScripts) {
     for (const script of doc2.querySelectorAll("script")) script.remove();
+  } else {
+    await inlineSameTenantScripts(doc2, url, signal);
+    addNavigationBridge(doc2);
   }
   if (nonce) {
     for (const style of doc2.querySelectorAll("style")) style.nonce = nonce;
@@ -4334,13 +4397,33 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     updateNested("settings", { browserHistory: [...history] });
     renderHistory();
   }
+  function followBrowserLink(url) {
+    if (url.origin !== location.origin) {
+      onError?.("Browser links are limited to this SharePoint tenant.");
+      return;
+    }
+    if (BROWSER_LINK_RE.test(url.href)) {
+      const configured = configuredDocs.find((entry) => entry.url === url.href);
+      const title = configured?.title || resourceTitle(url);
+      loadDoc2(configured || {
+        id: `linked:${url.href}`,
+        title,
+        url: url.href,
+        type: "auto"
+      });
+      return;
+    }
+    onError?.("Browser supports same-tenant HTML, Markdown, code, and text files.");
+  }
   function wireFrameLinks(targetFrame) {
-    targetFrame.addEventListener("load", () => {
+    const wiredDocuments = /* @__PURE__ */ new WeakSet();
+    const wireCurrentDocument = () => {
       const doc2 = targetFrame.contentDocument;
-      if (!doc2) return;
+      if (!doc2 || wiredDocuments.has(doc2)) return;
+      wiredDocuments.add(doc2);
       doc2.addEventListener("click", (event) => {
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        const link = event.target.closest?.("a[href]");
+        const link = event.target?.closest?.("a[href]") || event.target?.parentElement?.closest?.("a[href]");
         if (!link) return;
         const raw = link.getAttribute("href") || "";
         if (!raw || raw.startsWith("#")) return;
@@ -4350,28 +4433,23 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
         } catch (_) {
           return;
         }
-        if (url.origin !== location.origin) {
-          event.preventDefault();
-          onError?.("Browser links are limited to this SharePoint tenant.");
-          return;
-        }
-        if (BROWSER_LINK_RE.test(url.href)) {
-          event.preventDefault();
-          const configured = configuredDocs.find((entry) => entry.url === url.href);
-          const title = configured?.title || resourceTitle(url);
-          loadDoc2(configured || {
-            id: `linked:${url.href}`,
-            title,
-            url: url.href,
-            type: "auto"
-          });
-          return;
-        }
         event.preventDefault();
-        onError?.("Browser supports same-tenant HTML, Markdown, code, and text files.");
+        followBrowserLink(url);
       }, true);
-    }, { once: true });
+    };
+    targetFrame.addEventListener("load", wireCurrentDocument);
+    return wireCurrentDocument;
   }
+  window.addEventListener("message", (event) => {
+    if (event.source !== frame.contentWindow || event.data?.type !== BROWSER_NAVIGATION_MESSAGE || typeof event.data.href !== "string") return;
+    let url;
+    try {
+      url = new URL(event.data.href, location.href);
+    } catch (_) {
+      return;
+    }
+    followBrowserLink(url);
+  });
   function setMode(name) {
     for (const tab of document.querySelectorAll("#extras-tabs .extras-tab")) {
       const active = tab.dataset.extra === name;
@@ -4459,7 +4537,10 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
       }
       const type = documentType(doc2);
       const allowScripts = type === "html";
-      const srcdoc = type === "markdown" ? prepareMarkdownDocument(source, doc2.url, doc2.title) : type === "text" ? prepareTextDocument(source, doc2.url, doc2.title) : prepareHtmlDocument(source, doc2.url, { allowScripts });
+      const srcdoc = type === "markdown" ? await prepareMarkdownDocument(source, doc2.url, doc2.title) : type === "text" ? prepareTextDocument(source, doc2.url, doc2.title) : await prepareHtmlDocument(source, doc2.url, {
+        allowScripts,
+        signal: loadController.signal
+      });
       const nextFrame = frame.cloneNode(false);
       nextFrame.hidden = false;
       nextFrame.title = doc2.title;

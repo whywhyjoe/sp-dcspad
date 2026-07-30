@@ -6,6 +6,7 @@ import { getState, updateNested } from './state.js';
 
 const BROWSER_PATH_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)$/i;
 const BROWSER_LINK_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)(?:$|[?#])/i;
+const BROWSER_NAVIGATION_MESSAGE = 'dcspad:browser-navigate';
 
 const escapeHtml = (value) => String(value)
   .replaceAll('&', '&amp;')
@@ -165,7 +166,77 @@ function hostNonce() {
     || '';
 }
 
-function prepareHtmlDocument(source, url, { allowScripts = false } = {}) {
+async function inlineSameTenantScripts(doc, documentUrl, signal) {
+  const documentOrigin = new URL(documentUrl, location.href).origin;
+  const scripts = [...doc.querySelectorAll('script[src]')];
+  await Promise.all(scripts.map(async (script) => {
+    const type = (script.getAttribute('type') || '').trim().toLowerCase();
+    if (type && !/^(?:module|text\/javascript|application\/javascript)$/.test(type)) return;
+
+    let scriptUrl;
+    try {
+      scriptUrl = new URL(script.getAttribute('src'), documentUrl);
+    } catch {
+      return;
+    }
+    if (!/^https?:$/.test(scriptUrl.protocol) || scriptUrl.origin !== documentOrigin) return;
+
+    try {
+      const response = await fetch(scriptUrl.href, {
+        credentials: 'same-origin',
+        cache: 'no-cache',
+        signal,
+      });
+      if (!response.ok) return;
+      const source = await response.text();
+      script.removeAttribute('src');
+      script.removeAttribute('integrity');
+      script.removeAttribute('crossorigin');
+      script.removeAttribute('referrerpolicy');
+      // The serialized srcdoc must not contain a literal closing script tag,
+      // even when one appears inside a JavaScript string.
+      const embeddableSource = source.replace(/<\/script/gi, '<\\/script');
+      script.textContent = `${embeddableSource}\n//# sourceURL=${scriptUrl.href}`;
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      // Leave the original src in place. The iframe can still attempt the
+      // browser request when the server already supplies an executable MIME.
+    }
+  }));
+}
+
+function addNavigationBridge(doc) {
+  const bridge = doc.createElement('script');
+  bridge.dataset.dcspadBrowserBridge = '';
+  bridge.textContent = `(function () {
+  document.addEventListener('click', function (event) {
+    if (event.defaultPrevented || event.button !== 0
+        || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var path = event.composedPath ? event.composedPath() : [event.target];
+    var link = null;
+    for (var index = 0; index < path.length; index += 1) {
+      if (path[index] && path[index].matches && path[index].matches('a[href]')) {
+        link = path[index];
+        break;
+      }
+    }
+    if (!link) return;
+    var raw = link.getAttribute('href') || '';
+    if (!raw || raw.charAt(0) === '#') return;
+    var href;
+    try { href = new URL(raw, document.baseURI).href; } catch (_) { return; }
+    event.preventDefault();
+    parent.postMessage({ type: '${BROWSER_NAVIGATION_MESSAGE}', href: href }, '*');
+  }, true);
+}());`;
+  (doc.head || doc.documentElement).prepend(bridge);
+}
+
+async function prepareHtmlDocument(
+  source,
+  url,
+  { allowScripts = false, signal } = {},
+) {
   const doc = new DOMParser().parseFromString(source, 'text/html');
   const nonce = hostNonce();
   let base = doc.querySelector('base');
@@ -182,6 +253,15 @@ function prepareHtmlDocument(source, url, { allowScripts = false } = {}) {
   }
   if (!allowScripts) {
     for (const script of doc.querySelectorAll('script')) script.remove();
+  } else {
+    // SharePoint commonly serves library .js files as downloads or
+    // application/octet-stream. Fetch same-tenant scripts as text, just as
+    // the Browser does for the HTML document, then execute them inline.
+    await inlineSameTenantScripts(doc, url, signal);
+    // This bridge lives inside the parsed page, so it cannot miss the
+    // document's load event. The parent validates both the sender frame and
+    // destination before routing the link through loadDoc().
+    addNavigationBridge(doc);
   }
   if (nonce) {
     for (const style of doc.querySelectorAll('style')) style.nonce = nonce;
@@ -331,41 +411,60 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
     renderHistory();
   }
 
+  function followBrowserLink(url) {
+    if (url.origin !== location.origin) {
+      onError?.('Browser links are limited to this SharePoint tenant.');
+      return;
+    }
+    if (BROWSER_LINK_RE.test(url.href)) {
+      const configured = configuredDocs.find((entry) => entry.url === url.href);
+      const title = configured?.title || resourceTitle(url);
+      loadDoc(configured || {
+        id: `linked:${url.href}`,
+        title,
+        url: url.href,
+        type: 'auto',
+      });
+      return;
+    }
+    onError?.('Browser supports same-tenant HTML, Markdown, code, and text files.');
+  }
+
   function wireFrameLinks(targetFrame) {
-    targetFrame.addEventListener('load', () => {
+    const wiredDocuments = new WeakSet();
+    const wireCurrentDocument = () => {
       const doc = targetFrame.contentDocument;
-      if (!doc) return;
+      if (!doc || wiredDocuments.has(doc)) return;
+      wiredDocuments.add(doc);
       doc.addEventListener('click', (event) => {
         if (event.defaultPrevented || event.button !== 0
             || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        const link = event.target.closest?.('a[href]');
+        const link = event.target?.closest?.('a[href]')
+          || event.target?.parentElement?.closest?.('a[href]');
         if (!link) return;
         const raw = link.getAttribute('href') || '';
         if (!raw || raw.startsWith('#')) return;
         let url;
         try { url = new URL(raw, doc.baseURI); } catch (_) { return; }
-        if (url.origin !== location.origin) {
-          event.preventDefault();
-          onError?.('Browser links are limited to this SharePoint tenant.');
-          return;
-        }
-        if (BROWSER_LINK_RE.test(url.href)) {
-          event.preventDefault();
-          const configured = configuredDocs.find((entry) => entry.url === url.href);
-          const title = configured?.title || resourceTitle(url);
-          loadDoc(configured || {
-            id: `linked:${url.href}`,
-            title,
-            url: url.href,
-            type: 'auto',
-          });
-          return;
-        }
         event.preventDefault();
-        onError?.('Browser supports same-tenant HTML, Markdown, code, and text files.');
+        followBrowserLink(url);
       }, true);
-    }, { once: true });
+    };
+    // A newly inserted iframe can emit an initial about:blank load before its
+    // srcdoc navigation. Wire every distinct document rather than consuming a
+    // one-shot listener on whichever load happens first.
+    targetFrame.addEventListener('load', wireCurrentDocument);
+    return wireCurrentDocument;
   }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== frame.contentWindow
+        || event.data?.type !== BROWSER_NAVIGATION_MESSAGE
+        || typeof event.data.href !== 'string') return;
+    let url;
+    try { url = new URL(event.data.href, location.href); } catch (_) { return; }
+    followBrowserLink(url);
+  });
 
   function setMode(name) {
     for (const tab of document.querySelectorAll('#extras-tabs .extras-tab')) {
@@ -460,10 +559,13 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
       const type = documentType(doc);
       const allowScripts = type === 'html';
       const srcdoc = type === 'markdown'
-        ? prepareMarkdownDocument(source, doc.url, doc.title)
+        ? await prepareMarkdownDocument(source, doc.url, doc.title)
         : type === 'text'
           ? prepareTextDocument(source, doc.url, doc.title)
-          : prepareHtmlDocument(source, doc.url, { allowScripts });
+          : await prepareHtmlDocument(source, doc.url, {
+            allowScripts,
+            signal: loadController.signal,
+          });
       // Use a fresh frame for every document. Replacing srcdoc in an existing
       // sandboxed frame can leave Chromium with a zero-size child viewport.
       const nextFrame = frame.cloneNode(false);
@@ -482,6 +584,8 @@ export function initDocs({ config, layoutApi, onBrowse, onError } = {}) {
       wireFrameLinks(nextFrame);
       frame.replaceWith(nextFrame);
       frame = nextFrame;
+      // Assign after insertion. The persistent load hook above wires both a
+      // possible initial about:blank document and the final srcdoc document.
       frame.srcdoc = srcdoc;
       state.hidden = true;
       if (record) recordHistory(doc.url);
