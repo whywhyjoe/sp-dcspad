@@ -4,7 +4,7 @@
 # in CLAUDE.md for why the bundle exists.
 
 param(
-    [string]$LivePath = "C:\Users\other\NERVE\NewNerve - Code\dcspad-live"
+    [string]$LivePath = "C:\dev\fcuportal-code\tools\dcspad"
 )
 
 $repo = Split-Path $PSScriptRoot -Parent
