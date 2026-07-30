@@ -10,7 +10,16 @@ import { launchBrowser, check, exitWithResult, APP_URL, FIXTURES_URL } from './l
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
+const starterSnippetDoc = JSON.parse(readFileSync(
+  join('..', 'examples', 'dcspad-starter-snippets.json'),
+  'utf8',
+));
 
+// The locally installed browser may use a persistent profile. Clear this
+// origin before the app boots so "new project" and default-library checks are
+// deterministic without clearing again on the persistence reload near EOF.
+await page.goto(new URL('/__dcspad-smoke-reset__', APP_URL).href);
+await page.evaluate(() => localStorage.clear());
 await page.goto(APP_URL);
 await page.waitForTimeout(1200);
 await page.context().grantPermissions(
@@ -26,10 +35,11 @@ await check('SP chip shows Mock', async () =>
   (await page.locator('#sp-chip-text').textContent()) === 'SP: Mock');
 
 await check('new projects start with a labeled untitled name control', async () =>
-  (await page.locator('.project-name__label').textContent()) === 'Project'
+  (await page.locator('.project-name__label').textContent()) === 'PRJ'
   && (await page.locator('#project-name-text').textContent()) === '(untitled)');
-
-await page.evaluate(() => localStorage.clear());
+await check('a fresh project is visibly unsaved to a project file', async () =>
+  (await page.locator('#project-file-state').textContent()) === 'unsaved'
+  && (await page.locator('#project-file-state').getAttribute('title')).includes('browser autosave'));
 
 const setDoc = async (name, code) => {
   await page.click(`#editor-tabs .tab[data-editor="${name}"]`);
@@ -48,30 +58,17 @@ await setDoc('html', `
 `);
 await setJs('');
 await page.click('#btn-run');
-await page.waitForFunction(() => {
-  const frame = document.querySelector('#preview-host iframe');
-  const icon = frame?.contentDocument?.querySelector('fluent-icon');
-  return icon?.firstElementChild?.classList.contains('icon-ic_fluent_home_24_regular');
-});
-await check('configured Fluent runtime injects font CSS and upgrades <fluent-icon>', () =>
+await page.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('ran in'));
+await check('disabled configured Fluent bridge is not injected into the preview', () =>
   page.evaluate(() => {
     const frame = document.querySelector('#preview-host iframe');
     const previewDocument = frame.contentDocument;
     const links = [...previewDocument.querySelectorAll('link[rel="stylesheet"]')]
       .map((link) => new URL(link.href).pathname);
     const icon = previewDocument.querySelector('fluent-icon');
-    const regular = icon.firstElementChild;
-    const filled = previewDocument.querySelector('#fluent-filled');
-    const regularStyle = frame.contentWindow.getComputedStyle(regular, '::before');
-    const filledStyle = frame.contentWindow.getComputedStyle(filled, '::before');
-    return links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Regular.css')
-      && links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Filled.css')
-      && links.includes('/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Light.css')
-      && regular.className === 'icon-ic_fluent_home_24_regular'
-      && regular.style.fontSize === '24px'
-      && regularStyle.fontFamily.includes('FluentSystemIcons-Regular')
-      && filledStyle.fontFamily.includes('FluentSystemIcons-Filled')
-      && regularStyle.content !== 'none';
+    return !links.some((path) => path.includes('/bsp-fluent-icon-lib/fonts/'))
+      && icon.childElementCount === 0;
   }));
 
 await setJs(`
@@ -329,7 +326,27 @@ const catPath = await catDownload.path();
 const catJson = JSON.parse(readFileSync(catPath, 'utf8'));
 const testlibEntry = catJson.items.find((i) => i.name === 'testlib.js');
 await check('exported catalog file has the right shape', () =>
-  Array.isArray(catJson.items) && !!testlibEntry);
+  catJson.kind === 'dcspad-framework-catalog'
+  && Array.isArray(catJson.items) && !!testlibEntry);
+
+// A snippet document used to pass the catalog's shallow { items } check and
+// replace every framework. The signed wrong type must now be rejected before
+// confirmation or mutation.
+const wrongCatalogPath = join(tmpdir(), 'snippets-mistaken-for-frameworks.json');
+writeFileSync(wrongCatalogPath, JSON.stringify({
+  kind: 'dcspad-snippet-library',
+  v: 1,
+  items: [{ id: 'wrong-type', name: 'Wrong type', lang: 'js', code: 'void 0;' }],
+}));
+const catalogCountBeforeWrongImport = await page.locator('#panel-frameworks .lib-item').count();
+const wrongCatalogDialogPromise = page.waitForEvent('dialog');
+await page.setInputFiles('#import-catalog-file', wrongCatalogPath);
+const wrongCatalogDialog = await wrongCatalogDialogPromise;
+const wrongCatalogMessage = wrongCatalogDialog.message();
+await wrongCatalogDialog.dismiss();
+await check('snippet files are rejected by the framework importer without mutation', async () =>
+  wrongCatalogMessage.includes('snippet library, not a framework catalog')
+  && await page.locator('#panel-frameworks .lib-item').count() === catalogCountBeforeWrongImport);
 
 // Import a copy with testlib removed while testlib is still enabled:
 // the row must disappear AND its dead id must be pruned from the
@@ -355,7 +372,21 @@ await check('catalog file round-trip restores entries', () =>
     document.querySelector('#lib-list').textContent.includes('testlib.js'))
     .then(() => true, () => false));
 
-// --- snippets: save from selection, insert at cursor ---
+// --- snippets: default pack, guarded files, save from selection, insert ---
+await check('new users receive the maintained starter snippet library', async () =>
+  (await page.locator('#snippet-list .snippet-item').count()) === starterSnippetDoc.items.length
+  && (await page.locator('#snippets-count').textContent()) === String(starterSnippetDoc.items.length));
+
+// Isolate the custom-snippet checks from the starter pack while retaining a
+// correctly signed empty personal library.
+await page.evaluate(() => localStorage.setItem(
+  'dcspad.v2.snippets',
+  JSON.stringify({ kind: 'dcspad-snippet-library', v: 1, items: [] }),
+));
+await page.reload();
+await page.waitForSelector('.monaco-editor');
+await page.waitForFunction(() => document.documentElement.dataset.monacoReady === 'true');
+
 await setJs('var SNIPPET_MARKER = 42;');
 await page.locator('#pane-editor .view-lines').click({ position: { x: 80, y: 10 } });
 await page.keyboard.press('Control+a');
@@ -381,6 +412,26 @@ await check('snippets display alphabetically regardless of file type', async () 
   const names = await page.locator('#snippet-list .snippet-item .lib-name').allTextContents();
   return JSON.stringify(names) === JSON.stringify(['alpha styles', 'my-snip', 'Zulu markup']);
 });
+
+const [snippetDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#btn-snippets-export'),
+]);
+const snippetPath = await snippetDownload.path();
+const snippetJson = JSON.parse(readFileSync(snippetPath, 'utf8'));
+await check('exported snippet library carries its file signature', () =>
+  snippetJson.kind === 'dcspad-snippet-library'
+  && snippetJson.items.length === 3);
+
+const snippetCountBeforeWrongImport = await page.locator('#snippet-list .snippet-item').count();
+const wrongSnippetDialogPromise = page.waitForEvent('dialog');
+await page.setInputFiles('#import-snippets-file', catPath);
+const wrongSnippetDialog = await wrongSnippetDialogPromise;
+const wrongSnippetMessage = wrongSnippetDialog.message();
+await wrongSnippetDialog.dismiss();
+await check('framework files are rejected by the snippet importer without mutation', async () =>
+  wrongSnippetMessage.includes('framework catalog, not a snippet library')
+  && await page.locator('#snippet-list .snippet-item').count() === snippetCountBeforeWrongImport);
 
 await setJs('// cleared\n');
 await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).click();
@@ -415,18 +466,87 @@ await check('saved project file has the right shape', () =>
   && Array.isArray(projJson.libraries.enabled) && projJson.name === 'This Is an Example');
 await check('project JSON uses the project slug and .dcspad.json extension', () =>
   projDownload.suggestedFilename() === 'this-is-an-example.dcspad.json');
+await check('downloading a project marks its current contents saved', async () =>
+  (await page.locator('#project-file-state').textContent()) === 'saved');
 await check('project import picker prefers .dcspad.json files', () =>
   page.locator('#import-project-file').getAttribute('accept')
     .then((accept) => accept.startsWith('.dcspad.json')));
 
 await setJs('console.log("changed after save");');
+await page.waitForFunction(() =>
+  document.querySelector('#project-file-state')?.textContent === 'unsaved');
+await check('editing after a project-file save marks the project unsaved', async () =>
+  (await page.locator('#project-file-state').textContent()) === 'unsaved');
 await page.setInputFiles('#import-project-file', projPath);
 await page.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('project loaded'));
+await page.waitForFunction(() =>
+  document.querySelector('#pane-editor .view-lines')?.textContent.includes('round-trip-original'));
 await check('loading the project file restores the JS pane', async () =>
   (await page.locator('#pane-editor .view-lines').textContent()).includes('round-trip-original'));
 await check('loading the project file restores its title', async () =>
   (await page.locator('#project-name-text').textContent()) === 'This Is an Example');
+await check('loading a project establishes a saved baseline', async () =>
+  (await page.locator('#project-file-state').textContent()) === 'saved');
+
+// File > New Project only prompts when the current project differs from its
+// last file. Cancel preserves the work; Save downloads it before resetting.
+await setJs('console.log("save-before-new");');
+await page.click('#btn-file');
+await page.click('#mi-new-project');
+await check('New Project prompts to save changed work', () =>
+  page.locator('#new-project-dialog').evaluate((dialog) => dialog.open));
+await page.click('#new-project-cancel');
+await check('canceling New Project preserves the current project', async () =>
+  (await page.locator('#project-name-text').textContent()) === 'This Is an Example'
+  && (await page.locator('#pane-editor .view-lines').textContent()).includes('save-before-new'));
+
+await page.click('#btn-file');
+await page.click('#mi-new-project');
+const [beforeNewDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#new-project-save'),
+]);
+await page.waitForFunction(() =>
+  document.querySelector('#project-name-text')?.textContent === '(untitled)'
+  && document.querySelector('#status-run')?.textContent.includes('new project'));
+await check('saving from the New Project prompt downloads the changed project', async () =>
+  beforeNewDownload.suggestedFilename() === 'this-is-an-example.dcspad.json'
+  && readFileSync(await beforeNewDownload.path(), 'utf8').includes('save-before-new'));
+await page.click('#editor-tabs .tab[data-editor="js"]');
+await page.waitForFunction(() =>
+  document.querySelector('#pane-editor .view-lines')?.textContent
+    .replaceAll('\u00a0', ' ')
+    .includes('DCSPad ready'));
+await check('New Project restores fresh untitled editors and clears the old preview', async () =>
+  (await page.locator('#project-name-text').textContent()) === '(untitled)'
+  && (await page.locator('#project-file-state').textContent()) === 'unsaved'
+  && await page.locator('#preview-empty').isVisible()
+  && (await page.locator('#pane-editor .view-lines').textContent())
+    .replaceAll('\u00a0', ' ')
+    .includes('DCSPad ready'));
+
+// Restore the named fixture for the title-derived export checks below.
+await page.setInputFiles('#import-project-file', projPath);
+await page.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('project loaded'));
+
+await setJs('console.log("discard-before-new");');
+await page.waitForFunction(() =>
+  document.querySelector('#project-file-state')?.textContent === 'unsaved');
+await page.click('#btn-file');
+await page.click('#mi-new-project');
+await page.click('#new-project-discard');
+await page.waitForFunction(() =>
+  document.querySelector('#project-name-text')?.textContent === '(untitled)');
+await check('Don’t save starts a fresh project without downloading', async () =>
+  (await page.locator('#project-file-state').textContent()) === 'unsaved'
+  && await page.locator('#preview-empty').isVisible());
+
+// Restore once more for the title-derived export checks below.
+await page.setInputFiles('#import-project-file', projPath);
+await page.waitForFunction(() =>
+  document.querySelector('#status-run')?.textContent.includes('project loaded'));
 
 // Named pane exports share the title-derived base. Export-all skips the
 // deliberately emptied CSS pane and downloads the two remaining types.
@@ -502,6 +622,34 @@ await check('catalog framework persisted after reload', async () =>
   (await libRow('testlib.js').count()) === 1);
 await check('snippet library persisted after reload', async () =>
   (await page.locator('#snippet-list .snippet-item', { hasText: 'my-snip' }).count()) === 1);
+
+// Explicit recovery controls restore the same state as a fresh install.
+page.once('dialog', (dialog) => dialog.accept());
+await page.click('#btn-catalog-reset');
+await check('framework reset restores PRESETS and clears workspace selections', () =>
+  page.evaluate(async () => {
+    const { getCatalogDoc, PRESETS } = await import('/src/libraries.js');
+    const { getState } = await import('/src/state.js');
+    const workspace = getState();
+    const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
+    return stored.kind === 'dcspad-framework-catalog'
+      && getCatalogDoc().items.length === PRESETS.length
+      && stored.items.length === PRESETS.length
+      && workspace.libraries.enabled.length === 0
+      && JSON.stringify(workspace.libraries.pinned) === JSON.stringify(['pnpjs2']);
+  }));
+
+page.once('dialog', (dialog) => dialog.accept());
+await page.click('#btn-snippets-reset');
+await page.waitForFunction((expected) =>
+  Number(document.querySelector('#snippets-count')?.textContent) === expected,
+  starterSnippetDoc.items.length);
+await check('snippet reset restores the maintained starter pack', () =>
+  page.evaluate((expected) => {
+    const stored = JSON.parse(localStorage.getItem('dcspad.v2.snippets'));
+    return stored.kind === 'dcspad-snippet-library'
+      && stored.items.length === expected;
+  }, starterSnippetDoc.items.length));
 
 await browser.close();
 exitWithResult();

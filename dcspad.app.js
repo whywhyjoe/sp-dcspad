@@ -20,7 +20,8 @@ var DEFAULTS = {
     wordWrap: false,
     spFilesWebUrl: "",
     spFilesFolder: "",
-    browserHistory: []
+    browserHistory: [],
+    projectFileFingerprint: ""
   },
   layout: {
     sidebarW: 230,
@@ -71,6 +72,21 @@ function persist() {
 }
 function getState() {
   return state;
+}
+function getNewProjectDefaults() {
+  return {
+    projectName: DEFAULTS.projectName,
+    docs: {
+      html: DEFAULTS.html,
+      css: DEFAULTS.css,
+      js: DEFAULTS.js
+    },
+    libraries: {
+      enabled: [...DEFAULTS.libraries.enabled],
+      dcsUrl: ""
+    },
+    jsAsModule: DEFAULTS.settings.jsAsModule
+  };
 }
 function update(patch) {
   Object.assign(state, patch);
@@ -1821,6 +1837,22 @@ function run(opts) {
   currentFrame = frame;
   return { runNumber: runCounter, token: currentToken };
 }
+function reset() {
+  currentToken = null;
+  if (currentFrame) currentFrame.remove();
+  currentFrame = null;
+  for (const cb of evalCallbacks.values()) {
+    cb({ ok: false, cancelled: true, value: { t: "str", v: "(cancelled \u2014 the project was reset)" } });
+  }
+  evalCallbacks.clear();
+  const host = document.getElementById("preview-host");
+  host.replaceChildren();
+  const empty = document.createElement("div");
+  empty.id = "preview-empty";
+  empty.className = "preview-empty";
+  empty.innerHTML = "Nothing to preview yet \u2014 press <kbd>Ctrl/Cmd + Enter</kbd>";
+  host.append(empty);
+}
 function evalInFrame(code) {
   return new Promise((resolve) => {
     if (!currentFrame) {
@@ -2642,6 +2674,105 @@ function selectedAssetBase(group) {
   return preferred || group.hostedBaseUrl || group.localBaseUrl || "";
 }
 
+// ../src/library-files.js
+var FRAMEWORK_CATALOG_KIND = "dcspad-framework-catalog";
+var SNIPPET_LIBRARY_KIND = "dcspad-snippet-library";
+var KIND_LABELS = {
+  [FRAMEWORK_CATALOG_KIND]: "framework catalog",
+  [SNIPPET_LIBRARY_KIND]: "snippet library"
+};
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
+function validateRoot(doc2, expectedKind, expectedLabel, allowUnsignedEmpty) {
+  if (!isObject(doc2) || !Array.isArray(doc2.items)) {
+    return { ok: false, message: `Not a DCSPad ${expectedLabel} file.` };
+  }
+  if (doc2.kind && doc2.kind !== expectedKind) {
+    const actual = KIND_LABELS[doc2.kind];
+    return {
+      ok: false,
+      message: actual ? `This is a DCSPad ${actual}, not a ${expectedLabel}.` : `Unsupported DCSPad file type "${doc2.kind}".`
+    };
+  }
+  if (!doc2.kind && doc2.items.length === 0 && !allowUnsignedEmpty) {
+    return {
+      ok: false,
+      message: `This empty legacy file has no "kind" signature, so it cannot be safely identified as a ${expectedLabel}.`
+    };
+  }
+  return { ok: true };
+}
+function duplicateId(items) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const item of items) {
+    if (!item.id) continue;
+    if (ids.has(item.id)) return item.id;
+    ids.add(item.id);
+  }
+  return "";
+}
+function validateFrameworkCatalog(doc2, { allowUnsignedEmpty = false } = {}) {
+  const root = validateRoot(
+    doc2,
+    FRAMEWORK_CATALOG_KIND,
+    "framework catalog",
+    allowUnsignedEmpty
+  );
+  if (!root.ok) return root;
+  for (let index = 0; index < doc2.items.length; index += 1) {
+    const item = doc2.items[index];
+    const validSource = isNonEmptyString(item?.js) || isNonEmptyString(item?.css) || item?.needsConfig === true;
+    if (!isObject(item) || !isNonEmptyString(item.id) || !isNonEmptyString(item.name) || !validSource || item.js !== void 0 && typeof item.js !== "string" || item.css !== void 0 && typeof item.css !== "string") {
+      return {
+        ok: false,
+        message: `Item ${index + 1} is not a valid framework entry (expected id, name, and a JS/CSS source).`
+      };
+    }
+  }
+  const repeated = duplicateId(doc2.items);
+  if (repeated) {
+    return { ok: false, message: `Framework id "${repeated}" appears more than once.` };
+  }
+  return {
+    ok: true,
+    doc: {
+      kind: FRAMEWORK_CATALOG_KIND,
+      v: 1,
+      items: doc2.items.map((item) => ({ ...item }))
+    }
+  };
+}
+function validateSnippetLibrary(doc2, { allowUnsignedEmpty = false } = {}) {
+  const root = validateRoot(
+    doc2,
+    SNIPPET_LIBRARY_KIND,
+    "snippet library",
+    allowUnsignedEmpty
+  );
+  if (!root.ok) return root;
+  for (let index = 0; index < doc2.items.length; index += 1) {
+    const item = doc2.items[index];
+    if (!isObject(item) || !isNonEmptyString(item.name) || typeof item.code !== "string" || !["html", "css", "js"].includes(item.lang) || item.id !== void 0 && !isNonEmptyString(item.id)) {
+      return {
+        ok: false,
+        message: `Item ${index + 1} is not a valid snippet entry (expected name, html/css/js language, and code).`
+      };
+    }
+  }
+  const repeated = duplicateId(doc2.items);
+  if (repeated) {
+    return { ok: false, message: `Snippet id "${repeated}" appears more than once.` };
+  }
+  return {
+    ok: true,
+    doc: {
+      kind: SNIPPET_LIBRARY_KIND,
+      v: 1,
+      items: doc2.items.map((item) => ({ ...item }))
+    }
+  };
+}
+
 // ../src/libraries.js
 var PRESETS = [
   {
@@ -2678,6 +2809,11 @@ var onChangeCb = null;
 var onStorageErrorCb = null;
 var filterText = "";
 var draggedEntryId = null;
+var defaultCatalog = () => ({
+  kind: FRAMEWORK_CATALOG_KIND,
+  v: 1,
+  items: structuredClone(PRESETS)
+});
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 var entryFromUrl = (url, name) => ({
   id: newId("lib"),
@@ -2689,9 +2825,14 @@ function initLibraries({ config, onChange, onStorageError }) {
   appConfig = config;
   onChangeCb = onChange;
   onStorageErrorCb = onStorageError;
-  catalog = loadDoc(CATALOG_KEY);
+  const storedCatalog = loadDoc(CATALOG_KEY);
+  const storedValidation = storedCatalog ? validateFrameworkCatalog(storedCatalog, { allowUnsignedEmpty: true }) : null;
+  catalog = storedValidation?.ok ? storedValidation.doc : null;
   if (!catalog) {
-    catalog = { v: 1, items: structuredClone(PRESETS) };
+    if (storedCatalog) {
+      console.warn("DCSPad: invalid stored framework catalog was reset", storedValidation.message);
+    }
+    catalog = defaultCatalog();
     const libs = getState().libraries;
     if (libs.custom?.length) {
       const migratedIds = [];
@@ -2753,6 +2894,12 @@ function initLibraries({ config, onChange, onStorageError }) {
       filterText = "";
       render();
     }
+  });
+  document.getElementById("btn-catalog-reset").addEventListener("click", () => {
+    if (!confirm(
+      "Reset Frameworks to the built-in catalog?\n\nCustom framework entries, enabled selections, pins, and the saved DCS URL will be cleared."
+    )) return;
+    resetCatalogToDefaults();
   });
   toggleBtn.addEventListener("click", () => setAddFormOpen(true));
   document.getElementById("lib-add-cancel").addEventListener("click", () => setAddFormOpen(false));
@@ -3088,9 +3235,10 @@ function getCatalogDoc() {
   return catalog;
 }
 function replaceCatalog(doc2) {
-  if (!doc2 || !Array.isArray(doc2.items)) return false;
-  const items = doc2.items.filter((it) => it && typeof it.id === "string" && typeof it.name === "string");
-  catalog = { v: 1, items };
+  const validation = validateFrameworkCatalog(doc2);
+  if (!validation.ok) return false;
+  catalog = validation.doc;
+  const items = catalog.items;
   persistCatalog();
   const known = new Set(items.map((it) => it.id));
   const cur = getState().libraries;
@@ -3101,6 +3249,23 @@ function replaceCatalog(doc2) {
   render();
   onChangeCb?.();
   return true;
+}
+function resetCatalogToDefaults() {
+  catalog = defaultCatalog();
+  persistCatalog();
+  updateNested("libraries", {
+    enabled: [],
+    pinned: ["pnpjs2"],
+    custom: [],
+    dcsUrl: ""
+  });
+  filterText = "";
+  const filterInput = document.getElementById("frameworks-filter");
+  const filterRow = document.getElementById("frameworks-filter-row");
+  if (filterInput) filterInput.value = "";
+  if (filterRow) filterRow.hidden = true;
+  render();
+  onChangeCb?.();
 }
 function unknownLibraryIds(ids) {
   const known = new Set(catalog.items.map((it) => it.id));
@@ -3152,9 +3317,45 @@ var snippetNameCollator = new Intl.Collator(void 0, {
   sensitivity: "base",
   numeric: true
 });
-function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
+var defaultSnippetLibrary = () => ({
+  kind: SNIPPET_LIBRARY_KIND,
+  v: 1,
+  items: []
+});
+function starterLibraryUrl() {
+  const appRoot = window.__DCSPAD_ASSET_BASE__ || new URL("../", import.meta.url).href;
+  return new URL("examples/dcspad-starter-snippets.json", appRoot).href;
+}
+async function loadDefaultSnippetLibrary() {
+  const response = await fetch(starterLibraryUrl(), {
+    credentials: "same-origin",
+    cache: "no-cache"
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} loading the starter snippet library`);
+  }
+  const validation = validateSnippetLibrary(await response.json());
+  if (!validation.ok) throw new Error(validation.message);
+  return validation.doc;
+}
+async function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
   deps3 = { getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError };
-  doc = loadDoc(SNIPPETS_KEY) || { v: 1, items: [] };
+  const storedDoc = loadDoc(SNIPPETS_KEY);
+  const storedValidation = storedDoc ? validateSnippetLibrary(storedDoc, { allowUnsignedEmpty: true }) : null;
+  if (storedValidation?.ok) {
+    doc = storedValidation.doc;
+  } else {
+    if (storedDoc) {
+      console.warn("DCSPad: invalid stored snippet library was reset", storedValidation.message);
+    }
+    try {
+      doc = await loadDefaultSnippetLibrary();
+    } catch (error) {
+      console.warn("DCSPad: starter snippet library could not be loaded", error);
+      doc = defaultSnippetLibrary();
+    }
+    saveDoc(SNIPPETS_KEY, doc);
+  }
   render2();
   const dialog = document.getElementById("snippet-name-dialog");
   const form = document.getElementById("snippet-name-form");
@@ -3198,16 +3399,42 @@ function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, 
   document.getElementById("btn-snippets-import").addEventListener("click", () => {
     document.getElementById("import-snippets-file").click();
   });
-  wireJsonImport("import-snippets-file", (imported) => {
-    const items = imported && Array.isArray(imported.items) ? imported.items.filter((s) => s && typeof s.name === "string" && typeof s.code === "string" && ["html", "css", "js"].includes(s.lang)) : null;
-    if (!items) {
-      alert("Not a DCSPad snippet library file.");
+  wireJsonImport("import-snippets-file", (imported, fileName) => {
+    const validation = validateSnippetLibrary(imported);
+    if (!validation.ok) {
+      alert(`"${fileName}" was not imported.
+
+${validation.message}`);
       return;
     }
+    const items = validation.doc.items;
     if (doc.items.length && !confirm(`Replace your ${doc.items.length} snippet(s) with the ${items.length} from this file?`)) return;
-    doc = { v: 1, items: items.map((s) => ({ ...s, id: s.id || newId("snip") })) };
+    doc = {
+      ...validation.doc,
+      items: items.map((s) => ({ ...s, id: s.id || newId("snip") }))
+    };
     persist2();
     render2();
+  });
+  document.getElementById("btn-snippets-reset").addEventListener("click", async () => {
+    if (!confirm(
+      `Reset Snippets to the built-in starter library?
+
+This will replace all ${doc.items.length} currently saved snippet(s).`
+    )) return;
+    const resetButton = document.getElementById("btn-snippets-reset");
+    resetButton.disabled = true;
+    try {
+      doc = await loadDefaultSnippetLibrary();
+      persist2();
+      render2();
+    } catch (error) {
+      alert(`The starter snippet library could not be loaded.
+
+${error.message || error}`);
+    } finally {
+      resetButton.disabled = false;
+    }
   });
 }
 function persist2() {
@@ -4690,7 +4917,32 @@ function initSpChromeToggle(initialContext) {
   };
 }
 
+// ../src/build-info.js
+var APP_VERSION = "1.0.0";
+var injectedBuild = true ? "56-dirty" : "dev";
+var injectedRevision = true ? "4f50e804-dirty" : "";
+var APP_BUILD_INFO = Object.freeze({
+  version: APP_VERSION,
+  build: injectedBuild,
+  revision: injectedRevision
+});
+function buildTooltip(info = APP_BUILD_INFO) {
+  const revision = info.revision ? ` (${info.revision})` : "";
+  return `DCSPad \u2014 version ${info.version} \u2014 Build #${info.build}${revision}`;
+}
+function applyBuildMarker(root = document) {
+  const logo = root.querySelector(".logo");
+  if (!logo) return;
+  const tooltip = buildTooltip();
+  logo.title = tooltip;
+  logo.setAttribute("aria-label", tooltip);
+  document.documentElement.dataset.dcspadVersion = APP_BUILD_INFO.version;
+  document.documentElement.dataset.dcspadBuild = APP_BUILD_INFO.build;
+  window.__DCSPAD_BUILD_INFO__ = APP_BUILD_INFO;
+}
+
 // ../src/main.js
+applyBuildMarker();
 var splashApi = showSplash();
 splashApi.status("Restoring workspace\u2026");
 var configReady = loadAppConfig();
@@ -4726,6 +4978,7 @@ try {
   editorsApi = await initEditors({
     onChange: (name) => {
       markUnsaved(name);
+      refreshProjectFileStatus();
       scheduleAutorun();
     },
     onRunShortcut: () => run2(),
@@ -4752,13 +5005,14 @@ var configResult = await configReady;
 initLibraries({
   config: configResult.config,
   onChange: () => {
+    refreshProjectFileStatus();
     scheduleAutorun();
     editorsApi.setIntelligencePacks(getEnabledIntelligence());
   },
   onStorageError: (msg) => reportStorageError(msg)
 });
 editorsApi.setIntelligencePacks(getEnabledIntelligence());
-initSnippets({
+await initSnippets({
   getSelection: (name) => editorsApi.getSelection(name),
   getDocs: () => editorsApi.getDocs(),
   insertAtCursor: (name, text) => editorsApi.insertAtCursor(name, text),
@@ -4983,7 +5237,8 @@ var projectNameText = document.getElementById("project-name-text");
 var projectNameForm = document.getElementById("project-name-form");
 var projectNameInput = document.getElementById("project-name-input");
 var projectNameError = document.getElementById("project-name-error");
-var saveProjectAfterNaming = false;
+var projectFileState = document.getElementById("project-file-state");
+var projectSaveAfterNaming = null;
 function projectName() {
   return typeof getState().projectName === "string" ? getState().projectName.trim() : "";
 }
@@ -4998,6 +5253,45 @@ function renderProjectName() {
   projectNameDisplay.title = name ? "Edit project name" : "Set project name";
   document.title = name ? `${name} \u2014 DCSPad` : "DCSPad \u2014 SharePoint Developer Workbench";
 }
+function projectFileSnapshot() {
+  const s = getState();
+  return {
+    name: projectName(),
+    docs: editorsApi.getDocs(),
+    libraries: {
+      enabled: [...s.libraries.enabled],
+      dcsUrl: typeof s.libraries.dcsUrl === "string" ? s.libraries.dcsUrl : ""
+    },
+    jsAsModule: Boolean(s.settings.jsAsModule)
+  };
+}
+function projectFingerprint() {
+  const text = JSON.stringify(projectFileSnapshot());
+  let a = 2166136261;
+  let b = 2654435769;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    a = Math.imul(a ^ code, 16777619);
+    b = Math.imul(b ^ code, 2246822507);
+  }
+  return `v1:${text.length}:${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
+}
+function projectHasUnsavedChanges() {
+  const saved = getState().settings.projectFileFingerprint;
+  return !saved || saved !== projectFingerprint();
+}
+function refreshProjectFileStatus() {
+  if (!editorsApi || !projectFileState) return;
+  const unsaved = projectHasUnsavedChanges();
+  projectFileState.textContent = unsaved ? "unsaved" : "saved";
+  projectFileState.classList.toggle("unsaved", unsaved);
+  projectFileState.classList.toggle("saved", !unsaved);
+  projectFileState.title = unsaved ? "Not saved to a project file (browser autosave is still active)" : "Matches the last saved or loaded project file";
+}
+function recordProjectFileSave() {
+  updateNested("settings", { projectFileFingerprint: projectFingerprint() });
+  refreshProjectFileStatus();
+}
 function showProjectNameError(message = "") {
   projectNameError.textContent = message;
   projectNameError.hidden = !message;
@@ -5005,7 +5299,7 @@ function showProjectNameError(message = "") {
   projectNameInput.setAttribute("aria-invalid", String(Boolean(message)));
 }
 function startProjectNameEdit({ requiredForProjectSave = false } = {}) {
-  saveProjectAfterNaming = requiredForProjectSave;
+  if (!requiredForProjectSave) projectSaveAfterNaming = null;
   projectNameInput.value = projectName();
   projectNameDisplay.hidden = true;
   projectNameForm.hidden = false;
@@ -5021,7 +5315,7 @@ function finishProjectNameEdit() {
   showProjectNameError("");
 }
 function cancelProjectNameEdit() {
-  saveProjectAfterNaming = false;
+  projectSaveAfterNaming = null;
   finishProjectNameEdit();
 }
 function downloadProject() {
@@ -5037,8 +5331,19 @@ function downloadProject() {
     jsAsModule: s.settings.jsAsModule
   };
   downloadText2(`${filenameBase()}.dcspad.json`, JSON.stringify(file, null, 2));
+  recordProjectFileSave();
+}
+function requestProjectSave(afterSave = null) {
+  if (!projectName()) {
+    projectSaveAfterNaming = { afterSave };
+    startProjectNameEdit({ requiredForProjectSave: true });
+    return;
+  }
+  downloadProject();
+  afterSave?.();
 }
 renderProjectName();
+refreshProjectFileStatus();
 projectNameDisplay.addEventListener("click", () => startProjectNameEdit());
 projectNameInput.addEventListener("input", () => showProjectNameError(""));
 projectNameInput.addEventListener("keydown", (event) => {
@@ -5059,18 +5364,75 @@ projectNameForm.addEventListener("submit", (event) => {
   update({ projectName: name });
   renderProjectName();
   finishProjectNameEdit();
-  if (saveProjectAfterNaming) {
-    saveProjectAfterNaming = false;
+  refreshProjectFileStatus();
+  if (projectSaveAfterNaming) {
+    const { afterSave } = projectSaveAfterNaming;
+    projectSaveAfterNaming = null;
     downloadProject();
+    afterSave?.();
   }
 });
 document.getElementById("mi-save-project").addEventListener("click", () => {
   closeFileMenu();
-  if (!projectName()) {
-    startProjectNameEdit({ requiredForProjectSave: true });
+  requestProjectSave();
+});
+var newProjectDialog = document.getElementById("new-project-dialog");
+function closeNewProjectDialog() {
+  if (newProjectDialog.open) newProjectDialog.close();
+}
+function startNewProject() {
+  const fresh = getNewProjectDefaults();
+  projectSaveAfterNaming = null;
+  finishProjectNameEdit();
+  editorsApi.setDocs(fresh.docs);
+  update({ projectName: fresh.projectName });
+  updateNested("libraries", fresh.libraries);
+  updateNested("settings", {
+    jsAsModule: fresh.jsAsModule,
+    projectFileFingerprint: ""
+  });
+  document.getElementById("chk-module").checked = fresh.jsAsModule;
+  editorsApi.setJsAsModule(fresh.jsAsModule);
+  refreshLibraryUI();
+  editorsApi.setIntelligencePacks(getEnabledIntelligence());
+  renderProjectName();
+  refreshProjectFileStatus();
+  stopSpinner();
+  clearTimeout(longRunTimer);
+  longRunTimer = null;
+  document.getElementById("preview-panel").classList.remove("sweeping", "running-long");
+  document.getElementById("preview-run-chip").hidden = true;
+  reset();
+  consoleApi.clear();
+  networkApi.clear();
+  for (const name of ["html", "css", "js"]) markUnsaved(name);
+  statusRun.textContent = "new project \u2014 press Run";
+  statusRun.className = "status-item";
+  showToast("New project ready. Browser autosave is active.", "success");
+}
+document.getElementById("mi-new-project").addEventListener("click", () => {
+  closeFileMenu();
+  if (!projectHasUnsavedChanges()) {
+    startNewProject();
     return;
   }
-  downloadProject();
+  const name = projectName();
+  document.getElementById("new-project-context").textContent = name ? `\u201C${name}\u201D has changes that are not in a downloaded project file. Browser autosave will still retain them on this device.` : "This untitled project is not in a downloaded project file. Browser autosave will still retain it on this device.";
+  if (!newProjectDialog.open) newProjectDialog.showModal();
+  document.getElementById("new-project-save").focus();
+});
+document.getElementById("new-project-close").addEventListener("click", closeNewProjectDialog);
+document.getElementById("new-project-cancel").addEventListener("click", closeNewProjectDialog);
+document.getElementById("new-project-discard").addEventListener("click", () => {
+  closeNewProjectDialog();
+  startNewProject();
+});
+document.getElementById("new-project-save").addEventListener("click", () => {
+  closeNewProjectDialog();
+  requestProjectSave(startNewProject);
+});
+newProjectDialog.addEventListener("cancel", () => {
+  projectSaveAfterNaming = null;
 });
 document.getElementById("mi-load-project").addEventListener("click", () => {
   closeFileMenu();
@@ -5102,6 +5464,7 @@ wireJsonImport2("import-project-file", (doc2) => {
   if (missing.length) {
     padWarn(`this project references framework(s) not in your catalog: ${missing.join(", ")} \u2014 re-add them under Frameworks, or the run will fail where they're used`);
   }
+  recordProjectFileSave();
   statusRun.textContent = "project loaded \u2014 press Run";
   statusRun.className = "status-item";
 });
@@ -5480,20 +5843,24 @@ document.getElementById("btn-catalog-export").addEventListener("click", () => {
 document.getElementById("btn-catalog-import").addEventListener("click", () => {
   document.getElementById("import-catalog-file").click();
 });
-wireJsonImport2("import-catalog-file", (doc2) => {
-  if (!doc2 || !Array.isArray(doc2.items)) {
-    alert("Not a DCSPad catalog file.");
+wireJsonImport2("import-catalog-file", (doc2, fileName) => {
+  const validation = validateFrameworkCatalog(doc2);
+  if (!validation.ok) {
+    alert(`"${fileName}" was not imported.
+
+${validation.message}`);
     return;
   }
   const cur = getCatalogDoc().items.length;
-  if (!confirm(`Replace your framework catalog (${cur} entries) with this file (${doc2.items.length} entries)?`)) return;
-  replaceCatalog(doc2);
+  if (!confirm(`Replace your framework catalog (${cur} entries) with this file (${validation.doc.items.length} entries)?`)) return;
+  replaceCatalog(validation.doc);
 });
 var chkModule = document.getElementById("chk-module");
 chkModule.checked = state2.settings.jsAsModule;
 chkModule.addEventListener("change", () => {
   updateNested("settings", { jsAsModule: chkModule.checked });
   editorsApi.setJsAsModule(chkModule.checked);
+  refreshProjectFileStatus();
 });
 var chkAutoclear = document.getElementById("chk-autoclear");
 chkAutoclear.checked = state2.settings.autoClearConsole;

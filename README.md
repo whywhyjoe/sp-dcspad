@@ -29,7 +29,10 @@ to SharePoint. There is no DCSPad backend.
   `<project-name>.dcspad.json`; choosing Save while untitled opens the name
   editor and resumes the download after a valid name is entered. Loading a
   `.dcspad.json` file restores its name, panes, enabled frameworks, DCS URL,
-  and module setting. Project JSON remains local-only.
+  and module setting. The chip beside the project name shows whether the
+  current project matches the last saved or loaded project file. **File >
+  New project** prompts to Save, Don't save, or Cancel when that chip is
+  unsaved. Project JSON remains local-only.
 - **Local code files** — **Import HTML, CSS, or JS…** accepts one `.html`,
   `.htm`, `.css`, or `.js` file, infers its pane from the extension, and asks
   before replacing that pane. Export one pane or choose **Export all
@@ -44,8 +47,8 @@ to SharePoint. There is no DCSPad backend.
   signed-in user's SharePoint REST permissions—no Graph app, PnP.PowerShell,
   or separate login. Project, framework-catalog, and snippet JSON never use
   this picker.
-- **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and drag rows to reorder them. Order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
-- **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file. A maintained, import-ready 37-entry starter pack lives at [`examples/dcspad-starter-snippets.json`](examples/dcspad-starter-snippets.json), with usage notes in [`examples/README.md`](examples/README.md).
+- **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and drag rows to reorder them. Order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file; reset restores the built-in presets and clears framework selections. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
+- **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file. The maintained 37-entry pack at [`examples/dcspad-starter-snippets.json`](examples/dcspad-starter-snippets.json) is loaded for new users and restored by the reset button; usage notes live in [`examples/README.md`](examples/README.md). Framework and snippet exports carry different `kind` signatures, and both importers validate every entry before replacing stored data.
 
 ## Runtime configuration
 
@@ -134,6 +137,12 @@ The script rebuilds the hosted bundle and design-system intelligence before
 copying the complete runtime. Confirm the top-right chip reads **SP: Live**
 after OneDrive finishes syncing.
 
+Hover the DCSPad logo to see the deployed application version and build
+identity. The release version is maintained in `src/build-info.js`; hosted
+builds use the Git commit count as `Build #`, include the short commit, and add
+`-dirty` when tracked files differ from that commit. Automated builds can set
+`DCSPAD_BUILD_NUMBER` to use a CI/CD run number instead.
+
 ### Explicit host-context adapter
 
 DCSPad does not require a host to recreate the complete
@@ -217,7 +226,9 @@ SharePoint session there.
 | Maximize | ⛶ on the preview or console panel; `Esc` restores |
 | Preview dark mode | ☀/🌙 on the preview header (default dark). Pad-only canvas color injected *before* your CSS, so anything you style wins — flip to light to see how it renders on a typical SharePoint page |
 
-Work-in-progress (editors, libraries, settings, layout) autosaves to `localStorage` and restores on load.
+Work-in-progress (editors, libraries, settings, layout) autosaves to
+`localStorage` and restores on load. This browser recovery is separate from
+the project-file saved/unsaved chip.
 
 ### Testing framework intelligence
 

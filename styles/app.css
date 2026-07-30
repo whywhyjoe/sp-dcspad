@@ -225,6 +225,18 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
   border: 1px solid var(--error-soft-line); border-radius: var(--radius-m);
   box-shadow: var(--shadow-pop); font-size: 11.5px; line-height: 1.35;
 }
+.project-file-state {
+  flex: none; padding: 3px 6px;
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--fg-dim); background: var(--bg-1);
+  font: 600 9.5px/1 var(--sans); letter-spacing: .025em;
+}
+.project-file-state.saved {
+  color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--border));
+}
+.project-file-state.unsaved {
+  color: var(--warn); border-color: color-mix(in srgb, var(--warn) 32%, var(--border));
+}
 
 /* Pane toggles: one segmented control — resources / preview / console.
    Shown = filled segment with an accent glyph; hidden = ghost. The editor
@@ -702,6 +714,7 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 .app-dialog__actions {
   display: flex; justify-content: flex-end; align-items: center; gap: 8px;
 }
+.new-project-actions { flex-wrap: wrap; }
 
 /* File menu */
 .file-menu { width: 272px; gap: 2px; padding: 4px 0 6px; }

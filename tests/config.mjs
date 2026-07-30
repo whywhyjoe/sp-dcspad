@@ -139,6 +139,12 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
 await page.goto(APP_URL);
 await page.waitForSelector('.monaco-editor');
 
+await check('logo tooltip exposes the application version and build marker', async () => {
+  const title = await page.locator('.logo').getAttribute('title');
+  return title === 'DCSPad — version 1.0.0 — Build #dev'
+    && await page.locator('.logo').getAttribute('aria-label') === title;
+});
+
 await check('relative local URLs resolve from the configured SharePoint site root', () =>
   page.evaluate(async (expected) => {
     const { getAppConfig } = await import('/src/config.js?v=2');

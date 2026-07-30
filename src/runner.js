@@ -170,6 +170,23 @@ export function run(opts) {
   return { runNumber: runCounter, token: currentToken };
 }
 
+export function reset() {
+  currentToken = null;
+  if (currentFrame) currentFrame.remove();
+  currentFrame = null;
+  for (const cb of evalCallbacks.values()) {
+    cb({ ok: false, cancelled: true, value: { t: 'str', v: '(cancelled — the project was reset)' } });
+  }
+  evalCallbacks.clear();
+  const host = document.getElementById('preview-host');
+  host.replaceChildren();
+  const empty = document.createElement('div');
+  empty.id = 'preview-empty';
+  empty.className = 'preview-empty';
+  empty.innerHTML = 'Nothing to preview yet — press <kbd>Ctrl/Cmd + Enter</kbd>';
+  host.append(empty);
+}
+
 export function evalInFrame(code) {
   return new Promise((resolve) => {
     if (!currentFrame) {

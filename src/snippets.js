@@ -6,6 +6,10 @@
 import { getState, loadDoc, saveDoc, newId, SNIPPETS_KEY } from './state.js';
 import { downloadText, wireJsonImport } from './io.js';
 import { el } from './inspect/tree-view.js';
+import {
+  SNIPPET_LIBRARY_KIND,
+  validateSnippetLibrary,
+} from './library-files.js';
 
 let doc = null;
 let deps = {};
@@ -14,9 +18,51 @@ const snippetNameCollator = new Intl.Collator(undefined, {
   numeric: true,
 });
 
-export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
+const defaultSnippetLibrary = () => ({
+  kind: SNIPPET_LIBRARY_KIND,
+  v: 1,
+  items: [],
+});
+
+function starterLibraryUrl() {
+  const appRoot = window.__DCSPAD_ASSET_BASE__
+    || new URL('../', import.meta.url).href;
+  return new URL('examples/dcspad-starter-snippets.json', appRoot).href;
+}
+
+async function loadDefaultSnippetLibrary() {
+  const response = await fetch(starterLibraryUrl(), {
+    credentials: 'same-origin',
+    cache: 'no-cache',
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} loading the starter snippet library`);
+  }
+  const validation = validateSnippetLibrary(await response.json());
+  if (!validation.ok) throw new Error(validation.message);
+  return validation.doc;
+}
+
+export async function initSnippets({ getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError }) {
   deps = { getSelection, getDocs, insertAtCursor, selectEditorTab, onStorageError };
-  doc = loadDoc(SNIPPETS_KEY) || { v: 1, items: [] };
+  const storedDoc = loadDoc(SNIPPETS_KEY);
+  const storedValidation = storedDoc
+    ? validateSnippetLibrary(storedDoc, { allowUnsignedEmpty: true })
+    : null;
+  if (storedValidation?.ok) {
+    doc = storedValidation.doc;
+  } else {
+    if (storedDoc) {
+      console.warn('DCSPad: invalid stored snippet library was reset', storedValidation.message);
+    }
+    try {
+      doc = await loadDefaultSnippetLibrary();
+    } catch (error) {
+      console.warn('DCSPad: starter snippet library could not be loaded', error);
+      doc = defaultSnippetLibrary();
+    }
+    saveDoc(SNIPPETS_KEY, doc);
+  }
   render();
 
   const dialog = document.getElementById('snippet-name-dialog');
@@ -65,16 +111,37 @@ export function initSnippets({ getSelection, getDocs, insertAtCursor, selectEdit
   document.getElementById('btn-snippets-import').addEventListener('click', () => {
     document.getElementById('import-snippets-file').click();
   });
-  wireJsonImport('import-snippets-file', (imported) => {
-    const items = imported && Array.isArray(imported.items)
-      ? imported.items.filter((s) => s && typeof s.name === 'string' && typeof s.code === 'string'
-          && ['html', 'css', 'js'].includes(s.lang))
-      : null;
-    if (!items) { alert('Not a DCSPad snippet library file.'); return; }
+  wireJsonImport('import-snippets-file', (imported, fileName) => {
+    const validation = validateSnippetLibrary(imported);
+    if (!validation.ok) {
+      alert(`"${fileName}" was not imported.\n\n${validation.message}`);
+      return;
+    }
+    const items = validation.doc.items;
     if (doc.items.length && !confirm(`Replace your ${doc.items.length} snippet(s) with the ${items.length} from this file?`)) return;
-    doc = { v: 1, items: items.map((s) => ({ ...s, id: s.id || newId('snip') })) };
+    doc = {
+      ...validation.doc,
+      items: items.map((s) => ({ ...s, id: s.id || newId('snip') })),
+    };
     persist();
     render();
+  });
+
+  document.getElementById('btn-snippets-reset').addEventListener('click', async () => {
+    if (!confirm(
+      `Reset Snippets to the built-in starter library?\n\nThis will replace all ${doc.items.length} currently saved snippet(s).`,
+    )) return;
+    const resetButton = document.getElementById('btn-snippets-reset');
+    resetButton.disabled = true;
+    try {
+      doc = await loadDefaultSnippetLibrary();
+      persist();
+      render();
+    } catch (error) {
+      alert(`The starter snippet library could not be loaded.\n\n${error.message || error}`);
+    } finally {
+      resetButton.disabled = false;
+    }
   });
 }
 

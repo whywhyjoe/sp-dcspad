@@ -4,6 +4,11 @@
 import-ready library of PnPjs, Alpine, BSP design-system, Fluent icon, and
 general browser helpers.
 
+DCSPad loads this file as the default library for new users. The reset button
+in the Snippets header replaces the current personal library with this pack.
+The manual import flow below remains useful for older deployments or moving
+the pack between installations.
+
 ## Import
 
 1. If you already have personal snippets, use the Snippets **download** button

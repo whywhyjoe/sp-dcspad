@@ -27,6 +27,7 @@
         <button id="btn-file" class="btn btn-icon" title="Save / load project, export panes"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z"/><path d="M9.5 1.5V5H13"/></svg> File <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".6" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></button>
         <div id="file-menu" class="settings-menu file-menu" hidden>
           <div class="menu-group-label">Project</div>
+          <button class="menu-item" id="mi-new-project">New project…</button>
           <button class="menu-item" id="mi-save-project">Save project (.dcspad.json)</button>
           <button class="menu-item" id="mi-load-project">Load project (.dcspad.json)…</button>
           <div class="menu-group-label">Import</div>
@@ -84,6 +85,7 @@
         <button id="project-name-cancel" class="project-name__action" type="button" title="Cancel" aria-label="Cancel editing project name"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
       </form>
       <span id="project-name-error" class="project-name__error" role="alert" hidden></span>
+      <span id="project-file-state" class="project-file-state unsaved" role="status" aria-live="polite">unsaved</span>
     </div>
     <div class="topbar-right">
       <span class="pane-toggles" id="pane-toggles" role="group" aria-label="Show or hide panes">
@@ -130,6 +132,7 @@
             <button id="btn-frameworks-search" class="btn btn-ghost btn-xs" title="Filter frameworks"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg></button>
             <button id="btn-catalog-export" class="btn btn-ghost btn-xs" title="Save catalog to a .json file"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5V10M4.8 6.8 8 10l3.2-3.2M3 13h10"/></svg></button>
             <button id="btn-catalog-import" class="btn btn-ghost btn-xs" title="Load catalog from a .json file (replaces the current catalog)"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13.5V6M4.8 9.2 8 6l3.2 3.2M3 3h10"/></svg></button>
+            <button id="btn-catalog-reset" class="btn btn-ghost btn-xs" title="Reset frameworks to the built-in catalog"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 8A5.2 5.2 0 1 1 11 3.8"/><path d="M13.2 2.6v3.2H10"/></svg></button>
           </span>
         </div>
         <div class="side-panel-head frameworks-filter-row" id="frameworks-filter-row" hidden>
@@ -164,6 +167,7 @@
             <button id="btn-snippet-add" class="btn btn-ghost btn-xs" title="Save the current selection (or whole pane) as a snippet"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
             <button id="btn-snippets-export" class="btn btn-ghost btn-xs" title="Save snippet library to a .json file"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5V10M4.8 6.8 8 10l3.2-3.2M3 13h10"/></svg></button>
             <button id="btn-snippets-import" class="btn btn-ghost btn-xs" title="Load snippet library from a .json file (replaces the current library)"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13.5V6M4.8 9.2 8 6l3.2 3.2M3 3h10"/></svg></button>
+            <button id="btn-snippets-reset" class="btn btn-ghost btn-xs" title="Reset snippets to the built-in starter library"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 8A5.2 5.2 0 1 1 11 3.8"/><path d="M13.2 2.6v3.2H10"/></svg></button>
           </span>
         </div>
         <div class="side-panel-body">
@@ -346,6 +350,21 @@
   </form>
 </dialog>
 
+<dialog id="new-project-dialog" class="app-dialog" aria-labelledby="new-project-title" aria-describedby="new-project-context">
+  <div class="app-dialog__panel">
+    <div class="app-dialog__head">
+      <h2 id="new-project-title">Save changes before starting a new project?</h2>
+      <button id="new-project-close" class="btn btn-ghost btn-xs" type="button" aria-label="Close"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+    </div>
+    <p id="new-project-context" class="app-dialog__context">Your current project has changes that are not in a downloaded project file. Browser autosave will still retain them on this device.</p>
+    <div class="app-dialog__actions new-project-actions">
+      <button id="new-project-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="new-project-discard" class="btn" type="button">Don’t save</button>
+      <button id="new-project-save" class="btn btn-run" type="button">Save project</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="sp-files-dialog" class="app-dialog sp-files-dialog" aria-labelledby="sp-files-title">
   <div class="app-dialog__panel sp-files-panel">
     <div class="app-dialog__head">
@@ -399,6 +418,6 @@
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js?v=21"></script>
+<script type="module" src="src/main.js?v=22"></script>
 </body>
 </html>

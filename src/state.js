@@ -19,6 +19,7 @@ const DEFAULTS = {
     autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false,
     previewDark: true, diagFontSize: 12, editorFontSize: 13, wordWrap: false,
     spFilesWebUrl: '', spFilesFolder: '', browserHistory: [],
+    projectFileFingerprint: '',
   },
   layout: {
     sidebarW: 230, sidebarCollapsed: false,
@@ -70,6 +71,24 @@ function persist() {
 }
 
 export function getState() { return state; }
+
+// The project-sized portion of a fresh workspace. New Project deliberately
+// leaves app preferences, layout, snippets, and the framework catalog alone.
+export function getNewProjectDefaults() {
+  return {
+    projectName: DEFAULTS.projectName,
+    docs: {
+      html: DEFAULTS.html,
+      css: DEFAULTS.css,
+      js: DEFAULTS.js,
+    },
+    libraries: {
+      enabled: [...DEFAULTS.libraries.enabled],
+      dcsUrl: '',
+    },
+    jsAsModule: DEFAULTS.settings.jsAsModule,
+  };
+}
 
 export function update(patch) {
   Object.assign(state, patch);

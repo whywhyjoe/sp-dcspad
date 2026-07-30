@@ -12,6 +12,10 @@
 import { getState, updateNested, loadDoc, saveDoc, newId, CATALOG_KEY } from './state.js';
 import { el } from './inspect/tree-view.js';
 import { applyFrameworkConfig, selectedAssetBase } from './config.js';
+import {
+  FRAMEWORK_CATALOG_KIND,
+  validateFrameworkCatalog,
+} from './library-files.js';
 
 // Seed only — after first boot the stored catalog is the truth.
 export const PRESETS = [
@@ -39,6 +43,12 @@ let onStorageErrorCb = null;
 let filterText = '';
 let draggedEntryId = null;
 
+const defaultCatalog = () => ({
+  kind: FRAMEWORK_CATALOG_KIND,
+  v: 1,
+  items: structuredClone(PRESETS),
+});
+
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 const entryFromUrl = (url, name) => ({
   id: newId('lib'),
@@ -51,13 +61,20 @@ export function initLibraries({ config, onChange, onStorageError }) {
   appConfig = config;
   onChangeCb = onChange;
   onStorageErrorCb = onStorageError;
-  catalog = loadDoc(CATALOG_KEY);
+  const storedCatalog = loadDoc(CATALOG_KEY);
+  const storedValidation = storedCatalog
+    ? validateFrameworkCatalog(storedCatalog, { allowUnsignedEmpty: true })
+    : null;
+  catalog = storedValidation?.ok ? storedValidation.doc : null;
 
   if (!catalog) {
     // First boot on catalog-aware code: seed from PRESETS and migrate any
     // legacy workspace-local custom URLs into real catalog entries. They
     // were always-injected before, so they arrive enabled.
-    catalog = { v: 1, items: structuredClone(PRESETS) };
+    if (storedCatalog) {
+      console.warn('DCSPad: invalid stored framework catalog was reset', storedValidation.message);
+    }
+    catalog = defaultCatalog();
     const libs = getState().libraries;
     if (libs.custom?.length) {
       const migratedIds = [];
@@ -123,6 +140,14 @@ export function initLibraries({ config, onChange, onStorageError }) {
       filterText = '';
       render();
     }
+  });
+
+  document.getElementById('btn-catalog-reset').addEventListener('click', () => {
+    if (!confirm(
+      'Reset Frameworks to the built-in catalog?\n\n'
+      + 'Custom framework entries, enabled selections, pins, and the saved DCS URL will be cleared.',
+    )) return;
+    resetCatalogToDefaults();
   });
 
   toggleBtn.addEventListener('click', () => setAddFormOpen(true));
@@ -513,12 +538,13 @@ export function getEnabledIntelligence() {
 
 export function getCatalogDoc() { return catalog; }
 
-// Replace the catalog wholesale from an imported file. Minimal shape
-// validation; returns false when the file isn't a catalog document.
+// Replace the catalog wholesale from an imported file. Validation remains
+// here as a defense even when the file picker already checked the document.
 export function replaceCatalog(doc) {
-  if (!doc || !Array.isArray(doc.items)) return false;
-  const items = doc.items.filter((it) => it && typeof it.id === 'string' && typeof it.name === 'string');
-  catalog = { v: 1, items };
+  const validation = validateFrameworkCatalog(doc);
+  if (!validation.ok) return false;
+  catalog = validation.doc;
+  const items = catalog.items;
   persistCatalog();
   // Prune workspace ids that no longer resolve — otherwise dead
   // references accumulate in enabled/pinned across import cycles.
@@ -531,6 +557,24 @@ export function replaceCatalog(doc) {
   render();
   onChangeCb?.();
   return true;
+}
+
+export function resetCatalogToDefaults() {
+  catalog = defaultCatalog();
+  persistCatalog();
+  updateNested('libraries', {
+    enabled: [],
+    pinned: ['pnpjs2'],
+    custom: [],
+    dcsUrl: '',
+  });
+  filterText = '';
+  const filterInput = document.getElementById('frameworks-filter');
+  const filterRow = document.getElementById('frameworks-filter-row');
+  if (filterInput) filterInput.value = '';
+  if (filterRow) filterRow.hidden = true;
+  render();
+  onChangeCb?.();
 }
 
 // Ids referenced by a loaded project but missing from the catalog.

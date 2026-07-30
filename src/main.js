@@ -1,9 +1,12 @@
 // DCSPad bootstrap — wires modules together.
 
-import { getState, update, updateNested, onSaveStatus } from './state.js';
+import { getState, getNewProjectDefaults, update, updateNested, onSaveStatus } from './state.js';
 import { initLayout } from './layout.js';
 import { initEditors } from './editors.js';
-import { initRunner, run as runnerRun, evalInFrame, mapSrcdocLineToUserJs, hasRun } from './runner.js';
+import {
+  initRunner, run as runnerRun, reset as resetRunner, evalInFrame,
+  mapSrcdocLineToUserJs, hasRun,
+} from './runner.js';
 import { initConsolePanel } from './console-panel.js';
 import { initNetworkPanel, markRun as networkMarkRun } from './network-panel.js';
 import {
@@ -20,7 +23,10 @@ import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js?v=2';
 import { initDocs } from './docs.js?v=2';
 import { initSpChromeToggle } from './sp-chrome.js';
+import { applyBuildMarker } from './build-info.js';
+import { validateFrameworkCatalog } from './library-files.js';
 
+applyBuildMarker();
 const splashApi = showSplash();
 splashApi.status('Restoring workspace…');
 const configReady = loadAppConfig();
@@ -65,7 +71,11 @@ const isDiagVisible = (name) =>
 splashApi.status('Starting Monaco editor…');
 try {
   editorsApi = await initEditors({
-    onChange: (name) => { markUnsaved(name); scheduleAutorun(); },
+    onChange: (name) => {
+      markUnsaved(name);
+      refreshProjectFileStatus();
+      scheduleAutorun();
+    },
     onRunShortcut: () => run(),
     onTogglePane: (name) => layoutApi.togglePane?.(name),
     onFontStep: (delta) => stepEditorFontSize(delta),
@@ -94,6 +104,7 @@ const configResult = await configReady;
 initLibraries({
   config: configResult.config,
   onChange: () => {
+    refreshProjectFileStatus();
     scheduleAutorun();
     editorsApi.setIntelligencePacks(getEnabledIntelligence());
   },
@@ -102,7 +113,7 @@ initLibraries({
 editorsApi.setIntelligencePacks(getEnabledIntelligence());
 
 // ---------- snippets ----------
-initSnippets({
+await initSnippets({
   getSelection: (name) => editorsApi.getSelection(name),
   getDocs: () => editorsApi.getDocs(),
   insertAtCursor: (name, text) => editorsApi.insertAtCursor(name, text),
@@ -367,7 +378,8 @@ const projectNameText = document.getElementById('project-name-text');
 const projectNameForm = document.getElementById('project-name-form');
 const projectNameInput = document.getElementById('project-name-input');
 const projectNameError = document.getElementById('project-name-error');
-let saveProjectAfterNaming = false;
+const projectFileState = document.getElementById('project-file-state');
+let projectSaveAfterNaming = null;
 
 function projectName() {
   return typeof getState().projectName === 'string' ? getState().projectName.trim() : '';
@@ -396,6 +408,54 @@ function renderProjectName() {
     : 'DCSPad — SharePoint Developer Workbench';
 }
 
+function projectFileSnapshot() {
+  const s = getState();
+  return {
+    name: projectName(),
+    docs: editorsApi.getDocs(),
+    libraries: {
+      enabled: [...s.libraries.enabled],
+      dcsUrl: typeof s.libraries.dcsUrl === 'string' ? s.libraries.dcsUrl : '',
+    },
+    jsAsModule: Boolean(s.settings.jsAsModule),
+  };
+}
+
+// Two independent 32-bit streams plus the JSON length keep the persisted
+// marker compact without duplicating every editor buffer in localStorage.
+function projectFingerprint() {
+  const text = JSON.stringify(projectFileSnapshot());
+  let a = 0x811c9dc5;
+  let b = 0x9e3779b9;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    a = Math.imul(a ^ code, 0x01000193);
+    b = Math.imul(b ^ code, 0x85ebca6b);
+  }
+  return `v1:${text.length}:${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
+}
+
+function projectHasUnsavedChanges() {
+  const saved = getState().settings.projectFileFingerprint;
+  return !saved || saved !== projectFingerprint();
+}
+
+function refreshProjectFileStatus() {
+  if (!editorsApi || !projectFileState) return;
+  const unsaved = projectHasUnsavedChanges();
+  projectFileState.textContent = unsaved ? 'unsaved' : 'saved';
+  projectFileState.classList.toggle('unsaved', unsaved);
+  projectFileState.classList.toggle('saved', !unsaved);
+  projectFileState.title = unsaved
+    ? 'Not saved to a project file (browser autosave is still active)'
+    : 'Matches the last saved or loaded project file';
+}
+
+function recordProjectFileSave() {
+  updateNested('settings', { projectFileFingerprint: projectFingerprint() });
+  refreshProjectFileStatus();
+}
+
 function showProjectNameError(message = '') {
   projectNameError.textContent = message;
   projectNameError.hidden = !message;
@@ -404,7 +464,7 @@ function showProjectNameError(message = '') {
 }
 
 function startProjectNameEdit({ requiredForProjectSave = false } = {}) {
-  saveProjectAfterNaming = requiredForProjectSave;
+  if (!requiredForProjectSave) projectSaveAfterNaming = null;
   projectNameInput.value = projectName();
   projectNameDisplay.hidden = true;
   projectNameForm.hidden = false;
@@ -424,7 +484,7 @@ function finishProjectNameEdit() {
 }
 
 function cancelProjectNameEdit() {
-  saveProjectAfterNaming = false;
+  projectSaveAfterNaming = null;
   finishProjectNameEdit();
 }
 
@@ -439,9 +499,21 @@ function downloadProject() {
     jsAsModule: s.settings.jsAsModule,
   };
   downloadText(`${filenameBase()}.dcspad.json`, JSON.stringify(file, null, 2));
+  recordProjectFileSave();
+}
+
+function requestProjectSave(afterSave = null) {
+  if (!projectName()) {
+    projectSaveAfterNaming = { afterSave };
+    startProjectNameEdit({ requiredForProjectSave: true });
+    return;
+  }
+  downloadProject();
+  afterSave?.();
 }
 
 renderProjectName();
+refreshProjectFileStatus();
 projectNameDisplay.addEventListener('click', () => startProjectNameEdit());
 projectNameInput.addEventListener('input', () => showProjectNameError(''));
 projectNameInput.addEventListener('keydown', (event) => {
@@ -462,19 +534,82 @@ projectNameForm.addEventListener('submit', (event) => {
   update({ projectName: name });
   renderProjectName();
   finishProjectNameEdit();
-  if (saveProjectAfterNaming) {
-    saveProjectAfterNaming = false;
+  refreshProjectFileStatus();
+  if (projectSaveAfterNaming) {
+    const { afterSave } = projectSaveAfterNaming;
+    projectSaveAfterNaming = null;
     downloadProject();
+    afterSave?.();
   }
 });
 
 document.getElementById('mi-save-project').addEventListener('click', () => {
   closeFileMenu();
-  if (!projectName()) {
-    startProjectNameEdit({ requiredForProjectSave: true });
+  requestProjectSave();
+});
+
+const newProjectDialog = document.getElementById('new-project-dialog');
+
+function closeNewProjectDialog() {
+  if (newProjectDialog.open) newProjectDialog.close();
+}
+
+function startNewProject() {
+  const fresh = getNewProjectDefaults();
+  projectSaveAfterNaming = null;
+  finishProjectNameEdit();
+  editorsApi.setDocs(fresh.docs);
+  update({ projectName: fresh.projectName });
+  updateNested('libraries', fresh.libraries);
+  updateNested('settings', {
+    jsAsModule: fresh.jsAsModule,
+    projectFileFingerprint: '',
+  });
+  document.getElementById('chk-module').checked = fresh.jsAsModule;
+  editorsApi.setJsAsModule(fresh.jsAsModule);
+  refreshLibraryUI();
+  editorsApi.setIntelligencePacks(getEnabledIntelligence());
+  renderProjectName();
+  refreshProjectFileStatus();
+  stopSpinner();
+  clearTimeout(longRunTimer);
+  longRunTimer = null;
+  document.getElementById('preview-panel').classList.remove('sweeping', 'running-long');
+  document.getElementById('preview-run-chip').hidden = true;
+  resetRunner();
+  consoleApi.clear();
+  networkApi.clear();
+  for (const name of ['html', 'css', 'js']) markUnsaved(name);
+  statusRun.textContent = 'new project — press Run';
+  statusRun.className = 'status-item';
+  showToast('New project ready. Browser autosave is active.', 'success');
+}
+
+document.getElementById('mi-new-project').addEventListener('click', () => {
+  closeFileMenu();
+  if (!projectHasUnsavedChanges()) {
+    startNewProject();
     return;
   }
-  downloadProject();
+  const name = projectName();
+  document.getElementById('new-project-context').textContent = name
+    ? `“${name}” has changes that are not in a downloaded project file. Browser autosave will still retain them on this device.`
+    : 'This untitled project is not in a downloaded project file. Browser autosave will still retain it on this device.';
+  if (!newProjectDialog.open) newProjectDialog.showModal();
+  document.getElementById('new-project-save').focus();
+});
+document.getElementById('new-project-close').addEventListener('click', closeNewProjectDialog);
+document.getElementById('new-project-cancel').addEventListener('click', closeNewProjectDialog);
+document.getElementById('new-project-discard').addEventListener('click', () => {
+  closeNewProjectDialog();
+  startNewProject();
+});
+document.getElementById('new-project-save').addEventListener('click', () => {
+  closeNewProjectDialog();
+  requestProjectSave(startNewProject);
+});
+newProjectDialog.addEventListener('cancel', () => {
+  projectSaveAfterNaming = null;
 });
 
 document.getElementById('mi-load-project').addEventListener('click', () => {
@@ -515,6 +650,7 @@ wireJsonImport('import-project-file', (doc) => {
   if (missing.length) {
     padWarn(`this project references framework(s) not in your catalog: ${missing.join(', ')} — re-add them under Frameworks, or the run will fail where they're used`);
   }
+  recordProjectFileSave();
   statusRun.textContent = 'project loaded — press Run';
   statusRun.className = 'status-item';
 });
@@ -951,11 +1087,15 @@ document.getElementById('btn-catalog-export').addEventListener('click', () => {
 document.getElementById('btn-catalog-import').addEventListener('click', () => {
   document.getElementById('import-catalog-file').click();
 });
-wireJsonImport('import-catalog-file', (doc) => {
-  if (!doc || !Array.isArray(doc.items)) { alert('Not a DCSPad catalog file.'); return; }
+wireJsonImport('import-catalog-file', (doc, fileName) => {
+  const validation = validateFrameworkCatalog(doc);
+  if (!validation.ok) {
+    alert(`"${fileName}" was not imported.\n\n${validation.message}`);
+    return;
+  }
   const cur = getCatalogDoc().items.length;
-  if (!confirm(`Replace your framework catalog (${cur} entries) with this file (${doc.items.length} entries)?`)) return;
-  replaceCatalog(doc);
+  if (!confirm(`Replace your framework catalog (${cur} entries) with this file (${validation.doc.items.length} entries)?`)) return;
+  replaceCatalog(validation.doc);
 });
 
 const chkModule = document.getElementById('chk-module');
@@ -963,6 +1103,7 @@ chkModule.checked = state.settings.jsAsModule;
 chkModule.addEventListener('change', () => {
   updateNested('settings', { jsAsModule: chkModule.checked });
   editorsApi.setJsAsModule(chkModule.checked);
+  refreshProjectFileStatus();
 });
 
 const chkAutoclear = document.getElementById('chk-autoclear');

@@ -68,6 +68,12 @@ await check('hosted boot mounts one Monaco workbench', async () =>
   (await page.locator('#dcspad-mount .app').count()) === 1
   && (await page.locator('#dcspad-mount .monaco-editor').count()) === 1);
 
+await check('hosted logo identifies its embedded version and Git build', async () => {
+  const title = await page.locator('#dcspad-mount .logo').getAttribute('title');
+  return /^DCSPad — version 1\.0\.0 — Build #\d+(?:-dirty)? \([0-9a-f]{8}(?:-dirty)?\)$/
+    .test(title || '');
+});
+
 await check('hosted mode flag is applied', () =>
   page.evaluate(() => document.documentElement.classList.contains('dcspad-hosted')));
 
@@ -120,14 +126,12 @@ await check('hosted app, config, Monaco, and intelligence URLs are versioned', (
 await page.click('#btn-run');
 await page.waitForFunction(() =>
   document.querySelector('#status-run')?.textContent.includes('ran in'));
-await check('hosted Fluent preview bridge is same-origin and versioned', () => {
+await check('disabled Fluent preview bridge is not injected by hosted runtime', () => {
   const bridge = requests.find((url) => url.includes('/src/bridge/fluent-icon-font.js?'));
-  return !!bridge
-    && new URL(bridge).origin === origin
-    && new URL(bridge).searchParams.has('v');
+  return !bridge;
 });
 
-const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs v2 (classic)' });
+const pnpRow = page.locator('.lib-item[data-library-id="pnpjs2"]');
 await pnpRow.locator('input[type="checkbox"]').check();
 await page.waitForFunction(() => document.documentElement.dataset.pnpTypes === 'ready');
 await check('hosted PnPjs declarations use the versioned vendor URL', () => {

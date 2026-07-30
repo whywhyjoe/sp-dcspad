@@ -864,7 +864,7 @@ await assertCatalogReferences();
 await mkdir(outputDir, { recursive: true });
 await writeFile(
   outputPath,
-  `${JSON.stringify({ v: 1, items }, null, 2)}\n`,
+  `${JSON.stringify({ kind: 'dcspad-snippet-library', v: 1, items }, null, 2)}\n`,
   'utf8',
 );
 

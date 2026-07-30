@@ -52,6 +52,7 @@ $liveRoot = (Resolve-Path -LiteralPath $LivePath).Path.TrimEnd('\')
 $accidentalNestedFolders = @(
     (Join-Path $LivePath 'src\src'),
     (Join-Path $LivePath 'styles\styles'),
+    (Join-Path $LivePath 'examples\examples'),
     (Join-Path $LivePath 'vendor\vendor')
 )
 foreach ($folder in $accidentalNestedFolders) {
@@ -152,6 +153,7 @@ Copy-Item (Join-Path $repo 'workbench.webpart.html') $LivePath -Force
 Copy-Item (Join-Path $repo 'dcspad.workbench.js')   $LivePath -Force
 Copy-DirectoryContents (Join-Path $repo 'src')    (Join-Path $LivePath 'src')
 Copy-DirectoryContents (Join-Path $repo 'styles') (Join-Path $LivePath 'styles')
+Copy-DirectoryContents (Join-Path $repo 'examples') (Join-Path $LivePath 'examples')
 Copy-DirectoryContents (Join-Path $repo 'vendor') (Join-Path $LivePath 'vendor')
 Copy-DirectoryContents (Join-Path $repo 'lib-mirror') (Join-Path $LivePath 'lib-mirror')
 
