@@ -79,7 +79,7 @@
         "lightCss": "fonts/FluentSystemIcons-Light.css"
       },
       "runtime": {
-        "enabled": true,
+        "enabled": false,
         "cssFiles": [
           "regularCss",
           "filledCss",
