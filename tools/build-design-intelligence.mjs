@@ -3,7 +3,7 @@
 // consumers; this is development tooling for the workbench itself.
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,17 +12,74 @@ const repoRoot = path.resolve(toolsDir, '..');
 const configPath = path.join(repoRoot, 'dcspad.config.json');
 const outputDir = path.join(repoRoot, 'vendor', 'intelligence');
 
+function optionValue(name) {
+  const exactIndex = process.argv.indexOf(name);
+  if (exactIndex !== -1) {
+    const value = process.argv[exactIndex + 1];
+    if (!value || value.startsWith('--')) {
+      throw new Error(`${name} requires a directory path`);
+    }
+    return value;
+  }
+  const prefix = `${name}=`;
+  const inline = process.argv.find((arg) => arg.startsWith(prefix));
+  return inline ? inline.slice(prefix.length) : '';
+}
+
+function resolveBuildRoot(option, environmentName, siblingRepo) {
+  const configured = optionValue(option)
+    || process.env[environmentName]
+    || path.resolve(repoRoot, '..', siblingRepo);
+  return path.isAbsolute(configured)
+    ? path.normalize(configured)
+    : path.resolve(repoRoot, configured);
+}
+
+async function requireDirectory(root, label, option, environmentName) {
+  try {
+    if ((await stat(root)).isDirectory()) return;
+  } catch {
+    // Use the actionable error below for missing and inaccessible paths.
+  }
+  throw new Error(
+    `${label} source directory was not found: ${root}\n`
+    + `Pass ${option} <path> or set ${environmentName}.`,
+  );
+}
+
+// Runtime asset URLs belong in dcspad.config.json. Intelligence is generated
+// from local source repositories, which are deliberately configured
+// separately so a SharePoint URL fragment is never mistaken for a disk path.
+const sourceRoot = resolveBuildRoot(
+  '--design-root',
+  'DCSPAD_DESIGN_SYSTEM_ROOT',
+  'bsp-design-system',
+);
+const fluentIconsRoot = resolveBuildRoot(
+  '--fluent-icons-root',
+  'DCSPAD_FLUENT_ICONS_ROOT',
+  'bsp-fluent-icon-lib',
+);
+await requireDirectory(
+  sourceRoot,
+  'BSP design system',
+  '--design-root',
+  'DCSPAD_DESIGN_SYSTEM_ROOT',
+);
+await requireDirectory(
+  fluentIconsRoot,
+  'Fluent icon library',
+  '--fluent-icons-root',
+  'DCSPAD_FLUENT_ICONS_ROOT',
+);
+
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 const designConfig = config?.assets?.designSystem;
 const fluentIconsConfig = config?.assets?.fluentIcons;
-if (!designConfig || typeof designConfig.localBaseUrl !== 'string') {
-  throw new Error('dcspad.config.json must define assets.designSystem.localBaseUrl');
-}
-if (/^[a-z][a-z\d+.-]*:/i.test(designConfig.localBaseUrl)) {
-  throw new Error('assets.designSystem.localBaseUrl must be a local path when generating intelligence');
+if (!designConfig) {
+  throw new Error('dcspad.config.json must define assets.designSystem');
 }
 
-const sourceRoot = path.resolve(repoRoot, designConfig.localBaseUrl);
 const relativeSource = (key, fallback) =>
   designConfig.files?.[key] || fallback;
 const sourceSpecs = [
@@ -31,13 +88,9 @@ const sourceSpecs = [
   { key: 'editorial', file: relativeSource('editorial', 'editorial.css'), tokens: true, classes: true, scope: 'editorial' },
 ];
 
-if (!fluentIconsConfig || typeof fluentIconsConfig.localBaseUrl !== 'string') {
-  throw new Error('dcspad.config.json must define assets.fluentIcons.localBaseUrl');
+if (!fluentIconsConfig) {
+  throw new Error('dcspad.config.json must define assets.fluentIcons');
 }
-if (/^[a-z][a-z\d+.-]*:/i.test(fluentIconsConfig.localBaseUrl)) {
-  throw new Error('assets.fluentIcons.localBaseUrl must be a local path when generating intelligence');
-}
-const fluentIconsRoot = path.resolve(repoRoot, fluentIconsConfig.localBaseUrl);
 const fluentCatalogFile = fluentIconsConfig.files?.catalog || 'fluent-font-library.json';
 
 const cleanComment = (raw) => {
@@ -396,3 +449,4 @@ console.log(
   `BSP intelligence generated: ${tokens.length} tokens, ${classes.length} classes; `
   + `${fluentIcons.length} Fluent icons, ${fluentVariantCount} variants`,
 );
+console.log(`Sources: ${sourceRoot}; ${fluentIconsRoot}`);

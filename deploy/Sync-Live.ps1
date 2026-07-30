@@ -4,10 +4,28 @@
 # in CLAUDE.md for why the bundle exists.
 
 param(
-    [string]$LivePath = "C:\dev\fcuportal-code\tools\dcspad"
+    [string]$LivePath = "C:\dev\fcuportal-code\tools\dcspad",
+    [string]$DesignSystemSource = "",
+    [string]$FluentIconsSource = ""
 )
 
 $repo = Split-Path $PSScriptRoot -Parent
+$reposRoot = Split-Path $repo -Parent
+if ([string]::IsNullOrWhiteSpace($DesignSystemSource)) {
+    $DesignSystemSource = Join-Path $reposRoot 'bsp-design-system'
+}
+if ([string]::IsNullOrWhiteSpace($FluentIconsSource)) {
+    $FluentIconsSource = Join-Path $reposRoot 'bsp-fluent-icon-lib'
+}
+if (-not (Test-Path -LiteralPath $DesignSystemSource -PathType Container)) {
+    throw "BSP design-system source folder was not found: $DesignSystemSource. Pass -DesignSystemSource <path>."
+}
+if (-not (Test-Path -LiteralPath $FluentIconsSource -PathType Container)) {
+    throw "Fluent icon source folder was not found: $FluentIconsSource. Pass -FluentIconsSource <path>."
+}
+$DesignSystemSource = (Resolve-Path -LiteralPath $DesignSystemSource).Path
+$FluentIconsSource = (Resolve-Path -LiteralPath $FluentIconsSource).Path
+
 $monaco = Join-Path $repo 'vendor\monaco'
 $requiredMonaco = @(
     'version.json',
@@ -110,7 +128,7 @@ Write-Host "Building design-system intelligence…" -ForegroundColor Cyan
 $tools = Join-Path $repo 'tools'
 Ensure-LocalEsbuild -ToolsPath $tools
 Push-Location $tools
-node build-design-intelligence.mjs
+node build-design-intelligence.mjs --design-root $DesignSystemSource --fluent-icons-root $FluentIconsSource
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "design-system intelligence build failed" }
 
 Write-Host "Building dcspad.app.js…" -ForegroundColor Cyan

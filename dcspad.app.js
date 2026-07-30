@@ -2653,24 +2653,24 @@ var PRESETS = [
   {
     id: "pnpjs2",
     name: "PnPjs 2.15 (pnp2 bundle)",
-    js: "./lib-mirror/pnp2.bundle.js",
+    js: "lib-mirror/pnp2.bundle.js",
     intelligence: ["pnpjs-2.15.0"],
     hint: "Exposes compatible globals pnp2 and pnp \u2014 use const { sp } = pnp;"
   },
   {
     id: "alpine",
     name: "Alpine.js 3.15.2",
-    js: "./lib-mirror/alpine.js",
+    js: "lib-mirror/alpine.js",
     intelligence: ["alpine-3"]
   },
+  { id: "fluent", name: "Fluent System Icons ", css: "../../fluent-icons/fonts/FluentSystemIcons-All.css" },
   { id: "chartjs", name: "Chart.js", js: "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" },
   { id: "lodash", name: "Lodash", js: "https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js" },
   { id: "exceljs", name: "ExcelJS", js: "https://cdn.jsdelivr.net/npm/exceljs@4/dist/exceljs.min.js" },
   { id: "dayjs", name: "Day.js", js: "https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js" },
   { id: "fusejs", name: "Fuse.js", js: "https://cdn.jsdelivr.net/npm/fuse.js@7/dist/fuse.min.js" },
   { id: "marked", name: "Marked", js: "https://cdn.jsdelivr.net/npm/marked@12/marked.min.js" },
-  { id: "sortable", name: "Sortable.js", js: "https://cdn.jsdelivr.net/npm/sortablejs@1/Sortable.min.js" },
-  { id: "fabric", name: "Fluent/Fabric Icons (CSS)", css: "https://static2.sharepointonline.com/files/fabric/office-ui-fabric-core/11.0.0/css/fabric.min.css" }
+  { id: "sortable", name: "Sortable.js", js: "https://cdn.jsdelivr.net/npm/sortablejs@1/Sortable.min.js" }
 ];
 var catalog = null;
 var appConfig = null;

@@ -309,8 +309,14 @@ after changing the pinned editor/type versions or the vendor builder.
 
 Design-system intelligence is generated rather than scraped in the browser.
 From `tools/`, run `npm run build:intelligence` after changing the configured
-local design-system CSS or Fluent icon catalog. `deploy/Sync-Live.ps1` runs
-that generator and the app bundle build automatically.
+local design-system CSS or Fluent icon catalog. The builder reads the sibling
+repositories `../bsp-design-system` and `../bsp-fluent-icon-lib` by default;
+runtime `assets.*.localBaseUrl` values remain SharePoint URL fragments. Override
+the build inputs with `--design-root` / `--fluent-icons-root`, or the
+`DCSPAD_DESIGN_SYSTEM_ROOT` / `DCSPAD_FLUENT_ICONS_ROOT` environment variables.
+`deploy/Sync-Live.ps1` runs that generator and the app bundle build
+automatically; its equivalent overrides are `-DesignSystemSource` and
+`-FluentIconsSource`.
 
 ## Tests
 
