@@ -2585,6 +2585,7 @@ function markRun() {
 // ../src/config.js
 var EMPTY_CONFIG = Object.freeze({
   version: 1,
+  siteUrl: "",
   frameworks: Object.freeze({
     prefer: "local",
     fallbackToCdn: true,
@@ -2595,153 +2596,12 @@ var EMPTY_CONFIG = Object.freeze({
   copilot: Object.freeze({
     enabled: false,
     url: ""
+  }),
+  workbench: Object.freeze({
+    url: ""
   })
 });
 var activeConfig = EMPTY_CONFIG;
-var isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var cleanString = (value) => typeof value === "string" ? value.trim() : "";
-var sourcePreference = (value, fallback = "local") => value === "cdn" || value === "hosted" || value === "local" ? value : fallback;
-function resolveUrl(value, configUrl2, { folder = false } = {}) {
-  const source = cleanString(value);
-  if (!source) return "";
-  const resolved = new URL(source, configUrl2).href;
-  return folder && !resolved.endsWith("/") ? `${resolved}/` : resolved;
-}
-function normalizeFrameworks(value, configUrl2, warnings) {
-  const source = isRecord(value) ? value : {};
-  const prefer = sourcePreference(source.prefer);
-  const fallbackToCdn = source.fallbackToCdn !== false;
-  const items = {};
-  for (const [id, raw] of Object.entries(isRecord(source.items) ? source.items : {})) {
-    if (!isRecord(raw)) {
-      warnings.push(`framework config "${id}" was ignored because it is not an object`);
-      continue;
-    }
-    const probeGlobal = cleanString(raw.probeGlobal).replace(/^window\./, "");
-    if (probeGlobal && !/^[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*$/.test(probeGlobal)) {
-      warnings.push(`framework config "${id}" has an invalid probeGlobal path`);
-    }
-    items[id] = {
-      localUrl: resolveUrl(raw.localUrl, configUrl2),
-      cdnUrl: resolveUrl(raw.cdnUrl, configUrl2),
-      prefer: sourcePreference(raw.prefer, prefer),
-      fallbackToCdn: typeof raw.fallbackToCdn === "boolean" ? raw.fallbackToCdn : fallbackToCdn,
-      probeGlobal: /^[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*$/.test(probeGlobal) ? probeGlobal : "",
-      intelligence: Array.isArray(raw.intelligence) ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))] : []
-    };
-  }
-  return { prefer, fallbackToCdn, items };
-}
-function normalizeAssetGroup(raw, configUrl2, defaultPreference) {
-  if (!isRecord(raw)) return null;
-  const files = {};
-  for (const [name, path] of Object.entries(isRecord(raw.files) ? raw.files : {})) {
-    const clean = cleanString(path);
-    if (clean) files[name] = clean;
-  }
-  const rawRuntime = isRecord(raw.runtime) ? raw.runtime : {};
-  return {
-    prefer: sourcePreference(raw.prefer, defaultPreference),
-    localBaseUrl: resolveUrl(raw.localBaseUrl, configUrl2, { folder: true }),
-    hostedBaseUrl: resolveUrl(raw.hostedBaseUrl, configUrl2, { folder: true }),
-    intelligence: Array.isArray(raw.intelligence) ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))] : [],
-    files,
-    runtime: {
-      enabled: rawRuntime.enabled === true,
-      cssFiles: Array.isArray(rawRuntime.cssFiles) ? [...new Set(rawRuntime.cssFiles.map(cleanString).filter(Boolean))] : [],
-      fluentIconElement: rawRuntime.fluentIconElement === true
-    }
-  };
-}
-function normalizeDocs(value, configUrl2, warnings) {
-  const docs = [];
-  const ids = /* @__PURE__ */ new Set();
-  for (const [index, raw] of (Array.isArray(value) ? value : []).entries()) {
-    if (!isRecord(raw)) {
-      warnings.push(`docs entry ${index + 1} was ignored because it is not an object`);
-      continue;
-    }
-    const title = cleanString(raw.title);
-    const url = resolveUrl(raw.url, configUrl2);
-    if (!title || !url) {
-      warnings.push(`docs entry ${index + 1} was ignored because title and url are required`);
-      continue;
-    }
-    const inferredId = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `doc-${index + 1}`;
-    let id = cleanString(raw.id) || inferredId;
-    if (ids.has(id)) {
-      const base = id;
-      let suffix = 2;
-      while (ids.has(`${base}-${suffix}`)) suffix += 1;
-      id = `${base}-${suffix}`;
-      warnings.push(`duplicate docs id "${base}" was renamed to "${id}"`);
-    }
-    ids.add(id);
-    const requestedType = cleanString(raw.type).toLowerCase();
-    const type = ["html", "markdown", "md", "text", "txt", "css", "js", "javascript", "json", "csv"].includes(requestedType) ? requestedType === "html" ? "html" : ["markdown", "md"].includes(requestedType) ? "markdown" : "text" : "auto";
-    docs.push({
-      id,
-      title,
-      url,
-      type
-    });
-  }
-  return docs;
-}
-function normalizeCopilot(value, configUrl2) {
-  const source = isRecord(value) ? value : {};
-  return {
-    enabled: source.enabled === true,
-    url: resolveUrl(source.url, configUrl2)
-  };
-}
-function normalizeConfig(raw, configUrl2) {
-  const warnings = [];
-  if (!isRecord(raw)) {
-    return { config: EMPTY_CONFIG, warnings: ["configuration root must be an object"] };
-  }
-  if (raw.version !== 1) {
-    warnings.push(`configuration version ${JSON.stringify(raw.version)} is not supported; expected 1`);
-  }
-  const assets = {};
-  for (const [name, value] of Object.entries(isRecord(raw.assets) ? raw.assets : {})) {
-    const group = normalizeAssetGroup(value, configUrl2, "local");
-    if (group) assets[name] = group;
-  }
-  return {
-    config: {
-      version: 1,
-      frameworks: normalizeFrameworks(raw.frameworks, configUrl2, warnings),
-      assets,
-      docs: normalizeDocs(raw.docs, configUrl2, warnings),
-      copilot: normalizeCopilot(raw.copilot, configUrl2)
-    },
-    warnings
-  };
-}
-function configUrl() {
-  return window.__DCSPAD_CONFIG_URL__ || new URL("../dcspad.config.json", import.meta.url).href;
-}
-async function loadAppConfig() {
-  const url = configUrl();
-  try {
-    const response = await fetch(url, {
-      credentials: "same-origin",
-      cache: "no-cache"
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const normalized = normalizeConfig(await response.json(), url);
-    activeConfig = normalized.config;
-    return { ...normalized, url };
-  } catch (error) {
-    activeConfig = EMPTY_CONFIG;
-    return {
-      config: activeConfig,
-      url,
-      warnings: [`dcspad.config.json could not be loaded (${error.message || error}); built-in framework URLs remain active`]
-    };
-  }
-}
 function applyFrameworkConfig(entry, config = activeConfig) {
   const override = config?.frameworks?.items?.[entry?.id];
   if (!override) return { ...entry };
@@ -3481,7 +3341,7 @@ var SERIALIZABLE_FIELDS = [
   "formDigestTimeoutSeconds"
 ];
 var cached = null;
-var isRecord2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 function safeSameOriginUrl(value) {
   if (typeof value !== "string" || !value.trim()) return "";
   try {
@@ -3516,8 +3376,8 @@ function candidateWindows() {
 function hostContext(candidate) {
   try {
     const host = candidate.__DCSPAD_SP_CONTEXT__;
-    if (!isRecord2(host)) return null;
-    const pageContext = isRecord2(host.pageContext) ? host.pageContext : host;
+    if (!isRecord(host)) return null;
+    const pageContext = isRecord(host.pageContext) ? host.pageContext : host;
     const webAbsoluteUrl = safeSameOriginUrl(
       host.webAbsoluteUrl || pageContext.webAbsoluteUrl
     );
@@ -4061,6 +3921,180 @@ function showSplash() {
     }));
   }
   return standaloneController(splash);
+}
+
+// ../src/config.js?v=2
+var EMPTY_CONFIG2 = Object.freeze({
+  version: 1,
+  siteUrl: "",
+  frameworks: Object.freeze({
+    prefer: "local",
+    fallbackToCdn: true,
+    items: Object.freeze({})
+  }),
+  assets: Object.freeze({}),
+  docs: Object.freeze([]),
+  copilot: Object.freeze({
+    enabled: false,
+    url: ""
+  }),
+  workbench: Object.freeze({
+    url: ""
+  })
+});
+var activeConfig2 = EMPTY_CONFIG2;
+var isRecord2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var cleanString = (value) => typeof value === "string" ? value.trim() : "";
+var sourcePreference = (value, fallback = "local") => value === "cdn" || value === "hosted" || value === "local" ? value : fallback;
+function resolveUrl(value, configUrl2, { folder = false } = {}) {
+  const source = cleanString(value);
+  if (!source) return "";
+  const resolved = new URL(source, configUrl2).href;
+  return folder && !resolved.endsWith("/") ? `${resolved}/` : resolved;
+}
+function normalizeFrameworks(value, configUrl2, siteUrl, warnings) {
+  const source = isRecord2(value) ? value : {};
+  const prefer = sourcePreference(source.prefer);
+  const fallbackToCdn = source.fallbackToCdn !== false;
+  const items = {};
+  for (const [id, raw] of Object.entries(isRecord2(source.items) ? source.items : {})) {
+    if (!isRecord2(raw)) {
+      warnings.push(`framework config "${id}" was ignored because it is not an object`);
+      continue;
+    }
+    const probeGlobal = cleanString(raw.probeGlobal).replace(/^window\./, "");
+    if (probeGlobal && !/^[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*$/.test(probeGlobal)) {
+      warnings.push(`framework config "${id}" has an invalid probeGlobal path`);
+    }
+    items[id] = {
+      localUrl: resolveUrl(raw.localUrl, siteUrl || configUrl2),
+      cdnUrl: resolveUrl(raw.cdnUrl, configUrl2),
+      prefer: sourcePreference(raw.prefer, prefer),
+      fallbackToCdn: typeof raw.fallbackToCdn === "boolean" ? raw.fallbackToCdn : fallbackToCdn,
+      probeGlobal: /^[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*$/.test(probeGlobal) ? probeGlobal : "",
+      intelligence: Array.isArray(raw.intelligence) ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))] : []
+    };
+  }
+  return { prefer, fallbackToCdn, items };
+}
+function normalizeAssetGroup(raw, configUrl2, siteUrl, defaultPreference) {
+  if (!isRecord2(raw)) return null;
+  const files = {};
+  for (const [name, path] of Object.entries(isRecord2(raw.files) ? raw.files : {})) {
+    const clean = cleanString(path);
+    if (clean) files[name] = clean;
+  }
+  const rawRuntime = isRecord2(raw.runtime) ? raw.runtime : {};
+  return {
+    prefer: sourcePreference(raw.prefer, defaultPreference),
+    localBaseUrl: resolveUrl(raw.localBaseUrl, siteUrl || configUrl2, { folder: true }),
+    hostedBaseUrl: resolveUrl(raw.hostedBaseUrl, configUrl2, { folder: true }),
+    intelligence: Array.isArray(raw.intelligence) ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))] : [],
+    files,
+    runtime: {
+      enabled: rawRuntime.enabled === true,
+      cssFiles: Array.isArray(rawRuntime.cssFiles) ? [...new Set(rawRuntime.cssFiles.map(cleanString).filter(Boolean))] : [],
+      fluentIconElement: rawRuntime.fluentIconElement === true
+    }
+  };
+}
+function normalizeDocs(value, configUrl2, siteUrl, warnings) {
+  const docs = [];
+  const ids = /* @__PURE__ */ new Set();
+  for (const [index, raw] of (Array.isArray(value) ? value : []).entries()) {
+    if (!isRecord2(raw)) {
+      warnings.push(`docs entry ${index + 1} was ignored because it is not an object`);
+      continue;
+    }
+    const title = cleanString(raw.title);
+    const url = resolveUrl(raw.url, siteUrl || configUrl2);
+    if (!title || !url) {
+      warnings.push(`docs entry ${index + 1} was ignored because title and url are required`);
+      continue;
+    }
+    const inferredId = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `doc-${index + 1}`;
+    let id = cleanString(raw.id) || inferredId;
+    if (ids.has(id)) {
+      const base = id;
+      let suffix = 2;
+      while (ids.has(`${base}-${suffix}`)) suffix += 1;
+      id = `${base}-${suffix}`;
+      warnings.push(`duplicate docs id "${base}" was renamed to "${id}"`);
+    }
+    ids.add(id);
+    const requestedType = cleanString(raw.type).toLowerCase();
+    const type = ["html", "markdown", "md", "text", "txt", "css", "js", "javascript", "json", "csv"].includes(requestedType) ? requestedType === "html" ? "html" : ["markdown", "md"].includes(requestedType) ? "markdown" : "text" : "auto";
+    docs.push({
+      id,
+      title,
+      url,
+      type
+    });
+  }
+  return docs;
+}
+function normalizeCopilot(value, configUrl2) {
+  const source = isRecord2(value) ? value : {};
+  return {
+    enabled: source.enabled === true,
+    url: resolveUrl(source.url, configUrl2)
+  };
+}
+function normalizeWorkbench(value, configUrl2, siteUrl) {
+  const source = isRecord2(value) ? value : {};
+  return {
+    url: resolveUrl(source.url, siteUrl || configUrl2)
+  };
+}
+function normalizeConfig(raw, configUrl2) {
+  const warnings = [];
+  if (!isRecord2(raw)) {
+    return { config: EMPTY_CONFIG2, warnings: ["configuration root must be an object"] };
+  }
+  if (raw.version !== 1) {
+    warnings.push(`configuration version ${JSON.stringify(raw.version)} is not supported; expected 1`);
+  }
+  const siteUrl = resolveUrl(raw.siteURL || raw.siteUrl, configUrl2, { folder: true });
+  const assets = {};
+  for (const [name, value] of Object.entries(isRecord2(raw.assets) ? raw.assets : {})) {
+    const group = normalizeAssetGroup(value, configUrl2, siteUrl, "local");
+    if (group) assets[name] = group;
+  }
+  return {
+    config: {
+      version: 1,
+      siteUrl,
+      frameworks: normalizeFrameworks(raw.frameworks, configUrl2, siteUrl, warnings),
+      assets,
+      docs: normalizeDocs(raw.docs, configUrl2, siteUrl, warnings),
+      copilot: normalizeCopilot(raw.copilot, configUrl2),
+      workbench: normalizeWorkbench(raw.workbench, configUrl2, siteUrl)
+    },
+    warnings
+  };
+}
+function configUrl() {
+  return window.__DCSPAD_CONFIG_URL__ || new URL("../dcspad.config.json", import.meta.url).href;
+}
+async function loadAppConfig() {
+  const url = configUrl();
+  try {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      cache: "no-cache"
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const normalized = normalizeConfig(await response.json(), url);
+    activeConfig2 = normalized.config;
+    return { ...normalized, url };
+  } catch (error) {
+    activeConfig2 = EMPTY_CONFIG2;
+    return {
+      config: activeConfig2,
+      url,
+      warnings: [`dcspad.config.json could not be loaded (${error.message || error}); built-in framework URLs remain active`]
+    };
+  }
 }
 
 // ../src/docs.js?v=2

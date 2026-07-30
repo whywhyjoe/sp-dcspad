@@ -52,6 +52,10 @@ to SharePoint. There is no DCSPad backend.
 Edit [`dcspad.config.json`](dcspad.config.json) to change environment-specific
 URLs without editing or rebuilding the application.
 
+- `siteURL` is an optional SharePoint site root such as
+  `"/sites/NewNerve/FCUPortal/"`. Relative local framework URLs, asset bases,
+  Browser-document URLs, and the Workbench URL resolve beneath it. Absolute
+  URLs remain unchanged. `siteUrl` is accepted as an alias.
 - `frameworks.items.<catalog-id>.localUrl` is the preferred self-hosted or
   organization-hosted script.
 - `cdnUrl` is its backup. Set `frameworks.prefer` to `"cdn"` to reverse the
@@ -69,8 +73,9 @@ URLs without editing or rebuilding the application.
   `pnp` alias. Keep `pnp2.bundle.js.map` beside the bundle for browser
   debugging.
 - `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
-  hosted base folders. Relative local paths resolve from `dcspad.config.json`;
-  hosted locations may be absolute SharePoint URLs.
+  hosted base folders. Relative local paths resolve from `siteURL` when it is
+  set, otherwise from `dcspad.config.json`; hosted locations may be absolute
+  SharePoint URLs.
 - `assets.designSystem.intelligence: ["bsp-design"]` enables the generated BMO
   design-system pack independently of framework checkboxes. Remove that ID to
   disable it. The browser loads the compact versioned artifact under
@@ -83,7 +88,8 @@ URLs without editing or rebuilding the application.
 - `docs` supplies the Browser menu bookmarks. Each entry has `id`, `title`,
   `url`, and an optional `type` (`html`, `markdown`, `text`, `css`, `js`,
   `json`, `csv`, or `auto`).
-  Relative URLs resolve from this configuration file. The Browser also accepts
+  Relative URLs resolve from `siteURL` when set, otherwise from this
+  configuration file. The Browser also accepts
   pasted `.html`, `.htm`, `.md`, `.markdown`, `.css`, `.js`, `.json`, `.csv`,
   and `.txt` URLs, but enforces the exact origin hosting DCSPad. Same-tenant
   HTML runs its scripts; Markdown, code, and text are rendered without script
@@ -92,6 +98,8 @@ URLs without editing or rebuilding the application.
   opens the shared SharePoint picker for same-tenant site/folder browsing.
 - `copilot` controls the external Microsoft 365 Copilot shortcut. It opens one
   reusable named tab because the service does not permit iframe embedding.
+- `workbench.url` controls the SP Workbench shortcut. It can be absolute or
+  relative to `siteURL`, for example `"_layouts/15/SPWorkbench.aspx"`.
 
 Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
 their existing CDN URLs until local copies are filled in. Hosted mode versions

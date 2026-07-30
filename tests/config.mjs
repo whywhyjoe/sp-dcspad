@@ -4,9 +4,11 @@
 import { launchBrowser, check, exitWithResult, APP_URL } from './lib.mjs';
 
 const origin = new URL(APP_URL).origin;
+const siteRoot = `${origin}/site-root`;
+const docsRoot = `${siteRoot}/docs`;
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1400, height: 820 } });
-const primaryUrl = `${origin}/tests/fixtures/missing-local-framework.js`;
+const primaryUrl = `${siteRoot}/tests/fixtures/missing-local-framework.js`;
 const fallbackUrl = `${origin}/tests/fixtures/testlib.js`;
 let notesFetches = 0;
 
@@ -54,18 +56,19 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
   contentType: 'application/json',
   body: JSON.stringify({
     version: 1,
+    siteURL: '/site-root/',
     frameworks: {
       prefer: 'local',
       fallbackToCdn: true,
       items: {
         pnpjs2: {
-          localUrl: `${origin}/custom/pnp-rollup.js`,
+          localUrl: 'custom/pnp-rollup.js',
           cdnUrl: '',
           probeGlobal: 'pnp',
           intelligence: ['pnpjs-2.15.0'],
         },
         alpine: {
-          localUrl: primaryUrl,
+          localUrl: 'tests/fixtures/missing-local-framework.js',
           cdnUrl: fallbackUrl,
           probeGlobal: 'testlib',
           intelligence: ['alpine-3'],
@@ -76,25 +79,25 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
       {
         id: 'design-reference',
         title: 'Design reference',
-        url: './docs/design-reference.html',
+        url: 'docs/design-reference.html',
         type: 'html',
       },
       {
         id: 'authoring-guide',
         title: 'Authoring guide',
-        url: './docs/guide.md',
+        url: 'docs/guide.md',
         type: 'markdown',
       },
       {
         id: 'plain-notes',
         title: 'Plain notes',
-        url: './docs/notes.txt',
+        url: 'docs/notes.txt',
         type: 'txt',
       },
       {
         id: 'token-data',
         title: 'Token data',
-        url: './docs/browser.json',
+        url: 'docs/browser.json',
         type: 'json',
       },
     ],
@@ -102,17 +105,20 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
       enabled: true,
       url: 'https://m365.cloud.microsoft/chat',
     },
+    workbench: {
+      url: '_layouts/15/SPWorkbench.aspx',
+    },
     assets: {
       designSystem: {
         prefer: 'local',
-        localBaseUrl: './bsp-design-system/',
+        localBaseUrl: 'bsp-design-system/',
         hostedBaseUrl: '',
         intelligence: ['bsp-design'],
         files: { components: 'components.css' },
       },
       fluentIcons: {
         prefer: 'local',
-        localBaseUrl: './bsp-fluent-icon-lib/',
+        localBaseUrl: 'bsp-fluent-icon-lib/',
         hostedBaseUrl: '',
         intelligence: ['fluent-icons'],
         files: {
@@ -133,15 +139,24 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
 await page.goto(APP_URL);
 await page.waitForSelector('.monaco-editor');
 
-await check('relative configured asset folders resolve from dcspad.config.json', () =>
+await check('relative local URLs resolve from the configured SharePoint site root', () =>
   page.evaluate(async (expected) => {
-    const { getAppConfig } = await import('/src/config.js');
-    return getAppConfig().assets.designSystem.localBaseUrl === expected;
-  }, `${origin}/bsp-design-system/`));
+    const { getAppConfig } = await import('/src/config.js?v=2');
+    const config = getAppConfig();
+    return config.siteUrl === expected.site
+      && config.assets.designSystem.localBaseUrl === expected.asset
+      && config.frameworks.items.alpine.localUrl === expected.framework
+      && config.workbench.url === expected.workbench;
+  }, {
+    site: `${siteRoot}/`,
+    asset: `${siteRoot}/bsp-design-system/`,
+    framework: primaryUrl,
+    workbench: `${siteRoot}/_layouts/15/SPWorkbench.aspx`,
+  }));
 
 await check('Browser bookmarks and Copilot URLs normalize from dcspad.config.json', () =>
   page.evaluate(async (expected) => {
-    const { getAppConfig } = await import('/src/config.js');
+    const { getAppConfig } = await import('/src/config.js?v=2');
     const config = getAppConfig();
     return config.docs.length === 4
       && config.docs[0].url === expected.doc
@@ -150,7 +165,7 @@ await check('Browser bookmarks and Copilot URLs normalize from dcspad.config.jso
       && config.docs[3].type === 'text'
       && config.copilot.enabled
       && config.copilot.url === 'https://m365.cloud.microsoft/chat';
-  }, { doc: `${origin}/docs/design-reference.html` }));
+  }, { doc: `${docsRoot}/design-reference.html` }));
 
 await page.click('#btn-docs');
 await page.click('#docs-menu-items [data-doc-id="design-reference"]');
@@ -164,7 +179,7 @@ await check('HTML docs are fetched as text and rendered through srcdoc with a ba
     page.evaluate((expected) => {
       const frame = document.getElementById('docs-frame');
       return !frame.hidden && frame.srcdoc.includes(`<base href="${expected}">`);
-    }, `${origin}/docs/design-reference.html`),
+    }, `${docsRoot}/design-reference.html`),
     page.frameLocator('#docs-frame').locator('h1').textContent()
       .then((text) => text === 'Design reference'),
     page.frameLocator('#docs-frame').locator('body').getAttribute('data-script-ready')
@@ -178,7 +193,7 @@ await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Authoring guide
 await check('Browser links reuse the fetch-and-srcdoc loader instead of navigating to a download', () =>
   Promise.all([
     page.locator('#browser-address-input').inputValue()
-      .then((value) => value === `${origin}/docs/guide.md`),
+      .then((value) => value === `${docsRoot}/guide.md`),
     page.evaluate(() =>
       document.getElementById('docs-frame').srcdoc.includes('Authoring guide')),
   ]).then((values) => values.every(Boolean)));
@@ -210,8 +225,8 @@ await check('Browser history records unique URLs most-recent-first', () =>
       && history[2] === expected.design;
   }, {
     notes: `${origin}/docs/notes.txt`,
-    guide: `${origin}/docs/guide.md`,
-    design: `${origin}/docs/design-reference.html`,
+    guide: `${docsRoot}/guide.md`,
+    design: `${docsRoot}/design-reference.html`,
   }));
 
 await page.click('#browser-refresh');
@@ -323,9 +338,9 @@ await check('configured Fluent runtime resolves all local CSS and bridge URLs', 
       && runtime?.cssText.includes('FluentSystemIcons-Regular');
   }, {
     css: [
-      `${origin}/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Regular.css`,
-      `${origin}/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Filled.css`,
-      `${origin}/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Light.css`,
+      `${siteRoot}/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Regular.css`,
+      `${siteRoot}/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Filled.css`,
+      `${siteRoot}/bsp-fluent-icon-lib/fonts/FluentSystemIcons-Light.css`,
     ],
     js: `${origin}/src/bridge/fluent-icon-font.js`,
   }));

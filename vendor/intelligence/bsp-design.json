@@ -9,7 +9,7 @@
       "description": "Interactive",
       "source": {
         "file": "colors_and_type.css",
-        "line": 132
+        "line": 141
       }
     },
     {
@@ -19,7 +19,7 @@
       "description": "Interactive",
       "source": {
         "file": "colors_and_type.css",
-        "line": 130
+        "line": 139
       }
     },
     {
@@ -29,7 +29,7 @@
       "description": "darker Midnight",
       "source": {
         "file": "colors_and_type.css",
-        "line": 131
+        "line": 140
       }
     },
     {
@@ -39,7 +39,7 @@
       "description": "Interactive",
       "source": {
         "file": "colors_and_type.css",
-        "line": 129
+        "line": 138
       }
     },
     {
@@ -49,7 +49,7 @@
       "description": "Secondary surface",
       "source": {
         "file": "colors_and_type.css",
-        "line": 33
+        "line": 42
       }
     },
     {
@@ -59,7 +59,7 @@
       "description": "First Bank Blue — the single BMO interactive blue (consumed via --accent-rest). The blue the BMO intranet consistently uses; supersedes the former #0075BE Accessible Blue.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 23
+        "line": 32
       }
     },
     {
@@ -69,7 +69,7 @@
       "description": "Cerulean — focus ring",
       "source": {
         "file": "colors_and_type.css",
-        "line": 25
+        "line": 34
       }
     },
     {
@@ -79,7 +79,7 @@
       "description": "Ultramarine",
       "source": {
         "file": "colors_and_type.css",
-        "line": 24
+        "line": 33
       }
     },
     {
@@ -89,7 +89,7 @@
       "description": "Chart palette — primary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 44
+        "line": 53
       }
     },
     {
@@ -99,7 +99,7 @@
       "description": "Chart palette — secondary (sparingly)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 52
+        "line": 61
       }
     },
     {
@@ -109,7 +109,7 @@
       "description": "Chart palette — primary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 46
+        "line": 55
       }
     },
     {
@@ -119,7 +119,7 @@
       "description": "Chart palette — secondary (sparingly)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 50
+        "line": 59
       }
     },
     {
@@ -129,7 +129,7 @@
       "description": "Chart palette — primary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 42
+        "line": 51
       }
     },
     {
@@ -139,7 +139,7 @@
       "description": "Chart palette — secondary (sparingly)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 51
+        "line": 60
       }
     },
     {
@@ -149,7 +149,7 @@
       "description": "Chart palette — primary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 43
+        "line": 52
       }
     },
     {
@@ -159,7 +159,7 @@
       "description": "Chart palette — secondary (sparingly)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 53
+        "line": 62
       }
     },
     {
@@ -169,7 +169,7 @@
       "description": "Chart palette — secondary (sparingly)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 49
+        "line": 58
       }
     },
     {
@@ -179,7 +179,7 @@
       "description": "Chart palette — primary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 45
+        "line": 54
       }
     },
     {
@@ -189,7 +189,7 @@
       "description": "Secondary text",
       "source": {
         "file": "colors_and_type.css",
-        "line": 29
+        "line": 38
       }
     },
     {
@@ -199,7 +199,7 @@
       "description": "Dividers, rules",
       "source": {
         "file": "colors_and_type.css",
-        "line": 34
+        "line": 43
       }
     },
     {
@@ -209,7 +209,7 @@
       "description": "Feedback",
       "source": {
         "file": "colors_and_type.css",
-        "line": 39
+        "line": 48
       }
     },
     {
@@ -219,7 +219,7 @@
       "description": "Illustration tint",
       "source": {
         "file": "colors_and_type.css",
-        "line": 35
+        "line": 44
       }
     },
     {
@@ -229,7 +229,7 @@
       "description": "Feedback",
       "source": {
         "file": "colors_and_type.css",
-        "line": 38
+        "line": 47
       }
     },
     {
@@ -239,7 +239,7 @@
       "description": "Logo-only red. NEVER use in UI.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 20
+        "line": 29
       }
     },
     {
@@ -249,7 +249,7 @@
       "description": "Primary text, headings",
       "source": {
         "file": "colors_and_type.css",
-        "line": 28
+        "line": 37
       }
     },
     {
@@ -259,7 +259,17 @@
       "description": "Surfaces",
       "source": {
         "file": "colors_and_type.css",
-        "line": 32
+        "line": 41
+      }
+    },
+    {
+      "name": "--ds-version",
+      "value": "\"1.0.0\"",
+      "category": "Design token",
+      "description": "0 · VERSION — stamped by tools/Set-Version.ps1 from the VERSION file. Not a design token; it exists so a deployed copy can identify itself with no git and no build. Probe the live page from devtools: getComputedStyle(document.documentElement).getPropertyValue('--ds-version')",
+      "source": {
+        "file": "colors_and_type.css",
+        "line": 23
       }
     },
     {
@@ -269,7 +279,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 252
+        "line": 261
       }
     },
     {
@@ -279,7 +289,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 253
+        "line": 262
       }
     },
     {
@@ -289,7 +299,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 251
+        "line": 260
       }
     },
     {
@@ -300,7 +310,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 53
+        "line": 54
       }
     },
     {
@@ -311,7 +321,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 35
+        "line": 36
       }
     },
     {
@@ -322,7 +332,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 42
+        "line": 43
       }
     },
     {
@@ -333,7 +343,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 43
+        "line": 44
       }
     },
     {
@@ -344,7 +354,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 38
+        "line": 39
       }
     },
     {
@@ -355,7 +365,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 47
+        "line": 48
       }
     },
     {
@@ -366,7 +376,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 46
+        "line": 47
       }
     },
     {
@@ -377,7 +387,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 48
+        "line": 49
       }
     },
     {
@@ -388,7 +398,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 51
+        "line": 52
       }
     },
     {
@@ -399,7 +409,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 52
+        "line": 53
       }
     },
     {
@@ -410,7 +420,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 41
+        "line": 42
       }
     },
     {
@@ -421,7 +431,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 36
+        "line": 37
       }
     },
     {
@@ -432,7 +442,7 @@
       "scope": "editorial",
       "source": {
         "file": "editorial.css",
-        "line": 37
+        "line": 38
       }
     },
     {
@@ -442,7 +452,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 74
+        "line": 83
       }
     },
     {
@@ -452,7 +462,7 @@
       "description": "Fluent 2 brand ramp around themePrimary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 81
+        "line": 90
       }
     },
     {
@@ -462,7 +472,7 @@
       "description": "Fluent 2 brand ramp around themePrimary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 80
+        "line": 89
       }
     },
     {
@@ -472,7 +482,7 @@
       "description": "Fluent 2 brand ramp around themePrimary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 79
+        "line": 88
       }
     },
     {
@@ -482,7 +492,7 @@
       "description": "themePrimary — Fluent default",
       "source": {
         "file": "colors_and_type.css",
-        "line": 78
+        "line": 87
       }
     },
     {
@@ -492,7 +502,7 @@
       "description": "hover dark",
       "source": {
         "file": "colors_and_type.css",
-        "line": 77
+        "line": 86
       }
     },
     {
@@ -502,7 +512,7 @@
       "description": "Fluent 2 brand ramp around themePrimary",
       "source": {
         "file": "colors_and_type.css",
-        "line": 82
+        "line": 91
       }
     },
     {
@@ -512,7 +522,7 @@
       "description": "selected row background",
       "source": {
         "file": "colors_and_type.css",
-        "line": 83
+        "line": 92
       }
     },
     {
@@ -522,7 +532,7 @@
       "description": "Fluent 2 semantic",
       "source": {
         "file": "colors_and_type.css",
-        "line": 88
+        "line": 97
       }
     },
     {
@@ -532,7 +542,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 73
+        "line": 82
       }
     },
     {
@@ -542,7 +552,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 72
+        "line": 81
       }
     },
     {
@@ -552,7 +562,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 71
+        "line": 80
       }
     },
     {
@@ -562,7 +572,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 70
+        "line": 79
       }
     },
     {
@@ -572,7 +582,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 69
+        "line": 78
       }
     },
     {
@@ -582,7 +592,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 68
+        "line": 77
       }
     },
     {
@@ -592,7 +602,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 67
+        "line": 76
       }
     },
     {
@@ -602,7 +612,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 66
+        "line": 75
       }
     },
     {
@@ -612,7 +622,7 @@
       "description": "neutralQuaternaryAlt — dividers",
       "source": {
         "file": "colors_and_type.css",
-        "line": 65
+        "line": 74
       }
     },
     {
@@ -622,7 +632,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 64
+        "line": 73
       }
     },
     {
@@ -632,7 +642,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 63
+        "line": 72
       }
     },
     {
@@ -642,7 +652,7 @@
       "description": "neutralLighter",
       "source": {
         "file": "colors_and_type.css",
-        "line": 62
+        "line": 71
       }
     },
     {
@@ -652,7 +662,7 @@
       "description": "neutralLighterAlt",
       "source": {
         "file": "colors_and_type.css",
-        "line": 61
+        "line": 70
       }
     },
     {
@@ -662,7 +672,7 @@
       "description": "Fluent 2 semantic",
       "source": {
         "file": "colors_and_type.css",
-        "line": 86
+        "line": 95
       }
     },
     {
@@ -672,7 +682,7 @@
       "description": "Fluent 2 semantic",
       "source": {
         "file": "colors_and_type.css",
-        "line": 87
+        "line": 96
       }
     },
     {
@@ -682,7 +692,7 @@
       "description": "2 · FLUENT 2 NEUTRAL RAMP — cool grays Use these (NOT SharePoint's warm #323130 / #f3f2f1) inside apps.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 60
+        "line": 69
       }
     },
     {
@@ -692,7 +702,7 @@
       "description": "Fluent 2 semantic",
       "source": {
         "file": "colors_and_type.css",
-        "line": 89
+        "line": 98
       }
     },
     {
@@ -702,7 +712,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 116
+        "line": 125
       }
     },
     {
@@ -712,7 +722,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 117
+        "line": 126
       }
     },
     {
@@ -722,7 +732,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 118
+        "line": 127
       }
     },
     {
@@ -732,7 +742,7 @@
       "description": "darker negative — destructive hover/active",
       "source": {
         "file": "colors_and_type.css",
-        "line": 140
+        "line": 149
       }
     },
     {
@@ -742,7 +752,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 114
+        "line": 123
       }
     },
     {
@@ -752,7 +762,7 @@
       "description": "#005587",
       "source": {
         "file": "colors_and_type.css",
-        "line": 137
+        "line": 146
       }
     },
     {
@@ -762,7 +772,7 @@
       "description": "#424242",
       "source": {
         "file": "colors_and_type.css",
-        "line": 139
+        "line": 148
       }
     },
     {
@@ -772,7 +782,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 115
+        "line": 124
       }
     },
     {
@@ -782,7 +792,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 112
+        "line": 121
       }
     },
     {
@@ -792,7 +802,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 113
+        "line": 122
       }
     },
     {
@@ -802,7 +812,7 @@
       "description": "Foreground (text)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 119
+        "line": 128
       }
     },
     {
@@ -812,7 +822,7 @@
       "description": "success glyph on the dark toast ground",
       "source": {
         "file": "colors_and_type.css",
-        "line": 141
+        "line": 150
       }
     },
     {
@@ -822,7 +832,7 @@
       "description": "Feedback foregrounds + soft surface tints — used by badges, message bars, status pills. Foregrounds carry contrast; tints are the quiet ground behind them. Solid, low saturation (no gradients).",
       "source": {
         "file": "colors_and_type.css",
-        "line": 138
+        "line": 147
       }
     },
     {
@@ -832,7 +842,7 @@
       "description": "8 · TYPOGRAPHY — Fluent 2 web ramp on Segoe UI Used at the sizes from BMO Intranet ramp where they diverge.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 216
+        "line": 225
       }
     },
     {
@@ -842,7 +852,7 @@
       "description": "8 · TYPOGRAPHY — Fluent 2 web ramp on Segoe UI Used at the sizes from BMO Intranet ramp where they diverge.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 219
+        "line": 228
       }
     },
     {
@@ -852,7 +862,7 @@
       "description": "card hover-lift travel",
       "source": {
         "file": "colors_and_type.css",
-        "line": 255
+        "line": 264
       }
     },
     {
@@ -862,7 +872,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 247
+        "line": 256
       }
     },
     {
@@ -872,7 +882,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 248
+        "line": 257
       }
     },
     {
@@ -882,7 +892,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 250
+        "line": 259
       }
     },
     {
@@ -892,7 +902,7 @@
       "description": "@kind other",
       "source": {
         "file": "colors_and_type.css",
-        "line": 249
+        "line": 258
       }
     },
     {
@@ -902,7 +912,7 @@
       "description": "5 · CORNER RADIUS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 187
+        "line": 196
       }
     },
     {
@@ -912,7 +922,7 @@
       "description": "large buttons, cards",
       "source": {
         "file": "colors_and_type.css",
-        "line": 185
+        "line": 194
       }
     },
     {
@@ -922,7 +932,7 @@
       "description": "DEFAULT — buttons, inputs",
       "source": {
         "file": "colors_and_type.css",
-        "line": 184
+        "line": 193
       }
     },
     {
@@ -932,7 +942,7 @@
       "description": "5 · CORNER RADIUS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 182
+        "line": 191
       }
     },
     {
@@ -942,7 +952,7 @@
       "description": "5 · CORNER RADIUS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 183
+        "line": 192
       }
     },
     {
@@ -952,7 +962,7 @@
       "description": "popovers, sheets",
       "source": {
         "file": "colors_and_type.css",
-        "line": 186
+        "line": 195
       }
     },
     {
@@ -962,7 +972,7 @@
       "description": "reveal-on-scroll travel",
       "source": {
         "file": "colors_and_type.css",
-        "line": 254
+        "line": 263
       }
     },
     {
@@ -972,7 +982,7 @@
       "description": "dialog/sheet backdrop (Slate @ 40%)",
       "source": {
         "file": "colors_and_type.css",
-        "line": 154
+        "line": 163
       }
     },
     {
@@ -982,7 +992,7 @@
       "description": "7 · ELEVATION — Fluent 2 shadow ramp (light mode) Formula: blur=n, y=0.5n, 14% + 14% opacity for low elevation. For embedded SharePoint apps stay at shadow4–shadow8.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 207
+        "line": 216
       }
     },
     {
@@ -992,7 +1002,7 @@
       "description": "7 · ELEVATION — Fluent 2 shadow ramp (light mode) Formula: blur=n, y=0.5n, 14% + 14% opacity for low elevation. For embedded SharePoint apps stay at shadow4–shadow8.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 204
+        "line": 213
       }
     },
     {
@@ -1002,7 +1012,7 @@
       "description": "7 · ELEVATION — Fluent 2 shadow ramp (light mode) Formula: blur=n, y=0.5n, 14% + 14% opacity for low elevation. For embedded SharePoint apps stay at shadow4–shadow8.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 208
+        "line": 217
       }
     },
     {
@@ -1012,7 +1022,7 @@
       "description": "7 · ELEVATION — Fluent 2 shadow ramp (light mode) Formula: blur=n, y=0.5n, 14% + 14% opacity for low elevation. For embedded SharePoint apps stay at shadow4–shadow8.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 205
+        "line": 214
       }
     },
     {
@@ -1022,7 +1032,7 @@
       "description": "7 · ELEVATION — Fluent 2 shadow ramp (light mode) Formula: blur=n, y=0.5n, 14% + 14% opacity for low elevation. For embedded SharePoint apps stay at shadow4–shadow8.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 209
+        "line": 218
       }
     },
     {
@@ -1032,7 +1042,7 @@
       "description": "7 · ELEVATION — Fluent 2 shadow ramp (light mode) Formula: blur=n, y=0.5n, 14% + 14% opacity for low elevation. For embedded SharePoint apps stay at shadow4–shadow8.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 206
+        "line": 215
       }
     },
     {
@@ -1042,7 +1052,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 160
+        "line": 169
       }
     },
     {
@@ -1052,7 +1062,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 165
+        "line": 174
       }
     },
     {
@@ -1062,7 +1072,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 166
+        "line": 175
       }
     },
     {
@@ -1072,7 +1082,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 167
+        "line": 176
       }
     },
     {
@@ -1082,7 +1092,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 161
+        "line": 170
       }
     },
     {
@@ -1092,7 +1102,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 168
+        "line": 177
       }
     },
     {
@@ -1102,7 +1112,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 169
+        "line": 178
       }
     },
     {
@@ -1112,7 +1122,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 170
+        "line": 179
       }
     },
     {
@@ -1122,7 +1132,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 171
+        "line": 180
       }
     },
     {
@@ -1132,7 +1142,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 172
+        "line": 181
       }
     },
     {
@@ -1142,7 +1152,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 162
+        "line": 171
       }
     },
     {
@@ -1152,7 +1162,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 173
+        "line": 182
       }
     },
     {
@@ -1162,7 +1172,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 174
+        "line": 183
       }
     },
     {
@@ -1172,7 +1182,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 175
+        "line": 184
       }
     },
     {
@@ -1182,7 +1192,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 176
+        "line": 185
       }
     },
     {
@@ -1192,7 +1202,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 163
+        "line": 172
       }
     },
     {
@@ -1202,7 +1212,7 @@
       "description": "4 · SPACING — Fluent 2 4px ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 164
+        "line": 173
       }
     },
     {
@@ -1212,7 +1222,7 @@
       "description": "Strokes",
       "source": {
         "file": "colors_and_type.css",
-        "line": 126
+        "line": 135
       }
     },
     {
@@ -1222,7 +1232,7 @@
       "description": "Strokes",
       "source": {
         "file": "colors_and_type.css",
-        "line": 123
+        "line": 132
       }
     },
     {
@@ -1232,7 +1242,7 @@
       "description": "Strokes",
       "source": {
         "file": "colors_and_type.css",
-        "line": 124
+        "line": 133
       }
     },
     {
@@ -1242,7 +1252,7 @@
       "description": "Feedback-tint borders — the slightly deeper edge on a message bar's soft ground. One per semantic; consumed only by .msgbar--*.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 153
+        "line": 162
       }
     },
     {
@@ -1252,7 +1262,7 @@
       "description": "Strokes",
       "source": {
         "file": "colors_and_type.css",
-        "line": 122
+        "line": 131
       }
     },
     {
@@ -1262,7 +1272,7 @@
       "description": "Strokes",
       "source": {
         "file": "colors_and_type.css",
-        "line": 125
+        "line": 134
       }
     },
     {
@@ -1272,7 +1282,7 @@
       "description": "Feedback-tint borders — the slightly deeper edge on a message bar's soft ground. One per semantic; consumed only by .msgbar--*.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 150
+        "line": 159
       }
     },
     {
@@ -1282,7 +1292,7 @@
       "description": "Feedback-tint borders — the slightly deeper edge on a message bar's soft ground. One per semantic; consumed only by .msgbar--*.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 151
+        "line": 160
       }
     },
     {
@@ -1292,7 +1302,7 @@
       "description": "6 · STROKE THICKNESS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 194
+        "line": 203
       }
     },
     {
@@ -1302,7 +1312,7 @@
       "description": "6 · STROKE THICKNESS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 195
+        "line": 204
       }
     },
     {
@@ -1312,7 +1322,7 @@
       "description": "6 · STROKE THICKNESS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 196
+        "line": 205
       }
     },
     {
@@ -1322,7 +1332,7 @@
       "description": "6 · STROKE THICKNESS — Fluent 2",
       "source": {
         "file": "colors_and_type.css",
-        "line": 193
+        "line": 202
       }
     },
     {
@@ -1332,7 +1342,7 @@
       "description": "Feedback-tint borders — the slightly deeper edge on a message bar's soft ground. One per semantic; consumed only by .msgbar--*.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 152
+        "line": 161
       }
     },
     {
@@ -1342,7 +1352,7 @@
       "description": "app default",
       "source": {
         "file": "colors_and_type.css",
-        "line": 98
+        "line": 107
       }
     },
     {
@@ -1352,7 +1362,7 @@
       "description": "Feedback foregrounds + soft surface tints — used by badges, message bars, status pills. Foregrounds carry contrast; tints are the quiet ground behind them. Solid, low saturation (no gradients).",
       "source": {
         "file": "colors_and_type.css",
-        "line": 145
+        "line": 154
       }
     },
     {
@@ -1362,7 +1372,7 @@
       "description": "image placeholder ground",
       "source": {
         "file": "colors_and_type.css",
-        "line": 109
+        "line": 118
       }
     },
     {
@@ -1372,7 +1382,7 @@
       "description": "Feedback foregrounds + soft surface tints — used by badges, message bars, status pills. Foregrounds carry contrast; tints are the quiet ground behind them. Solid, low saturation (no gradients).",
       "source": {
         "file": "colors_and_type.css",
-        "line": 142
+        "line": 151
       }
     },
     {
@@ -1382,7 +1392,7 @@
       "description": "Surfaces",
       "source": {
         "file": "colors_and_type.css",
-        "line": 101
+        "line": 110
       }
     },
     {
@@ -1392,7 +1402,7 @@
       "description": "#F0F0F0",
       "source": {
         "file": "colors_and_type.css",
-        "line": 146
+        "line": 155
       }
     },
     {
@@ -1402,7 +1412,7 @@
       "description": "cards",
       "source": {
         "file": "colors_and_type.css",
-        "line": 100
+        "line": 109
       }
     },
     {
@@ -1412,7 +1422,7 @@
       "description": "Surfaces",
       "source": {
         "file": "colors_and_type.css",
-        "line": 102
+        "line": 111
       }
     },
     {
@@ -1422,7 +1432,7 @@
       "description": "secondary panels",
       "source": {
         "file": "colors_and_type.css",
-        "line": 99
+        "line": 108
       }
     },
     {
@@ -1432,7 +1442,7 @@
       "description": "Feedback foregrounds + soft surface tints — used by badges, message bars, status pills. Foregrounds carry contrast; tints are the quiet ground behind them. Solid, low saturation (no gradients).",
       "source": {
         "file": "colors_and_type.css",
-        "line": 143
+        "line": 152
       }
     },
     {
@@ -1442,7 +1452,7 @@
       "description": "pale blue band",
       "source": {
         "file": "colors_and_type.css",
-        "line": 107
+        "line": 116
       }
     },
     {
@@ -1452,7 +1462,7 @@
       "description": "cool neutral band",
       "source": {
         "file": "colors_and_type.css",
-        "line": 106
+        "line": 115
       }
     },
     {
@@ -1462,7 +1472,7 @@
       "description": "slightly deeper hero band",
       "source": {
         "file": "colors_and_type.css",
-        "line": 108
+        "line": 117
       }
     },
     {
@@ -1472,7 +1482,7 @@
       "description": "Feedback foregrounds + soft surface tints — used by badges, message bars, status pills. Foregrounds carry contrast; tints are the quiet ground behind them. Solid, low saturation (no gradients).",
       "source": {
         "file": "colors_and_type.css",
-        "line": 144
+        "line": 153
       }
     },
     {
@@ -1482,7 +1492,7 @@
       "description": "SharePoint baseline",
       "source": {
         "file": "colors_and_type.css",
-        "line": 230
+        "line": 239
       }
     },
     {
@@ -1492,7 +1502,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 231
+        "line": 240
       }
     },
     {
@@ -1502,7 +1512,7 @@
       "description": "BMO intranet body",
       "source": {
         "file": "colors_and_type.css",
-        "line": 232
+        "line": 241
       }
     },
     {
@@ -1512,7 +1522,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 233
+        "line": 242
       }
     },
     {
@@ -1522,7 +1532,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 228
+        "line": 237
       }
     },
     {
@@ -1532,7 +1542,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 229
+        "line": 238
       }
     },
     {
@@ -1542,7 +1552,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 226
+        "line": 235
       }
     },
     {
@@ -1552,7 +1562,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 227
+        "line": 236
       }
     },
     {
@@ -1562,7 +1572,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 240
+        "line": 249
       }
     },
     {
@@ -1572,7 +1582,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 239
+        "line": 248
       }
     },
     {
@@ -1582,7 +1592,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 235
+        "line": 244
       }
     },
     {
@@ -1592,7 +1602,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 234
+        "line": 243
       }
     },
     {
@@ -1602,7 +1612,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 238
+        "line": 247
       }
     },
     {
@@ -1612,7 +1622,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 237
+        "line": 246
       }
     },
     {
@@ -1622,7 +1632,7 @@
       "description": "Fluent 2 web type ramp",
       "source": {
         "file": "colors_and_type.css",
-        "line": 236
+        "line": 245
       }
     },
     {
@@ -1632,7 +1642,7 @@
       "description": "8 · TYPOGRAPHY — Fluent 2 web ramp on Segoe UI Used at the sizes from BMO Intranet ramp where they diverge.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 223
+        "line": 232
       }
     },
     {
@@ -1642,7 +1652,7 @@
       "description": "8 · TYPOGRAPHY — Fluent 2 web ramp on Segoe UI Used at the sizes from BMO Intranet ramp where they diverge.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 220
+        "line": 229
       }
     },
     {
@@ -1652,7 +1662,7 @@
       "description": "8 · TYPOGRAPHY — Fluent 2 web ramp on Segoe UI Used at the sizes from BMO Intranet ramp where they diverge.",
       "source": {
         "file": "colors_and_type.css",
-        "line": 222
+        "line": 231
       }
     }
   ],
@@ -1673,7 +1683,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 265
+        "line": 276
       }
     },
     {
@@ -1689,7 +1699,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 291
+        "line": 302
       }
     },
     {
@@ -1705,7 +1715,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 299
+        "line": 310
       }
     },
     {
@@ -1721,7 +1731,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 298
+        "line": 309
       }
     },
     {
@@ -1737,7 +1747,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 296
+        "line": 307
       }
     },
     {
@@ -1753,7 +1763,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 297
+        "line": 308
       }
     },
     {
@@ -1769,7 +1779,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 277
+        "line": 288
       }
     },
     {
@@ -1785,7 +1795,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 280
+        "line": 291
       }
     },
     {
@@ -1801,7 +1811,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 281
+        "line": 292
       }
     },
     {
@@ -1817,7 +1827,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 282
+        "line": 293
       }
     },
     {
@@ -1833,7 +1843,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 283
+        "line": 294
       }
     },
     {
@@ -1849,7 +1859,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 284
+        "line": 295
       }
     },
     {
@@ -1865,7 +1875,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 285
+        "line": 296
       }
     },
     {
@@ -1877,7 +1887,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 286
+        "line": 297
       }
     },
     {
@@ -1889,7 +1899,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 215
+        "line": 226
       }
     },
     {
@@ -1905,7 +1915,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 233
+        "line": 244
       }
     },
     {
@@ -1921,7 +1931,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 230
+        "line": 241
       }
     },
     {
@@ -1937,7 +1947,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 234
+        "line": 245
       }
     },
     {
@@ -1953,7 +1963,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 231
+        "line": 242
       }
     },
     {
@@ -1969,7 +1979,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 232
+        "line": 243
       }
     },
     {
@@ -1981,7 +1991,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 602
+        "line": 613
       }
     },
     {
@@ -1997,7 +2007,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 619
+        "line": 630
       }
     },
     {
@@ -2013,7 +2023,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 616
+        "line": 627
       }
     },
     {
@@ -2042,7 +2052,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 322
+        "line": 345
       }
     },
     {
@@ -2058,7 +2068,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 615
+        "line": 626
       }
     },
     {
@@ -2074,7 +2084,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 617
+        "line": 628
       }
     },
     {
@@ -2090,13 +2100,13 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 618
+        "line": 629
       }
     },
     {
       "name": "btn",
       "kind": "base",
-      "description": "Icon — inline SVG via the canonical sprite (bmo-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline bmo-icons.svg once per page so #id refs resolve same-d…",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
       "appliesTo": [
         "icon"
       ],
@@ -2108,7 +2118,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 31
+        "line": 42
       }
     },
     {
@@ -2124,7 +2134,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 85
+        "line": 96
       }
     },
     {
@@ -2141,7 +2151,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 82
+        "line": 93
       }
     },
     {
@@ -2158,7 +2168,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 79
+        "line": 90
       }
     },
     {
@@ -2174,7 +2184,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 64
+        "line": 75
       }
     },
     {
@@ -2197,7 +2207,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 65
+        "line": 76
       }
     },
     {
@@ -2221,7 +2231,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 69
+        "line": 80
       }
     },
     {
@@ -2237,7 +2247,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 62
+        "line": 73
       }
     },
     {
@@ -2253,7 +2263,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 87
+        "line": 98
       }
     },
     {
@@ -2270,7 +2280,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 76
+        "line": 87
       }
     },
     {
@@ -2287,122 +2297,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 73
-      }
-    },
-    {
-      "name": "c-icon",
-      "kind": "base",
-      "description": "A quiet section-divider marker: illustration + eyebrow + heading, centered.",
-      "appliesTo": [
-        "icon",
-        "quicklink"
-      ],
-      "selectors": [
-        ".c-icon",
-        ".quicklink .icon, .quicklink .c-icon"
-      ],
-      "scopes": [
-        "editorial"
-      ],
-      "source": {
-        "file": "editorial.css",
-        "line": 526
-      }
-    },
-    {
-      "name": "c-icon--24",
-      "kind": "modifier",
-      "base": "c-icon",
-      "description": "14 · Corporate content line-icons — the content-labeling tier (distinct from the functional Fluent ic-fluent-* app icons). Rendered from the separate bmo-content-icons.svg sprite; sized here. PLACEHOLDER art until the licensed \"BMO Design Icons\" set is dropped in. <svg class=\"c-icon c-icon--48\"><use href=\"#bmo-ic-learning\"/></svg>",
-      "appliesTo": [
-        "c-icon"
-      ],
-      "selectors": [
-        ".c-icon--24"
-      ],
-      "scopes": [
-        "editorial"
-      ],
-      "source": {
-        "file": "editorial.css",
-        "line": 536
-      }
-    },
-    {
-      "name": "c-icon--32",
-      "kind": "modifier",
-      "base": "c-icon",
-      "description": "14 · Corporate content line-icons — the content-labeling tier (distinct from the functional Fluent ic-fluent-* app icons). Rendered from the separate bmo-content-icons.svg sprite; sized here. PLACEHOLDER art until the licensed \"BMO Design Icons\" set is dropped in. <svg class=\"c-icon c-icon--48\"><use href=\"#bmo-ic-learning\"/></svg>",
-      "appliesTo": [
-        "c-icon"
-      ],
-      "selectors": [
-        ".c-icon--32"
-      ],
-      "scopes": [
-        "editorial"
-      ],
-      "source": {
-        "file": "editorial.css",
-        "line": 537
-      }
-    },
-    {
-      "name": "c-icon--48",
-      "kind": "modifier",
-      "base": "c-icon",
-      "description": "14 · Corporate content line-icons — the content-labeling tier (distinct from the functional Fluent ic-fluent-* app icons). Rendered from the separate bmo-content-icons.svg sprite; sized here. PLACEHOLDER art until the licensed \"BMO Design Icons\" set is dropped in. <svg class=\"c-icon c-icon--48\"><use href=\"#bmo-ic-learning\"/></svg>",
-      "appliesTo": [
-        "c-icon"
-      ],
-      "selectors": [
-        ".c-icon--48"
-      ],
-      "scopes": [
-        "editorial"
-      ],
-      "source": {
-        "file": "editorial.css",
-        "line": 538
-      }
-    },
-    {
-      "name": "c-icon--64",
-      "kind": "modifier",
-      "base": "c-icon",
-      "description": "14 · Corporate content line-icons — the content-labeling tier (distinct from the functional Fluent ic-fluent-* app icons). Rendered from the separate bmo-content-icons.svg sprite; sized here. PLACEHOLDER art until the licensed \"BMO Design Icons\" set is dropped in. <svg class=\"c-icon c-icon--48\"><use href=\"#bmo-ic-learning\"/></svg>",
-      "appliesTo": [
-        "c-icon"
-      ],
-      "selectors": [
-        ".c-icon--64"
-      ],
-      "scopes": [
-        "editorial"
-      ],
-      "source": {
-        "file": "editorial.css",
-        "line": 539
-      }
-    },
-    {
-      "name": "c-icon--on-blue",
-      "kind": "modifier",
-      "base": "c-icon",
-      "description": "14 · Corporate content line-icons — the content-labeling tier (distinct from the functional Fluent ic-fluent-* app icons). Rendered from the separate bmo-content-icons.svg sprite; sized here. PLACEHOLDER art until the licensed \"BMO Design Icons\" set is dropped in. <svg class=\"c-icon c-icon--48\"><use href=\"#bmo-ic-learning\"/></svg>",
-      "appliesTo": [
-        "c-icon"
-      ],
-      "selectors": [
-        ".c-icon--on-blue"
-      ],
-      "scopes": [
-        "editorial"
-      ],
-      "source": {
-        "file": "editorial.css",
-        "line": 540
+        "line": 84
       }
     },
     {
@@ -2414,7 +2309,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 306
+        "line": 315
       }
     },
     {
@@ -2433,7 +2328,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 305
+        "line": 316
       }
     },
     {
@@ -2454,7 +2349,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 321
+        "line": 332
       }
     },
     {
@@ -2474,7 +2369,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 341
+        "line": 352
       }
     },
     {
@@ -2494,7 +2389,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 327
+        "line": 338
       }
     },
     {
@@ -2512,7 +2407,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 319
+        "line": 330
       }
     },
     {
@@ -2530,7 +2425,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 322
+        "line": 333
       }
     },
     {
@@ -2548,7 +2443,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 333
+        "line": 344
       }
     },
     {
@@ -2566,7 +2461,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 339
+        "line": 350
       }
     },
     {
@@ -2583,7 +2478,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 354
+        "line": 365
       }
     },
     {
@@ -2599,7 +2494,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 360
+        "line": 371
       }
     },
     {
@@ -2620,7 +2515,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 359
+        "line": 370
       }
     },
     {
@@ -2643,7 +2538,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 325
+        "line": 336
       }
     },
     {
@@ -2664,7 +2559,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 320
+        "line": 331
       }
     },
     {
@@ -2690,7 +2585,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 355
+        "line": 378
       }
     },
     {
@@ -2706,14 +2601,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 318
+        "line": 329
       }
     },
     {
       "name": "card--quiet",
       "kind": "modifier",
       "base": "card",
-      "description": "14 · Corporate content line-icons — the content-labeling tier (distinct from the functional Fluent ic-fluent-* app icons). Rendered from the separate bmo-content-icons.svg sprite; sized here. PLACEHOLDER art until the licensed \"BMO Design Icons\" set is dropped in. <svg class=\"c-icon c-icon--48\"><use href=\"#bmo-ic-learning\"/></svg>",
+      "description": "14 · Content-labeling icons — REMOVED (.c-icon and the bmo-ic-* sprite). That tier was placeholder art. It is now served by the real Abacus icons in abacus-icons/, referenced by URL and sized with the base .icon ladder: <img class=\"icon icon--32\" src=\"abacus-icons/goals-48.svg\" alt=\"\"> ON A BLUE GROUND — Abacus SVGs carry baked BMO blue, and an <img> cannot inherit `color`, so a blue glyph on a blue tile disappear…",
       "appliesTo": [
         "card",
         "editorial"
@@ -2726,7 +2621,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 541
+        "line": 565
       }
     },
     {
@@ -2744,7 +2639,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 352
+        "line": 363
       }
     },
     {
@@ -2759,7 +2654,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 462
+        "line": 473
       }
     },
     {
@@ -2775,7 +2670,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 169
+        "line": 180
       }
     },
     {
@@ -2797,7 +2692,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 200
+        "line": 211
       }
     },
     {
@@ -2816,7 +2711,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 196
+        "line": 207
       }
     },
     {
@@ -2830,7 +2725,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 728
+        "line": 739
       }
     },
     {
@@ -2846,7 +2741,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 736
+        "line": 747
       }
     },
     {
@@ -2862,7 +2757,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 735
+        "line": 746
       }
     },
     {
@@ -2877,7 +2772,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 496
+        "line": 519
       }
     },
     {
@@ -2896,7 +2791,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 504
+        "line": 527
       }
     },
     {
@@ -2918,7 +2813,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 330
+        "line": 353
       }
     },
     {
@@ -2941,7 +2836,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 327
+        "line": 350
       }
     },
     {
@@ -2953,7 +2848,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 504
+        "line": 515
       }
     },
     {
@@ -2969,7 +2864,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 514
+        "line": 525
       }
     },
     {
@@ -2985,7 +2880,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 515
+        "line": 526
       }
     },
     {
@@ -3001,7 +2896,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 511
+        "line": 522
       }
     },
     {
@@ -3017,7 +2912,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 513
+        "line": 524
       }
     },
     {
@@ -3033,7 +2928,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 512
+        "line": 523
       }
     },
     {
@@ -3045,7 +2940,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 300
+        "line": 311
       }
     },
     {
@@ -3061,7 +2956,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 304
+        "line": 315
       }
     },
     {
@@ -3073,7 +2968,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 255
+        "line": 266
       }
     },
     {
@@ -3089,7 +2984,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 259
+        "line": 270
       }
     },
     {
@@ -3105,7 +3000,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 262
+        "line": 273
       }
     },
     {
@@ -3121,7 +3016,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 263
+        "line": 274
       }
     },
     {
@@ -3137,7 +3032,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 264
+        "line": 275
       }
     },
     {
@@ -3153,7 +3048,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 260
+        "line": 271
       }
     },
     {
@@ -3169,7 +3064,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 261
+        "line": 272
       }
     },
     {
@@ -3185,7 +3080,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 516
+        "line": 527
       }
     },
     {
@@ -3201,7 +3096,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 524
+        "line": 535
       }
     },
     {
@@ -3248,7 +3143,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 594
+        "line": 605
       }
     },
     {
@@ -3264,7 +3159,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 601
+        "line": 612
       }
     },
     {
@@ -3280,7 +3175,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 600
+        "line": 611
       }
     },
     {
@@ -3299,7 +3194,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 344
+        "line": 367
       }
     },
     {
@@ -3318,7 +3213,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 354
+        "line": 377
       }
     },
     {
@@ -3336,7 +3231,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 545
+        "line": 556
       }
     },
     {
@@ -3354,7 +3249,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 581
+        "line": 592
       }
     },
     {
@@ -3370,7 +3265,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 592
+        "line": 603
       }
     },
     {
@@ -3388,7 +3283,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 587
+        "line": 598
       }
     },
     {
@@ -3408,7 +3303,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 583
+        "line": 594
       }
     },
     {
@@ -3423,7 +3318,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 385
+        "line": 408
       }
     },
     {
@@ -3445,7 +3340,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 400
+        "line": 423
       }
     },
     {
@@ -3464,7 +3359,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 399
+        "line": 422
       }
     },
     {
@@ -3483,7 +3378,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 397
+        "line": 420
       }
     },
     {
@@ -3502,7 +3397,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 398
+        "line": 421
       }
     },
     {
@@ -3516,7 +3411,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 479
+        "line": 490
       }
     },
     {
@@ -3532,7 +3427,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 639
+        "line": 650
       }
     },
     {
@@ -3550,7 +3445,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 659
+        "line": 670
       }
     },
     {
@@ -3566,7 +3461,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 666
+        "line": 677
       }
     },
     {
@@ -3584,7 +3479,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 657
+        "line": 668
       }
     },
     {
@@ -3603,7 +3498,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 667
+        "line": 678
       }
     },
     {
@@ -3619,7 +3514,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 665
+        "line": 676
       }
     },
     {
@@ -3638,7 +3533,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 656
+        "line": 667
       }
     },
     {
@@ -3650,7 +3545,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 103
+        "line": 114
       }
     },
     {
@@ -3666,7 +3561,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 117
+        "line": 128
       }
     },
     {
@@ -3682,7 +3577,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 116
+        "line": 127
       }
     },
     {
@@ -3698,7 +3593,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 114
+        "line": 125
       }
     },
     {
@@ -3714,7 +3609,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 115
+        "line": 126
       }
     },
     {
@@ -3732,7 +3627,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 927
+        "line": 938
       }
     },
     {
@@ -3748,7 +3643,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 949
+        "line": 960
       }
     },
     {
@@ -3764,7 +3659,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 950
+        "line": 961
       }
     },
     {
@@ -3780,7 +3675,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 951
+        "line": 962
       }
     },
     {
@@ -3801,7 +3696,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 438
+        "line": 449
       }
     },
     {
@@ -3819,7 +3714,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 968
+        "line": 979
       }
     },
     {
@@ -3835,7 +3730,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 955
+        "line": 966
       }
     },
     {
@@ -3854,7 +3749,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 981
+        "line": 992
       }
     },
     {
@@ -3870,7 +3765,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 970
+        "line": 981
       }
     },
     {
@@ -3888,7 +3783,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 454
+        "line": 465
       }
     },
     {
@@ -3900,7 +3795,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 273
+        "line": 282
       }
     },
     {
@@ -3912,7 +3807,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 279
+        "line": 288
       }
     },
     {
@@ -3924,7 +3819,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 284
+        "line": 293
       }
     },
     {
@@ -3936,7 +3831,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 289
+        "line": 298
       }
     },
     {
@@ -3948,7 +3843,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 294
+        "line": 303
       }
     },
     {
@@ -3960,7 +3855,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 299
+        "line": 308
       }
     },
     {
@@ -3979,7 +3874,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 737
+        "line": 748
       }
     },
     {
@@ -4000,7 +3895,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 310
+        "line": 333
       }
     },
     {
@@ -4013,6 +3908,11 @@
         "hero--band",
         "hero--blue",
         "hero--bokeh",
+        "hero--bokeh-a",
+        "hero--bokeh-b",
+        "hero--bokeh-c",
+        "hero--bokeh-d",
+        "hero--bokeh-e",
         "hero--scrim"
       ],
       "selectors": [
@@ -4026,7 +3926,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 223
+        "line": 224
       }
     },
     {
@@ -4046,7 +3946,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 229
+        "line": 230
       }
     },
     {
@@ -4062,7 +3962,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 747
+        "line": 758
       }
     },
     {
@@ -4082,7 +3982,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 312
+        "line": 335
       }
     },
     {
@@ -4105,7 +4005,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 744
+        "line": 755
       }
     },
     {
@@ -4130,7 +4030,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 746
+        "line": 757
       }
     },
     {
@@ -4156,7 +4056,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 748
+        "line": 759
       }
     },
     {
@@ -4181,14 +4081,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 745
+        "line": 756
       }
     },
     {
       "name": "hero--arc",
       "kind": "modifier",
       "base": "hero",
-      "description": "--bokeh: the approved alt to photography for \"dry\" content — a spec-compliant bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted as bokeh.svg. Pair with a spot illustration or copy over it.",
+      "description": "--bokeh: the approved alt to photography for \"dry\" content — the official BMO bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted in assets/. Pair with a spot illustration or copy over it. FIVE variants ship, a–e. Same design language; they differ in how much of the frame the circles occupy, i.e. how much clear gradient is left for text or a photo. Densest to sparsest: a · c · b…",
       "appliesTo": [
         "hero",
         "hero--arc-blue",
@@ -4206,7 +4106,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 282
+        "line": 305
       }
     },
     {
@@ -4226,7 +4126,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 304
+        "line": 327
       }
     },
     {
@@ -4253,7 +4153,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 726
+        "line": 750
       }
     },
     {
@@ -4275,7 +4175,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 224
+        "line": 225
       }
     },
     {
@@ -4302,7 +4202,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 205
+        "line": 206
       }
     },
     {
@@ -4324,7 +4224,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 227
+        "line": 228
       }
     },
     {
@@ -4346,7 +4246,107 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 275
+        "line": 276
+      }
+    },
+    {
+      "name": "hero--bokeh-a",
+      "kind": "modifier",
+      "base": "hero",
+      "description": "--bokeh: the approved alt to photography for \"dry\" content — the official BMO bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted in assets/. Pair with a spot illustration or copy over it. FIVE variants ship, a–e. Same design language; they differ in how much of the frame the circles occupy, i.e. how much clear gradient is left for text or a photo. Densest to sparsest: a · c · b…",
+      "appliesTo": [
+        "hero",
+        "hero__bg"
+      ],
+      "selectors": [
+        ".hero--bokeh-a .hero__bg"
+      ],
+      "scopes": [
+        "editorial"
+      ],
+      "source": {
+        "file": "editorial.css",
+        "line": 299
+      }
+    },
+    {
+      "name": "hero--bokeh-b",
+      "kind": "modifier",
+      "base": "hero",
+      "description": "--bokeh: the approved alt to photography for \"dry\" content — the official BMO bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted in assets/. Pair with a spot illustration or copy over it. FIVE variants ship, a–e. Same design language; they differ in how much of the frame the circles occupy, i.e. how much clear gradient is left for text or a photo. Densest to sparsest: a · c · b…",
+      "appliesTo": [
+        "hero",
+        "hero__bg"
+      ],
+      "selectors": [
+        ".hero--bokeh-b .hero__bg"
+      ],
+      "scopes": [
+        "editorial"
+      ],
+      "source": {
+        "file": "editorial.css",
+        "line": 301
+      }
+    },
+    {
+      "name": "hero--bokeh-c",
+      "kind": "modifier",
+      "base": "hero",
+      "description": "--bokeh: the approved alt to photography for \"dry\" content — the official BMO bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted in assets/. Pair with a spot illustration or copy over it. FIVE variants ship, a–e. Same design language; they differ in how much of the frame the circles occupy, i.e. how much clear gradient is left for text or a photo. Densest to sparsest: a · c · b…",
+      "appliesTo": [
+        "hero",
+        "hero__bg"
+      ],
+      "selectors": [
+        ".hero--bokeh-c .hero__bg"
+      ],
+      "scopes": [
+        "editorial"
+      ],
+      "source": {
+        "file": "editorial.css",
+        "line": 302
+      }
+    },
+    {
+      "name": "hero--bokeh-d",
+      "kind": "modifier",
+      "base": "hero",
+      "description": "--bokeh: the approved alt to photography for \"dry\" content — the official BMO bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted in assets/. Pair with a spot illustration or copy over it. FIVE variants ship, a–e. Same design language; they differ in how much of the frame the circles occupy, i.e. how much clear gradient is left for text or a photo. Densest to sparsest: a · c · b…",
+      "appliesTo": [
+        "hero",
+        "hero__bg"
+      ],
+      "selectors": [
+        ".hero--bokeh-d .hero__bg"
+      ],
+      "scopes": [
+        "editorial"
+      ],
+      "source": {
+        "file": "editorial.css",
+        "line": 303
+      }
+    },
+    {
+      "name": "hero--bokeh-e",
+      "kind": "modifier",
+      "base": "hero",
+      "description": "--bokeh: the approved alt to photography for \"dry\" content — the official BMO bokeh artwork (blue gradient corner-to-corner + round translucent circles), self-hosted in assets/. Pair with a spot illustration or copy over it. FIVE variants ship, a–e. Same design language; they differ in how much of the frame the circles occupy, i.e. how much clear gradient is left for text or a photo. Densest to sparsest: a · c · b…",
+      "appliesTo": [
+        "hero",
+        "hero__bg"
+      ],
+      "selectors": [
+        ".hero--bokeh-e .hero__bg"
+      ],
+      "scopes": [
+        "editorial"
+      ],
+      "source": {
+        "file": "editorial.css",
+        "line": 304
       }
     },
     {
@@ -4368,7 +4368,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 224
+        "line": 225
       }
     },
     {
@@ -4390,7 +4390,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 306
+        "line": 329
       }
     },
     {
@@ -4411,7 +4411,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 739
+        "line": 763
       }
     },
     {
@@ -4434,7 +4434,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 755
+        "line": 779
       }
     },
     {
@@ -4455,7 +4455,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 775
+        "line": 799
       }
     },
     {
@@ -4464,7 +4464,6 @@
       "description": "Button <button class=\"btn btn--primary\">Submit request</button> <button class=\"btn btn--secondary\"><svg class=\"icon icon--16\">…</svg> Filter</button> Variants: primary · secondary · tertiary · subtle · ghost · danger Sizes: btn--sm · (default) · btn--lg",
       "appliesTo": [
         "btn",
-        "c-icon",
         "card__cta",
         "card__icon-tile",
         "card__icon-tile--sm",
@@ -4518,7 +4517,7 @@
       "name": "icon--12",
       "kind": "modifier",
       "base": "icon",
-      "description": "Icon — inline SVG via the canonical sprite (bmo-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline bmo-icons.svg once per page so #id refs resolve same-d…",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
       "appliesTo": [
         "icon"
       ],
@@ -4527,14 +4526,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 27
+        "line": 34
       }
     },
     {
       "name": "icon--16",
       "kind": "modifier",
       "base": "icon",
-      "description": "Icon — inline SVG via the canonical sprite (bmo-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline bmo-icons.svg once per page so #id refs resolve same-d…",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
       "appliesTo": [
         "icon"
       ],
@@ -4543,14 +4542,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 28
+        "line": 35
       }
     },
     {
       "name": "icon--20",
       "kind": "modifier",
       "base": "icon",
-      "description": "Icon — inline SVG via the canonical sprite (bmo-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline bmo-icons.svg once per page so #id refs resolve same-d…",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
       "appliesTo": [
         "icon"
       ],
@@ -4559,14 +4558,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 29
+        "line": 36
       }
     },
     {
       "name": "icon--24",
       "kind": "modifier",
       "base": "icon",
-      "description": "Icon — inline SVG via the canonical sprite (bmo-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline bmo-icons.svg once per page so #id refs resolve same-d…",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
       "appliesTo": [
         "icon"
       ],
@@ -4575,7 +4574,90 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 30
+        "line": 37
+      }
+    },
+    {
+      "name": "icon--28",
+      "kind": "modifier",
+      "base": "icon",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
+      "appliesTo": [
+        "icon"
+      ],
+      "selectors": [
+        ".icon--28"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 38
+      }
+    },
+    {
+      "name": "icon--32",
+      "kind": "modifier",
+      "base": "icon",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
+      "appliesTo": [
+        "icon"
+      ],
+      "selectors": [
+        ".icon--32"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 39
+      }
+    },
+    {
+      "name": "icon--48",
+      "kind": "modifier",
+      "base": "icon",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
+      "appliesTo": [
+        "icon"
+      ],
+      "selectors": [
+        ".icon--48"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 40
+      }
+    },
+    {
+      "name": "icon--64",
+      "kind": "modifier",
+      "base": "icon",
+      "description": "Icon — inline SVG via the canonical sprite (fluent-basic-icons.svg). Inherits text color via currentColor; sizes to 1.25em, or pin with a helper. Two equivalent forms resolve to the same ic-fluent-* symbol: no-JS : <svg class=\"icon icon--16\"><use href=\"#ic-fluent-home-24-regular\"/></svg> sugar : <fluent-icon name=\"home-24-regular\" class=\"icon--16\"></fluent-icon> Inline fluent-basic-icons.svg once per page so #id r…",
+      "appliesTo": [
+        "icon"
+      ],
+      "selectors": [
+        ".icon--64"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 41
+      }
+    },
+    {
+      "name": "icon--on-blue",
+      "kind": "modifier",
+      "base": "icon",
+      "description": "A quiet section-divider marker: illustration + eyebrow + heading, centered.",
+      "appliesTo": [
+        "icon"
+      ],
+      "selectors": [
+        ".icon--on-blue"
+      ],
+      "scopes": [
+        "editorial"
+      ],
+      "source": {
+        "file": "editorial.css",
+        "line": 549
       }
     },
     {
@@ -4594,7 +4676,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 88
+        "line": 99
       }
     },
     {
@@ -4611,7 +4693,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 331
+        "line": 340
       }
     },
     {
@@ -4630,7 +4712,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 118
+        "line": 129
       }
     },
     {
@@ -4647,7 +4729,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 151
+        "line": 162
       }
     },
     {
@@ -4664,7 +4746,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 167
+        "line": 178
       }
     },
     {
@@ -4680,7 +4762,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 166
+        "line": 177
       }
     },
     {
@@ -4708,7 +4790,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 101
+        "line": 112
       }
     },
     {
@@ -4728,7 +4810,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 909
+        "line": 920
       }
     },
     {
@@ -4746,7 +4828,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 909
+        "line": 920
       }
     },
     {
@@ -4764,7 +4846,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 923
+        "line": 934
       }
     },
     {
@@ -4784,7 +4866,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 410
+        "line": 419
       }
     },
     {
@@ -4800,7 +4882,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 459
+        "line": 470
       }
     },
     {
@@ -4815,7 +4897,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 469
+        "line": 492
       }
     },
     {
@@ -4838,7 +4920,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 715
+        "line": 739
       }
     },
     {
@@ -4857,7 +4939,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 483
+        "line": 506
       }
     },
     {
@@ -4877,7 +4959,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 485
+        "line": 508
       }
     },
     {
@@ -4899,7 +4981,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 488
+        "line": 511
       }
     },
     {
@@ -4920,7 +5002,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 487
+        "line": 510
       }
     },
     {
@@ -4939,7 +5021,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 701
+        "line": 725
       }
     },
     {
@@ -4961,7 +5043,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 707
+        "line": 731
       }
     },
     {
@@ -4981,7 +5063,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 481
+        "line": 504
       }
     },
     {
@@ -5002,7 +5084,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 713
+        "line": 737
       }
     },
     {
@@ -5021,7 +5103,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 484
+        "line": 507
       }
     },
     {
@@ -5040,7 +5122,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 706
+        "line": 730
       }
     },
     {
@@ -5059,7 +5141,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 705
+        "line": 729
       }
     },
     {
@@ -5078,7 +5160,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 692
+        "line": 716
       }
     },
     {
@@ -5097,7 +5179,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 690
+        "line": 701
       }
     },
     {
@@ -5116,7 +5198,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 694
+        "line": 705
       }
     },
     {
@@ -5135,7 +5217,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 695
+        "line": 706
       }
     },
     {
@@ -5154,7 +5236,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 696
+        "line": 707
       }
     },
     {
@@ -5173,7 +5255,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 687
+        "line": 698
       }
     },
     {
@@ -5192,7 +5274,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 675
+        "line": 686
       }
     },
     {
@@ -5207,7 +5289,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 357
+        "line": 366
       }
     },
     {
@@ -5221,7 +5303,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 383
+        "line": 392
       }
     },
     {
@@ -5240,7 +5322,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 360
+        "line": 383
       }
     },
     {
@@ -5259,7 +5341,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 366
+        "line": 389
       }
     },
     {
@@ -5280,7 +5362,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 383
+        "line": 406
       }
     },
     {
@@ -5299,7 +5381,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 381
+        "line": 404
       }
     },
     {
@@ -5320,7 +5402,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 372
+        "line": 395
       }
     },
     {
@@ -5339,7 +5421,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 378
+        "line": 401
       }
     },
     {
@@ -5358,7 +5440,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 382
+        "line": 405
       }
     },
     {
@@ -5378,7 +5460,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 379
+        "line": 402
       }
     },
     {
@@ -5396,7 +5478,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 461
+        "line": 484
       }
     },
     {
@@ -5415,7 +5497,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 464
+        "line": 487
       }
     },
     {
@@ -5438,7 +5520,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 453
+        "line": 476
       }
     },
     {
@@ -5458,7 +5540,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 447
+        "line": 470
       }
     },
     {
@@ -5474,7 +5556,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 323
+        "line": 332
       }
     },
     {
@@ -5486,7 +5568,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 396
+        "line": 407
       }
     },
     {
@@ -5502,7 +5584,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 415
+        "line": 426
       }
     },
     {
@@ -5518,7 +5600,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 416
+        "line": 427
       }
     },
     {
@@ -5541,7 +5623,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 414
+        "line": 425
       }
     },
     {
@@ -5559,7 +5641,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 423
+        "line": 434
       }
     },
     {
@@ -5577,7 +5659,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 417
+        "line": 428
       }
     },
     {
@@ -5595,7 +5677,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 419
+        "line": 430
       }
     },
     {
@@ -5613,7 +5695,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 421
+        "line": 432
       }
     },
     {
@@ -5628,7 +5710,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 811
+        "line": 835
       }
     },
     {
@@ -5647,7 +5729,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 827
+        "line": 851
       }
     },
     {
@@ -5668,7 +5750,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 812
+        "line": 836
       }
     },
     {
@@ -5687,7 +5769,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 824
+        "line": 848
       }
     },
     {
@@ -5706,7 +5788,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 828
+        "line": 852
       }
     },
     {
@@ -5726,7 +5808,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 819
+        "line": 843
       }
     },
     {
@@ -5746,7 +5828,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 825
+        "line": 849
       }
     },
     {
@@ -5761,7 +5843,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 789
+        "line": 813
       }
     },
     {
@@ -5780,7 +5862,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 571
+        "line": 595
       }
     },
     {
@@ -5799,7 +5881,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 585
+        "line": 609
       }
     },
     {
@@ -5818,7 +5900,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 582
+        "line": 606
       }
     },
     {
@@ -5837,7 +5919,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 586
+        "line": 610
       }
     },
     {
@@ -5857,7 +5939,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 577
+        "line": 601
       }
     },
     {
@@ -5877,7 +5959,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 583
+        "line": 607
       }
     },
     {
@@ -5896,7 +5978,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 797
+        "line": 821
       }
     },
     {
@@ -5915,7 +5997,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 809
+        "line": 833
       }
     },
     {
@@ -5935,7 +6017,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 798
+        "line": 822
       }
     },
     {
@@ -5954,7 +6036,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 810
+        "line": 834
       }
     },
     {
@@ -5974,7 +6056,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 804
+        "line": 828
       }
     },
     {
@@ -5993,7 +6075,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 567
+        "line": 591
       }
     },
     {
@@ -6008,7 +6090,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 453
+        "line": 464
       }
     },
     {
@@ -6023,7 +6105,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 439
+        "line": 462
       }
     },
     {
@@ -6035,7 +6117,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 463
+        "line": 474
       }
     },
     {
@@ -6051,7 +6133,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 476
+        "line": 487
       }
     },
     {
@@ -6067,7 +6149,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 477
+        "line": 488
       }
     },
     {
@@ -6083,7 +6165,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 475
+        "line": 486
       }
     },
     {
@@ -6099,7 +6181,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 478
+        "line": 489
       }
     },
     {
@@ -6121,7 +6203,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 368
+        "line": 377
       }
     },
     {
@@ -6136,7 +6218,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 620
+        "line": 644
       }
     },
     {
@@ -6155,7 +6237,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 663
+        "line": 687
       }
     },
     {
@@ -6178,7 +6260,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 669
+        "line": 693
       }
     },
     {
@@ -6201,7 +6283,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 652
+        "line": 676
       }
     },
     {
@@ -6220,7 +6302,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 678
+        "line": 702
       }
     },
     {
@@ -6240,7 +6322,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 682
+        "line": 706
       }
     },
     {
@@ -6261,7 +6343,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 635
+        "line": 659
       }
     },
     {
@@ -6280,7 +6362,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 691
+        "line": 715
       }
     },
     {
@@ -6299,7 +6381,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 647
+        "line": 671
       }
     },
     {
@@ -6318,7 +6400,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 634
+        "line": 658
       }
     },
     {
@@ -6330,7 +6412,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 814
+        "line": 825
       }
     },
     {
@@ -6354,7 +6436,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 838
+        "line": 849
       }
     },
     {
@@ -6376,7 +6458,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 830
+        "line": 841
       }
     },
     {
@@ -6392,7 +6474,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 829
+        "line": 840
       }
     },
     {
@@ -6415,7 +6497,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 833
+        "line": 844
       }
     },
     {
@@ -6433,7 +6515,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 832
+        "line": 843
       }
     },
     {
@@ -6458,7 +6540,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 846
+        "line": 857
       }
     },
     {
@@ -6475,7 +6557,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 876
+        "line": 887
       }
     },
     {
@@ -6492,7 +6574,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 860
+        "line": 871
       }
     },
     {
@@ -6515,7 +6597,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 849
+        "line": 860
       }
     },
     {
@@ -6539,7 +6621,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 844
+        "line": 855
       }
     },
     {
@@ -6556,7 +6638,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 858
+        "line": 869
       }
     },
     {
@@ -6568,7 +6650,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 620
+        "line": 631
       }
     },
     {
@@ -6584,7 +6666,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 638
+        "line": 649
       }
     },
     {
@@ -6600,7 +6682,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 637
+        "line": 648
       }
     },
     {
@@ -6608,21 +6690,20 @@
       "kind": "base",
       "description": "Quick links — outlined icon + label tiles (the SP \"button\" layout).",
       "appliesTo": [
-        "c-icon",
         "icon"
       ],
       "selectors": [
         ".quicklink",
         ".quicklink:hover",
         ".quicklink:focus-visible",
-        ".quicklink .icon, .quicklink .c-icon"
+        ".quicklink .icon"
       ],
       "scopes": [
         "editorial"
       ],
       "source": {
         "file": "editorial.css",
-        "line": 591
+        "line": 615
       }
     },
     {
@@ -6641,7 +6722,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 603
+        "line": 627
       }
     },
     {
@@ -6656,7 +6737,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 588
+        "line": 612
       }
     },
     {
@@ -6672,7 +6753,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 169
+        "line": 180
       }
     },
     {
@@ -6687,7 +6768,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 606
+        "line": 630
       }
     },
     {
@@ -6711,7 +6792,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 610
+        "line": 634
       }
     },
     {
@@ -6733,7 +6814,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 617
+        "line": 641
       }
     },
     {
@@ -6755,7 +6836,7 @@
       ],
       "source": {
         "file": "colors_and_type.css",
-        "line": 404
+        "line": 413
       }
     },
     {
@@ -6770,7 +6851,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 406
+        "line": 429
       }
     },
     {
@@ -6789,7 +6870,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 434
+        "line": 457
       }
     },
     {
@@ -6810,7 +6891,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 430
+        "line": 453
       }
     },
     {
@@ -6829,7 +6910,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 433
+        "line": 456
       }
     },
     {
@@ -6848,7 +6929,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 424
+        "line": 447
       }
     },
     {
@@ -6867,7 +6948,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 435
+        "line": 458
       }
     },
     {
@@ -6886,7 +6967,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 432
+        "line": 455
       }
     },
     {
@@ -6907,7 +6988,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 422
+        "line": 445
       }
     },
     {
@@ -6928,7 +7009,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 423
+        "line": 446
       }
     },
     {
@@ -6940,7 +7021,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 493
+        "line": 504
       }
     },
     {
@@ -6959,7 +7040,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 760
+        "line": 771
       }
     },
     {
@@ -6982,7 +7063,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 768
+        "line": 779
       }
     },
     {
@@ -7006,7 +7087,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 770
+        "line": 781
       }
     },
     {
@@ -7031,7 +7112,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 769
+        "line": 780
       }
     },
     {
@@ -7047,7 +7128,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 767
+        "line": 778
       }
     },
     {
@@ -7067,7 +7148,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 118
+        "line": 129
       }
     },
     {
@@ -7084,7 +7165,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 151
+        "line": 152
       }
     },
     {
@@ -7103,7 +7184,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 160
+        "line": 161
       }
     },
     {
@@ -7118,7 +7199,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 96
+        "line": 97
       }
     },
     {
@@ -7140,7 +7221,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 104
+        "line": 105
       }
     },
     {
@@ -7159,7 +7240,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 111
+        "line": 112
       }
     },
     {
@@ -7174,7 +7255,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 136
+        "line": 137
       }
     },
     {
@@ -7196,7 +7277,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 143
+        "line": 144
       }
     },
     {
@@ -7211,7 +7292,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 112
+        "line": 113
       }
     },
     {
@@ -7233,7 +7314,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 128
+        "line": 129
       }
     },
     {
@@ -7254,7 +7335,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 120
+        "line": 121
       }
     },
     {
@@ -7273,7 +7354,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 127
+        "line": 128
       }
     },
     {
@@ -7292,7 +7373,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 126
+        "line": 127
       }
     },
     {
@@ -7307,7 +7388,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 54
+        "line": 55
       }
     },
     {
@@ -7328,7 +7409,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 94
+        "line": 95
       }
     },
     {
@@ -7348,7 +7429,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 82
+        "line": 83
       }
     },
     {
@@ -7371,7 +7452,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 73
+        "line": 74
       }
     },
     {
@@ -7392,7 +7473,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 85
+        "line": 86
       }
     },
     {
@@ -7411,7 +7492,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 84
+        "line": 85
       }
     },
     {
@@ -7423,7 +7504,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 771
+        "line": 782
       }
     },
     {
@@ -7439,7 +7520,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 797
+        "line": 808
       }
     },
     {
@@ -7455,7 +7536,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 798
+        "line": 809
       }
     },
     {
@@ -7471,7 +7552,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 799
+        "line": 810
       }
     },
     {
@@ -7487,7 +7568,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 800
+        "line": 811
       }
     },
     {
@@ -7499,7 +7580,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 805
+        "line": 816
       }
     },
     {
@@ -7519,7 +7600,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 505
+        "line": 528
       }
     },
     {
@@ -7538,7 +7619,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 518
+        "line": 541
       }
     },
     {
@@ -7557,7 +7638,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 517
+        "line": 540
       }
     },
     {
@@ -7576,7 +7657,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 516
+        "line": 539
       }
     },
     {
@@ -7595,7 +7676,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 515
+        "line": 538
       }
     },
     {
@@ -7614,7 +7695,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 523
+        "line": 546
       }
     },
     {
@@ -7626,7 +7707,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 361
+        "line": 372
       }
     },
     {
@@ -7644,7 +7725,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 372
+        "line": 383
       }
     },
     {
@@ -7660,7 +7741,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 374
+        "line": 385
       }
     },
     {
@@ -7676,7 +7757,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 373
+        "line": 384
       }
     },
     {
@@ -7694,7 +7775,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 365
+        "line": 376
       }
     },
     {
@@ -7714,7 +7795,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 368
+        "line": 379
       }
     },
     {
@@ -7730,7 +7811,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 371
+        "line": 382
       }
     },
     {
@@ -7746,7 +7827,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1009
+        "line": 1020
       }
     },
     {
@@ -7762,7 +7843,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1010
+        "line": 1021
       }
     },
     {
@@ -7778,7 +7859,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 376
+        "line": 387
       }
     },
     {
@@ -7796,7 +7877,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 370
+        "line": 381
       }
     },
     {
@@ -7816,7 +7897,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1006
+        "line": 1017
       }
     },
     {
@@ -7828,7 +7909,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 990
+        "line": 1001
       }
     },
     {
@@ -7840,7 +7921,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 884
+        "line": 895
       }
     },
     {
@@ -7863,7 +7944,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 912
+        "line": 923
       }
     },
     {
@@ -7884,7 +7965,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 924
+        "line": 935
       }
     },
     {
@@ -7908,7 +7989,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 898
+        "line": 909
       }
     },
     {
@@ -7920,7 +8001,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 703
+        "line": 714
       }
     },
     {
@@ -7940,7 +8021,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 720
+        "line": 731
       }
     },
     {
@@ -7956,7 +8037,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 716
+        "line": 727
       }
     },
     {
@@ -7972,7 +8053,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 717
+        "line": 728
       }
     },
     {
@@ -7988,7 +8069,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 718
+        "line": 729
       }
     },
     {
@@ -8004,7 +8085,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 709
+        "line": 720
       }
     },
     {
@@ -8020,7 +8101,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 710
+        "line": 721
       }
     },
     {
@@ -8036,7 +8117,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 719
+        "line": 730
       }
     },
     {
@@ -8054,7 +8135,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 177
+        "line": 188
       }
     },
     {
@@ -8073,7 +8154,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 182
+        "line": 193
       }
     },
     {
@@ -8092,7 +8173,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 383
+        "line": 394
       }
     },
     {
@@ -8104,7 +8185,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 377
+        "line": 388
       }
     },
     {
@@ -8120,7 +8201,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 235
+        "line": 246
       }
     },
     {
@@ -8140,7 +8221,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 245
+        "line": 256
       }
     },
     {
@@ -8159,7 +8240,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 118
+        "line": 129
       }
     },
     {
@@ -8171,7 +8252,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 484
+        "line": 495
       }
     },
     {
@@ -8187,7 +8268,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 490
+        "line": 501
       }
     },
     {
@@ -8203,7 +8284,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 487
+        "line": 498
       }
     },
     {
@@ -8219,7 +8300,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 489
+        "line": 500
       }
     },
     {
@@ -8235,7 +8316,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 488
+        "line": 499
       }
     },
     {
@@ -8251,7 +8332,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 491
+        "line": 502
       }
     },
     {
@@ -8267,7 +8348,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 492
+        "line": 503
       }
     },
     {
@@ -8283,7 +8364,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 525
+        "line": 536
       }
     },
     {
@@ -8299,7 +8380,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 540
+        "line": 551
       }
     },
     {
@@ -8311,7 +8392,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 425
+        "line": 436
       }
     },
     {
@@ -8327,7 +8408,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 437
+        "line": 448
       }
     },
     {
@@ -8343,7 +8424,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 436
+        "line": 447
       }
     },
     {
@@ -8355,7 +8436,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 749
+        "line": 760
       }
     },
     {
@@ -8371,7 +8452,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 752
+        "line": 763
       }
     },
     {
@@ -8387,7 +8468,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 754
+        "line": 765
       }
     },
     {
@@ -8403,7 +8484,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 753
+        "line": 764
       }
     },
     {
@@ -8422,7 +8503,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 566
+        "line": 590
       }
     },
     {
@@ -8441,7 +8522,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 554
+        "line": 578
       }
     },
     {
@@ -8460,7 +8541,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 561
+        "line": 585
       }
     }
   ]

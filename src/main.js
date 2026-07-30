@@ -17,7 +17,7 @@ import {
   connectSpWeb, getSpWebInfo, listFolder, readTextFile, writeTextFile,
 } from './sp-files.js?v=3';
 import { showSplash } from './splash.js';
-import { loadAppConfig } from './config.js';
+import { loadAppConfig } from './config.js?v=2';
 import { initDocs } from './docs.js?v=2';
 import { initSpChromeToggle } from './sp-chrome.js';
 

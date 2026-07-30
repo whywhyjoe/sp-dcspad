@@ -2,6 +2,7 @@
 // diagnostics, PnPjs 2.15.0 completion, asset routing, and worker failure.
 
 import { launchBrowser, check, exitWithResult, APP_URL } from './lib.mjs';
+import { readFile } from 'node:fs/promises';
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
@@ -11,6 +12,18 @@ page.on('request', (request) => {
   if (request.url().includes('/vendor/monaco/')) assetRequests.push(request.url());
 });
 page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
+
+for (const [url, file] of [
+  ['**/sites/NewNerve/FCUPortal/code/tools/dcspad/lib-mirror/alpine.js',
+    new URL('../lib-mirror/alpine.js', import.meta.url)],
+  ['**/sites/NewNerve/FCUPortal/code/tools/dcspad/lib-mirror/pnp2.bundle.js',
+    new URL('../lib-mirror/pnp2.bundle.js', import.meta.url)],
+]) {
+  await page.route(url, async (route) => route.fulfill({
+    contentType: 'text/javascript',
+    body: await readFile(file),
+  }));
+}
 
 await page.goto(APP_URL);
 await page.context().grantPermissions(
@@ -95,7 +108,7 @@ await check('Alpine v3 intelligence survives catalogs saved before pack metadata
 await check('maintained PnPjs and Alpine frameworks resolve only to lib-mirror', () =>
   page.evaluate(async () => {
     const [{ getAppConfig, applyFrameworkConfig }, { PRESETS }] = await Promise.all([
-      import('/src/config.js'),
+      import('/src/config.js?v=2'),
       import('/src/libraries.js'),
     ]);
     const config = getAppConfig();

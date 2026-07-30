@@ -1,11 +1,12 @@
 {
   "version": 1,
+  "siteURL": "/sites/NewNerve/FCUPortal/",
   "frameworks": {
     "prefer": "local",
     "fallbackToCdn": false,
     "items": {
       "pnpjs2": {
-        "localUrl": "./lib-mirror/pnp2.bundle.js",
+        "localUrl": "code/lib/pnp2.bundle.js",
         "cdnUrl": "",
         "probeGlobal": "pnp2",
         "intelligence": [
@@ -13,7 +14,7 @@
         ]
       },
       "alpine": {
-        "localUrl": "./lib-mirror/alpine.js",
+        "localUrl": "code/lib/alpine.js",
         "cdnUrl": "",
         "probeGlobal": "Alpine",
         "intelligence": [
@@ -25,14 +26,14 @@
   "docs": [
     {
       "id": "design-system-reference",
-      "title": "Design system reference",
-      "url": "../bsp-design-system/examples/design-system-reference.html",
+      "title": "BSP Design System reference",
+      "url": "code/bsp-design/index.html",
       "type": "html"
     },
     {
-      "id": "illustration-library",
-      "title": "Illustration library",
-      "url": "../bsp-design-system/bmo-illustration-library/gallery.html",
+      "id": "fluent-icons",
+      "title": "Fluent Icons library reference",
+      "url": "code/fluent-icons/index.html",
       "type": "html"
     }
   ],
@@ -41,12 +42,12 @@
     "url": "https://m365.cloud.microsoft/chat"
   },
   "workbench": {
-    "url": "https://tenant.sharepoint.com/sites/YourSite/_layouts/15/SPWorkbench.aspx"
+    "url": "/SitePages/tools/SPWorkbench.aspx"
   },
   "assets": {
     "designSystem": {
       "prefer": "local",
-      "localBaseUrl": "../bsp-design-system/",
+      "localBaseUrl": "code/bsp-design/",
       "hostedBaseUrl": "",
       "intelligence": [
         "bsp-design"
@@ -64,13 +65,13 @@
     },
     "fluentIcons": {
       "prefer": "local",
-      "localBaseUrl": "../bsp-fluent-icon-lib/",
+      "localBaseUrl": "code/fluent-icons/",
       "hostedBaseUrl": "",
       "intelligence": [
         "fluent-icons"
       ],
       "files": {
-        "catalog": "fluent-font-library.json",
+        "catalog": "fluent-icon-library.json",
         "svgFolder": "svg/",
         "fontFolder": "fonts/",
         "regularCss": "fonts/FluentSystemIcons-Regular.css",

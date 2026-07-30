@@ -4,6 +4,7 @@
 
 const EMPTY_CONFIG = Object.freeze({
   version: 1,
+  siteUrl: '',
   frameworks: Object.freeze({
     prefer: 'local',
     fallbackToCdn: true,
@@ -13,6 +14,9 @@ const EMPTY_CONFIG = Object.freeze({
   docs: Object.freeze([]),
   copilot: Object.freeze({
     enabled: false,
+    url: '',
+  }),
+  workbench: Object.freeze({
     url: '',
   }),
 });
@@ -32,7 +36,7 @@ function resolveUrl(value, configUrl, { folder = false } = {}) {
   return folder && !resolved.endsWith('/') ? `${resolved}/` : resolved;
 }
 
-function normalizeFrameworks(value, configUrl, warnings) {
+function normalizeFrameworks(value, configUrl, siteUrl, warnings) {
   const source = isRecord(value) ? value : {};
   const prefer = sourcePreference(source.prefer);
   const fallbackToCdn = source.fallbackToCdn !== false;
@@ -48,7 +52,7 @@ function normalizeFrameworks(value, configUrl, warnings) {
       warnings.push(`framework config "${id}" has an invalid probeGlobal path`);
     }
     items[id] = {
-      localUrl: resolveUrl(raw.localUrl, configUrl),
+      localUrl: resolveUrl(raw.localUrl, siteUrl || configUrl),
       cdnUrl: resolveUrl(raw.cdnUrl, configUrl),
       prefer: sourcePreference(raw.prefer, prefer),
       fallbackToCdn: typeof raw.fallbackToCdn === 'boolean'
@@ -66,7 +70,7 @@ function normalizeFrameworks(value, configUrl, warnings) {
   return { prefer, fallbackToCdn, items };
 }
 
-function normalizeAssetGroup(raw, configUrl, defaultPreference) {
+function normalizeAssetGroup(raw, configUrl, siteUrl, defaultPreference) {
   if (!isRecord(raw)) return null;
   const files = {};
   for (const [name, path] of Object.entries(isRecord(raw.files) ? raw.files : {})) {
@@ -76,7 +80,7 @@ function normalizeAssetGroup(raw, configUrl, defaultPreference) {
   const rawRuntime = isRecord(raw.runtime) ? raw.runtime : {};
   return {
     prefer: sourcePreference(raw.prefer, defaultPreference),
-    localBaseUrl: resolveUrl(raw.localBaseUrl, configUrl, { folder: true }),
+    localBaseUrl: resolveUrl(raw.localBaseUrl, siteUrl || configUrl, { folder: true }),
     hostedBaseUrl: resolveUrl(raw.hostedBaseUrl, configUrl, { folder: true }),
     intelligence: Array.isArray(raw.intelligence)
       ? [...new Set(raw.intelligence.map(cleanString).filter(Boolean))]
@@ -92,7 +96,7 @@ function normalizeAssetGroup(raw, configUrl, defaultPreference) {
   };
 }
 
-function normalizeDocs(value, configUrl, warnings) {
+function normalizeDocs(value, configUrl, siteUrl, warnings) {
   const docs = [];
   const ids = new Set();
   for (const [index, raw] of (Array.isArray(value) ? value : []).entries()) {
@@ -101,7 +105,7 @@ function normalizeDocs(value, configUrl, warnings) {
       continue;
     }
     const title = cleanString(raw.title);
-    const url = resolveUrl(raw.url, configUrl);
+    const url = resolveUrl(raw.url, siteUrl || configUrl);
     if (!title || !url) {
       warnings.push(`docs entry ${index + 1} was ignored because title and url are required`);
       continue;
@@ -142,6 +146,13 @@ function normalizeCopilot(value, configUrl) {
   };
 }
 
+function normalizeWorkbench(value, configUrl, siteUrl) {
+  const source = isRecord(value) ? value : {};
+  return {
+    url: resolveUrl(source.url, siteUrl || configUrl),
+  };
+}
+
 function normalizeConfig(raw, configUrl) {
   const warnings = [];
   if (!isRecord(raw)) {
@@ -150,20 +161,23 @@ function normalizeConfig(raw, configUrl) {
   if (raw.version !== 1) {
     warnings.push(`configuration version ${JSON.stringify(raw.version)} is not supported; expected 1`);
   }
+  const siteUrl = resolveUrl(raw.siteURL || raw.siteUrl, configUrl, { folder: true });
 
   const assets = {};
   for (const [name, value] of Object.entries(isRecord(raw.assets) ? raw.assets : {})) {
-    const group = normalizeAssetGroup(value, configUrl, 'local');
+    const group = normalizeAssetGroup(value, configUrl, siteUrl, 'local');
     if (group) assets[name] = group;
   }
 
   return {
     config: {
       version: 1,
-      frameworks: normalizeFrameworks(raw.frameworks, configUrl, warnings),
+      siteUrl,
+      frameworks: normalizeFrameworks(raw.frameworks, configUrl, siteUrl, warnings),
       assets,
-      docs: normalizeDocs(raw.docs, configUrl, warnings),
+      docs: normalizeDocs(raw.docs, configUrl, siteUrl, warnings),
       copilot: normalizeCopilot(raw.copilot, configUrl),
+      workbench: normalizeWorkbench(raw.workbench, configUrl, siteUrl),
     },
     warnings,
   };

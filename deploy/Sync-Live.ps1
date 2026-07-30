@@ -46,6 +46,55 @@ foreach ($folder in $accidentalNestedFolders) {
     Write-Host "Removed accidental nested folder $resolved" -ForegroundColor DarkGray
 }
 
+function Ensure-LocalEsbuild {
+    param(
+        [Parameter(Mandatory)] [string]$ToolsPath
+    )
+
+    Push-Location $ToolsPath
+    try {
+        $nodeArch = (& node -p "process.arch").Trim()
+        if ($LASTEXITCODE -ne 0 -or $nodeArch -notin @('x64', 'arm64')) {
+            throw "Unsupported Node architecture '$nodeArch'. Expected x64 or arm64."
+        }
+
+        $platformPackage = "@esbuild/win32-$nodeArch"
+        $platformBinary = Join-Path $ToolsPath "node_modules\$platformPackage\esbuild.exe"
+        $esbuildReady = Test-Path -LiteralPath $platformBinary
+        if ($esbuildReady) {
+            & node -e "require('esbuild').version" *> $null
+            $esbuildReady = $LASTEXITCODE -eq 0
+        }
+        if ($esbuildReady) {
+            Write-Host "Using machine-local esbuild for Node $nodeArch." -ForegroundColor DarkGray
+            return
+        }
+
+        Write-Host "Installing machine-local tools for Node $nodeArch ($platformPackage)…" -ForegroundColor Yellow
+        $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+        if (-not $npm) {
+            throw "npm.cmd was not found. Install npm, then run 'npm install' from $ToolsPath."
+        }
+        $esbuildVersion = (& node -p "require('./package.json').dependencies.esbuild || require('./package.json').devDependencies.esbuild").Trim()
+        $platformSpec = "$platformPackage@$esbuildVersion"
+        & $npm.Source install $platformSpec --include=optional --no-save --no-package-lock --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) {
+            throw "Local tools install failed. Run 'npm install' from $ToolsPath and retry."
+        }
+
+        if (-not (Test-Path -LiteralPath $platformBinary)) {
+            throw "npm did not install $platformPackage. Remove $ToolsPath\node_modules, run 'npm install', and retry."
+        }
+        & node -e "require('esbuild').version" *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "esbuild still does not match Node $nodeArch. Remove $ToolsPath\node_modules, run 'npm install', and retry."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 function Copy-DirectoryContents {
     param(
         [Parameter(Mandatory)] [string]$Source,
@@ -58,7 +107,9 @@ function Copy-DirectoryContents {
 }
 
 Write-Host "Building design-system intelligence…" -ForegroundColor Cyan
-Push-Location (Join-Path $repo 'tools')
+$tools = Join-Path $repo 'tools'
+Ensure-LocalEsbuild -ToolsPath $tools
+Push-Location $tools
 node build-design-intelligence.mjs
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "design-system intelligence build failed" }
 

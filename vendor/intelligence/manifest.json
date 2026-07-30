@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "pack": "bsp-design",
   "artifact": "bsp-design.json",
-  "artifactSha256": "603887999a891701669c935f7c4f61bf0ce770b8239e6b064e741af56be25cfd",
+  "artifactSha256": "aeabbc15be4cdf043e781946e243f5841f28ad54545eb3b278bf06109dfa0901",
   "counts": {
-    "tokens": 164,
-    "classes": 375
+    "tokens": 165,
+    "classes": 379
   },
   "sources": {
-    "colors_and_type.css": "dd83101a48f8f5740f35f5802d5b25cc351c37027a127011f1823d721c5dece1",
-    "components.css": "fd3649bf6bb4b5a7d7b021bf82390aae4dbedf8fd1fa9ec2566ca0cfedcd501e",
-    "editorial.css": "f2cda1d1a6a861e25c7b444efa763dc46f68694261d5bdbdce7b2d98d308e9bb"
+    "colors_and_type.css": "4efdd56174e18522da6726d23d90b5bbd9b3477442b862c572ccd4f104057cd4",
+    "components.css": "3ade5669b61fb1db155b650df86ed1ef0fb5c17486924ea353172d318236cf7e",
+    "editorial.css": "8b2e97aa74f8f81e48c3c72cd215dc91ba5728ebef02b01951f9b4c54a91ed7c"
   },
   "fluentIcons": {
     "artifact": "fluent-icons.json",
