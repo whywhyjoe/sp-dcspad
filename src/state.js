@@ -18,7 +18,7 @@ const DEFAULTS = {
   settings: {
     autorun: false, jsAsModule: false, autoClearConsole: true, seenSplash: false,
     previewDark: true, diagFontSize: 12, editorFontSize: 13, wordWrap: false,
-    spFilesWebUrl: '', spFilesFolder: '', browserHistory: [],
+    spFilesWebUrl: '', spFilesFolder: '', browserHistory: [], browserFavorites: [],
     projectFileFingerprint: '',
   },
   layout: {

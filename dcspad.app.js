@@ -21,6 +21,7 @@ var DEFAULTS = {
     spFilesWebUrl: "",
     spFilesFolder: "",
     browserHistory: [],
+    browserFavorites: [],
     projectFileFingerprint: ""
   },
   layout: {
@@ -4324,7 +4325,7 @@ async function loadAppConfig() {
   }
 }
 
-// ../src/docs.js?v=2
+// ../src/docs.js?v=3
 var BROWSER_PATH_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)$/i;
 var BROWSER_LINK_RE = /\.(?:html?|md|markdown|txt|css|js|json|csv)(?:$|[?#])/i;
 var BROWSER_NAVIGATION_MESSAGE = "dcspad:browser-navigate";
@@ -4501,7 +4502,7 @@ function addNavigationBridge(doc2) {
     }
     if (!link) return;
     var raw = link.getAttribute('href') || '';
-    if (!raw || raw.charAt(0) === '#') return;
+    if (!raw) return;
     var href;
     try { href = new URL(raw, document.baseURI).href; } catch (_) { return; }
     event.preventDefault();
@@ -4604,25 +4605,107 @@ function resourceTitle(url) {
   const filename = decodeURIComponent(url.pathname.split("/").pop() || "").trim();
   return filename || "SharePoint resource";
 }
+function htmlDocumentTitle(source) {
+  try {
+    const title = new DOMParser().parseFromString(source, "text/html").querySelector("title")?.textContent?.replace(/\s+/g, " ").trim();
+    return title || "";
+  } catch {
+    return "";
+  }
+}
 function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
   const configuredDocs = Array.isArray(config?.docs) ? config.docs : [];
   const copilot = config?.copilot || {};
   const main = document.getElementById("main");
   const menu = document.getElementById("docs-menu");
   const menuItems = document.getElementById("docs-menu-items");
+  const favoritesMenuItems = document.getElementById("favorites-menu-items");
+  const menuDivider = document.getElementById("docs-menu-divider");
   const menuEmpty = document.getElementById("docs-menu-empty");
   const addressForm = document.getElementById("browser-address-form");
   const addressInput = document.getElementById("browser-address-input");
   const historySelect = document.getElementById("browser-history");
+  const backButton = document.getElementById("browser-back");
   const refreshButton = document.getElementById("browser-refresh");
   const browseButton = document.getElementById("browser-browse");
+  const addFavoriteButton = document.getElementById("btn-browser-add-favorite");
+  const favoriteDialog = document.getElementById("favorite-name-dialog");
+  const favoriteForm = document.getElementById("favorite-name-form");
+  const favoriteInput = document.getElementById("favorite-name-input");
+  const favoriteContext = document.getElementById("favorite-name-context");
   let frame = document.getElementById("docs-frame");
   const state3 = document.getElementById("docs-state");
-  const openSource = document.getElementById("btn-docs-open-source");
   const cache = /* @__PURE__ */ new Map();
   let current = null;
   let loadController = null;
   let history = [];
+  let favorites = [];
+  let pendingFavorite = null;
+  let navigationEntries = [];
+  let navigationIndex = -1;
+  function readFavorites() {
+    const values = Array.isArray(getState().settings.browserFavorites) ? getState().settings.browserFavorites : [];
+    const seen = /* @__PURE__ */ new Set();
+    favorites = [];
+    for (const value of values) {
+      if (!value || typeof value !== "object") continue;
+      try {
+        const url = normalizeTenantUrl(value.url);
+        if (seen.has(url.href)) continue;
+        seen.add(url.href);
+        favorites.push({
+          title: String(value.title || "").trim().slice(0, 80) || resourceTitle(url),
+          url: url.href,
+          type: String(value.type || "auto")
+        });
+      } catch {
+      }
+    }
+  }
+  function persistFavorites() {
+    updateNested("settings", {
+      browserFavorites: favorites.map((favorite) => ({ ...favorite }))
+    });
+  }
+  function renderFavorites() {
+    favoritesMenuItems.replaceChildren();
+    for (const favorite of favorites) {
+      const row = document.createElement("div");
+      row.className = "favorite-menu-row";
+      row.setAttribute("role", "none");
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "menu-item docs-menu-item";
+      open.setAttribute("role", "menuitem");
+      open.textContent = favorite.title;
+      open.title = favorite.url;
+      open.addEventListener("click", () => loadDoc2({
+        id: `favorite:${favorite.url}`,
+        ...favorite
+      }));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "favorite-menu-remove";
+      remove.setAttribute("aria-label", `Remove ${favorite.title} from favorites`);
+      remove.title = "Remove from favorites";
+      remove.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (!confirm(`Remove "${favorite.title}" from favorites?`)) return;
+        favorites = favorites.filter((item) => item.url !== favorite.url);
+        persistFavorites();
+        renderFavorites();
+      });
+      row.append(open, remove);
+      favoritesMenuItems.append(row);
+    }
+    menuDivider.hidden = !(configuredDocs.length && favorites.length);
+    menuEmpty.hidden = configuredDocs.length + favorites.length > 0;
+  }
+  function closeFavoriteDialog() {
+    pendingFavorite = null;
+    if (favoriteDialog.open) favoriteDialog.close();
+  }
   function readHistory() {
     const values = Array.isArray(getState().settings.browserHistory) ? getState().settings.browserHistory : [];
     const seen = /* @__PURE__ */ new Set();
@@ -4658,11 +4741,46 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     updateNested("settings", { browserHistory: [...history] });
     renderHistory();
   }
+  function updateBackButton() {
+    backButton.disabled = navigationIndex <= 0;
+  }
+  function commitNavigation(doc2) {
+    const active = navigationEntries[navigationIndex];
+    if (active?.url === doc2.url) {
+      navigationEntries[navigationIndex] = { ...doc2 };
+      updateBackButton();
+      return;
+    }
+    navigationEntries = navigationEntries.slice(0, navigationIndex + 1);
+    navigationEntries.push({ ...doc2 });
+    navigationIndex = navigationEntries.length - 1;
+    updateBackButton();
+  }
+  function followPageFragment(url) {
+    if (!current?.url || !url.hash) return false;
+    const loadedUrl = new URL(current.url, location.href);
+    const targetUrl = new URL(url.href);
+    loadedUrl.hash = "";
+    targetUrl.hash = "";
+    if (loadedUrl.href !== targetUrl.href) return false;
+    let fragment = url.hash.slice(1);
+    try {
+      fragment = decodeURIComponent(fragment);
+    } catch {
+    }
+    const doc2 = frame.contentDocument;
+    const target = doc2?.getElementById(fragment) || doc2?.getElementsByName(fragment)?.[0];
+    target?.scrollIntoView();
+    current = { ...current, url: url.href };
+    addressInput.value = url.href;
+    return true;
+  }
   function followBrowserLink(url) {
     if (url.origin !== location.origin) {
       onError?.("Browser links are limited to this SharePoint tenant.");
       return;
     }
+    if (followPageFragment(url)) return;
     if (BROWSER_LINK_RE.test(url.href)) {
       const configured = configuredDocs.find((entry) => entry.url === url.href);
       const title = configured?.title || resourceTitle(url);
@@ -4687,7 +4805,7 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
         const link = event.target?.closest?.("a[href]") || event.target?.parentElement?.closest?.("a[href]");
         if (!link) return;
         const raw = link.getAttribute("href") || "";
-        if (!raw || raw.startsWith("#")) return;
+        if (!raw) return;
         let url;
         try {
           url = new URL(raw, doc2.baseURI);
@@ -4760,7 +4878,7 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
       return Promise.resolve();
     }
   }
-  async function loadDoc2(doc2, { force = false, record = true } = {}) {
+  async function loadDoc2(doc2, { force = false, record = true, track = true } = {}) {
     if (!doc2?.url) return;
     let url;
     try {
@@ -4777,9 +4895,8 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     addressInput.value = doc2.url;
     menu.hidden = true;
     document.getElementById("btn-docs").setAttribute("aria-expanded", "false");
-    openSource.disabled = false;
     refreshButton.disabled = false;
-    openSource.title = `Open ${doc2.title} source in a new tab`;
+    addFavoriteButton.disabled = true;
     showState(`Loading ${doc2.title}\u2026`, "loading");
     loadController?.abort();
     loadController = new AbortController();
@@ -4820,6 +4937,12 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
       frame = nextFrame;
       frame.srcdoc = srcdoc;
       state3.hidden = true;
+      current = {
+        ...doc2,
+        favoriteTitle: type === "html" ? htmlDocumentTitle(source) || resourceTitle(url) : resourceTitle(url)
+      };
+      if (track) commitNavigation(current);
+      addFavoriteButton.disabled = false;
       if (record) recordHistory(doc2.url);
     } catch (error) {
       if (error.name === "AbortError") return;
@@ -4833,11 +4956,10 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     button.className = "menu-item docs-menu-item";
     button.setAttribute("role", "menuitem");
     button.dataset.docId = doc2.id;
-    button.innerHTML = escapeHtml(doc2.title);
+    button.textContent = doc2.title;
     button.addEventListener("click", () => loadDoc2(doc2));
     menuItems.append(button);
   }
-  menuEmpty.hidden = configuredDocs.length > 0;
   if (!configuredDocs.length) {
     showState("Paste a same-tenant HTML, Markdown, code, or text URL in the address bar.");
   }
@@ -4867,23 +4989,68 @@ function initDocs({ config, layoutApi: layoutApi2, onBrowse, onError } = {}) {
     historySelect.value = "";
     if (url) loadAddress(url);
   });
+  backButton.addEventListener("click", () => {
+    if (navigationIndex <= 0) return;
+    navigationIndex -= 1;
+    updateBackButton();
+    loadDoc2(navigationEntries[navigationIndex], { record: false, track: false });
+  });
   refreshButton.addEventListener("click", () => {
-    if (current) loadDoc2(current, { force: true, record: false });
+    if (current) loadDoc2(current, { force: true, record: false, track: false });
   });
   browseButton.addEventListener("click", () => onBrowse?.());
-  openSource.addEventListener("click", () => {
-    if (current?.url) window.open(current.url, "_blank", "noopener,noreferrer");
+  addFavoriteButton.addEventListener("click", () => {
+    if (!current?.url || addFavoriteButton.disabled) return;
+    const existing = favorites.find((favorite) => favorite.url === current.url);
+    pendingFavorite = {
+      title: existing?.title || current.favoriteTitle || resourceTitle(new URL(current.url)),
+      url: current.url,
+      type: current.type || "auto"
+    };
+    favoriteInput.value = pendingFavorite.title;
+    favoriteContext.textContent = current.url;
+    document.getElementById("favorite-name-title").textContent = existing ? "Update favorite" : "Add to favorites";
+    document.getElementById("favorite-name-save").textContent = existing ? "Update favorite" : "Save favorite";
+    if (!favoriteDialog.open) favoriteDialog.showModal();
+    requestAnimationFrame(() => {
+      favoriteInput.focus();
+      favoriteInput.select();
+    });
+  });
+  favoriteForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const title = favoriteInput.value.trim();
+    if (!pendingFavorite || !title) return;
+    const favorite = { ...pendingFavorite, title };
+    const existingIndex = favorites.findIndex((item) => item.url === favorite.url);
+    if (existingIndex >= 0) favorites[existingIndex] = favorite;
+    else favorites.push(favorite);
+    persistFavorites();
+    renderFavorites();
+    pendingFavorite = null;
+    favoriteDialog.close();
+  });
+  document.getElementById("favorite-name-cancel").addEventListener("click", closeFavoriteDialog);
+  document.getElementById("favorite-name-close").addEventListener("click", closeFavoriteDialog);
+  favoriteDialog.addEventListener("cancel", () => {
+    pendingFavorite = null;
   });
   document.getElementById("btn-max-docs").addEventListener("click", () => {
     main.classList.remove("max-preview", "max-diag", "max-editor");
     main.classList.toggle("max-docs");
   });
+  readFavorites();
+  renderFavorites();
   readHistory();
   renderHistory();
   return {
     loadDoc: loadDoc2,
     loadAddress,
-    refresh: () => current && loadDoc2(current, { force: true, record: false }),
+    refresh: () => current && loadDoc2(current, {
+      force: true,
+      record: false,
+      track: false
+    }),
     setMode
   };
 }
@@ -4919,8 +5086,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "56-dirty" : "dev";
-var injectedRevision = true ? "4f50e804-dirty" : "";
+var injectedBuild = true ? "57-dirty" : "dev";
+var injectedRevision = true ? "f85b7d53-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,

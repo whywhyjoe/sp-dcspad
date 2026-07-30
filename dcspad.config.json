@@ -32,8 +32,20 @@
     },
     {
       "id": "fluent-icons",
-      "title": "Fluent Icons library reference",
+      "title": "Fluent Icons library",
       "url": "code/fluent-icons/index.html",
+      "type": "html"
+    },
+        {
+      "id": "abacus-icons",
+      "title": "BMO 'Abacus' icons library",
+      "url": "code/bsp-design/abacus-icons/index.html",
+      "type": "html"
+    },
+        {
+      "id": "spot-illustrarions",
+      "title": "BMO spot illustraions library",
+      "url": "code/bsp-design/spot-illustrations/index.html",
       "type": "html"
     }
   ],

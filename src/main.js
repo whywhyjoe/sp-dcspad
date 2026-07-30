@@ -21,7 +21,7 @@ import {
 } from './sp-files.js?v=3';
 import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js?v=2';
-import { initDocs } from './docs.js?v=2';
+import { initDocs } from './docs.js?v=3';
 import { initSpChromeToggle } from './sp-chrome.js';
 import { applyBuildMarker } from './build-info.js';
 import { validateFrameworkCatalog } from './library-files.js';

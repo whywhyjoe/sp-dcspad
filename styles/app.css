@@ -278,7 +278,7 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 .btn-icon { display: inline-flex; align-items: center; gap: 7px; }
 .btn-icon svg { flex-shrink: 0; }
 
-/* File and Docs menus share a quiet rest state and a framed hover/expanded state. */
+/* File and Favorites menus share a quiet rest state and a framed hover/expanded state. */
 #btn-file, #btn-docs {
   height: 28px; padding: 0 8px;
   background: transparent; border-color: transparent; color: var(--fg-dim);
@@ -350,6 +350,18 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
 .size-stepper { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
 .size-val { font-family: var(--mono); font-size: 11px; min-width: 2ch; text-align: center; color: var(--fg-dim); }
 .docs-menu { width: 272px; gap: 2px; padding: 4px 0 6px; }
+.docs-menu-divider { border-top: 1px solid var(--border); margin: 5px 0; }
+.favorite-menu-row { display: flex; align-items: stretch; min-width: 0; }
+.docs-menu .favorite-menu-row .docs-menu-item {
+  flex: 1 1 auto; min-width: 0; width: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.favorite-menu-remove {
+  flex: 0 0 30px; width: 30px; padding: 0;
+  color: var(--fg-faint); background: transparent; border: 0; cursor: pointer;
+}
+.favorite-menu-remove:hover { color: var(--error-fg); background: var(--bg-3); }
+.favorite-menu-remove:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
 
 .docs-ai-group {
   display: grid; gap: 5px; margin-top: 5px; padding-top: 7px;
@@ -507,6 +519,7 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
   border: 0; border-left: 1px solid var(--border);
   border-radius: 0;
 }
+.browser-address .browser-back { border-left: 0; border-right: 1px solid var(--border); }
 .docs-host { position: relative; flex: 1 1 auto; min-height: 0; background: #16191f; }
 .docs-host iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
 .docs-state {

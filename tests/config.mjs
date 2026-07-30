@@ -10,12 +10,17 @@ const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1400, height: 820 } });
 const primaryUrl = `${siteRoot}/tests/fixtures/missing-local-framework.js`;
 const fallbackUrl = `${origin}/tests/fixtures/testlib.js`;
+let designFetches = 0;
+let guideFetches = 0;
 let notesFetches = 0;
 
-await page.route('**/docs/design-reference.html', (route) => route.fulfill({
-  contentType: 'text/plain',
-  body: '<!doctype html><html><head><link rel="stylesheet" href="./docs.css"></head><body><h1>Design reference</h1><a href="guide.md">Guide</a><script src="./page-script.js"></script><script>document.body.dataset.scriptReady = "yes";</script></body></html>',
-}));
+await page.route('**/docs/design-reference.html', (route) => {
+  designFetches += 1;
+  return route.fulfill({
+    contentType: 'text/plain',
+    body: '<!doctype html><html><head><title>Design system reference</title><link rel="stylesheet" href="./docs.css"></head><body><h1>Design reference</h1><a href="#type-ramp">Heading ramp</a><a href="design-reference.html#type-ramp">Relative heading ramp</a><a href="guide.md">Guide</a><div style="height:1200px"></div><h2 id="type-ramp">Type ramp</h2><script src="./page-script.js"></script><script>document.body.dataset.scriptReady = "yes";</script></body></html>',
+  });
+});
 await page.route('**/docs/page-script.js', (route) => route.fulfill({
   contentType: 'application/octet-stream',
   headers: {
@@ -24,10 +29,14 @@ await page.route('**/docs/page-script.js', (route) => route.fulfill({
   },
   body: 'document.body.dataset.externalScriptReady = "yes";',
 }));
-await page.route('**/docs/guide.md', (route) => route.fulfill({
-  contentType: 'text/plain',
-  body: '# Authoring guide\n\nUse **semantic HTML**.\n\n```js\nconsole.log("docs");\n```\n\n| Item | Value |\n| --- | --- |\n| Mode | Markdown |',
-}));
+await page.route('**/docs/guide.md', (route) => {
+  guideFetches += 1;
+  return route.fulfill({
+    contentType: 'text/plain',
+    body: '# Authoring guide\n\n[Jump to details](#details)\n\nUse **semantic HTML**.\n\n```js\nconsole.log("docs");\n```\n\n| Item | Value |\n| --- | --- |\n| Mode | Markdown |\n\n'
+      + `${'Filler content for anchor scrolling.\n\n'.repeat(30)}## Details\n\nMarkdown anchor target.`,
+  });
+});
 await page.route('**/docs/notes.txt', (route) => route.fulfill({
   contentType: 'text/plain',
   body: `Design tokens\n=============\nUse semantic aliases.\nRefresh ${++notesFetches}`,
@@ -194,6 +203,71 @@ await check('HTML docs are fetched as text and rendered through srcdoc with a ba
       .then((value) => value === 'yes'),
   ]).then((values) => values.every(Boolean)));
 
+await page.frameLocator('#docs-frame').getByRole('link', {
+  name: 'Heading ramp',
+  exact: true,
+}).click();
+await page.waitForFunction(() =>
+  document.getElementById('docs-frame')?.contentWindow?.scrollY > 500);
+await check('literal hash anchors scroll within scripted HTML without re-requesting the file', () =>
+  Promise.all([
+    page.locator('#browser-address-input').inputValue()
+      .then((value) => value === `${docsRoot}/design-reference.html#type-ramp`),
+    page.frameLocator('#docs-frame').locator('#type-ramp').textContent()
+      .then((text) => text === 'Type ramp'),
+    page.evaluate(() => document.getElementById('docs-frame').contentWindow.scrollY > 500),
+  ]).then((values) => values.every(Boolean) && designFetches === 1));
+
+await page.frameLocator('#docs-frame').locator('html').evaluate((element) => {
+  element.ownerDocument.defaultView.scrollTo(0, 0);
+});
+await page.frameLocator('#docs-frame').getByRole('link', {
+  name: 'Relative heading ramp',
+  exact: true,
+}).click();
+await page.waitForFunction(() =>
+  document.getElementById('docs-frame')?.contentWindow?.scrollY > 500);
+await check('same-page file-plus-hash links also stay in the rendered document', () =>
+  page.evaluate(() => document.getElementById('docs-frame').contentWindow.scrollY > 500)
+    .then((scrolled) => scrolled && designFetches === 1));
+
+await page.fill('#browser-address-input', `${docsRoot}/design-reference.html`);
+await page.keyboard.press('Enter');
+await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Design reference' }).waitFor();
+
+await page.click('#btn-browser-add-favorite');
+await page.locator('#favorite-name-dialog').waitFor({ state: 'visible' });
+await check('favorite naming defaults to the HTML document title', () =>
+  page.locator('#favorite-name-input').inputValue()
+    .then((value) => value === 'Design system reference'));
+await page.fill('#favorite-name-input', 'Team design reference');
+await page.click('#favorite-name-save');
+await page.click('#btn-docs');
+await check('Favorites menu keeps configured Docs above an untitled favorites section', () =>
+  page.evaluate(async (expected) => {
+    const { getState, saveNow } = await import('/src/state.js');
+    saveNow();
+    const favorite = getState().settings.browserFavorites[0];
+    const stored = JSON.parse(localStorage.getItem('dcspad.v2.workspace'))
+      .settings.browserFavorites[0];
+    const menu = document.getElementById('docs-menu');
+    const docs = [...menu.querySelectorAll('#docs-menu-items .docs-menu-item')];
+    const favorites = [...menu.querySelectorAll('#favorites-menu-items .docs-menu-item')];
+    return document.getElementById('btn-docs').textContent.includes('Favorites')
+      && docs.length === 4
+      && favorites.length === 1
+      && favorites[0].textContent === 'Team design reference'
+      && !document.getElementById('docs-menu-divider').hidden
+      && docs[docs.length - 1].compareDocumentPosition(favorites[0])
+        & Node.DOCUMENT_POSITION_FOLLOWING
+      && favorite.title === 'Team design reference'
+      && favorite.url === expected
+      && stored.title === favorite.title
+      && stored.url === favorite.url
+      && !document.getElementById('btn-docs-open-source');
+  }, `${docsRoot}/design-reference.html`));
+await page.click('#btn-docs');
+
 await page.frameLocator('#docs-frame').getByRole('link', { name: 'Guide' }).click();
 await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Authoring guide' }).waitFor();
 await check('Browser links reuse the fetch-and-srcdoc loader instead of navigating to a download', () =>
@@ -203,6 +277,22 @@ await check('Browser links reuse the fetch-and-srcdoc loader instead of navigati
     page.evaluate(() =>
       document.getElementById('docs-frame').srcdoc.includes('Authoring guide')),
   ]).then((values) => values.every(Boolean)));
+
+await check('Browser Back enables after navigating to a second resource', () =>
+  page.locator('#browser-back').isEnabled());
+await page.click('#browser-back');
+await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Design reference' }).waitFor();
+await check('Browser Back restores the previous resource without adding history', () =>
+  Promise.all([
+    page.locator('#browser-address-input').inputValue()
+      .then((value) => value === `${docsRoot}/design-reference.html`),
+    page.locator('#browser-back').isDisabled(),
+    page.evaluate(() =>
+      document.getElementById('docs-frame').srcdoc.includes('Design reference')),
+  ]).then((values) => values.every(Boolean) && designFetches === 1));
+
+await page.frameLocator('#docs-frame').getByRole('link', { name: 'Guide' }).click();
+await page.frameLocator('#docs-frame').locator('h1', { hasText: 'Authoring guide' }).waitFor();
 await check('Markdown docs render headings, code fences, and tables in the same viewer', () =>
   Promise.all([
     page.frameLocator('#docs-frame').locator('strong').textContent()
@@ -214,6 +304,17 @@ await check('Markdown docs render headings, code fences, and tables in the same 
     page.locator('#docs-frame').getAttribute('sandbox')
       .then((value) => !value.includes('allow-scripts')),
   ]).then((values) => values.every(Boolean)));
+
+await page.frameLocator('#docs-frame').getByRole('link', { name: 'Jump to details' }).click();
+await page.waitForFunction(() =>
+  document.getElementById('docs-frame')?.contentWindow?.scrollY > 500);
+await check('literal hash anchors stay inside script-free Markdown documents', () =>
+  Promise.all([
+    page.locator('#browser-address-input').inputValue()
+      .then((value) => value === `${docsRoot}/guide.md#details`),
+    page.frameLocator('#docs-frame').locator('#details').textContent()
+      .then((text) => text === 'Details'),
+  ]).then((values) => values.every(Boolean) && guideFetches === 1));
 
 await page.fill('#browser-address-input', `${origin}/docs/notes.txt`);
 await page.keyboard.press('Enter');
@@ -271,6 +372,21 @@ await page.frameLocator('#docs-frame').locator('pre', { hasText: '/docs/history-
 await check('history dropdown reopens a selected recent URL', () =>
   page.locator('#browser-address-input').inputValue()
     .then((value) => value === `${origin}/docs/history-5.txt`));
+
+await page.click('#btn-docs');
+page.once('dialog', (dialog) => dialog.accept());
+await page.click('#favorites-menu-items .favorite-menu-remove');
+await check('favorites can be removed from the menu and workspace state', () =>
+  page.evaluate(async () => {
+    const { getState, saveNow } = await import('/src/state.js');
+    saveNow();
+    const stored = JSON.parse(localStorage.getItem('dcspad.v2.workspace'))
+      .settings.browserFavorites;
+    return getState().settings.browserFavorites.length === 0
+      && stored.length === 0
+      && document.querySelectorAll('#favorites-menu-items .docs-menu-item').length === 0
+      && document.getElementById('docs-menu-divider').hidden;
+  }));
 
 for (const resource of [
   { url: `${origin}/docs/browser.css`, marker: '.browser-marker { color: teal; }' },
