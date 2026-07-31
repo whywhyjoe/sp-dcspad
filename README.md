@@ -41,12 +41,21 @@ to SharePoint. There is no DCSPad backend.
   `dcspad.html`, `dcspad.css`, and `dcspad.js`.
 - **SharePoint code files** — when the chip reads **SP: Live**, enter any
   SharePoint site URL on the same tenant origin, then browse that web's
-  libraries/folders to import or upload HTML, CSS, and JavaScript. The selected
-  site and last folder persist. Imports require replacement confirmation and
-  uploads require explicit overwrite confirmation. These operations use the
-  signed-in user's SharePoint REST permissions—no Graph app, PnP.PowerShell,
-  or separate login. Project, framework-catalog, and snippet JSON never use
-  this picker.
+  libraries/folders to import or upload editor contents. The selected site and
+  last folder persist. Imports require replacement confirmation. SharePoint
+  export requires a filename but does not add or validate its extension; an
+  untitled project starts with a blank filename unless an existing destination
+  file is selected. Before upload, DCSPad resolves the destination library,
+  checks for writable `Title`, `Description`, and `DocVersion` fields, and opens
+  a metadata dialog. Missing or incompatible fields remain visible but disabled.
+  Existing files supply their current values; an existing destination Title wins
+  over a conflicting project title. Overwrite is called out in this metadata
+  dialog instead of requiring a separate confirmation step. If the file uploads
+  but SharePoint rejects its metadata, the dialog can retry metadata without
+  uploading again or keep the uploaded file without metadata. These operations
+  use the signed-in user's SharePoint REST permissions—no Graph app,
+  PnP.PowerShell, or separate login. Project, framework-catalog, and snippet
+  JSON never use this picker.
 - **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and drag rows to reorder them. Order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file; reset restores the built-in presets and clears framework selections. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
 - **Snippets** — save the current editor selection (or whole pane) as a named snippet with ＋; click a snippet to insert it at the cursor of its editor. ⤓/⤒ save/load the snippet library as a file. The maintained 37-entry pack at [`examples/dcspad-starter-snippets.json`](examples/dcspad-starter-snippets.json) is loaded for new users and restored by the reset button; usage notes live in [`examples/README.md`](examples/README.md). Framework and snippet exports carry different `kind` signatures, and both importers validate every entry before replacing stored data.
 
@@ -206,7 +215,8 @@ SharePoint session there.
    matching editor. Repeat with another site URL on the same tenant.
 7. In a disposable document-library folder, choose **File ▸ Export to
    SharePoint…** and verify a new upload succeeds. Repeat with the same name
-   and confirm that the second action requires explicit overwrite consent.
+   and confirm that the metadata dialog clearly identifies the overwrite before
+   it saves.
 
 ## Using the pad
 

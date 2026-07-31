@@ -62,6 +62,11 @@ await check('oversized local file is rejected before confirmation', async () =>
 const origin = new URL(APP_URL).origin;
 const apiRequests = [];
 let upload = null;
+const uploads = [];
+const metadataUpdates = [];
+let includeDocVersion = true;
+let failMetadataUpdate = false;
+const metadataLibraryId = '11111111-2222-3333-4444-555555555555';
 await page.route('**/_api/**', async (route) => {
   const request = route.request();
   const url = request.url();
@@ -91,6 +96,7 @@ await page.route('**/_api/**', async (route) => {
       body: request.postData() || '',
       digest: request.headers()['x-requestdigest'],
     };
+    uploads.push(upload);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -98,7 +104,89 @@ await page.route('**/_api/**', async (route) => {
     });
     return;
   }
-  if (url.includes('/GetFileByServerRelativePath(')) {
+  if (url.includes('/GetFolderByServerRelativePath(')
+      && new URL(url).searchParams.get('$expand')
+        === 'ListItemAllFields,ListItemAllFields/ParentList') {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ListItemAllFields: {
+          ParentList: { Id: metadataLibraryId },
+        },
+      }),
+    });
+    return;
+  }
+  if (/\/lists\(guid/i.test(url) && url.includes('/Fields')) {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        value: [
+          {
+            InternalName: 'Title',
+            Title: 'Document title',
+            TypeAsString: 'Text',
+            ReadOnlyField: false,
+            Hidden: false,
+          },
+          {
+            InternalName: 'Description',
+            Title: 'Summary',
+            TypeAsString: 'Note',
+            ReadOnlyField: false,
+            Hidden: false,
+          },
+          ...(includeDocVersion ? [{
+            InternalName: 'DocVersion',
+            Title: 'Version label may vary',
+            TypeAsString: 'Text',
+            ReadOnlyField: false,
+            Hidden: false,
+          }] : []),
+        ],
+      }),
+    });
+    return;
+  }
+  if (url.includes('/ValidateUpdateListItem')) {
+    const body = JSON.parse(request.postData() || '{}');
+    metadataUpdates.push({
+      url,
+      body,
+      digest: request.headers()['x-requestdigest'],
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        value: (body.formValues || []).map((field, index) => ({
+          FieldName: field.FieldName,
+          FieldValue: field.FieldValue,
+          HasException: failMetadataUpdate && index === 0,
+          ErrorMessage: failMetadataUpdate && index === 0
+            ? 'The test library rejected this metadata value.'
+            : null,
+        })),
+      }),
+    });
+    return;
+  }
+  if (url.includes('/GetFileByServerRelativePath(')
+      && url.includes('/ListItemAllFields')) {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        Title: 'Destination file title',
+        Description: 'Existing destination description',
+        DocVersion: '1.4',
+      }),
+    });
+    return;
+  }
+  if (url.includes('/GetFileByServerRelativePath(') && url.includes('/$value')) {
     const otherSite = url.includes('/sites/other/_api/');
     await route.fulfill({
       status: 200,
@@ -328,10 +416,40 @@ await check('successful SharePoint import closes both dialogs', async () =>
   !(await page.locator('#sp-files-dialog').evaluate((dialog) => dialog.open))
   && !(await page.locator('#pane-replace-dialog').evaluate((dialog) => dialog.open)));
 
+// An untitled project does not invent a SharePoint file name. Selecting an
+// existing file is the explicit overwrite action and proceeds directly to the
+// metadata dialog, where the destructive action is called out.
+await page.click('#btn-file');
+await page.click('#mi-sp-export');
+await page.waitForSelector('#sp-files-dialog[open]');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+await check('untitled SharePoint export requires a user-supplied file name', async () =>
+  (await page.locator('#sp-export-name').inputValue()) === ''
+  && (await page.locator('#sp-export-name').getAttribute('required')) !== null
+  && (await page.locator('#sp-files-primary').isDisabled()));
+await page.locator('.sp-file-row', { hasText: 'existing.css' }).click();
+await check('choosing an existing file supplies its name as the overwrite target', async () =>
+  (await page.locator('#sp-export-name').inputValue()) === 'existing.css'
+  && (await page.locator('#sp-files-primary').textContent()) === 'Review overwrite'
+  && !(await page.locator('#sp-files-primary').isDisabled()));
+await page.click('#sp-files-primary');
+await page.waitForSelector('#sp-metadata-dialog[open]');
+await check('overwrite proceeds directly to metadata with a clear warning', async () =>
+  upload === null
+  && (await page.locator('#sp-metadata-overwrite').textContent())
+    .includes('Saving here will replace that file')
+  && !(await page.locator('#sp-metadata-overwrite').isHidden()));
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+
 // Seed CSS through the same local import path, then overwrite the matching
-// SharePoint file. The first click only arms overwrite; the second writes.
+// SharePoint file after reviewing its destination metadata.
 await page.setInputFiles('#import-pane-file', cssPath);
 await page.click('#pane-replace-confirm');
+await page.click('#project-name-display');
+await page.fill('#project-name-input', 'Current project title');
+await page.click('#project-name-save');
 await page.click('#btn-file');
 await page.click('#mi-sp-export');
 await page.waitForSelector('#sp-files-dialog[open]');
@@ -343,17 +461,89 @@ await page.waitForFunction(() =>
 await page.selectOption('#sp-export-pane', 'css');
 await page.fill('#sp-export-name', 'existing.css');
 await page.click('#sp-files-primary');
-await check('existing SharePoint file requires a separate overwrite confirmation', async () =>
-  upload === null
-  && (await page.locator('#sp-files-notice').textContent()).includes('already exists')
-  && (await page.locator('#sp-files-primary').textContent()) === 'Overwrite');
-await page.click('#sp-files-primary');
-await page.waitForFunction(() => !document.getElementById('sp-files-dialog').open);
+await page.waitForSelector('#sp-metadata-dialog[open]');
+await check('metadata schema is read from the resolved destination library GUID', () => {
+  const libraryRequest = apiRequests.find((url) => {
+    const requestUrl = new URL(url);
+    return requestUrl.pathname.includes('/GetFolderByServerRelativePath(')
+      && requestUrl.searchParams.get('$select') === 'ListItemAllFields/ParentList/Id'
+      && requestUrl.searchParams.get('$expand')
+        === 'ListItemAllFields,ListItemAllFields/ParentList';
+  });
+  const fieldsRequest = apiRequests.find((url) =>
+    decodeURIComponent(url).includes(`/lists(guid'${metadataLibraryId}')/Fields`));
+  return Boolean(libraryRequest && fieldsRequest);
+});
+await check('existing SharePoint metadata is guarded and prepopulated', async () =>
+  (await page.locator('#sp-metadata-title-input').inputValue()) === 'Destination file title'
+  && (await page.locator('#sp-metadata-description').inputValue())
+    === 'Existing destination description'
+  && (await page.locator('#sp-metadata-doc-version').inputValue()) === '1.4'
+  && !(await page.locator('#sp-metadata-title-input').isDisabled())
+  && !(await page.locator('#sp-metadata-description').isDisabled())
+  && !(await page.locator('#sp-metadata-doc-version').isDisabled()));
+await page.fill('#sp-metadata-description', 'Updated destination description');
+await page.fill('#sp-metadata-doc-version', '2.0');
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
 await check('confirmed SharePoint upload sends pane text and a digest', () =>
   upload?.body.includes('share-export-marker')
   && upload?.digest === 'OTHER-DIGEST'
   && upload?.url.includes('/sites/other/_api/')
   && /overwrite=true/i.test(upload.url));
+await check('successful SharePoint upload writes available custom metadata', () => {
+  const update = metadataUpdates.at(-1);
+  const fields = Object.fromEntries(
+    (update?.body.formValues || []).map((field) => [field.FieldName, field.FieldValue]),
+  );
+  return update?.digest === 'OTHER-DIGEST'
+    && update.body.bNewDocumentUpdate === true
+    && fields.Title === 'Destination file title'
+    && fields.Description === 'Updated destination description'
+    && fields.DocVersion === '2.0';
+});
+
+// Missing fields remain visible but disabled. If SharePoint rejects an
+// available field after the upload, keeping the file must not upload it twice.
+includeDocVersion = false;
+failMetadataUpdate = true;
+await page.click('#btn-file');
+await page.click('#mi-sp-export');
+await page.waitForSelector('#sp-files-dialog[open]');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+await page.selectOption('#sp-export-pane', 'css');
+await page.fill('#sp-export-name', 'metadata-failure');
+const uploadsBeforeMetadataFailure = uploads.length;
+await page.click('#sp-files-primary');
+await page.waitForSelector('#sp-metadata-dialog[open]');
+await check('new file metadata uses project title and disables a missing DocVersion field', async () =>
+  (await page.locator('#sp-metadata-title-input').inputValue()) === 'Current project title'
+  && !(await page.locator('#sp-metadata-title-input').isDisabled())
+  && !(await page.locator('#sp-metadata-description').isDisabled())
+  && (await page.locator('#sp-metadata-doc-version').isDisabled())
+  && (await page.locator('#sp-metadata-doc-version-hint').textContent())
+    .includes('not available'));
+await page.fill('#sp-metadata-description', 'Metadata failure probe');
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-error').hidden);
+await check('metadata failure distinguishes the successful file upload', async () =>
+  uploads.length === uploadsBeforeMetadataFailure + 1
+  && (await page.locator('#sp-metadata-error').textContent())
+    .includes('file was uploaded')
+  && (await page.locator('#sp-metadata-keep').isVisible())
+  && (await page.locator('#sp-metadata-save').textContent()) === 'Retry metadata');
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+await check('keeping an uploaded file without metadata does not upload it twice', () =>
+  uploads.length === uploadsBeforeMetadataFailure + 1
+  && decodeURIComponent(uploads.at(-1).url).includes("decodedUrl='metadata-failure'"));
+failMetadataUpdate = false;
 
 await page.click('#extras-tabs [data-extra="docs"]');
 await page.click('#browser-browse');

@@ -30,7 +30,7 @@ node hosted.mjs     # 14 checks: early/delayed splash, SharePoint chrome reflow,
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering
 node splash.mjs     #  3 checks: boot splash lifecycle
 node ux.mjs         # 18 checks: pane toggles (visibility/persistence/Ctrl+J via Monaco), editor text-size stepper, error count pills, REPL Eval button, add-framework footer validation, sidebar split persistence
-node files.mjs      # 23 checks: local import confirmation plus SP context, same-tenant site switching, ResourcePath/Browser folder browsing, cross-site import/digest upload, and overwrite confirmation
+node files.mjs      # 31 checks: local import confirmation, SP context/site switching, ResourcePath/Browser browsing, required untitled filenames, direct metadata-reviewed overwrite, extension-optional upload, parent-library metadata resolution, guarded metadata prefill/write, and metadata-failure fallback
 node workbench-hosted.mjs # 10 checks: the workbench's boot-workbench.js + bundle path on a fixture whose mount sits below the fold (as on a real page) — pinned in-viewport, painted on top, edit-mode suspension, and the edit-mode boot guard
 node workbench.mjs  # 39 checks: SP Workbench — mock grids, list drilldown, security + site views, export formats, script generator, same-tenant site switching, and the stubbed live path (Accept header, paging, re-targeted requests)
 ```

@@ -54,7 +54,7 @@
     "url": "https://m365.cloud.microsoft/chat"
   },
   "workbench": {
-    "url": "/SitePages/tools/SPWorkbench.aspx"
+    "url": "../SitePages/tools/SPworkbench.aspx"
   },
   "assets": {
     "designSystem": {

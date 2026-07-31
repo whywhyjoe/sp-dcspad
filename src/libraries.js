@@ -19,7 +19,7 @@ import {
 
 // Seed only — after first boot the stored catalog is the truth.
 export const PRESETS = [
-  { id: 'dcs-standard', name: 'DCS Standard Include', needsConfig: true,
+  { id: 'dcs-standard', name: 'DCS Standard Include', order: 3, needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
   { id: 'pnpjs2', name: 'PnPjs 2.15 (pnp2 bundle)', js: 'lib-mirror/pnp2.bundle.js',
     intelligence: ['pnpjs-2.15.0'],
@@ -43,10 +43,50 @@ let onStorageErrorCb = null;
 let filterText = '';
 let draggedEntryId = null;
 
+// `order` is one-based. Entries without it retain their relative array order,
+// which keeps legacy/imported catalogs compatible. Explicit entries win ties,
+// then every item is renumbered so persisted catalogs have one clear ordering.
+function materializeCatalogOrder(items) {
+  let implicitOrder = 0;
+  const ordered = items.map((entry, index) => {
+    const explicit = Number.isInteger(entry.order) && entry.order > 0;
+    return {
+      entry,
+      index,
+      explicit,
+      order: explicit ? entry.order : ++implicitOrder,
+    };
+  }).sort((a, b) =>
+    a.order - b.order
+    || Number(b.explicit) - Number(a.explicit)
+    || a.index - b.index);
+
+  ordered.forEach(({ entry }, index) => { entry.order = index + 1; });
+  return ordered.map(({ entry }) => entry);
+}
+
+function syncCatalogOrder() {
+  catalog.items.forEach((entry, index) => { entry.order = index + 1; });
+}
+
+function inheritPresetOrders(items) {
+  const presetOrders = new Map(PRESETS
+    .filter((entry) => Number.isInteger(entry.order) && entry.order > 0)
+    .map((entry) => [entry.id, entry.order]));
+  let changed = false;
+  for (const entry of items) {
+    if (entry.order === undefined && presetOrders.has(entry.id)) {
+      entry.order = presetOrders.get(entry.id);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 const defaultCatalog = () => ({
   kind: FRAMEWORK_CATALOG_KIND,
   v: 1,
-  items: structuredClone(PRESETS),
+  items: materializeCatalogOrder(structuredClone(PRESETS)),
 });
 
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
@@ -66,6 +106,14 @@ export function initLibraries({ config, onChange, onStorageError }) {
     ? validateFrameworkCatalog(storedCatalog, { allowUnsignedEmpty: true })
     : null;
   catalog = storedValidation?.ok ? storedValidation.doc : null;
+
+  if (catalog) {
+    const inheritedPresetOrder = inheritPresetOrders(catalog.items);
+    const orderNeedsSync = inheritedPresetOrder
+      || catalog.items.some((entry, index) => entry.order !== index + 1);
+    catalog.items = materializeCatalogOrder(catalog.items);
+    if (orderNeedsSync) persistCatalog();
+  }
 
   if (!catalog) {
     // First boot on catalog-aware code: seed from PRESETS and migrate any
@@ -168,6 +216,7 @@ export function initLibraries({ config, onChange, onStorageError }) {
     }
     const entry = entryFromUrl(url, nameInput.value.trim());
     catalog.items.push(entry);
+    syncCatalogOrder();
     persistCatalog();
     // Adding a framework means "I want to use it now" — enable immediately.
     const enabled = new Set(getState().libraries.enabled);
@@ -319,6 +368,7 @@ function catalogItem(entry, libs, pinned) {
       if (idx === -1) return;
       if (!confirm(`Remove "${entry.name}" from the framework catalog?`)) return;
       catalog.items.splice(idx, 1);
+      syncCatalogOrder();
       persistCatalog();
       const cur = getState().libraries;
       updateNested('libraries', {
@@ -377,6 +427,7 @@ function reorderEntry(sourceId, targetId, after) {
     return;
   }
   catalog.items.splice(targetIdx + (after ? 1 : 0), 0, entry);
+  syncCatalogOrder();
   persistCatalog();
   render();
   onChangeCb?.();   // injection order changed — rerun matters
@@ -544,6 +595,7 @@ export function replaceCatalog(doc) {
   const validation = validateFrameworkCatalog(doc);
   if (!validation.ok) return false;
   catalog = validation.doc;
+  catalog.items = materializeCatalogOrder(catalog.items);
   const items = catalog.items;
   persistCatalog();
   // Prune workspace ids that no longer resolve — otherwise dead

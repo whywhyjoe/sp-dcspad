@@ -412,7 +412,7 @@
       </label>
       <label class="app-dialog__field" for="sp-export-name">
         <span>File name</span>
-        <input id="sp-export-name" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+        <input id="sp-export-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" required>
       </label>
     </div>
     <div class="sp-folder-bar">
@@ -431,6 +431,48 @@
   </div>
 </dialog>
 
+<dialog id="sp-metadata-dialog" class="app-dialog sp-metadata-dialog" aria-labelledby="sp-metadata-title" aria-describedby="sp-metadata-context">
+  <div class="app-dialog__panel">
+    <div class="app-dialog__head">
+      <h2 id="sp-metadata-title">File metadata</h2>
+      <button id="sp-metadata-close" class="btn btn-ghost btn-xs" type="button" aria-label="Close"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+    </div>
+    <p id="sp-metadata-context" class="app-dialog__context"></p>
+    <div id="sp-metadata-overwrite" class="sp-files-notice" role="alert" hidden></div>
+    <div id="sp-metadata-notice" class="sp-files-notice" role="status" hidden></div>
+    <label class="app-dialog__field sp-metadata-field" for="sp-metadata-title-input">
+      <span class="sp-metadata-field__head">
+        <span>Title</span>
+        <span id="sp-metadata-title-state" class="sp-metadata-field__state">Checking…</span>
+      </span>
+      <input id="sp-metadata-title-input" type="text" maxlength="255" autocomplete="off" disabled>
+      <span id="sp-metadata-title-hint" class="sp-metadata-field__hint"></span>
+    </label>
+    <label class="app-dialog__field sp-metadata-field" for="sp-metadata-description">
+      <span class="sp-metadata-field__head">
+        <span>Description</span>
+        <span id="sp-metadata-description-state" class="sp-metadata-field__state">Checking…</span>
+      </span>
+      <textarea id="sp-metadata-description" rows="4" disabled></textarea>
+      <span id="sp-metadata-description-hint" class="sp-metadata-field__hint"></span>
+    </label>
+    <label class="app-dialog__field sp-metadata-field" for="sp-metadata-doc-version">
+      <span class="sp-metadata-field__head">
+        <span>DocVersion</span>
+        <span id="sp-metadata-doc-version-state" class="sp-metadata-field__state">Checking…</span>
+      </span>
+      <input id="sp-metadata-doc-version" type="text" maxlength="255" autocomplete="off" spellcheck="false" disabled>
+      <span id="sp-metadata-doc-version-hint" class="sp-metadata-field__hint"></span>
+    </label>
+    <div id="sp-metadata-error" class="sp-files-error" role="alert" hidden></div>
+    <div class="app-dialog__actions sp-metadata-actions">
+      <button id="sp-metadata-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="sp-metadata-keep" class="btn" type="button" hidden>Keep file without metadata</button>
+      <button id="sp-metadata-save" class="btn btn-run" type="button" disabled>Checking fields…</button>
+    </div>
+  </div>
+</dialog>
+
 <div id="app-toast" class="app-toast" role="status" aria-live="polite" hidden></div>
 
 <!-- Hidden pickers for file imports (one per purpose so tests can target them) -->
@@ -439,6 +481,6 @@
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js?v=23"></script>
+<script type="module" src="src/main.js?v=25"></script>
 </body>
 </html>

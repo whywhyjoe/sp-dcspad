@@ -11,6 +11,11 @@ import {
 } from './sp-odata.js';
 
 const DIGEST_SAFETY_MS = 60_000;
+const FILE_METADATA_SPECS = Object.freeze([
+  { key: 'title', label: 'Title', internalName: 'Title', types: ['Text'] },
+  { key: 'description', label: 'Description', internalName: 'Description', types: ['Note', 'Text'] },
+  { key: 'docVersion', label: 'DocVersion', internalName: 'DocVersion', types: ['Text'] },
+]);
 
 export { SpFileError };
 
@@ -270,6 +275,153 @@ export function createSpFilesClient({
     };
   }
 
+  async function inspectFileMetadata(
+    folderPath,
+    { filePath = '', webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const folder = checkedPath(folderPath, rootPath);
+    const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(folder)}')`
+      + '?$select=ListItemAllFields/ParentList/Id'
+      + '&$expand=ListItemAllFields,ListItemAllFields/ParentList';
+    const libraryResponse = await request(libraryEndpoint, {
+      headers: { Accept: ACCEPT_JSON },
+    });
+    await requireOk(
+      libraryResponse,
+      'Could not resolve the destination SharePoint library',
+      'metadata-library',
+    );
+    const libraryData = unwrapJson(await libraryResponse.json()) || {};
+    const libraryId = String(
+      libraryData.ListItemAllFields?.ParentList?.Id
+      || libraryData.ListItemAllFields?.ParentList?.ID
+      || '',
+    ).replace(/[{}]/g, '').trim();
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+      throw new SpFileError(
+        'SharePoint did not identify the destination document library.',
+        { code: 'metadata-library' },
+      );
+    }
+
+    const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields`
+      + '?$select=InternalName,Title,TypeAsString,ReadOnlyField,Hidden';
+    const fieldsResponse = await request(fieldsEndpoint, {
+      headers: { Accept: ACCEPT_JSON },
+    });
+    await requireOk(
+      fieldsResponse,
+      'Could not inspect the destination library metadata fields',
+      'metadata-fields',
+    );
+    const fieldsData = unwrapJson(await fieldsResponse.json()) || {};
+    const libraryFields = resultArray(fieldsData.value || fieldsData);
+
+    const fields = {};
+    for (const spec of FILE_METADATA_SPECS) {
+      const match = libraryFields.find((field) =>
+        String(field.InternalName || '').toLowerCase()
+        === spec.internalName.toLowerCase());
+      let reason = '';
+      if (!match) reason = `${spec.internalName} is not available in this library.`;
+      else if (match.ReadOnlyField) reason = `${spec.internalName} is read-only.`;
+      else if (match.Hidden) reason = `${spec.internalName} is hidden in this library.`;
+      else if (!spec.types.includes(String(match.TypeAsString || ''))) {
+        reason = `${spec.internalName} is not a supported text field.`;
+      }
+      fields[spec.key] = {
+        label: spec.label,
+        internalName: match?.InternalName || spec.internalName,
+        available: !reason,
+        reason,
+        value: '',
+      };
+    }
+
+    if (filePath) {
+      const path = checkedPath(filePath, rootPath);
+      const selected = Object.values(fields)
+        .filter((field) => field.available)
+        .map((field) => field.internalName);
+      if (selected.length) {
+        const valuesEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+          + `decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields`
+          + `?$select=${selected.map(encodeURIComponent).join(',')}`;
+        const valuesResponse = await request(valuesEndpoint, {
+          headers: { Accept: ACCEPT_JSON },
+        });
+        await requireOk(
+          valuesResponse,
+          'Could not read the destination file metadata',
+          'metadata-read',
+        );
+        const values = unwrapJson(await valuesResponse.json()) || {};
+        for (const field of Object.values(fields)) {
+          if (field.available) field.value = String(values[field.internalName] ?? '');
+        }
+      }
+    }
+
+    return { fields };
+  }
+
+  async function writeFileMetadata(
+    serverRelativePath,
+    fields,
+    values,
+    { webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const formValues = Object.entries(fields || {})
+      .filter(([key, field]) => field?.available && Object.hasOwn(values || {}, key))
+      .map(([key, field]) => ({
+        FieldName: field.internalName,
+        FieldValue: String(values[key] ?? ''),
+      }));
+    if (!formValues.length) return { updated: [] };
+
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')`
+      + '/ListItemAllFields/ValidateUpdateListItem';
+    const update = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: ACCEPT_JSON,
+          'Content-Type': 'application/json;odata=nometadata',
+          'X-RequestDigest': digest,
+        },
+        body: JSON.stringify({
+          formValues,
+          bNewDocumentUpdate: true,
+        }),
+      });
+    };
+
+    let response = await update(false);
+    if (response.status === 403) response = await update(true);
+    await requireOk(response, 'Could not save the SharePoint file metadata', 'metadata-write');
+    const data = unwrapJson(await response.json()) || {};
+    const results = resultArray(data.value || data.ValidateUpdateListItem || data);
+    const failures = results.filter((result) =>
+      result.HasException || String(result.ErrorMessage || '').trim());
+    if (failures.length) {
+      const detail = failures
+        .map((result) =>
+          `${result.FieldName || 'Field'}: ${result.ErrorMessage || 'SharePoint rejected the value.'}`)
+        .join(' ');
+      throw new SpFileError(
+        `SharePoint rejected the file metadata. ${detail}`,
+        { code: 'metadata-write' },
+      );
+    }
+    return { updated: formValues.map((value) => value.FieldName) };
+  }
+
   async function writeTextFile(
     folderPath,
     fileName,
@@ -279,9 +431,9 @@ export function createSpFilesClient({
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const safeName = String(fileName || '').trim();
-    if (!/^[a-z0-9][a-z0-9._-]*\.(?:html?|css|js)$/i.test(safeName)) {
+    if (!safeName || safeName === '.' || safeName === '..' || /[\\/]/.test(safeName)) {
       throw new SpFileError(
-        'Use a safe HTML, CSS, or JS file name containing letters, numbers, dots, hyphens, or underscores.',
+        'Enter a file name without folder separators.',
         { code: 'invalid-name' },
       );
     }
@@ -322,6 +474,8 @@ export function createSpFilesClient({
     getDigest,
     listFolder,
     readTextFile,
+    inspectFileMetadata,
+    writeFileMetadata,
     writeTextFile,
   };
 }
@@ -333,5 +487,9 @@ export const connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 export const getDigest = (options) => defaultClient.getDigest(options);
 export const listFolder = (path, options) => defaultClient.listFolder(path, options);
 export const readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+export const inspectFileMetadata = (folder, options) =>
+  defaultClient.inspectFileMetadata(folder, options);
+export const writeFileMetadata = (path, fields, values, options) =>
+  defaultClient.writeFileMetadata(path, fields, values, options);
 export const writeTextFile = (folder, name, text, options) =>
   defaultClient.writeTextFile(folder, name, text, options);

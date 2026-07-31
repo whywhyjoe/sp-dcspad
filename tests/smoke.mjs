@@ -314,6 +314,15 @@ await libRow('testlib-b').locator('.lib-drag').dragTo(libRow('testlib.js'), {
 await page.click('#btn-run');
 await check('drag reorder changes injection order', () =>
   scriptOrderBecomes([LIB_B, LIB_A]));
+await check('drag reorder persists explicit catalog order', () =>
+  page.evaluate(() => import('/src/libraries.js').then(({ getCatalogDoc }) => {
+    const items = getCatalogDoc().items;
+    const first = items.findIndex((item) => item.name === 'testlib-b');
+    const second = items.findIndex((item) => item.name === 'testlib.js');
+    return first !== -1
+      && first < second
+      && items.every((item, index) => item.order === index + 1);
+  })));
 page.once('dialog', (d) => d.accept());
 await libRow('testlib-b').locator('.lib-del').click();
 
@@ -635,8 +644,29 @@ await check('framework reset restores PRESETS and clears workspace selections', 
     return stored.kind === 'dcspad-framework-catalog'
       && getCatalogDoc().items.length === PRESETS.length
       && stored.items.length === PRESETS.length
+      && stored.items[2].id === 'dcs-standard'
+      && stored.items[2].order === 3
+      && stored.items.every((item, index) => item.order === index + 1)
       && workspace.libraries.enabled.length === 0
       && JSON.stringify(workspace.libraries.pinned) === JSON.stringify(['pnpjs2']);
+  }));
+
+// A catalog saved before explicit order fields existed should adopt the
+// built-in DCS position once, then persist concrete order values.
+await page.evaluate(() => {
+  const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
+  const dcsIndex = stored.items.findIndex((item) => item.id === 'dcs-standard');
+  const [dcs] = stored.items.splice(dcsIndex, 1);
+  stored.items.unshift(dcs);
+  stored.items.forEach((item) => { delete item.order; });
+  localStorage.setItem('dcspad.v2.catalog', JSON.stringify(stored));
+});
+await page.reload();
+await check('legacy framework catalog adopts explicit preset order', () =>
+  page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
+    return stored.items[2].id === 'dcs-standard'
+      && stored.items.every((item, index) => item.order === index + 1);
   }));
 
 page.once('dialog', (dialog) => dialog.accept());

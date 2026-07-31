@@ -17,8 +17,9 @@ import { initSnippets } from './snippets.js?v=2';
 import { downloadText, wireJsonImport, wirePaneImport } from './io.js?v=2';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import {
-  connectSpWeb, getSpWebInfo, listFolder, readTextFile, writeTextFile,
-} from './sp-files.js?v=3';
+  connectSpWeb, getSpWebInfo, inspectFileMetadata, listFolder, readTextFile,
+  writeFileMetadata, writeTextFile,
+} from './sp-files.js?v=5';
 import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js?v=2';
 import { initDocs } from './docs.js?v=3';
@@ -712,12 +713,39 @@ const spFilesEmpty = document.getElementById('sp-files-empty');
 const spFilesError = document.getElementById('sp-files-error');
 const spFilesNotice = document.getElementById('sp-files-notice');
 const spFilesPrimary = document.getElementById('sp-files-primary');
+const spMetadataDialog = document.getElementById('sp-metadata-dialog');
+const spMetadataContext = document.getElementById('sp-metadata-context');
+const spMetadataOverwrite = document.getElementById('sp-metadata-overwrite');
+const spMetadataNotice = document.getElementById('sp-metadata-notice');
+const spMetadataError = document.getElementById('sp-metadata-error');
+const spMetadataClose = document.getElementById('sp-metadata-close');
+const spMetadataCancel = document.getElementById('sp-metadata-cancel');
+const spMetadataKeep = document.getElementById('sp-metadata-keep');
+const spMetadataSave = document.getElementById('sp-metadata-save');
+const spMetadataControls = {
+  title: {
+    input: document.getElementById('sp-metadata-title-input'),
+    state: document.getElementById('sp-metadata-title-state'),
+    hint: document.getElementById('sp-metadata-title-hint'),
+  },
+  description: {
+    input: document.getElementById('sp-metadata-description'),
+    state: document.getElementById('sp-metadata-description-state'),
+    hint: document.getElementById('sp-metadata-description-hint'),
+  },
+  docVersion: {
+    input: document.getElementById('sp-metadata-doc-version'),
+    state: document.getElementById('sp-metadata-doc-version-state'),
+    hint: document.getElementById('sp-metadata-doc-version-hint'),
+  },
+};
 let spFilesMode = 'import';
 let spFolder = null;
 let spSelectedFile = null;
 let spFilesBusy = false;
-let spOverwriteArmed = false;
 let spTargetWebUrl = '';
+let spPendingExport = null;
+let spMetadataBusy = false;
 
 const FOLDER_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2h4l1.3 1.4h7.1v7.2H1.8z"/><path d="M1.8 4.2V2.8h4.4l1.2 1.4"/></svg>';
 const FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" aria-hidden="true"><path d="M3 1.8h6.2L13 5.6v8.6H3z"/><path d="M9.2 1.8v3.8H13"/></svg>';
@@ -753,10 +781,24 @@ function setSpNotice(message = '') {
   spFilesNotice.hidden = !message;
 }
 
-function resetOverwriteConfirmation() {
-  spOverwriteArmed = false;
+function resetSpExportAction() {
   setSpNotice('');
-  if (spFilesMode === 'export') spFilesPrimary.textContent = 'Upload file';
+  if (spFilesMode === 'export') spFilesPrimary.textContent = 'Review metadata';
+}
+
+function existingSpExportFile(name = spExportName.value.trim()) {
+  if (!name || !spFolder) return null;
+  return spFolder.files.find(
+    (file) => file.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0,
+  ) || null;
+}
+
+function syncSpExportAction() {
+  if (spFilesMode !== 'export') return;
+  const hasName = Boolean(spExportName.value.trim());
+  const existing = existingSpExportFile();
+  spFilesPrimary.textContent = existing ? 'Review overwrite' : 'Review metadata';
+  spFilesPrimary.disabled = spFilesBusy || !spFolder || !hasName;
 }
 
 function formatBytes(bytes) {
@@ -796,9 +838,9 @@ function renderSpFolder() {
     name.textContent = entry.name;
     const meta = document.createElement('span');
     meta.className = 'sp-file-row__meta';
-    meta.textContent = entry.kind === 'folder'
-      ? 'folder'
-      : `${spFilesMode === 'browser'
+      meta.textContent = entry.kind === 'folder'
+        ? 'folder'
+        : `${spFilesMode === 'browser'
           ? browserFileLabel(entry.browserType)
           : entry.pane.toUpperCase()} · ${formatBytes(entry.length)}`;
     row.append(icon, name, meta);
@@ -816,9 +858,10 @@ function renderSpFolder() {
         if (spFilesMode === 'import' || spFilesMode === 'browser') {
           spFilesPrimary.disabled = false;
         } else {
-          spExportPane.value = entry.pane;
+          if (entry.pane) spExportPane.value = entry.pane;
           spExportName.value = entry.name;
-          resetOverwriteConfirmation();
+          resetSpExportAction();
+          syncSpExportAction();
         }
       });
     }
@@ -832,7 +875,7 @@ async function loadSpFolder(path) {
   spSelectedFile = null;
   spFilesPrimary.disabled = true;
   setSpError('');
-  resetOverwriteConfirmation();
+  resetSpExportAction();
   spFilesEmpty.hidden = true;
   spFilesList.innerHTML = '<div class="sp-files-empty">Loading SharePoint folder…</div>';
   try {
@@ -842,12 +885,12 @@ async function loadSpFolder(path) {
     });
     updateNested('settings', { spFilesFolder: spFolder.path });
     renderSpFolder();
-    if (spFilesMode === 'export') spFilesPrimary.disabled = false;
   } catch (error) {
     spFilesList.replaceChildren();
     setSpError(error.message || String(error));
   } finally {
     spFilesBusy = false;
+    if (spFilesMode === 'export' && spFolder) syncSpExportAction();
   }
 }
 
@@ -900,7 +943,9 @@ function exportExtension(pane) {
 }
 
 function defaultSpExportName() {
-  return `${filenameBase()}.${exportExtension(spExportPane.value)}`;
+  return projectName()
+    ? `${filenameBase()}.${exportExtension(spExportPane.value)}`
+    : '';
 }
 
 async function openSpFiles(mode) {
@@ -914,14 +959,14 @@ async function openSpFiles(mode) {
   spSelectedFile = null;
   spFolder = null;
   setSpError('');
-  resetOverwriteConfirmation();
+  resetSpExportAction();
   spExportControls.hidden = mode !== 'export';
   spFilesTitle.textContent = mode === 'import'
     ? 'Import from SharePoint'
     : mode === 'browser' ? 'Browse SharePoint' : 'Export to SharePoint';
   spFilesPrimary.textContent = mode === 'import'
     ? 'Continue'
-    : mode === 'browser' ? 'Open file' : 'Upload file';
+    : mode === 'browser' ? 'Open file' : 'Review metadata';
   spFilesList.setAttribute(
     'aria-label',
     mode === 'browser'
@@ -978,18 +1023,262 @@ spSiteUrl.addEventListener('input', () => {
     setSpNotice('Choose Open site to browse this SharePoint site.');
   } else {
     setSpNotice('');
-    if (spFilesMode === 'export' && spFolder) spFilesPrimary.disabled = false;
+    if (spFilesMode === 'export') syncSpExportAction();
     if (spFilesMode === 'import' && spSelectedFile) spFilesPrimary.disabled = false;
     if (spFilesMode === 'browser' && spSelectedFile) spFilesPrimary.disabled = false;
   }
 });
 spExportPane.addEventListener('change', () => {
   spExportName.value = defaultSpExportName();
-  resetOverwriteConfirmation();
+  resetSpExportAction();
+  syncSpExportAction();
 });
 spExportName.addEventListener('input', () => {
   setSpError('');
-  resetOverwriteConfirmation();
+  resetSpExportAction();
+  syncSpExportAction();
+});
+
+function setSpMetadataNotice(message = '') {
+  spMetadataNotice.textContent = message;
+  spMetadataNotice.hidden = !message;
+}
+
+function setSpMetadataError(message = '') {
+  spMetadataError.textContent = message;
+  spMetadataError.hidden = !message;
+}
+
+function setSpMetadataField(key, field, value) {
+  const control = spMetadataControls[key];
+  const wrapper = control.input.closest('.sp-metadata-field');
+  control.input.value = value;
+  control.input.disabled = !field.available;
+  control.state.textContent = field.available ? 'Available' : 'Unavailable';
+  control.hint.textContent = field.available
+    ? `Writes to the ${field.internalName} field.`
+    : field.reason;
+  wrapper.classList.toggle('available', field.available);
+  wrapper.classList.toggle('unavailable', !field.available);
+}
+
+function setSpMetadataBusy(busy, label = '') {
+  spMetadataBusy = busy;
+  spMetadataSave.disabled = busy;
+  spMetadataCancel.disabled = busy;
+  spMetadataClose.disabled = busy;
+  if (label) spMetadataSave.textContent = label;
+  for (const [key, control] of Object.entries(spMetadataControls)) {
+    const available = spPendingExport?.metadataInfo?.fields?.[key]?.available;
+    control.input.disabled = busy || !available;
+  }
+}
+
+function resetSpMetadataDialog() {
+  spMetadataOverwrite.textContent = '';
+  spMetadataOverwrite.hidden = true;
+  setSpMetadataNotice('');
+  setSpMetadataError('');
+  spMetadataKeep.hidden = true;
+  spMetadataCancel.hidden = false;
+  spMetadataClose.hidden = false;
+  for (const control of Object.values(spMetadataControls)) {
+    const wrapper = control.input.closest('.sp-metadata-field');
+    control.input.value = '';
+    control.input.disabled = true;
+    control.state.textContent = 'Checking…';
+    control.hint.textContent = '';
+    wrapper.classList.remove('available', 'unavailable');
+  }
+  setSpMetadataBusy(true, 'Checking fields…');
+}
+
+function closeSpMetadataDialog() {
+  if (spMetadataBusy || spPendingExport?.uploadResult) return;
+  if (spMetadataDialog.open) spMetadataDialog.close();
+  spPendingExport = null;
+  spFilesPrimary.disabled = false;
+}
+
+function metadataValues() {
+  return {
+    title: spMetadataControls.title.input.value,
+    description: spMetadataControls.description.input.value,
+    docVersion: spMetadataControls.docVersion.input.value,
+  };
+}
+
+function finishSpExport(metadataStatus = 'saved') {
+  if (!spPendingExport) return;
+  const { name } = spPendingExport;
+  const detail = metadataStatus === 'saved'
+    ? ' Metadata saved.'
+    : metadataStatus === 'unavailable'
+      ? ' No supported metadata fields were available.'
+      : ' Metadata was skipped.';
+  showToast(`${name} uploaded to SharePoint.${detail}`, 'success');
+  statusRun.textContent = `${name} uploaded to SharePoint`;
+  statusRun.className = 'status-item';
+  if (spMetadataDialog.open) spMetadataDialog.close();
+  if (spFilesDialog.open) spFilesDialog.close();
+  spPendingExport = null;
+  spMetadataBusy = false;
+}
+
+async function openSpMetadataDialog({ pane, name, text, existing }) {
+  spPendingExport = {
+    pane,
+    name,
+    text,
+    existing,
+    metadataInfo: null,
+    metadataInspectionFailed: false,
+    uploadResult: null,
+  };
+  resetSpMetadataDialog();
+  spMetadataContext.textContent = existing
+    ? `Review the destination metadata before replacing ${existing.name}.`
+    : `Add metadata before uploading ${name}.`;
+  if (existing) {
+    spMetadataOverwrite.textContent =
+      `Overwrite: ${existing.name} already exists. Saving here will replace that file.`;
+    spMetadataOverwrite.hidden = false;
+  }
+  if (!spMetadataDialog.open) spMetadataDialog.showModal();
+  spFilesPrimary.disabled = true;
+
+  try {
+    const metadataInfo = await inspectFileMetadata(spFolder.path, {
+      filePath: existing?.serverRelativeUrl || '',
+      webUrl: spTargetWebUrl,
+    });
+    if (!spPendingExport || spPendingExport.name !== name) return;
+    spPendingExport.metadataInfo = metadataInfo;
+
+    const destinationTitle = existing && metadataInfo.fields.title.available
+      ? metadataInfo.fields.title.value.trim()
+      : '';
+    setSpMetadataField(
+      'title',
+      metadataInfo.fields.title,
+      destinationTitle || projectName(),
+    );
+    setSpMetadataField(
+      'description',
+      metadataInfo.fields.description,
+      existing ? metadataInfo.fields.description.value : '',
+    );
+    setSpMetadataField(
+      'docVersion',
+      metadataInfo.fields.docVersion,
+      existing ? metadataInfo.fields.docVersion.value : '',
+    );
+
+    const available = Object.values(metadataInfo.fields)
+      .filter((field) => field.available).length;
+    if (!available) {
+      setSpMetadataNotice(
+        'None of the supported metadata fields are writable in this library. '
+        + 'The file can still be uploaded.',
+      );
+    }
+    setSpMetadataBusy(
+      false,
+      available
+        ? existing ? 'Overwrite file' : 'Upload file'
+        : existing ? 'Overwrite without metadata' : 'Upload without metadata',
+    );
+  } catch (error) {
+    if (!spPendingExport || spPendingExport.name !== name) return;
+    spPendingExport.metadataInspectionFailed = true;
+    spPendingExport.metadataInfo = {
+      fields: Object.fromEntries(Object.keys(spMetadataControls).map((key) => [
+        key,
+        {
+          available: false,
+          internalName: key === 'docVersion'
+            ? 'DocVersion'
+            : `${key[0].toUpperCase()}${key.slice(1)}`,
+          reason: 'Could not inspect this field.',
+          value: '',
+        },
+      ])),
+    };
+    for (const [key, field] of Object.entries(spPendingExport.metadataInfo.fields)) {
+      setSpMetadataField(key, field, key === 'title' ? projectName() : '');
+    }
+    setSpMetadataNotice(
+      `${error.message || error} The file can still be uploaded without metadata.`,
+    );
+    setSpMetadataBusy(
+      false,
+      existing ? 'Overwrite without metadata' : 'Upload without metadata',
+    );
+  }
+}
+
+async function saveSpMetadata() {
+  if (spMetadataBusy || !spPendingExport) return;
+  const pending = spPendingExport;
+  setSpMetadataError('');
+  setSpMetadataBusy(
+    true,
+    pending.uploadResult ? 'Saving metadata…' : 'Uploading file…',
+  );
+
+  try {
+    if (!pending.uploadResult) {
+      pending.uploadResult = await writeTextFile(
+        spFolder.path,
+        pending.name,
+        pending.text,
+        {
+          overwrite: Boolean(pending.existing),
+          webUrl: spTargetWebUrl,
+        },
+      );
+    }
+
+    const fields = pending.metadataInfo?.fields || {};
+    const available = Object.values(fields).some((field) => field.available);
+    if (!pending.metadataInspectionFailed && available) {
+      await writeFileMetadata(
+        pending.uploadResult.serverRelativeUrl,
+        fields,
+        metadataValues(),
+        { webUrl: spTargetWebUrl },
+      );
+      finishSpExport('saved');
+    } else {
+      finishSpExport('unavailable');
+    }
+  } catch (error) {
+    if (!spPendingExport) return;
+    if (pending.uploadResult) {
+      setSpMetadataError(
+        `The file was uploaded, but its metadata was not saved. ${error.message || error}`,
+      );
+      spMetadataKeep.hidden = false;
+      spMetadataCancel.hidden = true;
+      spMetadataClose.hidden = true;
+      setSpMetadataBusy(false, 'Retry metadata');
+    } else {
+      setSpMetadataError(error.message || String(error));
+      setSpMetadataBusy(
+        false,
+        pending.existing ? 'Try overwrite again' : 'Try upload again',
+      );
+    }
+  }
+}
+
+spMetadataSave.addEventListener('click', saveSpMetadata);
+spMetadataKeep.addEventListener('click', () => finishSpExport('skipped'));
+spMetadataClose.addEventListener('click', closeSpMetadataDialog);
+spMetadataCancel.addEventListener('click', closeSpMetadataDialog);
+spMetadataDialog.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeSpMetadataDialog();
 });
 
 spFilesPrimary.addEventListener('click', async () => {
@@ -1033,15 +1322,12 @@ spFilesPrimary.addEventListener('click', async () => {
 
   const pane = spExportPane.value;
   const name = spExportName.value.trim();
-  const expected = pane === 'html' ? /\.(?:html|htm)$/i : new RegExp(`\\.${pane}$`, 'i');
-  if (!/^[a-z0-9][a-z0-9._-]*\.(?:html?|css|js)$/i.test(name)) {
-    setSpError(
-      'Use a safe file name containing letters, numbers, dots, hyphens, or underscores.',
-    );
+  if (!name) {
+    setSpError('Enter a file name.');
     return;
   }
-  if (!expected.test(name)) {
-    setSpError(`The file extension must match the ${pane.toUpperCase()} editor.`);
+  if (name === '.' || name === '..' || /[\\/]/.test(name)) {
+    setSpError('Enter a file name, not a folder path.');
     return;
   }
   const text = editorsApi.getDocs()[pane];
@@ -1050,34 +1336,10 @@ spFilesPrimary.addEventListener('click', async () => {
     return;
   }
 
-  const existing = spFolder.files.find(
-    (file) => file.name.localeCompare(name, undefined, { sensitivity: 'base' }) === 0,
-  );
-  if (existing && !spOverwriteArmed) {
-    spOverwriteArmed = true;
-    setSpNotice(`${existing.name} already exists. Choose Overwrite to replace it.`);
-    spFilesPrimary.textContent = 'Overwrite';
-    return;
-  }
+  const existing = existingSpExportFile(name);
 
-  spFilesBusy = true;
-  spFilesPrimary.disabled = true;
   setSpError('');
-  try {
-    await writeTextFile(spFolder.path, name, text, {
-      overwrite: Boolean(existing),
-      webUrl: spTargetWebUrl,
-    });
-    showToast(`${name} uploaded to SharePoint.`, 'success');
-    statusRun.textContent = `${name} uploaded to SharePoint`;
-    statusRun.className = 'status-item';
-    spFilesDialog.close();
-  } catch (error) {
-    setSpError(error.message || String(error));
-    spFilesPrimary.disabled = false;
-  } finally {
-    spFilesBusy = false;
-  }
+  await openSpMetadataDialog({ pane, name, text, existing });
 });
 
 // ---------- catalog file save/load ----------

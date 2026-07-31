@@ -2723,10 +2723,10 @@ function validateFrameworkCatalog(doc2, { allowUnsignedEmpty = false } = {}) {
   for (let index = 0; index < doc2.items.length; index += 1) {
     const item = doc2.items[index];
     const validSource = isNonEmptyString(item?.js) || isNonEmptyString(item?.css) || item?.needsConfig === true;
-    if (!isObject(item) || !isNonEmptyString(item.id) || !isNonEmptyString(item.name) || !validSource || item.js !== void 0 && typeof item.js !== "string" || item.css !== void 0 && typeof item.css !== "string") {
+    if (!isObject(item) || !isNonEmptyString(item.id) || !isNonEmptyString(item.name) || !validSource || item.js !== void 0 && typeof item.js !== "string" || item.css !== void 0 && typeof item.css !== "string" || item.order !== void 0 && (!Number.isInteger(item.order) || item.order < 1)) {
       return {
         ok: false,
-        message: `Item ${index + 1} is not a valid framework entry (expected id, name, and a JS/CSS source).`
+        message: `Item ${index + 1} is not a valid framework entry (expected id, name, a JS/CSS source, and an optional positive integer order).`
       };
     }
   }
@@ -2779,6 +2779,7 @@ var PRESETS = [
   {
     id: "dcs-standard",
     name: "DCS Standard Include",
+    order: 3,
     needsConfig: true,
     hint: "Set your org include URL once; stored with your workspace."
   },
@@ -2810,10 +2811,42 @@ var onChangeCb = null;
 var onStorageErrorCb = null;
 var filterText = "";
 var draggedEntryId = null;
+function materializeCatalogOrder(items) {
+  let implicitOrder = 0;
+  const ordered = items.map((entry, index) => {
+    const explicit = Number.isInteger(entry.order) && entry.order > 0;
+    return {
+      entry,
+      index,
+      explicit,
+      order: explicit ? entry.order : ++implicitOrder
+    };
+  }).sort((a, b) => a.order - b.order || Number(b.explicit) - Number(a.explicit) || a.index - b.index);
+  ordered.forEach(({ entry }, index) => {
+    entry.order = index + 1;
+  });
+  return ordered.map(({ entry }) => entry);
+}
+function syncCatalogOrder() {
+  catalog.items.forEach((entry, index) => {
+    entry.order = index + 1;
+  });
+}
+function inheritPresetOrders(items) {
+  const presetOrders = new Map(PRESETS.filter((entry) => Number.isInteger(entry.order) && entry.order > 0).map((entry) => [entry.id, entry.order]));
+  let changed = false;
+  for (const entry of items) {
+    if (entry.order === void 0 && presetOrders.has(entry.id)) {
+      entry.order = presetOrders.get(entry.id);
+      changed = true;
+    }
+  }
+  return changed;
+}
 var defaultCatalog = () => ({
   kind: FRAMEWORK_CATALOG_KIND,
   v: 1,
-  items: structuredClone(PRESETS)
+  items: materializeCatalogOrder(structuredClone(PRESETS))
 });
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 var entryFromUrl = (url, name) => ({
@@ -2829,6 +2862,12 @@ function initLibraries({ config, onChange, onStorageError }) {
   const storedCatalog = loadDoc(CATALOG_KEY);
   const storedValidation = storedCatalog ? validateFrameworkCatalog(storedCatalog, { allowUnsignedEmpty: true }) : null;
   catalog = storedValidation?.ok ? storedValidation.doc : null;
+  if (catalog) {
+    const inheritedPresetOrder = inheritPresetOrders(catalog.items);
+    const orderNeedsSync = inheritedPresetOrder || catalog.items.some((entry, index) => entry.order !== index + 1);
+    catalog.items = materializeCatalogOrder(catalog.items);
+    if (orderNeedsSync) persistCatalog();
+  }
   if (!catalog) {
     if (storedCatalog) {
       console.warn("DCSPad: invalid stored framework catalog was reset", storedValidation.message);
@@ -2930,6 +2969,7 @@ function initLibraries({ config, onChange, onStorageError }) {
     }
     const entry = entryFromUrl(url, nameInput.value.trim());
     catalog.items.push(entry);
+    syncCatalogOrder();
     persistCatalog();
     const enabled = new Set(getState().libraries.enabled);
     enabled.add(entry.id);
@@ -3061,6 +3101,7 @@ Fallback: ${effective.fallbackJs}`;
       if (idx === -1) return;
       if (!confirm(`Remove "${entry.name}" from the framework catalog?`)) return;
       catalog.items.splice(idx, 1);
+      syncCatalogOrder();
       persistCatalog();
       const cur = getState().libraries;
       updateNested("libraries", {
@@ -3113,6 +3154,7 @@ function reorderEntry(sourceId, targetId, after) {
     return;
   }
   catalog.items.splice(targetIdx + (after ? 1 : 0), 0, entry);
+  syncCatalogOrder();
   persistCatalog();
   render();
   onChangeCb?.();
@@ -3239,6 +3281,7 @@ function replaceCatalog(doc2) {
   const validation = validateFrameworkCatalog(doc2);
   if (!validation.ok) return false;
   catalog = validation.doc;
+  catalog.items = materializeCatalogOrder(catalog.items);
   const items = catalog.items;
   persistCatalog();
   const known = new Set(items.map((it) => it.id));
@@ -3783,8 +3826,13 @@ async function requireOk(response, fallback, code) {
   });
 }
 
-// ../src/sp-files.js?v=3
+// ../src/sp-files.js?v=5
 var DIGEST_SAFETY_MS = 6e4;
+var FILE_METADATA_SPECS = Object.freeze([
+  { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
+  { key: "description", label: "Description", internalName: "Description", types: ["Note", "Text"] },
+  { key: "docVersion", label: "DocVersion", internalName: "DocVersion", types: ["Text"] }
+]);
 function normalizedPath(value) {
   let path = String(value || "").trim().replaceAll("\\", "/");
   if (!path.startsWith("/")) path = `/${path}`;
@@ -4003,13 +4051,124 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
+  async function inspectFileMetadata2(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const folder = checkedPath(folderPath, rootPath);
+    const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')?$select=ListItemAllFields/ParentList/Id&$expand=ListItemAllFields,ListItemAllFields/ParentList`;
+    const libraryResponse = await request(libraryEndpoint, {
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(
+      libraryResponse,
+      "Could not resolve the destination SharePoint library",
+      "metadata-library"
+    );
+    const libraryData = unwrapJson(await libraryResponse.json()) || {};
+    const libraryId = String(
+      libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
+    ).replace(/[{}]/g, "").trim();
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+      throw new SpFileError(
+        "SharePoint did not identify the destination document library.",
+        { code: "metadata-library" }
+      );
+    }
+    const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,Title,TypeAsString,ReadOnlyField,Hidden`;
+    const fieldsResponse = await request(fieldsEndpoint, {
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(
+      fieldsResponse,
+      "Could not inspect the destination library metadata fields",
+      "metadata-fields"
+    );
+    const fieldsData = unwrapJson(await fieldsResponse.json()) || {};
+    const libraryFields = resultArray(fieldsData.value || fieldsData);
+    const fields = {};
+    for (const spec of FILE_METADATA_SPECS) {
+      const match = libraryFields.find((field) => String(field.InternalName || "").toLowerCase() === spec.internalName.toLowerCase());
+      let reason = "";
+      if (!match) reason = `${spec.internalName} is not available in this library.`;
+      else if (match.ReadOnlyField) reason = `${spec.internalName} is read-only.`;
+      else if (match.Hidden) reason = `${spec.internalName} is hidden in this library.`;
+      else if (!spec.types.includes(String(match.TypeAsString || ""))) {
+        reason = `${spec.internalName} is not a supported text field.`;
+      }
+      fields[spec.key] = {
+        label: spec.label,
+        internalName: match?.InternalName || spec.internalName,
+        available: !reason,
+        reason,
+        value: ""
+      };
+    }
+    if (filePath) {
+      const path = checkedPath(filePath, rootPath);
+      const selected = Object.values(fields).filter((field) => field.available).map((field) => field.internalName);
+      if (selected.length) {
+        const valuesEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields?$select=${selected.map(encodeURIComponent).join(",")}`;
+        const valuesResponse = await request(valuesEndpoint, {
+          headers: { Accept: ACCEPT_JSON }
+        });
+        await requireOk(
+          valuesResponse,
+          "Could not read the destination file metadata",
+          "metadata-read"
+        );
+        const values = unwrapJson(await valuesResponse.json()) || {};
+        for (const field of Object.values(fields)) {
+          if (field.available) field.value = String(values[field.internalName] ?? "");
+        }
+      }
+    }
+    return { fields };
+  }
+  async function writeFileMetadata2(serverRelativePath, fields, values, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const formValues = Object.entries(fields || {}).filter(([key2, field]) => field?.available && Object.hasOwn(values || {}, key2)).map(([key2, field]) => ({
+      FieldName: field.internalName,
+      FieldValue: String(values[key2] ?? "")
+    }));
+    if (!formValues.length) return { updated: [] };
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields/ValidateUpdateListItem`;
+    const update2 = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: ACCEPT_JSON,
+          "Content-Type": "application/json;odata=nometadata",
+          "X-RequestDigest": digest
+        },
+        body: JSON.stringify({
+          formValues,
+          bNewDocumentUpdate: true
+        })
+      });
+    };
+    let response = await update2(false);
+    if (response.status === 403) response = await update2(true);
+    await requireOk(response, "Could not save the SharePoint file metadata", "metadata-write");
+    const data = unwrapJson(await response.json()) || {};
+    const results = resultArray(data.value || data.ValidateUpdateListItem || data);
+    const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
+    if (failures.length) {
+      const detail = failures.map((result) => `${result.FieldName || "Field"}: ${result.ErrorMessage || "SharePoint rejected the value."}`).join(" ");
+      throw new SpFileError(
+        `SharePoint rejected the file metadata. ${detail}`,
+        { code: "metadata-write" }
+      );
+    }
+    return { updated: formValues.map((value) => value.FieldName) };
+  }
   async function writeTextFile2(folderPath, fileName, text, { overwrite = false, webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const safeName = String(fileName || "").trim();
-    if (!/^[a-z0-9][a-z0-9._-]*\.(?:html?|css|js)$/i.test(safeName)) {
+    if (!safeName || safeName === "." || safeName === ".." || /[\\/]/.test(safeName)) {
       throw new SpFileError(
-        "Use a safe HTML, CSS, or JS file name containing letters, numbers, dots, hyphens, or underscores.",
+        "Enter a file name without folder separators.",
         { code: "invalid-name" }
       );
     }
@@ -4045,6 +4204,8 @@ function createSpFilesClient({
     getDigest,
     listFolder: listFolder2,
     readTextFile: readTextFile2,
+    inspectFileMetadata: inspectFileMetadata2,
+    writeFileMetadata: writeFileMetadata2,
     writeTextFile: writeTextFile2
   };
 }
@@ -4053,6 +4214,8 @@ var getSpWebInfo = (webUrl) => defaultClient.webInfo(webUrl);
 var connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 var listFolder = (path, options) => defaultClient.listFolder(path, options);
 var readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+var inspectFileMetadata = (folder, options) => defaultClient.inspectFileMetadata(folder, options);
+var writeFileMetadata = (path, fields, values, options) => defaultClient.writeFileMetadata(path, fields, values, options);
 var writeTextFile = (folder, name, text, options) => defaultClient.writeTextFile(folder, name, text, options);
 
 // ../src/splash.js
@@ -5086,8 +5249,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "57-dirty" : "dev";
-var injectedRevision = true ? "f85b7d53-dirty" : "";
+var injectedBuild = true ? "58-dirty" : "dev";
+var injectedRevision = true ? "199f51c4-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5688,12 +5851,39 @@ var spFilesEmpty = document.getElementById("sp-files-empty");
 var spFilesError = document.getElementById("sp-files-error");
 var spFilesNotice = document.getElementById("sp-files-notice");
 var spFilesPrimary = document.getElementById("sp-files-primary");
+var spMetadataDialog = document.getElementById("sp-metadata-dialog");
+var spMetadataContext = document.getElementById("sp-metadata-context");
+var spMetadataOverwrite = document.getElementById("sp-metadata-overwrite");
+var spMetadataNotice = document.getElementById("sp-metadata-notice");
+var spMetadataError = document.getElementById("sp-metadata-error");
+var spMetadataClose = document.getElementById("sp-metadata-close");
+var spMetadataCancel = document.getElementById("sp-metadata-cancel");
+var spMetadataKeep = document.getElementById("sp-metadata-keep");
+var spMetadataSave = document.getElementById("sp-metadata-save");
+var spMetadataControls = {
+  title: {
+    input: document.getElementById("sp-metadata-title-input"),
+    state: document.getElementById("sp-metadata-title-state"),
+    hint: document.getElementById("sp-metadata-title-hint")
+  },
+  description: {
+    input: document.getElementById("sp-metadata-description"),
+    state: document.getElementById("sp-metadata-description-state"),
+    hint: document.getElementById("sp-metadata-description-hint")
+  },
+  docVersion: {
+    input: document.getElementById("sp-metadata-doc-version"),
+    state: document.getElementById("sp-metadata-doc-version-state"),
+    hint: document.getElementById("sp-metadata-doc-version-hint")
+  }
+};
 var spFilesMode = "import";
 var spFolder = null;
 var spSelectedFile = null;
 var spFilesBusy = false;
-var spOverwriteArmed = false;
 var spTargetWebUrl = "";
+var spPendingExport = null;
+var spMetadataBusy = false;
 var FOLDER_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2h4l1.3 1.4h7.1v7.2H1.8z"/><path d="M1.8 4.2V2.8h4.4l1.2 1.4"/></svg>';
 var FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" aria-hidden="true"><path d="M3 1.8h6.2L13 5.6v8.6H3z"/><path d="M9.2 1.8v3.8H13"/></svg>';
 var browserFileLabel = (type) => ({
@@ -5729,10 +5919,22 @@ function setSpNotice(message = "") {
   spFilesNotice.textContent = message;
   spFilesNotice.hidden = !message;
 }
-function resetOverwriteConfirmation() {
-  spOverwriteArmed = false;
+function resetSpExportAction() {
   setSpNotice("");
-  if (spFilesMode === "export") spFilesPrimary.textContent = "Upload file";
+  if (spFilesMode === "export") spFilesPrimary.textContent = "Review metadata";
+}
+function existingSpExportFile(name = spExportName.value.trim()) {
+  if (!name || !spFolder) return null;
+  return spFolder.files.find(
+    (file) => file.name.localeCompare(name, void 0, { sensitivity: "base" }) === 0
+  ) || null;
+}
+function syncSpExportAction() {
+  if (spFilesMode !== "export") return;
+  const hasName = Boolean(spExportName.value.trim());
+  const existing = existingSpExportFile();
+  spFilesPrimary.textContent = existing ? "Review overwrite" : "Review metadata";
+  spFilesPrimary.disabled = spFilesBusy || !spFolder || !hasName;
 }
 function formatBytes(bytes) {
   if (!bytes) return "0 B";
@@ -5782,9 +5984,10 @@ function renderSpFolder() {
         if (spFilesMode === "import" || spFilesMode === "browser") {
           spFilesPrimary.disabled = false;
         } else {
-          spExportPane.value = entry.pane;
+          if (entry.pane) spExportPane.value = entry.pane;
           spExportName.value = entry.name;
-          resetOverwriteConfirmation();
+          resetSpExportAction();
+          syncSpExportAction();
         }
       });
     }
@@ -5797,7 +6000,7 @@ async function loadSpFolder(path) {
   spSelectedFile = null;
   spFilesPrimary.disabled = true;
   setSpError("");
-  resetOverwriteConfirmation();
+  resetSpExportAction();
   spFilesEmpty.hidden = true;
   spFilesList.innerHTML = '<div class="sp-files-empty">Loading SharePoint folder\u2026</div>';
   try {
@@ -5807,12 +6010,12 @@ async function loadSpFolder(path) {
     });
     updateNested("settings", { spFilesFolder: spFolder.path });
     renderSpFolder();
-    if (spFilesMode === "export") spFilesPrimary.disabled = false;
   } catch (error) {
     spFilesList.replaceChildren();
     setSpError(error.message || String(error));
   } finally {
     spFilesBusy = false;
+    if (spFilesMode === "export" && spFolder) syncSpExportAction();
   }
 }
 async function connectSpSite(candidateWebUrl, { restoreFolder = true } = {}) {
@@ -5852,7 +6055,7 @@ function exportExtension(pane) {
   return pane === "js" ? "js" : pane;
 }
 function defaultSpExportName() {
-  return `${filenameBase()}.${exportExtension(spExportPane.value)}`;
+  return projectName() ? `${filenameBase()}.${exportExtension(spExportPane.value)}` : "";
 }
 async function openSpFiles(mode) {
   closeFileMenu();
@@ -5864,10 +6067,10 @@ async function openSpFiles(mode) {
   spSelectedFile = null;
   spFolder = null;
   setSpError("");
-  resetOverwriteConfirmation();
+  resetSpExportAction();
   spExportControls.hidden = mode !== "export";
   spFilesTitle.textContent = mode === "import" ? "Import from SharePoint" : mode === "browser" ? "Browse SharePoint" : "Export to SharePoint";
-  spFilesPrimary.textContent = mode === "import" ? "Continue" : mode === "browser" ? "Open file" : "Upload file";
+  spFilesPrimary.textContent = mode === "import" ? "Continue" : mode === "browser" ? "Open file" : "Review metadata";
   spFilesList.setAttribute(
     "aria-label",
     mode === "browser" ? "SharePoint folders and Browser-supported files" : "SharePoint folders and code files"
@@ -5912,18 +6115,229 @@ spSiteUrl.addEventListener("input", () => {
     setSpNotice("Choose Open site to browse this SharePoint site.");
   } else {
     setSpNotice("");
-    if (spFilesMode === "export" && spFolder) spFilesPrimary.disabled = false;
+    if (spFilesMode === "export") syncSpExportAction();
     if (spFilesMode === "import" && spSelectedFile) spFilesPrimary.disabled = false;
     if (spFilesMode === "browser" && spSelectedFile) spFilesPrimary.disabled = false;
   }
 });
 spExportPane.addEventListener("change", () => {
   spExportName.value = defaultSpExportName();
-  resetOverwriteConfirmation();
+  resetSpExportAction();
+  syncSpExportAction();
 });
 spExportName.addEventListener("input", () => {
   setSpError("");
-  resetOverwriteConfirmation();
+  resetSpExportAction();
+  syncSpExportAction();
+});
+function setSpMetadataNotice(message = "") {
+  spMetadataNotice.textContent = message;
+  spMetadataNotice.hidden = !message;
+}
+function setSpMetadataError(message = "") {
+  spMetadataError.textContent = message;
+  spMetadataError.hidden = !message;
+}
+function setSpMetadataField(key2, field, value) {
+  const control = spMetadataControls[key2];
+  const wrapper = control.input.closest(".sp-metadata-field");
+  control.input.value = value;
+  control.input.disabled = !field.available;
+  control.state.textContent = field.available ? "Available" : "Unavailable";
+  control.hint.textContent = field.available ? `Writes to the ${field.internalName} field.` : field.reason;
+  wrapper.classList.toggle("available", field.available);
+  wrapper.classList.toggle("unavailable", !field.available);
+}
+function setSpMetadataBusy(busy, label = "") {
+  spMetadataBusy = busy;
+  spMetadataSave.disabled = busy;
+  spMetadataCancel.disabled = busy;
+  spMetadataClose.disabled = busy;
+  if (label) spMetadataSave.textContent = label;
+  for (const [key2, control] of Object.entries(spMetadataControls)) {
+    const available = spPendingExport?.metadataInfo?.fields?.[key2]?.available;
+    control.input.disabled = busy || !available;
+  }
+}
+function resetSpMetadataDialog() {
+  spMetadataOverwrite.textContent = "";
+  spMetadataOverwrite.hidden = true;
+  setSpMetadataNotice("");
+  setSpMetadataError("");
+  spMetadataKeep.hidden = true;
+  spMetadataCancel.hidden = false;
+  spMetadataClose.hidden = false;
+  for (const control of Object.values(spMetadataControls)) {
+    const wrapper = control.input.closest(".sp-metadata-field");
+    control.input.value = "";
+    control.input.disabled = true;
+    control.state.textContent = "Checking\u2026";
+    control.hint.textContent = "";
+    wrapper.classList.remove("available", "unavailable");
+  }
+  setSpMetadataBusy(true, "Checking fields\u2026");
+}
+function closeSpMetadataDialog() {
+  if (spMetadataBusy || spPendingExport?.uploadResult) return;
+  if (spMetadataDialog.open) spMetadataDialog.close();
+  spPendingExport = null;
+  spFilesPrimary.disabled = false;
+}
+function metadataValues() {
+  return {
+    title: spMetadataControls.title.input.value,
+    description: spMetadataControls.description.input.value,
+    docVersion: spMetadataControls.docVersion.input.value
+  };
+}
+function finishSpExport(metadataStatus = "saved") {
+  if (!spPendingExport) return;
+  const { name } = spPendingExport;
+  const detail = metadataStatus === "saved" ? " Metadata saved." : metadataStatus === "unavailable" ? " No supported metadata fields were available." : " Metadata was skipped.";
+  showToast(`${name} uploaded to SharePoint.${detail}`, "success");
+  statusRun.textContent = `${name} uploaded to SharePoint`;
+  statusRun.className = "status-item";
+  if (spMetadataDialog.open) spMetadataDialog.close();
+  if (spFilesDialog.open) spFilesDialog.close();
+  spPendingExport = null;
+  spMetadataBusy = false;
+}
+async function openSpMetadataDialog({ pane, name, text, existing }) {
+  spPendingExport = {
+    pane,
+    name,
+    text,
+    existing,
+    metadataInfo: null,
+    metadataInspectionFailed: false,
+    uploadResult: null
+  };
+  resetSpMetadataDialog();
+  spMetadataContext.textContent = existing ? `Review the destination metadata before replacing ${existing.name}.` : `Add metadata before uploading ${name}.`;
+  if (existing) {
+    spMetadataOverwrite.textContent = `Overwrite: ${existing.name} already exists. Saving here will replace that file.`;
+    spMetadataOverwrite.hidden = false;
+  }
+  if (!spMetadataDialog.open) spMetadataDialog.showModal();
+  spFilesPrimary.disabled = true;
+  try {
+    const metadataInfo = await inspectFileMetadata(spFolder.path, {
+      filePath: existing?.serverRelativeUrl || "",
+      webUrl: spTargetWebUrl
+    });
+    if (!spPendingExport || spPendingExport.name !== name) return;
+    spPendingExport.metadataInfo = metadataInfo;
+    const destinationTitle = existing && metadataInfo.fields.title.available ? metadataInfo.fields.title.value.trim() : "";
+    setSpMetadataField(
+      "title",
+      metadataInfo.fields.title,
+      destinationTitle || projectName()
+    );
+    setSpMetadataField(
+      "description",
+      metadataInfo.fields.description,
+      existing ? metadataInfo.fields.description.value : ""
+    );
+    setSpMetadataField(
+      "docVersion",
+      metadataInfo.fields.docVersion,
+      existing ? metadataInfo.fields.docVersion.value : ""
+    );
+    const available = Object.values(metadataInfo.fields).filter((field) => field.available).length;
+    if (!available) {
+      setSpMetadataNotice(
+        "None of the supported metadata fields are writable in this library. The file can still be uploaded."
+      );
+    }
+    setSpMetadataBusy(
+      false,
+      available ? existing ? "Overwrite file" : "Upload file" : existing ? "Overwrite without metadata" : "Upload without metadata"
+    );
+  } catch (error) {
+    if (!spPendingExport || spPendingExport.name !== name) return;
+    spPendingExport.metadataInspectionFailed = true;
+    spPendingExport.metadataInfo = {
+      fields: Object.fromEntries(Object.keys(spMetadataControls).map((key2) => [
+        key2,
+        {
+          available: false,
+          internalName: key2 === "docVersion" ? "DocVersion" : `${key2[0].toUpperCase()}${key2.slice(1)}`,
+          reason: "Could not inspect this field.",
+          value: ""
+        }
+      ]))
+    };
+    for (const [key2, field] of Object.entries(spPendingExport.metadataInfo.fields)) {
+      setSpMetadataField(key2, field, key2 === "title" ? projectName() : "");
+    }
+    setSpMetadataNotice(
+      `${error.message || error} The file can still be uploaded without metadata.`
+    );
+    setSpMetadataBusy(
+      false,
+      existing ? "Overwrite without metadata" : "Upload without metadata"
+    );
+  }
+}
+async function saveSpMetadata() {
+  if (spMetadataBusy || !spPendingExport) return;
+  const pending = spPendingExport;
+  setSpMetadataError("");
+  setSpMetadataBusy(
+    true,
+    pending.uploadResult ? "Saving metadata\u2026" : "Uploading file\u2026"
+  );
+  try {
+    if (!pending.uploadResult) {
+      pending.uploadResult = await writeTextFile(
+        spFolder.path,
+        pending.name,
+        pending.text,
+        {
+          overwrite: Boolean(pending.existing),
+          webUrl: spTargetWebUrl
+        }
+      );
+    }
+    const fields = pending.metadataInfo?.fields || {};
+    const available = Object.values(fields).some((field) => field.available);
+    if (!pending.metadataInspectionFailed && available) {
+      await writeFileMetadata(
+        pending.uploadResult.serverRelativeUrl,
+        fields,
+        metadataValues(),
+        { webUrl: spTargetWebUrl }
+      );
+      finishSpExport("saved");
+    } else {
+      finishSpExport("unavailable");
+    }
+  } catch (error) {
+    if (!spPendingExport) return;
+    if (pending.uploadResult) {
+      setSpMetadataError(
+        `The file was uploaded, but its metadata was not saved. ${error.message || error}`
+      );
+      spMetadataKeep.hidden = false;
+      spMetadataCancel.hidden = true;
+      spMetadataClose.hidden = true;
+      setSpMetadataBusy(false, "Retry metadata");
+    } else {
+      setSpMetadataError(error.message || String(error));
+      setSpMetadataBusy(
+        false,
+        pending.existing ? "Try overwrite again" : "Try upload again"
+      );
+    }
+  }
+}
+spMetadataSave.addEventListener("click", saveSpMetadata);
+spMetadataKeep.addEventListener("click", () => finishSpExport("skipped"));
+spMetadataClose.addEventListener("click", closeSpMetadataDialog);
+spMetadataCancel.addEventListener("click", closeSpMetadataDialog);
+spMetadataDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeSpMetadataDialog();
 });
 spFilesPrimary.addEventListener("click", async () => {
   if (spFilesBusy || !spFolder) return;
@@ -5960,15 +6374,12 @@ spFilesPrimary.addEventListener("click", async () => {
   }
   const pane = spExportPane.value;
   const name = spExportName.value.trim();
-  const expected = pane === "html" ? /\.(?:html|htm)$/i : new RegExp(`\\.${pane}$`, "i");
-  if (!/^[a-z0-9][a-z0-9._-]*\.(?:html?|css|js)$/i.test(name)) {
-    setSpError(
-      "Use a safe file name containing letters, numbers, dots, hyphens, or underscores."
-    );
+  if (!name) {
+    setSpError("Enter a file name.");
     return;
   }
-  if (!expected.test(name)) {
-    setSpError(`The file extension must match the ${pane.toUpperCase()} editor.`);
+  if (name === "." || name === ".." || /[\\/]/.test(name)) {
+    setSpError("Enter a file name, not a folder path.");
     return;
   }
   const text = editorsApi.getDocs()[pane];
@@ -5976,33 +6387,9 @@ spFilesPrimary.addEventListener("click", async () => {
     setSpError(`The ${pane.toUpperCase()} editor is empty.`);
     return;
   }
-  const existing = spFolder.files.find(
-    (file) => file.name.localeCompare(name, void 0, { sensitivity: "base" }) === 0
-  );
-  if (existing && !spOverwriteArmed) {
-    spOverwriteArmed = true;
-    setSpNotice(`${existing.name} already exists. Choose Overwrite to replace it.`);
-    spFilesPrimary.textContent = "Overwrite";
-    return;
-  }
-  spFilesBusy = true;
-  spFilesPrimary.disabled = true;
+  const existing = existingSpExportFile(name);
   setSpError("");
-  try {
-    await writeTextFile(spFolder.path, name, text, {
-      overwrite: Boolean(existing),
-      webUrl: spTargetWebUrl
-    });
-    showToast(`${name} uploaded to SharePoint.`, "success");
-    statusRun.textContent = `${name} uploaded to SharePoint`;
-    statusRun.className = "status-item";
-    spFilesDialog.close();
-  } catch (error) {
-    setSpError(error.message || String(error));
-    spFilesPrimary.disabled = false;
-  } finally {
-    spFilesBusy = false;
-  }
+  await openSpMetadataDialog({ pane, name, text, existing });
 });
 document.getElementById("btn-catalog-export").addEventListener("click", () => {
   downloadText2("dcspad-catalog.json", JSON.stringify(getCatalogDoc(), null, 2));

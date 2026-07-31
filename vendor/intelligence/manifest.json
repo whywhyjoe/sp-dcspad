@@ -9,8 +9,8 @@
   },
   "sources": {
     "colors_and_type.css": "4efdd56174e18522da6726d23d90b5bbd9b3477442b862c572ccd4f104057cd4",
-    "components.css": "3ade5669b61fb1db155b650df86ed1ef0fb5c17486924ea353172d318236cf7e",
-    "editorial.css": "8b2e97aa74f8f81e48c3c72cd215dc91ba5728ebef02b01951f9b4c54a91ed7c"
+    "components.css": "1aa61d96b26f5fe569990b5f14fdf3ad5d9d1d237a69982165ebc39f73f74a5c",
+    "editorial.css": "be780187f945051bc6fd85a4e8831257416263ac8da190fecc0fbee365a1e04b"
   },
   "fluentIcons": {
     "artifact": "fluent-icons.json",
@@ -22,7 +22,7 @@
     },
     "source": {
       "file": "fluent-icon-library.json",
-      "sha256": "d3ee1ead9c6084f8effdd589e8532f4bb3c2e85d9af0ca04a4161495dc80627b"
+      "sha256": "67e72e53665c51c474f09c166ced1642a16ce80c3fc0f9dfd59bc3f0c24bccc8"
     }
   }
 }

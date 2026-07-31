@@ -69,10 +69,12 @@ export function validateFrameworkCatalog(doc, { allowUnsignedEmpty = false } = {
         || !isNonEmptyString(item.name)
         || !validSource
         || (item.js !== undefined && typeof item.js !== 'string')
-        || (item.css !== undefined && typeof item.css !== 'string')) {
+        || (item.css !== undefined && typeof item.css !== 'string')
+        || (item.order !== undefined
+          && (!Number.isInteger(item.order) || item.order < 1))) {
       return {
         ok: false,
-        message: `Item ${index + 1} is not a valid framework entry (expected id, name, and a JS/CSS source).`,
+        message: `Item ${index + 1} is not a valid framework entry (expected id, name, a JS/CSS source, and an optional positive integer order).`,
       };
     }
   }
