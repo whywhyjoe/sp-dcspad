@@ -91,6 +91,7 @@ await page.route('**/_api/**', async (route) => {
     return;
   }
   if (url.includes('/Files/AddUsingPath(')) {
+    const otherSite = url.includes('/sites/other/_api/');
     upload = {
       url,
       body: request.postData() || '',
@@ -100,21 +101,34 @@ await page.route('**/_api/**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ServerRelativeUrl: '/existing.css' }),
+      body: JSON.stringify({
+        ServerRelativeUrl: otherSite ? '/sites/other/existing.css' : '/existing.css',
+      }),
     });
     return;
   }
   if (url.includes('/GetFolderByServerRelativePath(')
       && new URL(url).searchParams.get('$expand')
         === 'ListItemAllFields,ListItemAllFields/ParentList') {
+    const libraryRoot = decodeURIComponent(url).includes("decodedUrl='/sites/other'");
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
+      body: JSON.stringify(libraryRoot ? {
+        ListItemAllFields: {},
+      } : {
         ListItemAllFields: {
           ParentList: { Id: metadataLibraryId },
         },
       }),
+    });
+    return;
+  }
+  if (url.includes('/GetList(@listUrl)')) {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ Id: metadataLibraryId }),
     });
     return;
   }
@@ -126,13 +140,15 @@ await page.route('**/_api/**', async (route) => {
         value: [
           {
             InternalName: 'Title',
+            EntityPropertyName: 'Title',
             Title: 'Document title',
             TypeAsString: 'Text',
             ReadOnlyField: false,
             Hidden: false,
           },
           {
-            InternalName: 'Description',
+            InternalName: '_ExtendedDescription',
+            EntityPropertyName: 'OData__ExtendedDescription',
             Title: 'Summary',
             TypeAsString: 'Note',
             ReadOnlyField: false,
@@ -140,6 +156,7 @@ await page.route('**/_api/**', async (route) => {
           },
           ...(includeDocVersion ? [{
             InternalName: 'DocVersion',
+            EntityPropertyName: 'DocVersion',
             Title: 'Version label may vary',
             TypeAsString: 'Text',
             ReadOnlyField: false,
@@ -180,7 +197,7 @@ await page.route('**/_api/**', async (route) => {
       contentType: 'application/json',
       body: JSON.stringify({
         Title: 'Destination file title',
-        Description: 'Existing destination description',
+        OData__ExtendedDescription: 'Existing destination description',
         DocVersion: '1.4',
       }),
     });
@@ -462,17 +479,34 @@ await page.selectOption('#sp-export-pane', 'css');
 await page.fill('#sp-export-name', 'existing.css');
 await page.click('#sp-files-primary');
 await page.waitForSelector('#sp-metadata-dialog[open]');
-await check('metadata schema is read from the resolved destination library GUID', () => {
-  const libraryRequest = apiRequests.find((url) => {
+await page.waitForFunction(() => {
+  const title = document.getElementById('sp-metadata-title-input');
+  return title && !title.disabled && title.value === 'Destination file title';
+});
+await check('library-root metadata resolves the destination library GUID', () => {
+  const folderLibraryRequest = apiRequests.find((url) => {
     const requestUrl = new URL(url);
     return requestUrl.pathname.includes('/GetFolderByServerRelativePath(')
       && requestUrl.searchParams.get('$select') === 'ListItemAllFields/ParentList/Id'
       && requestUrl.searchParams.get('$expand')
         === 'ListItemAllFields,ListItemAllFields/ParentList';
   });
+  const rootLibraryRequest = apiRequests.find((url) => {
+    const requestUrl = new URL(url);
+    return requestUrl.pathname.includes('/GetList(@listUrl)')
+      && requestUrl.searchParams.get('@listUrl') === "'/sites/other'"
+      && requestUrl.searchParams.get('$select') === 'Id';
+  });
   const fieldsRequest = apiRequests.find((url) =>
     decodeURIComponent(url).includes(`/lists(guid'${metadataLibraryId}')/Fields`));
-  return Boolean(libraryRequest && fieldsRequest);
+  const valuesRequest = apiRequests.find((url) =>
+    url.includes('/GetFileByServerRelativePath(')
+    && decodeURIComponent(url).includes(
+      '$select=Title,OData__ExtendedDescription,DocVersion',
+    ));
+  return Boolean(
+    folderLibraryRequest && rootLibraryRequest && fieldsRequest && valuesRequest,
+  );
 });
 await check('existing SharePoint metadata is guarded and prepopulated', async () =>
   (await page.locator('#sp-metadata-title-input').inputValue()) === 'Destination file title'
@@ -501,7 +535,7 @@ await check('successful SharePoint upload writes available custom metadata', () 
   return update?.digest === 'OTHER-DIGEST'
     && update.body.bNewDocumentUpdate === true
     && fields.Title === 'Destination file title'
-    && fields.Description === 'Updated destination description'
+    && fields._ExtendedDescription === 'Updated destination description'
     && fields.DocVersion === '2.0';
 });
 
@@ -519,6 +553,11 @@ await page.fill('#sp-export-name', 'metadata-failure');
 const uploadsBeforeMetadataFailure = uploads.length;
 await page.click('#sp-files-primary');
 await page.waitForSelector('#sp-metadata-dialog[open]');
+await page.waitForFunction(() => {
+  const title = document.getElementById('sp-metadata-title-input');
+  const docVersion = document.getElementById('sp-metadata-doc-version');
+  return title && !title.disabled && docVersion?.disabled;
+});
 await check('new file metadata uses project title and disables a missing DocVersion field', async () =>
   (await page.locator('#sp-metadata-title-input').inputValue()) === 'Current project title'
   && !(await page.locator('#sp-metadata-title-input').isDisabled())

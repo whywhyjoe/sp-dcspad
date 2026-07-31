@@ -18,6 +18,7 @@ import {
 } from './library-files.js';
 
 // Seed only — after first boot the stored catalog is the truth.
+const FRAMEWORK_CATALOG_VERSION = 2;
 export const PRESETS = [
   { id: 'dcs-standard', name: 'DCS Standard Include', order: 3, needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
@@ -26,7 +27,8 @@ export const PRESETS = [
     hint: 'Exposes compatible globals pnp2 and pnp — use const { sp } = pnp;' },
   { id: 'alpine', name: 'Alpine.js 3.15.2', js: 'lib-mirror/alpine.js',
     intelligence: ['alpine-3'] },
-  { id: 'fluent', name: 'Fluent System Icons ', css: '../../fluent-icons/fonts/FluentSystemIcons-All.css' },
+  { id: 'bsp-design', name: 'BSP Design System', css: 'Code/bsp-design/styles.css' },
+  { id: 'fluent', name: 'Fluent System Icons', css: 'Code/fluent-icons/fonts/FluentSystemIcons-All.css' },
   { id: 'chartjs', name: 'Chart.js', js: 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js' },
   { id: 'lodash', name: 'Lodash', js: 'https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js' },
   { id: 'exceljs', name: 'ExcelJS', js: 'https://cdn.jsdelivr.net/npm/exceljs@4/dist/exceljs.min.js' },
@@ -85,9 +87,41 @@ function inheritPresetOrders(items) {
 
 const defaultCatalog = () => ({
   kind: FRAMEWORK_CATALOG_KIND,
-  v: 1,
+  v: FRAMEWORK_CATALOG_VERSION,
   items: materializeCatalogOrder(structuredClone(PRESETS)),
 });
+
+// Catalog v2 restores the two maintained CSS frameworks. Persist the migration
+// version so a user may still remove or reorder either entry afterward.
+function migrateCatalogV2() {
+  if (Number(catalog.v) >= FRAMEWORK_CATALOG_VERSION) return false;
+
+  const hadCompleteOrder = catalog.items
+    .every((entry, index) => entry.order === index + 1);
+  const bspPreset = PRESETS.find((entry) => entry.id === 'bsp-design');
+  const fluentPreset = PRESETS.find((entry) => entry.id === 'fluent');
+  let fluentIndex = catalog.items.findIndex((entry) => entry.id === 'fluent');
+
+  if (fluentIndex !== -1) {
+    catalog.items[fluentIndex] = {
+      ...catalog.items[fluentIndex],
+      name: fluentPreset.name,
+      css: fluentPreset.css,
+    };
+  }
+
+  if (!catalog.items.some((entry) => entry.id === 'bsp-design')) {
+    fluentIndex = catalog.items.findIndex((entry) => entry.id === 'fluent');
+    const insertAt = fluentIndex !== -1
+      ? fluentIndex
+      : Math.min(3, catalog.items.length);
+    catalog.items.splice(insertAt, 0, structuredClone(bspPreset));
+  }
+
+  catalog.v = FRAMEWORK_CATALOG_VERSION;
+  if (hadCompleteOrder) syncCatalogOrder();
+  return true;
+}
 
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 const entryFromUrl = (url, name) => ({
@@ -108,8 +142,10 @@ export function initLibraries({ config, onChange, onStorageError }) {
   catalog = storedValidation?.ok ? storedValidation.doc : null;
 
   if (catalog) {
+    const migratedCatalog = migrateCatalogV2();
     const inheritedPresetOrder = inheritPresetOrders(catalog.items);
-    const orderNeedsSync = inheritedPresetOrder
+    const orderNeedsSync = migratedCatalog
+      || inheritedPresetOrder
       || catalog.items.some((entry, index) => entry.order !== index + 1);
     catalog.items = materializeCatalogOrder(catalog.items);
     if (orderNeedsSync) persistCatalog();
@@ -595,6 +631,7 @@ export function replaceCatalog(doc) {
   const validation = validateFrameworkCatalog(doc);
   if (!validation.ok) return false;
   catalog = validation.doc;
+  migrateCatalogV2();
   catalog.items = materializeCatalogOrder(catalog.items);
   const items = catalog.items;
   persistCatalog();

@@ -13,7 +13,7 @@ import {
 const DIGEST_SAFETY_MS = 60_000;
 const FILE_METADATA_SPECS = Object.freeze([
   { key: 'title', label: 'Title', internalName: 'Title', types: ['Text'] },
-  { key: 'description', label: 'Description', internalName: 'Description', types: ['Note', 'Text'] },
+  { key: 'description', label: 'Description', internalName: '_ExtendedDescription', types: ['Note', 'Text'] },
   { key: 'docVersion', label: 'DocVersion', internalName: 'DocVersion', types: ['Text'] },
 ]);
 
@@ -288,17 +288,34 @@ export function createSpFilesClient({
     const libraryResponse = await request(libraryEndpoint, {
       headers: { Accept: ACCEPT_JSON },
     });
-    await requireOk(
-      libraryResponse,
-      'Could not resolve the destination SharePoint library',
-      'metadata-library',
-    );
-    const libraryData = unwrapJson(await libraryResponse.json()) || {};
-    const libraryId = String(
+    const libraryData = libraryResponse.ok
+      ? (unwrapJson(await libraryResponse.json()) || {})
+      : {};
+    let libraryId = String(
       libraryData.ListItemAllFields?.ParentList?.Id
       || libraryData.ListItemAllFields?.ParentList?.ID
       || '',
     ).replace(/[{}]/g, '').trim();
+
+    // A document library's root folder has no corresponding list item, so
+    // ListItemAllFields.ParentList can be empty even though files may be saved
+    // there. Resolve the list directly from its root URL in that case.
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+      const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)`
+        + `?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
+      const rootLibraryResponse = await request(rootLibraryEndpoint, {
+        headers: { Accept: ACCEPT_JSON },
+      });
+      await requireOk(
+        rootLibraryResponse,
+        'Could not resolve the destination SharePoint library',
+        'metadata-library',
+      );
+      const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
+      libraryId = String(rootLibraryData.Id || rootLibraryData.ID || '')
+        .replace(/[{}]/g, '')
+        .trim();
+    }
     if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
       throw new SpFileError(
         'SharePoint did not identify the destination document library.',
@@ -307,7 +324,7 @@ export function createSpFilesClient({
     }
 
     const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields`
-      + '?$select=InternalName,Title,TypeAsString,ReadOnlyField,Hidden';
+      + '?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden';
     const fieldsResponse = await request(fieldsEndpoint, {
       headers: { Accept: ACCEPT_JSON },
     });
@@ -334,6 +351,8 @@ export function createSpFilesClient({
       fields[spec.key] = {
         label: spec.label,
         internalName: match?.InternalName || spec.internalName,
+        entityPropertyName:
+          match?.EntityPropertyName || match?.InternalName || spec.internalName,
         available: !reason,
         reason,
         value: '',
@@ -344,7 +363,7 @@ export function createSpFilesClient({
       const path = checkedPath(filePath, rootPath);
       const selected = Object.values(fields)
         .filter((field) => field.available)
-        .map((field) => field.internalName);
+        .map((field) => field.entityPropertyName);
       if (selected.length) {
         const valuesEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
           + `decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields`
@@ -359,7 +378,11 @@ export function createSpFilesClient({
         );
         const values = unwrapJson(await valuesResponse.json()) || {};
         for (const field of Object.values(fields)) {
-          if (field.available) field.value = String(values[field.internalName] ?? '');
+          if (field.available) {
+            field.value = String(
+              values[field.entityPropertyName] ?? values[field.internalName] ?? '',
+            );
+          }
         }
       }
     }

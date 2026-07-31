@@ -20,6 +20,14 @@
         "intelligence": [
           "alpine-3"
         ]
+      },
+      "bsp-design": {
+        "localUrl": "Code/bsp-design/styles.css",
+        "cdnUrl": ""
+      },
+      "fluent": {
+        "localUrl": "Code/fluent-icons/fonts/FluentSystemIcons-All.css",
+        "cdnUrl": ""
       }
     }
   },
@@ -54,11 +62,7 @@
     "url": "https://m365.cloud.microsoft/chat"
   },
   "workbench": {
-<<<<<<< Updated upstream
-    "url": "../SitePages/tools/SPworkbench.aspx"
-=======
     "url": "https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/tools/SPWorkbench.aspx"
->>>>>>> Stashed changes
   },
   "assets": {
     "designSystem": {

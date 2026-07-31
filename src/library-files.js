@@ -88,7 +88,7 @@ export function validateFrameworkCatalog(doc, { allowUnsignedEmpty = false } = {
     ok: true,
     doc: {
       kind: FRAMEWORK_CATALOG_KIND,
-      v: 1,
+      v: Number.isInteger(doc.v) && doc.v > 0 ? doc.v : 1,
       items: doc.items.map((item) => ({ ...item })),
     },
   };

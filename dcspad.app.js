@@ -2738,7 +2738,7 @@ function validateFrameworkCatalog(doc2, { allowUnsignedEmpty = false } = {}) {
     ok: true,
     doc: {
       kind: FRAMEWORK_CATALOG_KIND,
-      v: 1,
+      v: Number.isInteger(doc2.v) && doc2.v > 0 ? doc2.v : 1,
       items: doc2.items.map((item) => ({ ...item }))
     }
   };
@@ -2775,6 +2775,7 @@ function validateSnippetLibrary(doc2, { allowUnsignedEmpty = false } = {}) {
 }
 
 // ../src/libraries.js
+var FRAMEWORK_CATALOG_VERSION = 2;
 var PRESETS = [
   {
     id: "dcs-standard",
@@ -2796,7 +2797,8 @@ var PRESETS = [
     js: "lib-mirror/alpine.js",
     intelligence: ["alpine-3"]
   },
-  { id: "fluent", name: "Fluent System Icons ", css: "../../fluent-icons/fonts/FluentSystemIcons-All.css" },
+  { id: "bsp-design", name: "BSP Design System", css: "Code/bsp-design/styles.css" },
+  { id: "fluent", name: "Fluent System Icons", css: "Code/fluent-icons/fonts/FluentSystemIcons-All.css" },
   { id: "chartjs", name: "Chart.js", js: "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" },
   { id: "lodash", name: "Lodash", js: "https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js" },
   { id: "exceljs", name: "ExcelJS", js: "https://cdn.jsdelivr.net/npm/exceljs@4/dist/exceljs.min.js" },
@@ -2845,9 +2847,31 @@ function inheritPresetOrders(items) {
 }
 var defaultCatalog = () => ({
   kind: FRAMEWORK_CATALOG_KIND,
-  v: 1,
+  v: FRAMEWORK_CATALOG_VERSION,
   items: materializeCatalogOrder(structuredClone(PRESETS))
 });
+function migrateCatalogV2() {
+  if (Number(catalog.v) >= FRAMEWORK_CATALOG_VERSION) return false;
+  const hadCompleteOrder = catalog.items.every((entry, index) => entry.order === index + 1);
+  const bspPreset = PRESETS.find((entry) => entry.id === "bsp-design");
+  const fluentPreset = PRESETS.find((entry) => entry.id === "fluent");
+  let fluentIndex = catalog.items.findIndex((entry) => entry.id === "fluent");
+  if (fluentIndex !== -1) {
+    catalog.items[fluentIndex] = {
+      ...catalog.items[fluentIndex],
+      name: fluentPreset.name,
+      css: fluentPreset.css
+    };
+  }
+  if (!catalog.items.some((entry) => entry.id === "bsp-design")) {
+    fluentIndex = catalog.items.findIndex((entry) => entry.id === "fluent");
+    const insertAt = fluentIndex !== -1 ? fluentIndex : Math.min(3, catalog.items.length);
+    catalog.items.splice(insertAt, 0, structuredClone(bspPreset));
+  }
+  catalog.v = FRAMEWORK_CATALOG_VERSION;
+  if (hadCompleteOrder) syncCatalogOrder();
+  return true;
+}
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 var entryFromUrl = (url, name) => ({
   id: newId("lib"),
@@ -2863,8 +2887,9 @@ function initLibraries({ config, onChange, onStorageError }) {
   const storedValidation = storedCatalog ? validateFrameworkCatalog(storedCatalog, { allowUnsignedEmpty: true }) : null;
   catalog = storedValidation?.ok ? storedValidation.doc : null;
   if (catalog) {
+    const migratedCatalog = migrateCatalogV2();
     const inheritedPresetOrder = inheritPresetOrders(catalog.items);
-    const orderNeedsSync = inheritedPresetOrder || catalog.items.some((entry, index) => entry.order !== index + 1);
+    const orderNeedsSync = migratedCatalog || inheritedPresetOrder || catalog.items.some((entry, index) => entry.order !== index + 1);
     catalog.items = materializeCatalogOrder(catalog.items);
     if (orderNeedsSync) persistCatalog();
   }
@@ -3281,6 +3306,7 @@ function replaceCatalog(doc2) {
   const validation = validateFrameworkCatalog(doc2);
   if (!validation.ok) return false;
   catalog = validation.doc;
+  migrateCatalogV2();
   catalog.items = materializeCatalogOrder(catalog.items);
   const items = catalog.items;
   persistCatalog();
@@ -3830,7 +3856,7 @@ async function requireOk(response, fallback, code) {
 var DIGEST_SAFETY_MS = 6e4;
 var FILE_METADATA_SPECS = Object.freeze([
   { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
-  { key: "description", label: "Description", internalName: "Description", types: ["Note", "Text"] },
+  { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
   { key: "docVersion", label: "DocVersion", internalName: "DocVersion", types: ["Text"] }
 ]);
 function normalizedPath(value) {
@@ -4058,22 +4084,30 @@ function createSpFilesClient({
     const libraryResponse = await request(libraryEndpoint, {
       headers: { Accept: ACCEPT_JSON }
     });
-    await requireOk(
-      libraryResponse,
-      "Could not resolve the destination SharePoint library",
-      "metadata-library"
-    );
-    const libraryData = unwrapJson(await libraryResponse.json()) || {};
-    const libraryId = String(
+    const libraryData = libraryResponse.ok ? unwrapJson(await libraryResponse.json()) || {} : {};
+    let libraryId = String(
       libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
     ).replace(/[{}]/g, "").trim();
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+      const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
+      const rootLibraryResponse = await request(rootLibraryEndpoint, {
+        headers: { Accept: ACCEPT_JSON }
+      });
+      await requireOk(
+        rootLibraryResponse,
+        "Could not resolve the destination SharePoint library",
+        "metadata-library"
+      );
+      const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
+      libraryId = String(rootLibraryData.Id || rootLibraryData.ID || "").replace(/[{}]/g, "").trim();
+    }
     if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
       throw new SpFileError(
         "SharePoint did not identify the destination document library.",
         { code: "metadata-library" }
       );
     }
-    const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,Title,TypeAsString,ReadOnlyField,Hidden`;
+    const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden`;
     const fieldsResponse = await request(fieldsEndpoint, {
       headers: { Accept: ACCEPT_JSON }
     });
@@ -4097,6 +4131,7 @@ function createSpFilesClient({
       fields[spec.key] = {
         label: spec.label,
         internalName: match?.InternalName || spec.internalName,
+        entityPropertyName: match?.EntityPropertyName || match?.InternalName || spec.internalName,
         available: !reason,
         reason,
         value: ""
@@ -4104,7 +4139,7 @@ function createSpFilesClient({
     }
     if (filePath) {
       const path = checkedPath(filePath, rootPath);
-      const selected = Object.values(fields).filter((field) => field.available).map((field) => field.internalName);
+      const selected = Object.values(fields).filter((field) => field.available).map((field) => field.entityPropertyName);
       if (selected.length) {
         const valuesEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields?$select=${selected.map(encodeURIComponent).join(",")}`;
         const valuesResponse = await request(valuesEndpoint, {
@@ -4117,7 +4152,11 @@ function createSpFilesClient({
         );
         const values = unwrapJson(await valuesResponse.json()) || {};
         for (const field of Object.values(fields)) {
-          if (field.available) field.value = String(values[field.internalName] ?? "");
+          if (field.available) {
+            field.value = String(
+              values[field.entityPropertyName] ?? values[field.internalName] ?? ""
+            );
+          }
         }
       }
     }
@@ -5249,8 +5288,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "58-dirty" : "dev";
-var injectedRevision = true ? "199f51c4-dirty" : "";
+var injectedBuild = true ? "60-dirty" : "dev";
+var injectedRevision = true ? "a33b5c90-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,

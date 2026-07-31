@@ -651,10 +651,14 @@ await check('framework reset restores PRESETS and clears workspace selections', 
       && JSON.stringify(workspace.libraries.pinned) === JSON.stringify(['pnpjs2']);
   }));
 
-// A catalog saved before explicit order fields existed should adopt the
-// built-in DCS position once, then persist concrete order values.
+// A v1 catalog should restore the maintained CSS pair, repair Fluent's old
+// origin-root URL, and adopt the built-in ordering once.
 await page.evaluate(() => {
   const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
+  stored.v = 1;
+  stored.items = stored.items.filter((item) => item.id !== 'bsp-design');
+  const fluent = stored.items.find((item) => item.id === 'fluent');
+  fluent.css = '/fluent-icons/fonts/FluentSystemIcons-All.css';
   const dcsIndex = stored.items.findIndex((item) => item.id === 'dcs-standard');
   const [dcs] = stored.items.splice(dcsIndex, 1);
   stored.items.unshift(dcs);
@@ -662,10 +666,17 @@ await page.evaluate(() => {
   localStorage.setItem('dcspad.v2.catalog', JSON.stringify(stored));
 });
 await page.reload();
-await check('legacy framework catalog adopts explicit preset order', () =>
+await page.waitForFunction(() =>
+  JSON.parse(localStorage.getItem('dcspad.v2.catalog'))?.v === 2);
+await check('legacy framework catalog restores maintained CSS frameworks in order', () =>
   page.evaluate(() => {
     const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
-    return stored.items[2].id === 'dcs-standard'
+    const bspIndex = stored.items.findIndex((item) => item.id === 'bsp-design');
+    const fluentIndex = stored.items.findIndex((item) => item.id === 'fluent');
+    return stored.v === 2
+      && stored.items[2].id === 'dcs-standard'
+      && bspIndex + 1 === fluentIndex
+      && stored.items[fluentIndex].css === 'Code/fluent-icons/fonts/FluentSystemIcons-All.css'
       && stored.items.every((item, index) => item.order === index + 1);
   }));
 

@@ -82,6 +82,14 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
           probeGlobal: 'testlib',
           intelligence: ['alpine-3'],
         },
+        'bsp-design': {
+          localUrl: 'Code/bsp-design/styles.css',
+          cdnUrl: '',
+        },
+        fluent: {
+          localUrl: 'Code/fluent-icons/fonts/FluentSystemIcons-All.css',
+          cdnUrl: '',
+        },
       },
     },
     docs: [
@@ -167,6 +175,25 @@ await check('relative local URLs resolve from the configured SharePoint site roo
     asset: `${siteRoot}/bsp-design-system/`,
     framework: primaryUrl,
     workbench: `${siteRoot}/_layouts/15/SPWorkbench.aspx`,
+  }));
+
+await check('maintained CSS frameworks resolve from siteURL in injection order', () =>
+  page.evaluate(async (expected) => {
+    const [{ getAppConfig, applyFrameworkConfig }, { PRESETS }] = await Promise.all([
+      import('/src/config.js?v=2'),
+      import('/src/libraries.js'),
+    ]);
+    const config = getAppConfig();
+    const bspIndex = PRESETS.findIndex((entry) => entry.id === 'bsp-design');
+    const fluentIndex = PRESETS.findIndex((entry) => entry.id === 'fluent');
+    const bsp = applyFrameworkConfig(PRESETS[bspIndex], config);
+    const fluent = applyFrameworkConfig(PRESETS[fluentIndex], config);
+    return bspIndex + 1 === fluentIndex
+      && bsp.css === expected.bsp
+      && fluent.css === expected.fluent;
+  }, {
+    bsp: `${siteRoot}/Code/bsp-design/styles.css`,
+    fluent: `${siteRoot}/Code/fluent-icons/fonts/FluentSystemIcons-All.css`,
   }));
 
 await check('Browser bookmarks and Copilot URLs normalize from dcspad.config.json', () =>
