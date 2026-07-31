@@ -54,7 +54,11 @@
     "url": "https://m365.cloud.microsoft/chat"
   },
   "workbench": {
+<<<<<<< Updated upstream
     "url": "../SitePages/tools/SPworkbench.aspx"
+=======
+    "url": "https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/tools/SPWorkbench.aspx"
+>>>>>>> Stashed changes
   },
   "assets": {
     "designSystem": {
