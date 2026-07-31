@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dcspad",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8652"],
+      "port": 8652
+    }
+  ]
+}
