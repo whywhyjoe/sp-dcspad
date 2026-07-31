@@ -30,7 +30,8 @@ function displayValue(row, col) {
   return String(v);
 }
 
-// columns: [{ key, label, value?(row), format?(v,row), copyable?, mono?, width? }]
+// columns: [{ key, label, value?(row), format?(v,row), render?(v,row)=>Node,
+//             copyable?, mono?, width? }]
 // exportName enables the toolbar export menu; it's the download file stem.
 // descriptor { path, options, webUrl } enables the "Copy as…" script menu.
 export function createGrid({
@@ -187,6 +188,14 @@ export function createGrid({
       for (const col of columns) {
         const td = el('td', col.mono ? 'wb-mono' : '');
         const text = displayValue(row, col);
+        if (typeof col.render === 'function') {
+          // Custom cell node (e.g. anchors); displayValue still drives
+          // filter/sort/export, so renders stay data-consistent.
+          const node = col.render(cellValue(row, col), row);
+          if (node) td.append(node);
+          tr.append(td);
+          continue;
+        }
         if (col.copyable && text) {
           const span = el('span', 'sp-copy', text);
           span.title = 'Click to copy';

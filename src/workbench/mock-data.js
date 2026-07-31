@@ -50,6 +50,36 @@ const FIELDS = {
     field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true, Hidden: false }),
     field('Content Type', 'ContentType', 'Computed', 12, { Hidden: true, ReadOnlyField: true }),
   ],
+  // Documents library: the full editor-type spread for the Files browser,
+  // including a read-only User field displayed via FieldValuesAsText.
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e01': [
+    field('Title', 'Title', 'Text', 2),
+    field('Document category', 'DocCategory', 'Choice', 6, {
+      Choices: ['Contract', 'Report', 'Misc'], DefaultValue: 'Misc',
+    }),
+    field('Confidential', 'Confidential', 'Boolean', 8),
+    field('Published date', 'PublishedDate', 'DateTime', 4),
+    field('Source link', 'SourceLink', 'URL', 11),
+    field('DocVersion', 'DocVersion', 'Text', 2),
+    field('Author', 'Author', 'User', 20, { ReadOnlyField: true }),
+    field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true }),
+  ],
+  // Site Pages: one field per editor type the metadata form supports, plus
+  // the content fields the editor must refuse to touch.
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02': [
+    field('Title', 'Title', 'Text', 2, { Required: true }),
+    field('Description', 'Description', 'Note', 3),
+    field('Page category', 'PageCategory', 'Choice', 6, {
+      Choices: ['Announcement', 'How-to', 'Reference'], DefaultValue: 'Reference',
+    }),
+    field('Review date', 'ReviewDate', 'DateTime', 4),
+    field('Show in navigation', 'ShowInNav', 'Boolean', 8),
+    field('Related link', 'RelatedLink', 'URL', 11),
+    field('Promoted state', 'PromotedState', 'Number', 9, { ReadOnlyField: true }),
+    field('Editor', 'Editor', 'User', 20, { ReadOnlyField: true }),
+    field('Canvas content', 'CanvasContent1', 'Note', 3),
+    field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true }),
+  ],
 };
 
 const DEFAULT_FIELDS = [
@@ -79,6 +109,221 @@ function field(title, internal, type, kind, extra = {}) {
     ...extra,
   };
 }
+
+// List items, keyed by list id. Only the lists a Tier 2 view exercises need
+// fixtures; unknown lists resolve to an empty collection.
+const PROJECT_ITEMS = [
+  item(1, 'Intranet refresh', { ProjectStatus: 'Active', DueDate: '2026-09-15T00:00:00Z', Budget: 12000 }),
+  item(2, 'Records migration', { ProjectStatus: 'Planned', DueDate: '2026-11-01T00:00:00Z', Budget: 40000 }),
+  item(3, 'Team site cleanup', { ProjectStatus: 'Done', DueDate: '2026-03-30T00:00:00Z', Budget: 1500 }),
+  item(4, 'Permission audit', { ProjectStatus: 'Blocked', DueDate: '2026-08-05T00:00:00Z', Budget: 0 }),
+  item(5, 'Search tuning', { ProjectStatus: 'Active', DueDate: '2026-10-20T00:00:00Z', Budget: 8000 }),
+  item(6, 'Archive rollout', { ProjectStatus: 'Planned', DueDate: '2027-01-10T00:00:00Z', Budget: 22000 }),
+];
+
+function item(id, title, extra = {}) {
+  return {
+    Id: id,
+    ID: id,
+    Title: title,
+    Modified: '2026-07-18T10:00:00Z',
+    Created: '2026-05-02T09:00:00Z',
+    ...extra,
+  };
+}
+
+// Modern-page canvas fixtures for the Pages view. The JSON payload covers a
+// full-width text section, a 6/6 two-column section (known + unknown web
+// parts), a page-settings slice, and one malformed entry so the tolerant
+// parser's degrade path stays exercised.
+const HOME_CANVAS = JSON.stringify([
+  {
+    controlType: 4,
+    id: 'a1000000-0000-4000-8000-000000000001',
+    position: { zoneIndex: 1, sectionIndex: 1, controlIndex: 1, sectionFactor: 12, layoutIndex: 1 },
+    emphasis: {},
+    innerHTML: '<h2>Welcome</h2><p>Welcome to the mock intranet home page.</p>',
+  },
+  {
+    controlType: 3,
+    id: 'a1000000-0000-4000-8000-000000000002',
+    position: { zoneIndex: 2, sectionIndex: 1, controlIndex: 1, sectionFactor: 6, layoutIndex: 1 },
+    emphasis: { zoneEmphasis: 1 },
+    webPartId: 'c70391ea-0b10-4ee9-b2b4-006d3fcad0cd',
+    webPartData: {
+      id: 'c70391ea-0b10-4ee9-b2b4-006d3fcad0cd',
+      title: 'Quick links',
+      description: 'Mock quick links',
+      properties: { items: [{ title: 'Docs' }, { title: 'Pad' }] },
+      serverProcessedContent: {
+        htmlStrings: {},
+        searchablePlainTexts: { 'items[0].title': 'Docs', 'items[1].title': 'Pad' },
+        imageSources: {},
+        links: { baseUrl: '/SitePages' },
+      },
+    },
+  },
+  {
+    controlType: 3,
+    id: 'a1000000-0000-4000-8000-000000000003',
+    position: { zoneIndex: 2, sectionIndex: 2, controlIndex: 1, sectionFactor: 6, layoutIndex: 1 },
+    emphasis: { zoneEmphasis: 1 },
+    webPartId: 'ffff0000-1111-2222-3333-444455556666',
+    webPartData: {
+      id: 'ffff0000-1111-2222-3333-444455556666',
+      title: 'Mystery part',
+      properties: {},
+      serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} },
+    },
+  },
+  { horrible: 'shape', with: ['no', 'controlType'] },
+  { controlType: 0, pageSettingsSlice: { isDefaultDescription: true, isDefaultThumbnail: true } },
+]);
+
+// Legacy HTML storage format — attribute-encoded control JSON + nested RTE.
+const LEGACY_CANVAS = '<div><div data-sp-canvascontrol="" data-sp-canvasdataversion="1.0"'
+  + ' data-sp-controldata="{&quot;controlType&quot;:4,&quot;id&quot;:&quot;b2000000-0000-4000-8000-000000000001&quot;,'
+  + '&quot;position&quot;:{&quot;zoneIndex&quot;:1,&quot;sectionIndex&quot;:1,&quot;controlIndex&quot;:1,&quot;sectionFactor&quot;:12}}">'
+  + '<div data-sp-rte=""><p>Legacy formatted news body.</p></div></div></div>';
+
+const SITEPAGES_ITEMS = [
+  {
+    ...item(1, 'Home', {
+      FileLeafRef: 'Home.aspx',
+      FileRef: '/SitePages/Home.aspx',
+      FileDirRef: '/SitePages',
+      PromotedState: 0,
+      UniqueId: 'ee000000-0000-4000-8000-000000000001',
+      Author: { Title: 'Mock Developer' },
+      Editor: { Title: 'Mock Developer' },
+      CanvasContent1: HOME_CANVAS,
+      LayoutWebpartsContent: null,
+      Description: 'Mock landing page.',
+      BannerImageUrl: null,
+      PageCategory: 'Announcement',
+      ReviewDate: '2026-08-01T00:00:00Z',
+      ShowInNav: true,
+      RelatedLink: { Url: 'https://example.com', Description: 'Example' },
+      FieldValuesAsText: { Editor: 'Mock Developer', CanvasContent1: '(canvas markup)' },
+    }),
+  },
+  {
+    ...item(2, 'Release notes', {
+      FileLeafRef: 'News-Update.aspx',
+      FileRef: '/SitePages/News-Update.aspx',
+      FileDirRef: '/SitePages',
+      PromotedState: 2,
+      UniqueId: 'ee000000-0000-4000-8000-000000000002',
+      Author: { Title: 'Pat Example' },
+      Editor: { Title: 'Pat Example' },
+      CanvasContent1: LEGACY_CANVAS,
+      FieldValuesAsText: { Editor: 'Pat Example' },
+    }),
+  },
+  {
+    ...item(3, 'Blank page', {
+      FileLeafRef: 'Blank.aspx',
+      FileRef: '/SitePages/Blank.aspx',
+      FileDirRef: '/SitePages',
+      PromotedState: 0,
+      UniqueId: 'ee000000-0000-4000-8000-000000000003',
+      Author: { Title: 'Mock Developer' },
+      Editor: { Title: 'Mock Developer' },
+      CanvasContent1: null,
+      FieldValuesAsText: { Editor: 'Mock Developer' },
+    }),
+  },
+  // Pages in subfolders — the Pages view surfaces and sorts by folder.
+  {
+    ...item(4, 'Weekly roundup', {
+      FileLeafRef: 'Weekly.aspx',
+      FileRef: '/SitePages/news/Weekly.aspx',
+      FileDirRef: '/SitePages/news',
+      PromotedState: 2,
+      UniqueId: 'ee000000-0000-4000-8000-000000000004',
+      Author: { Title: 'Pat Example' },
+      Editor: { Title: 'Pat Example' },
+      CanvasContent1: null,
+      FieldValuesAsText: { Editor: 'Pat Example' },
+    }),
+  },
+  {
+    ...item(5, 'Résumé hebdo', {
+      FileLeafRef: 'Hebdo.aspx',
+      FileRef: '/SitePages/news/fr/Hebdo.aspx',
+      FileDirRef: '/SitePages/news/fr',
+      PromotedState: 2,
+      UniqueId: 'ee000000-0000-4000-8000-000000000005',
+      Author: { Title: 'Mock Developer' },
+      Editor: { Title: 'Mock Developer' },
+      CanvasContent1: null,
+      FieldValuesAsText: { Editor: 'Mock Developer' },
+    }),
+  },
+];
+
+const ITEMS = {
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03': PROJECT_ITEMS,
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02': SITEPAGES_ITEMS,
+};
+
+// Folder tree for the Files browser, keyed by lower-cased server-relative
+// path. Deliberately includes binary types (.docx/.png/.zip) — the browser
+// must list EVERYTHING, unlike the pad picker's code/text filter.
+function mockFile(name, length, modified = '2026-07-10T09:00:00Z') {
+  return {
+    Name: name,
+    ServerRelativeUrl: `__FOLDER__/${name}`,
+    Length: length,
+    TimeLastModified: modified,
+    UIVersionLabel: '1.0',
+    CheckOutType: 2,
+  };
+}
+
+const MOCK_TREE = {
+  '/shared documents': {
+    folders: [
+      { Name: 'Reports', ServerRelativeUrl: '/Shared Documents/Reports', ItemCount: 2, TimeLastModified: '2026-07-01T12:00:00Z' },
+    ],
+    files: [
+      mockFile('proposal.docx', 48230),
+      mockFile('logo.png', 15872),
+      mockFile('archive.zip', 1048576),
+      mockFile('notes.txt', 812),
+      mockFile('widget.js', 2048),
+      mockFile('data.csv', 5300),
+    ],
+  },
+  '/shared documents/reports': {
+    folders: [],
+    files: [mockFile('q1-report.docx', 91000), mockFile('q2-report.docx', 87000)],
+  },
+};
+for (const [folderPath, listing] of Object.entries(MOCK_TREE)) {
+  for (const f of listing.files) {
+    f.ServerRelativeUrl = f.ServerRelativeUrl.replace(
+      '__FOLDER__',
+      folderPath === '/shared documents' ? '/Shared Documents' : '/Shared Documents/Reports',
+    );
+  }
+}
+
+// File list-item metadata, keyed by lower-cased server-relative path.
+const FILE_ITEMS = {
+  '/shared documents/proposal.docx': {
+    Id: 201,
+    Title: 'Project proposal',
+    DocCategory: 'Contract',
+    Confidential: true,
+    PublishedDate: '2026-06-01T00:00:00Z',
+    SourceLink: { Url: 'https://example.com/spec', Description: 'Spec' },
+    DocVersion: '1.4',
+    FieldValuesAsText: { Author: 'Mock Developer' },
+  },
+};
+
+const DOC_LIB_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e01';
 
 const VIEWS = [
   { Id: 'bb0e2c1d-3333-4444-8888-000000000001', Title: 'All Items', DefaultView: true, PersonalView: false, Hidden: false, ServerRelativeUrl: '/Lists/Projects/AllItems.aspx', RowLimit: 30, Paged: true, ViewQuery: '<OrderBy><FieldRef Name="ID"/></OrderBy>' },
@@ -215,6 +460,14 @@ export function mockResolver(rawUrl) {
     const id = listIdOf(path);
     const found = LISTS.find((l) => l.Id.toLowerCase() === id);
     if (!found) return null;
+    const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
+    if (itemId) {
+      const single = (ITEMS[found.Id] || []).find((i) => i.Id === Number(itemId));
+      return single ?? null;
+    }
+    // The mock ignores $filter/$select on items — live-stub tests assert the
+    // real query URLs instead.
+    if (path.includes('/items')) return { value: ITEMS[found.Id] || [] };
     if (path.includes('/fields')) return { value: FIELDS[found.Id] || DEFAULT_FIELDS };
     if (/\/views\(guid'/.test(path) && path.includes('/viewfields')) {
       return { Items: ['LinkTitle', 'ProjectStatus', 'DueDate'] };
@@ -243,6 +496,30 @@ export function mockResolver(rawUrl) {
   if (path.startsWith('web/sitegroups')) return { value: GROUPS };
   if (path.startsWith('web/roledefinitions')) return { value: ROLE_DEFINITIONS };
   if (path.startsWith('web/roleassignments')) return { value: ROLE_ASSIGNMENTS };
+
+  // Files browser: ResourcePath folder/file endpoints. Paths arrive
+  // percent-encoded inside the decodedUrl literal; decode before matching.
+  const folderPathOf = /getfolderbyserverrelativepath\(decodedurl='([^']*)'\)/.exec(path)?.[1];
+  if (folderPathOf !== undefined) {
+    let decoded = folderPathOf;
+    try { decoded = decodeURIComponent(folderPathOf); } catch { /* keep raw */ }
+    const listing = MOCK_TREE[decoded];
+    if (path.includes('/folders')) return { value: listing?.folders || [] };
+    if (path.includes('/files')) return { value: listing?.files || [] };
+    if (path.includes('parentlist')) {
+      return { ListItemAllFields: { ParentList: { Id: DOC_LIB_ID } } };
+    }
+    return { Name: decoded.split('/').pop() || '', ServerRelativeUrl: decoded };
+  }
+  const filePathOf = /getfilebyserverrelativepath\(decodedurl='([^']*)'\)/.exec(path)?.[1];
+  if (filePathOf !== undefined) {
+    let decoded = filePathOf;
+    try { decoded = decodeURIComponent(filePathOf); } catch { /* keep raw */ }
+    if (path.includes('/listitemallfields')) {
+      return FILE_ITEMS[decoded] || { Id: 0, Title: '' };
+    }
+    return null;
+  }
 
   if (path.startsWith('web/allproperties')) return ALL_PROPERTIES;
   if (path.startsWith('web/regionalsettings')) return REGIONAL_SETTINGS;

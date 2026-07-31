@@ -237,13 +237,94 @@ inspector, REPL and network capture all work inside the web part; a live
 - **Site Inspector / SP diagnostics tools** — v1 SHIPPED as the SP Workbench
   (below).
 
+## SP Workbench Tier 2 (2026-07-30)
+
+Six features shipped on the workbench entry point (plan record:
+`~/.claude/plans/i-want-to-continue-sleepy-charm.md`; everything lives in
+`src/workbench/` — zero changes to pad-loaded files, which were under
+concurrent debugging on main):
+
+- **Config links** view — curated `_layouts` jumps grouped by category
+  (`config-links.js` data + `views/links.js`), plus per-row ⚙ and drilldown
+  "List settings" links in the Lists view. Uncertain classic URLs carry
+  hints; live click-through pass still pending.
+- **Site favorites + recents** — topbar star + "Sites ▾" picker; persists
+  through `state.js` `loadDoc`/`saveDoc` (key `dcspad.v2.wbsites`,
+  invariant 6 honored; workbench imports state.js safely — verified its
+  import side effects are read-only).
+- **Query builder** (`views/query.js`) — list/endpoint target, $select
+  checkboxes (User/Lookup auto-expand to `/Title`), typed $filter rows,
+  orderby/top/expand, raw-edit mode with descriptor round-trip parsing
+  (Copy-as menu omitted when a raw string can't round-trip), per-web
+  sessionStorage persistence.
+- **Page inspector** (`canvas.js` + `views/pages.js`) — SitePages master
+  grid (PromotedState badges), drilldown tabs: Structure (section/column
+  tree, widths /12, emphasis, vertical, collapsible), Web parts (names via
+  WEBPART_NAMES, unknown ids degrade to raw GUIDs), Text (sanitized render
+  + raw HTML), Metadata, Raw. Parser handles BOTH storage formats (JSON
+  array + legacy HTML `data-sp-controldata`) and never throws — malformed
+  entries land in errors[] + an "unplaced" bucket. CanvasContent1 must be
+  explicitly $select-ed (done per-item).
+- **Pages metadata editor** + **Files browser** share `field-editor.js`
+  (per-TypeAsString editors; FieldValue conventions unit-tested: MultiChoice
+  `;#A;#B;#`, Boolean `1/0`, DateTime ISO, URL `url, desc`;
+  User/Lookup/Taxonomy read-only v1) and `sp-write.js` (digest via the
+  exported sp-files.js cache, 403→force-refresh retry, ValidateUpdateListItem
+  with per-field error mapping, binary AddUsingPath ≤50 MB). Editors refuse
+  `CanvasContent1`/`LayoutWebpartsContent` (NO_EDIT_INTERNAL).
+- **Files browser** (`views/browser.js`) — every file type, paged listing,
+  breadcrumbs + library picker, download via `download.aspx`, upload with
+  overwrite consent (pre-flight and 409-race), post-upload metadata panel
+  with keep-without-metadata / retry-that-never-reuploads.
+
+**Tier 2 refinement pass (same day, Joe's feedback on the first cut):**
+
+- **Left nav reorganized**: Site · Permissions | Lists · Pages · Files |
+  Query | Panels · Advanced. Renames: Security→Permissions, Config
+  links→Panels, old Site sheets→Advanced. **New Site landing view**
+  (`views/site-home.js`): web + current-user cards, role chip, subwebs with
+  one-click Inspect (wired through a late-bound `inspectSite` dep).
+- **Status bar** now shows the current user plus a lit "Site admin" chip
+  (subtle "Site user" otherwise); refreshed on site switch.
+- **Panels curated** to Joe's crossed-out screenshot — 19 links in 5 groups
+  (General, Permissions & people, Recycle bins, Galleries, Search);
+  label-first UI, paths in tooltips. The set is deliberate; don't grow it.
+- **Permissions** gained a Members tab: flattened user-by-group roster
+  (group name/id, user, email, login, admin — exportable), add-user (email
+  → claims login) via `POST sitegroups(id)/users`, two-step remove via
+  `removebyid`, plus panel jump links in the head.
+- **Pages**: tab order Extract·Metadata·Structure·Web parts·Raw; header
+  shows the server-relative URL (click copies the FULL absolute URL; id
+  moved to Metadata); **Export content** (single human-readable .md —
+  title/description/created/location up top, merged control content,
+  standardized metadata block at bottom) and **Export raw** (.json) sit on
+  the header row (`page-export.js`, pure + unit-tested). Master grid shows
+  a sortable Folder column (subfolder pages) and an "Open Site Pages
+  library" link.
+- **Files**: per-row copy-direct-URL button beside download.
+
+Mock mode covers all of it (`mock-data.js` fixtures incl. canvas JSON +
+legacy HTML pages, subfolder pages, and a `/Shared Documents` tree; mock
+writes recorded on `__DCSPAD_WB_WRITES__`). Tests: `workbench.mjs` grew
+39→69, new `workbench-edit.mjs` (15), `workbench-hosted.mjs` still 10 —
+all pass.
+Known pre-existing failures on this branch (NOT Tier 2): smoke's "legacy
+framework catalog adopts explicit preset order" and files' "explicit host
+adapter enables SharePoint file actions" — both pad-side, consistent with
+the in-flight "metadata save - still buggy" work on main.
+
+**Live-tenant checklist still owed** (after deploy): config-link
+click-through on a web + subweb, DateTime/Number ValidateUpdateListItem
+formats on the tenant locale, legacy-format page parse, >200-file paging,
+binary up/download + copy-URL, `bNewDocumentUpdate` version behavior,
+SitePages Templates-folder noise, uncertain WEBPART_NAMES entries,
+group add/remove (the nometadata JSON body for `sitegroups(id)/users`
+needs one live confirmation), and the role chip on a non-admin account.
+
 ## Roadmap (seams reserved)
 
-- **Site Inspector** — v1 shipped as the **SP Workbench** second entry point
-  (`workbench.html` + `boot-workbench.js` + `src/workbench/`, hosted on its
-  own page via `workbench.webpart.html`; see deploy/README.md). v2 seams:
-  mount its views into the pad sidebar, modern-page inspector
-  (CanvasContent1 / text-web-part extraction), quick query builder, edit
-  tools reusing the sp-files.js digest cache.
+- **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).
+  Remaining seams: mount its views into the pad sidebar,
+  User/Lookup/Taxonomy metadata editing, chunked >50 MB uploads.
 - **SharePoint JSON storage** replacing localStorage via the `state.js` seam.
 - **Console remote handles** — lazy live-object expansion.

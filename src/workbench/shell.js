@@ -28,7 +28,14 @@ export function createShell({ mount, deps, views }) {
   const host = el('main', 'wb-host');
 
   const buttons = new Map();
+  let lastGroup = null;
   for (const view of views) {
+    // Optional grouping: a separator between consecutive registry entries
+    // whose `group` differs. Ungrouped registries render exactly as before.
+    if (view.group !== undefined && lastGroup !== null && view.group !== lastGroup) {
+      rail.append(el('div', 'wb-rail-sep'));
+    }
+    lastGroup = view.group ?? lastGroup;
     const btn = el('button', 'wb-rail-btn');
     btn.type = 'button';
     btn.dataset.view = view.id;
