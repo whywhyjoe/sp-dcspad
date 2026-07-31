@@ -21,6 +21,13 @@
       <input id="wb-site-input" type="text" autocomplete="url" spellcheck="false"
              placeholder="/sites/ProjectName — blank = this site">
       <button id="wb-site-open" class="btn btn-xs" type="submit">Inspect</button>
+      <button id="wb-site-fav" class="wb-fav-btn" type="button"
+              title="Favorite the inspected site" aria-pressed="false">☆</button>
+      <span class="wb-menu-wrap wb-site-menu-wrap">
+        <button id="wb-site-favlist" class="btn btn-xs" type="button"
+                title="Favorite and recent sites">Sites ▾</button>
+        <div id="wb-site-menu" class="wb-menu" hidden></div>
+      </span>
       <span id="wb-site-error" class="wb-site-error" role="alert" hidden></span>
     </form>
     <div class="wb-topbar-right">
@@ -35,6 +42,10 @@
 
   <footer class="wb-statusbar">
     <span id="wb-status-context" class="status-item">SP: detecting context…</span>
+    <span class="wb-status-right">
+      <span id="wb-status-user" class="status-item"></span>
+      <span id="wb-status-role" class="wb-role-chip" hidden></span>
+    </span>
   </footer>
 
 </div>

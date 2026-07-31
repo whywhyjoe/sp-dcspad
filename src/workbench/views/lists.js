@@ -4,6 +4,7 @@
 
 import { createGrid } from '../grid.js';
 import { copyText } from '../export.js';
+import { LIST_SETTINGS, linkUrl } from '../config-links.js';
 import { principalTypeName } from '../perm-kinds.js';
 import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
@@ -88,6 +89,24 @@ export function createListsView({ client, navigate }) {
       { key: 'Url', label: 'Url', value: (row) => row.RootFolder?.ServerRelativeUrl || '', mono: true, copyable: true },
       { key: 'Id', label: 'Id', mono: true, copyable: true },
       { key: 'LastItemModifiedDate', label: 'Modified', format: fmtDate },
+      // Appended last: tests address earlier columns positionally.
+      {
+        key: 'Settings',
+        label: '',
+        value: (row) => row.Id,
+        format: () => '',   // keep filter/sort/export free of the glyph
+        render: (id) => {
+          const a = document.createElement('a');
+          a.className = 'wb-cell-link';
+          a.href = linkUrl(client.webUrl(), LIST_SETTINGS, { guid: id });
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.title = 'Open list settings in a new tab';
+          a.textContent = '⚙';
+          a.addEventListener('click', (e) => e.stopPropagation());
+          return a;
+        },
+      },
     ],
     onOpen: (row) => navigate({ view: 'lists', listId: row.Id, listTitle: row.Title }),
     emptyText: 'No lists in this web.',
@@ -238,8 +257,14 @@ export function createListsView({ client, navigate }) {
     sub.title = 'Click to copy the list id';
     sub.addEventListener('click', () => copyText(listId, sub));
 
+    const settingsLink = el('a', 'btn btn-xs wb-detail-settings', 'List settings ↗');
+    settingsLink.href = linkUrl(client.webUrl(), LIST_SETTINGS, { guid: listId });
+    settingsLink.target = '_blank';
+    settingsLink.rel = 'noopener';
+    settingsLink.title = 'Open this list’s settings page in a new tab';
+
     const headRow = el('div', 'wb-detail-head');
-    headRow.append(back, title, sub);
+    headRow.append(back, title, sub, settingsLink);
 
     const tabsBar = el('div', 'wb-tabs');
     tabsBar.setAttribute('role', 'tablist');
