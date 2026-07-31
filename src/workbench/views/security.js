@@ -1,9 +1,12 @@
-// Security view: site groups (with lazy membership), role definitions
-// (decoded BasePermissions), web role assignments, and an explicit
+// Permissions view: site groups (with lazy membership), a flattened
+// all-members roster with add/remove, role definitions (decoded
+// BasePermissions), web role assignments, and an explicit
 // broken-inheritance scan across lists.
 
 import { createGrid } from '../grid.js';
 import { decodeBasePermissions, principalTypeName } from '../perm-kinds.js';
+import { createSpWriteClient } from '../sp-write.js';
+import { LINK_GROUPS, linkUrl } from '../config-links.js';
 import { BASE_TEMPLATE_NAMES } from './lists.js';
 
 const el = (tag, cls, text) => {
@@ -19,12 +22,24 @@ const roleNames = (row) =>
 
 export function createSecurityView({ client }) {
   const root = el('section', 'wb-view wb-view-security');
+  const spWrite = createSpWriteClient({ client });
 
   const head = el('div', 'wb-view-head');
-  head.innerHTML = '<h2>Users, groups &amp; permissions</h2>'
-    + '<p class="wb-view-hint">Site groups, role definitions, and who holds '
-    + 'what on this web. The inheritance scan is on-demand — it makes '
-    + 'SharePoint evaluate security per list.</p>';
+  head.innerHTML = '<h2>Permissions</h2>'
+    + '<p class="wb-view-hint">Site groups, membership, role definitions, and '
+    + 'who holds what on this web. The inheritance scan is on-demand — it '
+    + 'makes SharePoint evaluate security per list.</p>';
+  // One-click jumps to the matching SP panels (curated set from config-links).
+  const headLinks = el('div', 'wb-head-links');
+  const permGroup = LINK_GROUPS.find((g) => g.title === 'Permissions & people');
+  for (const link of (permGroup?.links || []).filter((l) => l.label !== 'Access requests')) {
+    const a = el('a', 'btn btn-xs wb-head-link', `${link.label} ↗`);
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.dataset.path = link.path;
+    headLinks.append(a);
+  }
+  head.append(headLinks);
 
   const tabsBar = el('div', 'wb-tabs');
   const body = el('div', 'wb-tab-body');
@@ -96,6 +111,161 @@ export function createSecurityView({ client }) {
         .catch((err) => membersGrid.setError(err));
     }
 
+    return wrap;
+  }
+
+  // ---- All members, flattened by group, with add/remove ----
+  function membersPane() {
+    const wrap = el('div', 'wb-tab-pane');
+
+    const notice = el('div', 'wb-consent');
+    notice.hidden = true;
+    function showNotice(message, { isError = false, confirm = null } = {}) {
+      notice.textContent = '';
+      notice.hidden = false;
+      notice.classList.toggle('wb-consent-error', isError);
+      notice.append(el('span', 'wb-consent-text', message));
+      if (confirm) {
+        const yes = el('button', 'btn btn-xs', confirm.label);
+        yes.type = 'button';
+        yes.addEventListener('click', () => { notice.hidden = true; confirm.run(); });
+        notice.append(yes);
+      }
+      const dismiss = el('button', 'btn btn-xs', confirm ? 'Cancel' : 'Dismiss');
+      dismiss.type = 'button';
+      dismiss.addEventListener('click', () => { notice.hidden = true; });
+      notice.append(dismiss);
+    }
+
+    // Add-user bar: group picker + login/email input.
+    const addBar = el('div', 'wb-members-add');
+    const groupSelect = el('select', 'wb-members-group');
+    groupSelect.setAttribute('aria-label', 'Group to add the user to');
+    const loginInput = el('input', 'wb-members-login');
+    loginInput.type = 'text';
+    loginInput.placeholder = 'user@tenant.com or i:0#.f|membership|…';
+    const addBtn = el('button', 'btn btn-xs', 'Add to group');
+    addBtn.type = 'button';
+    addBar.append(el('span', 'wb-qb-label', 'Add user'), groupSelect, loginInput, addBtn);
+
+    const grid = createGrid({
+      rowKey: 'Key',
+      columns: [
+        { key: 'GroupTitle', label: 'Group' },
+        { key: 'GroupId', label: 'Group id' },
+        { key: 'Title', label: 'User' },
+        { key: 'Email', label: 'Email', copyable: true },
+        { key: 'LoginName', label: 'Login', mono: true, copyable: true },
+        { key: 'IsSiteAdmin', label: 'Site admin' },
+        {
+          key: 'Remove',
+          label: '',
+          value: (row) => row.Key,
+          format: () => '',
+          render: (key, row) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'wb-cell-link wb-cell-copylink';
+            btn.title = `Remove ${row.Title} from ${row.GroupTitle}`;
+            btn.textContent = '✕';
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              showNotice(`Remove ${row.Title} from ${row.GroupTitle}?`, {
+                isError: false,
+                confirm: { label: 'Remove', run: () => removeMember(row) },
+              });
+            });
+            return btn;
+          },
+        },
+      ],
+      emptyText: 'No group members.',
+      filterPlaceholder: 'Filter members…',
+      exportName: 'sp-group-members',
+    });
+
+    wrap.append(addBar, notice, grid.el);
+
+    let groups = [];
+
+    async function loadMembers() {
+      grid.setLoading('Loading group membership…');
+      try {
+        const { items } = await client.getAll('web/sitegroups', {
+          select: ['Id', 'Title'],
+        });
+        groups = items;
+        groupSelect.textContent = '';
+        for (const group of groups) {
+          const opt = el('option', '', group.Title);
+          opt.value = String(group.Id);
+          groupSelect.append(opt);
+        }
+        const memberLists = await Promise.all(groups.map((group) =>
+          client.getAll(`web/sitegroups(${group.Id})/users`, {
+            select: ['Id', 'Title', 'LoginName', 'Email', 'IsSiteAdmin'],
+          }).then(({ items: users }) => users.map((user) => ({
+            Key: `${group.Id}:${user.Id}`,
+            GroupTitle: group.Title,
+            GroupId: group.Id,
+            UserId: user.Id,
+            Title: user.Title,
+            Email: user.Email || '',
+            LoginName: user.LoginName || '',
+            IsSiteAdmin: Boolean(user.IsSiteAdmin),
+          })), () => [])));   // locked-down groups 403 — skip, don't fail the roster
+        const rows = memberLists.flat()
+          .sort((a, b) => a.GroupTitle.localeCompare(b.GroupTitle) || a.Title.localeCompare(b.Title));
+        grid.setRows(rows);
+      } catch (err) {
+        grid.setError(err);
+      }
+    }
+
+    // Emails become claims logins; full claim strings pass through.
+    const toLoginName = (input) => {
+      const raw = String(input || '').trim();
+      if (!raw) return '';
+      return raw.includes('|') ? raw : `i:0#.f|membership|${raw}`;
+    };
+
+    addBtn.addEventListener('click', async () => {
+      const loginName = toLoginName(loginInput.value);
+      const groupId = Number(groupSelect.value);
+      if (!loginName || !groupId) return;
+      addBtn.disabled = true;
+      try {
+        await spWrite.postJson(`web/sitegroups(${groupId})/users`, { LoginName: loginName }, {
+          fallback: 'Could not add the user to the group', code: 'group-add',
+        });
+        loginInput.value = '';
+        showNotice(spWrite.isMock()
+          ? 'Added (mock mode — the fixture roster does not change).'
+          : 'User added.');
+        await loadMembers();
+      } catch (err) {
+        showNotice(err?.message || String(err), { isError: true });
+      } finally {
+        addBtn.disabled = false;
+      }
+    });
+
+    async function removeMember(row) {
+      try {
+        await spWrite.postJson(
+          `web/sitegroups(${row.GroupId})/users/removebyid(${row.UserId})`, {},
+          { fallback: 'Could not remove the user from the group', code: 'group-remove' },
+        );
+        showNotice(spWrite.isMock()
+          ? 'Removed (mock mode — the fixture roster does not change).'
+          : `Removed ${row.Title} from ${row.GroupTitle}.`);
+        await loadMembers();
+      } catch (err) {
+        showNotice(err?.message || String(err), { isError: true });
+      }
+    }
+
+    loadMembers();
     return wrap;
   }
 
@@ -246,6 +416,7 @@ export function createSecurityView({ client }) {
 
   const TABS = [
     { id: 'groups', label: 'Groups', build: groupsPane },
+    { id: 'members', label: 'Members', build: membersPane },
     { id: 'roledefs', label: 'Role definitions', build: roleDefsPane },
     { id: 'assignments', label: 'Role assignments', build: assignmentsPane },
     { id: 'inheritance', label: 'Inheritance scan', build: inheritancePane },
@@ -269,6 +440,10 @@ export function createSecurityView({ client }) {
   }
 
   function load() {
+    // Resolve panel links against the currently inspected web.
+    for (const a of headLinks.querySelectorAll('a')) {
+      a.href = linkUrl(client.webUrl(), { path: a.dataset.path });
+    }
     if (!tabsBar.querySelector('.wb-tab.active')) activate(TABS[0]);
   }
 

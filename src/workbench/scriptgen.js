@@ -20,6 +20,8 @@ function queryString({ select, expand, filter, orderby, top } = {}) {
 // Route table: regex over the descriptor path -> pnpjs fluent root.
 // Group 1 (when present) is the id captured from the path.
 const PNPJS_ROUTES = [
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)$/i, (id, m) => `sp.web.lists.getById("${id}").items.getById(${m[2]})`],
+  [/^web\/lists\(guid'([0-9a-f-]+)'\)\/items$/i, (id) => `sp.web.lists.getById("${id}").items`],
   [/^web\/lists\(guid'([0-9a-f-]+)'\)\/fields$/i, (id) => `sp.web.lists.getById("${id}").fields`],
   [/^web\/lists\(guid'([0-9a-f-]+)'\)\/views$/i, (id) => `sp.web.lists.getById("${id}").views`],
   [/^web\/lists\(guid'([0-9a-f-]+)'\)\/contenttypes$/i, (id) => `sp.web.lists.getById("${id}").contentTypes`],
@@ -52,8 +54,8 @@ export function toPnpjs2({ path, options = {} }) {
     ].join('\n');
   }
   const [re, root] = route;
-  const id = clean.match(re)?.[1];
-  let chain = root(id);
+  const match = clean.match(re);
+  let chain = root(match?.[1], match);
   if (options.select) chain += `\n  .select(${join(options.select).split(',').map((s) => `"${s}"`).join(', ')})`;
   if (options.expand) chain += `\n  .expand(${join(options.expand).split(',').map((s) => `"${s}"`).join(', ')})`;
   if (options.filter) chain += `\n  .filter("${String(options.filter).replaceAll('"', '\\"')}")`;
