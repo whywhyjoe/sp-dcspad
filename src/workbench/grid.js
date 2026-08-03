@@ -31,7 +31,7 @@ function displayValue(row, col) {
 }
 
 // columns: [{ key, label, value?(row), format?(v,row), render?(v,row)=>Node,
-//             copyable?, mono?, width? }]
+//             copyable?, mono?, num?, width? }]
 // exportName enables the toolbar export menu; it's the download file stem.
 // descriptor { path, options, webUrl } enables the "Copy as…" script menu.
 export function createGrid({
@@ -105,6 +105,7 @@ export function createGrid({
   const headRow = el('tr');
   for (const col of columns) {
     const th = el('th', '', col.label ?? col.key);
+    if (col.num) th.classList.add('wb-num');
     if (col.width) th.style.width = col.width;
     th.tabIndex = 0;
     th.title = `Sort by ${col.label ?? col.key}`;
@@ -163,8 +164,11 @@ export function createGrid({
 
     for (const th of headRow.children) {
       const col = columns[[...headRow.children].indexOf(th)];
+      const selected = Boolean(col && col.key === sortKey);
       th.querySelector('.wb-sort-arrow').textContent =
-        col && col.key === sortKey ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
+        selected ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
+      th.classList.toggle('is-sorted', selected);
+      th.setAttribute('aria-sort', selected ? (sortDir === 1 ? 'ascending' : 'descending') : 'none');
     }
 
     tbody.textContent = '';
@@ -186,7 +190,7 @@ export function createGrid({
       }
       tr.dataset.key = String(row[rowKey] ?? '');
       for (const col of columns) {
-        const td = el('td', col.mono ? 'wb-mono' : '');
+        const td = el('td', [col.mono ? 'wb-mono' : '', col.num ? 'wb-num' : ''].filter(Boolean).join(' '));
         const text = displayValue(row, col);
         if (typeof col.render === 'function') {
           // Custom cell node (e.g. anchors); displayValue still drives

@@ -3,7 +3,7 @@
 // section/column structure tree, a web-part inventory, extracted text
 // content, an editable metadata sheet, and the raw entity.
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 import {
   parseCanvasContent, buildSectionTree, textOfControl, webPartName, sanitizeHtml,
@@ -33,6 +33,8 @@ const FIELD_SELECT = [
   'FillInChoice',
 ];
 
+const SITE_PAGES_BASE_TEMPLATE = 119;
+
 const promotedLabel = (v) => ({ 0: '', 1: 'News (pending)', 2: 'News' }[v] ?? String(v ?? ''));
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -42,6 +44,11 @@ const el = (tag, cls, text) => {
   if (text !== undefined) n.textContent = text;
   return n;
 };
+
+const encodedServerPath = (path) => String(path || '').split('/').map((segment) => {
+  try { return encodeURIComponent(decodeURIComponent(segment)); }
+  catch { return encodeURIComponent(segment); }
+}).join('/');
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 
@@ -73,6 +80,7 @@ export function createPagesView({ client, navigate }) {
   let pagesLoaded = false;
   const detailCache = new Map();   // pageId -> Promise<item>
   let fieldsPromise = null;        // list fields shared by every page
+  let detailRun = 0;
 
   function sitePagesList() {
     if (!sitePagesPromise) {
@@ -83,8 +91,8 @@ export function createPagesView({ client, navigate }) {
       }).then(({ items }) => {
         // Client-side filter: the mock resolver ignores $filter, and the
         // library is cheap to find in the full list either way.
-        const found = items.find((l) => l.BaseTemplate === 119 && !l.Hidden)
-          || items.find((l) => l.BaseTemplate === 119);
+        const found = items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden)
+          || items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE);
         return found ? {
           listId: found.Id,
           title: found.Title,
@@ -199,6 +207,7 @@ export function createPagesView({ client, navigate }) {
     if (!detailCache.has(pageId)) {
       detailCache.set(pageId, client.get(guidPath(listId, `/items(${pageId})`), {
         select: DETAIL_SELECT,
+        expand: ['Author', 'Editor'],
       }).catch((err) => {
         detailCache.delete(pageId);
         throw err;
@@ -361,6 +370,7 @@ export function createPagesView({ client, navigate }) {
   }
 
   async function showDetail(route) {
+    const run = ++detailRun;
     gridPane.hidden = true;
     detailPane.hidden = false;
     detailPane.textContent = '';
@@ -383,10 +393,12 @@ export function createPagesView({ client, navigate }) {
       if (!sitePages) throw new Error('This web has no Site Pages library.');
       item = await pageItem(sitePages.listId, route.pageId);
     } catch (err) {
+      if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
       status.classList.add('wb-error');
       return;
     }
+    if (run !== detailRun) return;
     status.remove();
 
     // The server-relative URL fragment, click-to-copy the FULL absolute URL.
@@ -395,7 +407,7 @@ export function createPagesView({ client, navigate }) {
       const origin = (() => {
         try { return new URL(client.webUrl()).origin; } catch { return ''; }
       })();
-      const fullUrl = `${origin}${encodeURI(item.FileRef)}`;
+      const fullUrl = `${origin}${encodedServerPath(item.FileRef)}`;
       const frag = el('span', 'wb-detail-id sp-copy', item.FileRef);
       frag.title = `Click to copy the full URL\n${fullUrl}`;
       frag.addEventListener('click', () => copyText(fullUrl, frag));
@@ -486,6 +498,7 @@ export function createPagesView({ client, navigate }) {
     if (route?.pageId) {
       showDetail(route);
     } else {
+      detailRun += 1;
       detailPane.hidden = true;
       gridPane.hidden = false;
       loadPages();

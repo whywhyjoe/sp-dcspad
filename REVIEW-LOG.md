@@ -6,6 +6,48 @@ section per review round; move backlog items out when they land.
 
 ---
 
+## 2026-08-03 - SP Workbench full review and design-system alignment
+
+Reviewed the previous Workbench findings, the open feature/review backlog, the
+current implementation, the attached design-system reference, and the attached
+file broker.
+
+### Landed (this round)
+
+| # | Issue | Fix |
+|---|-------|-----|
+| W1 | Page detail selected `Author/Title` and `Editor/Title` without expanding either lookup, causing SharePoint to reject every page detail request | Added both lookup names to `$expand` and a live-route regression that rejects the old request shape |
+| W2 | A document-library root has no `ListItemAllFields/ParentList`, so root files could not resolve their library for metadata | Fall back to `web/GetList(@listUrl)` and validate the returned list GUID; added a root-library regression |
+| W3 | Fast page/folder navigation could let an older async response overwrite the newer view | Added run tokens to page-detail and folder-listing loads |
+| W4 | Navigating while a selected file was being read could upload it into the newly opened folder | Capture and retain the destination folder at upload start and through overwrite retry |
+| W5 | Direct file/page URLs used `encodeURI`, which leaves `#` and `?` with URL semantics | Encode each server-path segment canonically |
+| W6 | A malformed percent escape in Query's raw URL parser threw instead of returning an invalid descriptor | Catch decode failures and reject the descriptor |
+| W7 | The REST page cap could overshoot by a full server page | Slice the final page at the cap and mark the result partial |
+| W8 | Workbench details had drifted from the current design-system reference | Adopted the reference S mark, rail group labels, header hierarchy, sorted-column underline, numeric alignment, semantic file glyphs, notice tokens, focus treatment, and restrained motion without changing the shell layout |
+
+### Accepted but deferred
+
+- [ ] `createGrid()` installs a document click listener for each menu but has no
+  destroy hook. Add lifecycle cleanup if views become disposable or are rebuilt
+  repeatedly in one session.
+- [ ] `Retry-After` handling accepts delta-seconds but not HTTP-date values.
+  Support both forms if a live tenant is observed returning the date form.
+- [ ] Complete the existing live-tenant checklist in `HANDOFF.md`, especially
+  permissions, >200-item paging, binary writes, legacy pages, and non-admin UI.
+- [ ] Execute the selective broker consolidation described in
+  `plans/sp-workbench-file-broker-alignment.md`; this review intentionally made
+  no broker integration changes.
+
+### Not adopted
+
+- Raising REST concurrency above three: no tenant measurements show that the
+  extra pressure improves this tool more than it increases throttling risk.
+- Adding the reference template's persistent breadcrumb band or skeleton system:
+  both are worthwhile only with a larger structural pass, outside this review's
+  detail-alignment scope.
+
+---
+
 ## 2026-07-25 — GHCP GPT 5.6 Sol review (devpad/ only, security excluded)
 
 Two inputs were triaged: the reviewer's **final review** and an earlier

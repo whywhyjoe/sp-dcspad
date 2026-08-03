@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SP Workbench — SharePoint Site Inspector</title>
-<link rel="stylesheet" href="styles/app.css?v=19">
-<link rel="stylesheet" href="styles/workbench.css?v=1">
+<link rel="stylesheet" href="styles/app.css?v=21">
+<link rel="stylesheet" href="styles/workbench.css?v=2">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🔍</text></svg>">
 </head>
 <body>
@@ -14,6 +14,16 @@
 
   <header class="wb-topbar">
     <div class="wb-logo" title="SP Workbench">
+      <svg class="wb-logo-mark" viewBox="0 0 24.5 29" role="img" aria-label="SP Workbench mark — S">
+        <rect x=".5" y=".5" width="23.5" height="28" rx="6" class="wb-logo-tile"></rect>
+        <g class="wb-logo-pixels">
+          <rect x="4" y="4" width="3" height="3"></rect><rect class="lit" x="8.5" y="4" width="3" height="3"></rect><rect class="lit" x="13" y="4" width="3" height="3"></rect><rect class="lit" x="17.5" y="4" width="3" height="3"></rect>
+          <rect class="lit" x="4" y="8.5" width="3" height="3"></rect><rect x="8.5" y="8.5" width="3" height="3"></rect><rect x="13" y="8.5" width="3" height="3"></rect><rect x="17.5" y="8.5" width="3" height="3"></rect>
+          <rect x="4" y="13" width="3" height="3"></rect><rect class="lit dim" x="8.5" y="13" width="3" height="3"></rect><rect class="lit" x="13" y="13" width="3" height="3"></rect><rect x="17.5" y="13" width="3" height="3"></rect>
+          <rect x="4" y="17.5" width="3" height="3"></rect><rect x="8.5" y="17.5" width="3" height="3"></rect><rect x="13" y="17.5" width="3" height="3"></rect><rect class="lit" x="17.5" y="17.5" width="3" height="3"></rect>
+          <rect class="lit" x="4" y="22" width="3" height="3"></rect><rect class="lit" x="8.5" y="22" width="3" height="3"></rect><rect class="lit" x="13" y="22" width="3" height="3"></rect><rect x="17.5" y="22" width="3" height="3"></rect>
+        </g>
+      </svg>
       <span class="wb-logo-text">SP<b>WORKBENCH</b></span>
     </div>
     <form id="wb-site-form" class="wb-site-form" title="Inspect a different site on this tenant">
@@ -50,6 +60,6 @@
 
 </div>
 
-<script type="module" src="src/workbench/main.js"></script>
+<script type="module" src="src/workbench/main.js?v=3"></script>
 </body>
 </html>

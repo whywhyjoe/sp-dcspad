@@ -2,7 +2,7 @@
 // who and where you are, the essential web facts, and subwebs you can jump
 // into with one click. The exhaustive property sheets live under Advanced.
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 
 const el = (tag, cls, text) => {

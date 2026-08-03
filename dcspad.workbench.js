@@ -220,7 +220,7 @@ async function requireOk(response, fallback, code) {
   });
 }
 
-// ../src/workbench/sp-rest.js
+// ../src/workbench/sp-rest.js?v=2
 var PAGE_CAP = 5e3;
 var MAX_CONCURRENT = 3;
 var RETRY_STATUSES = /* @__PURE__ */ new Set([429, 503]);
@@ -366,6 +366,12 @@ function createSpRestClient({
       const page = collectionOf(data);
       if (!page) {
         items.push(entityOf(data));
+        break;
+      }
+      const remaining = PAGE_CAP - items.length;
+      if (page.length > remaining) {
+        items.push(...page.slice(0, remaining));
+        partial = true;
         break;
       }
       items.push(...page);
@@ -879,7 +885,7 @@ function mockResolver(rawUrl) {
   return null;
 }
 
-// ../src/workbench/shell.js
+// ../src/workbench/shell.js?v=2
 var ROUTE_KEY = "dcspad.workbench.route";
 var el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -896,8 +902,9 @@ function createShell({ mount, deps, views }) {
   const buttons = /* @__PURE__ */ new Map();
   let lastGroup = null;
   for (const view of views) {
-    if (view.group !== void 0 && lastGroup !== null && view.group !== lastGroup) {
-      rail.append(el("div", "wb-rail-sep"));
+    if (view.group !== void 0 && view.group !== lastGroup) {
+      if (lastGroup !== null) rail.append(el("div", "wb-rail-sep"));
+      rail.append(el("div", "wb-rail-group", view.group));
     }
     lastGroup = view.group ?? lastGroup;
     const btn = el("button", "wb-rail-btn");
@@ -1152,7 +1159,7 @@ function toPnpPowerShell({ path, options = {} }, webUrl = "") {
   ].join("\n");
 }
 
-// ../src/workbench/grid.js
+// ../src/workbench/grid.js?v=2
 var el2 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -1238,6 +1245,7 @@ function createGrid({
   const headRow = el2("tr");
   for (const col of columns) {
     const th = el2("th", "", col.label ?? col.key);
+    if (col.num) th.classList.add("wb-num");
     if (col.width) th.style.width = col.width;
     th.tabIndex = 0;
     th.title = `Sort by ${col.label ?? col.key}`;
@@ -1294,7 +1302,10 @@ function createGrid({
     count.textContent = filterText || visible.length !== rows.length ? `${visible.length} / ${rows.length}` : String(rows.length);
     for (const th of headRow.children) {
       const col = columns[[...headRow.children].indexOf(th)];
-      th.querySelector(".wb-sort-arrow").textContent = col && col.key === sortKey ? sortDir === 1 ? " \u25B2" : " \u25BC" : "";
+      const selected = Boolean(col && col.key === sortKey);
+      th.querySelector(".wb-sort-arrow").textContent = selected ? sortDir === 1 ? " \u25B2" : " \u25BC" : "";
+      th.classList.toggle("is-sorted", selected);
+      th.setAttribute("aria-sort", selected ? sortDir === 1 ? "ascending" : "descending" : "none");
     }
     tbody.textContent = "";
     if (!visible.length) {
@@ -1317,7 +1328,7 @@ function createGrid({
       }
       tr.dataset.key = String(row[rowKey] ?? "");
       for (const col of columns) {
-        const td = el2("td", col.mono ? "wb-mono" : "");
+        const td = el2("td", [col.mono ? "wb-mono" : "", col.num ? "wb-num" : ""].filter(Boolean).join(" "));
         const text = displayValue(row, col);
         if (typeof col.render === "function") {
           const node = col.render(cellValue2(row, col), row);
@@ -3501,7 +3512,7 @@ ${link.hint}` : link.path;
   return { el: root, load: load2 };
 }
 
-// ../src/workbench/views/query.js
+// ../src/workbench/views/query.js?v=2
 var QUERY_KEY = "dcspad.workbench.query";
 var DEFAULT_TOP = 100;
 var MAX_TOP = 5e3;
@@ -3582,8 +3593,13 @@ function rawToDescriptor(raw) {
     const value = pair.slice(eq + 1);
     if (key2 === "$select") options.select = value.split(",");
     else if (key2 === "$expand") options.expand = value.split(",");
-    else if (key2 === "$filter") options.filter = decodeURIComponent(value);
-    else if (key2 === "$orderby") options.orderby = value;
+    else if (key2 === "$filter") {
+      try {
+        options.filter = decodeURIComponent(value);
+      } catch {
+        return null;
+      }
+    } else if (key2 === "$orderby") options.orderby = value;
     else if (key2 === "$top") options.top = Number(value) || void 0;
     else return null;
   }
@@ -3677,7 +3693,7 @@ function createQueryView({ client: client2 }) {
   rawArea.setAttribute("aria-label", "Raw query");
   const rawNote = el9("span", "wb-qb-rawnote", "Editing the raw query overrides the builder.");
   rawNote.hidden = true;
-  const runBtn = el9("button", "btn btn-xs wb-qb-run", "Run \u25B6");
+  const runBtn = el9("button", "btn btn-xs wb-qb-run wb-primary", "Run \u25B6");
   runBtn.type = "button";
   const backToBuilder = el9("button", "btn btn-xs", "Back to builder");
   backToBuilder.type = "button";
@@ -4586,7 +4602,7 @@ function exportFileStem(item2) {
   return name.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "page";
 }
 
-// ../src/workbench/views/pages.js
+// ../src/workbench/views/pages.js?v=2
 var PAGE_SELECT = [
   "Id",
   "Title",
@@ -4629,6 +4645,7 @@ var FIELD_SELECT3 = [
   "Description",
   "FillInChoice"
 ];
+var SITE_PAGES_BASE_TEMPLATE = 119;
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
 var el11 = (tag, cls, text) => {
@@ -4637,6 +4654,13 @@ var el11 = (tag, cls, text) => {
   if (text !== void 0) n.textContent = text;
   return n;
 };
+var encodedServerPath = (path) => String(path || "").split("/").map((segment) => {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment));
+  } catch {
+    return encodeURIComponent(segment);
+  }
+}).join("/");
 var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function createPagesView({ client: client2, navigate }) {
   const root = el11("section", "wb-view wb-view-pages");
@@ -4660,6 +4684,7 @@ function createPagesView({ client: client2, navigate }) {
   let pagesLoaded = false;
   const detailCache = /* @__PURE__ */ new Map();
   let fieldsPromise = null;
+  let detailRun = 0;
   function sitePagesList() {
     if (!sitePagesPromise) {
       sitePagesPromise = client2.getAll("web/lists", {
@@ -4667,7 +4692,7 @@ function createPagesView({ client: client2, navigate }) {
         expand: "RootFolder",
         top: 5e3
       }).then(({ items }) => {
-        const found = items.find((l) => l.BaseTemplate === 119 && !l.Hidden) || items.find((l) => l.BaseTemplate === 119);
+        const found = items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden) || items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE);
         return found ? {
           listId: found.Id,
           title: found.Title,
@@ -4777,7 +4802,8 @@ function createPagesView({ client: client2, navigate }) {
   function pageItem(listId, pageId) {
     if (!detailCache.has(pageId)) {
       detailCache.set(pageId, client2.get(guidPath2(listId, `/items(${pageId})`), {
-        select: DETAIL_SELECT
+        select: DETAIL_SELECT,
+        expand: ["Author", "Editor"]
       }).catch((err) => {
         detailCache.delete(pageId);
         throw err;
@@ -4924,6 +4950,7 @@ function createPagesView({ client: client2, navigate }) {
     return wrap;
   }
   async function showDetail(route) {
+    const run = ++detailRun;
     gridPane.hidden = true;
     detailPane.hidden = false;
     detailPane.textContent = "";
@@ -4943,10 +4970,12 @@ function createPagesView({ client: client2, navigate }) {
       if (!sitePages) throw new Error("This web has no Site Pages library.");
       item2 = await pageItem(sitePages.listId, route.pageId);
     } catch (err) {
+      if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
       status.classList.add("wb-error");
       return;
     }
+    if (run !== detailRun) return;
     status.remove();
     if (item2.FileRef) {
       const origin = (() => {
@@ -4956,7 +4985,7 @@ function createPagesView({ client: client2, navigate }) {
           return "";
         }
       })();
-      const fullUrl = `${origin}${encodeURI(item2.FileRef)}`;
+      const fullUrl = `${origin}${encodedServerPath(item2.FileRef)}`;
       const frag = el11("span", "wb-detail-id sp-copy", item2.FileRef);
       frag.title = `Click to copy the full URL
 ${fullUrl}`;
@@ -5042,6 +5071,7 @@ ${fullUrl}`;
     if (route?.pageId) {
       showDetail(route);
     } else {
+      detailRun += 1;
       detailPane.hidden = true;
       gridPane.hidden = false;
       loadPages();
@@ -5050,7 +5080,7 @@ ${fullUrl}`;
   return { el: root, load: load2 };
 }
 
-// ../src/workbench/views/browser.js
+// ../src/workbench/views/browser.js?v=2
 var FIELD_SELECT4 = [
   "Id",
   "Title",
@@ -5066,6 +5096,8 @@ var FIELD_SELECT4 = [
   "Description",
   "FillInChoice"
 ];
+var DOCUMENT_LIBRARY_BASE_TYPE = 1;
+var GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 var FOLDER_SELECT = ["Name", "ServerRelativeUrl", "ItemCount", "TimeLastModified"];
 var FILE_SELECT = [
   "Name",
@@ -5081,6 +5113,55 @@ var el12 = (tag, cls, text) => {
   if (text !== void 0) n.textContent = text;
   return n;
 };
+var icon = (name, size = 15) => {
+  const paths = {
+    folder: [
+      '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'
+    ],
+    file: [
+      '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>',
+      '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>'
+    ],
+    download: [
+      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+      '<path d="m7 10 5 5 5-5"/>',
+      '<path d="M12 15V3"/>'
+    ],
+    link: [
+      '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>',
+      '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
+    ]
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = (paths[name] || []).join("");
+  return svg;
+};
+var fileRole = (row) => {
+  if (row.kind === "folder") return /^forms$|^_/i.test(row.Name || "") ? "sys" : "user";
+  const ext = extOf(row.Name);
+  if (["js", "mjs", "cjs", "ts", "tsx"].includes(ext)) return "js";
+  if (["html", "htm", "svg"].includes(ext)) return "html";
+  if (["css", "scss", "less"].includes(ext)) return "css";
+  if (["json", "csv", "tsv", "xml", "xlsx", "xls"].includes(ext)) return "json";
+  if (["doc", "docx", "pdf", "ppt", "pptx", "rtf"].includes(ext)) return "doc";
+  return "file";
+};
+var encodedServerPath2 = (path) => String(path || "").split("/").map((segment) => {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment));
+  } catch {
+    return encodeURIComponent(segment);
+  }
+}).join("/");
 var fmtDate5 = (v) => v ? String(v).slice(0, 10) : "";
 function formatBytes(n) {
   const bytes = Number(n);
@@ -5122,6 +5203,7 @@ function createBrowserView({ client: client2, navigate }) {
   let currentListing = { folders: [], files: [] };
   let grid = null;
   let librariesLoaded = false;
+  let listingRun = 0;
   const parentListCache = /* @__PURE__ */ new Map();
   const fieldsCache = /* @__PURE__ */ new Map();
   function webRootPath() {
@@ -5184,7 +5266,7 @@ function createBrowserView({ client: client2, navigate }) {
         orderby: "Title",
         top: 5e3
       });
-      libraries = items.filter((l) => l.BaseType === 1 && !l.Hidden);
+      libraries = items.filter((l) => l.BaseType === DOCUMENT_LIBRARY_BASE_TYPE && !l.Hidden);
       librariesLoaded = true;
     } catch {
       libraries = [];
@@ -5211,10 +5293,16 @@ function createBrowserView({ client: client2, navigate }) {
           key: "Name",
           label: "Name",
           value: (row) => row.Name,
-          format: (v, row) => `${row.kind === "folder" ? "\u{1F4C1} " : ""}${v}`
+          render: (name, row) => {
+            const wrap = el12("span", `wb-file-name wb-node-${fileRole(row)}`);
+            const glyph = icon(row.kind === "folder" ? "folder" : "file");
+            glyph.classList.add("wb-node");
+            wrap.append(glyph, el12("span", "wb-file-name-text", name));
+            return wrap;
+          }
         },
         { key: "Type", label: "Type", value: (row) => row.kind === "folder" ? "Folder" : extOf(row.Name) },
-        { key: "Length", label: "Size", value: (row) => row.kind === "folder" ? null : Number(row.Length) || 0, format: (v, row) => row.kind === "folder" ? "" : formatBytes(v) },
+        { key: "Length", label: "Size", num: true, value: (row) => row.kind === "folder" ? null : Number(row.Length) || 0, format: (v, row) => row.kind === "folder" ? "" : formatBytes(v) },
         { key: "TimeLastModified", label: "Modified", format: fmtDate5 },
         { key: "UIVersionLabel", label: "Version", value: (row) => row.kind === "folder" ? "" : row.UIVersionLabel || "" },
         {
@@ -5230,7 +5318,8 @@ function createBrowserView({ client: client2, navigate }) {
             dl.className = "wb-cell-link";
             dl.href = downloadHref(serverRelativeUrl2);
             dl.title = "Download";
-            dl.textContent = "\u2913";
+            dl.setAttribute("aria-label", `Download ${row.Name}`);
+            dl.append(icon("download", 13));
             if (!spWrite.isMock()) dl.setAttribute("download", row.Name);
             dl.addEventListener("click", (e) => e.stopPropagation());
             span.append(dl);
@@ -5238,11 +5327,12 @@ function createBrowserView({ client: client2, navigate }) {
             link.type = "button";
             link.className = "wb-cell-link wb-cell-copylink";
             link.title = "Copy the direct URL";
-            link.textContent = "\u{1F517}";
+            link.setAttribute("aria-label", `Copy the direct URL for ${row.Name}`);
+            link.append(icon("link", 13));
             link.addEventListener("click", (e) => {
               e.stopPropagation();
               const origin = new URL(client2.webUrl()).origin;
-              copyText(`${origin}${encodeURI(serverRelativeUrl2)}`, link);
+              copyText(`${origin}${encodedServerPath2(serverRelativeUrl2)}`, link);
             });
             span.append(link);
             return span;
@@ -5258,7 +5348,7 @@ function createBrowserView({ client: client2, navigate }) {
       filterPlaceholder: "Filter files\u2026",
       exportName: "sp-files"
     });
-    const uploadBtn = el12("button", "btn btn-xs", "Upload\u2026");
+    const uploadBtn = el12("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";
     const fileInput = el12("input");
     fileInput.type = "file";
@@ -5277,6 +5367,7 @@ function createBrowserView({ client: client2, navigate }) {
   }
   async function listFolder(path, { force = false } = {}) {
     void force;
+    const run = ++listingRun;
     currentPath = checkedPath(path);
     renderCrumbs();
     metaPanel.hidden = true;
@@ -5289,6 +5380,7 @@ function createBrowserView({ client: client2, navigate }) {
         client2.getAll(folderApi(currentPath, "/Files"), { select: FILE_SELECT, top: 5e3 })
       ]);
       const sortByName = (a, b) => String(a.Name).localeCompare(String(b.Name), void 0, { sensitivity: "base" });
+      if (run !== listingRun) return;
       currentListing = {
         folders: folders.items.map((f) => ({ ...f, kind: "folder" })).sort(sortByName),
         files: files.items.map((f) => ({ ...f, kind: "file" })).sort(sortByName)
@@ -5299,6 +5391,7 @@ function createBrowserView({ client: client2, navigate }) {
       const matching = [...librarySelect.options].find((o) => o.value && (currentPath === o.value || currentPath.startsWith(`${o.value}/`)));
       librarySelect.value = matching ? matching.value : "";
     } catch (err) {
+      if (run !== listingRun) return;
       grid.setError(err);
     }
   }
@@ -5332,6 +5425,7 @@ function createBrowserView({ client: client2, navigate }) {
     consent.append(dismiss);
   }
   async function startUpload(file) {
+    const folderPath = currentPath;
     consent.classList.remove("wb-consent-error");
     if (file.size > MAX_UPLOAD_BYTES) {
       uploadNotice(
@@ -5346,13 +5440,13 @@ function createBrowserView({ client: client2, navigate }) {
     if (existing) {
       showConsent(
         `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-        () => doUpload(file, { overwrite: true })
+        () => doUpload(file, { overwrite: true, folderPath })
       );
       return;
     }
-    await doUpload(file, { overwrite: false });
+    await doUpload(file, { overwrite: false, folderPath });
   }
-  async function doUpload(file, { overwrite }) {
+  async function doUpload(file, { overwrite, folderPath }) {
     uploadNotice(`Uploading \u201C${file.name}\u201D\u2026`);
     let data;
     try {
@@ -5362,9 +5456,13 @@ function createBrowserView({ client: client2, navigate }) {
       return;
     }
     try {
-      const result = await spWrite.uploadFile(currentPath, file.name, data, { overwrite });
+      const result = await spWrite.uploadFile(folderPath, file.name, data, { overwrite });
       consent.hidden = true;
-      await listFolder(currentPath, { force: true });
+      if (currentPath !== folderPath) {
+        uploadNotice(`Uploaded \u201C${file.name}\u201D to ${folderPath}.`);
+        return;
+      }
+      await listFolder(folderPath, { force: true });
       const uploaded = currentListing.files.find(
         (f) => String(f.Name).toLowerCase() === file.name.toLowerCase()
       ) || { kind: "file", Name: result.fileName, ServerRelativeUrl: result.serverRelativeUrl };
@@ -5373,7 +5471,7 @@ function createBrowserView({ client: client2, navigate }) {
       if (err?.code === "conflict" && !overwrite) {
         showConsent(
           `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-          () => doUpload(file, { overwrite: true })
+          () => doUpload(file, { overwrite: true, folderPath })
         );
         return;
       }
@@ -5386,11 +5484,16 @@ function createBrowserView({ client: client2, navigate }) {
       parentListCache.set(key2, client2.get(folderApi(folderPath, ""), {
         select: "ListItemAllFields/ParentList/Id",
         expand: "ListItemAllFields,ListItemAllFields/ParentList"
-      }).then((data) => {
-        const id = String(
+      }).catch(() => ({})).then(async (data) => {
+        let id = String(
           data?.ListItemAllFields?.ParentList?.Id || data?.ListItemAllFields?.ParentList?.ID || ""
         ).replace(/[{}]/g, "").trim();
-        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+        if (!GUID.test(id)) {
+          const aliasPath = `web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folderPath)}'&$select=Id`;
+          const viaUrl = await client2.get(aliasPath);
+          id = String(viaUrl?.Id || viaUrl?.ID || "").replace(/[{}]/g, "").trim();
+        }
+        if (!GUID.test(id)) {
           throw new Error("SharePoint did not identify this folder\u2019s document library.");
         }
         return id;
@@ -5677,14 +5780,14 @@ var shell = createShell({
   views: [
     // Nav order and grouping are Joe's spec (2026-07-31): identity first,
     // then content, then query, then jump-off/diagnostic sections.
-    { id: "site", label: "Site", glyph: GLYPHS.site, group: "identity", create: createSiteHomeView },
-    { id: "security", label: "Permissions", glyph: GLYPHS.security, group: "identity", create: createSecurityView },
-    { id: "lists", label: "Lists", glyph: GLYPHS.lists, group: "content", create: createListsView },
-    { id: "pages", label: "Pages", glyph: GLYPHS.pages, group: "content", create: createPagesView },
-    { id: "files", label: "Files", glyph: GLYPHS.files, group: "content", create: createBrowserView },
-    { id: "query", label: "Query", glyph: GLYPHS.query, group: "query", create: createQueryView },
-    { id: "links", label: "Panels", glyph: GLYPHS.links, group: "jump", create: createLinksView },
-    { id: "advanced", label: "Advanced", glyph: GLYPHS.advanced, group: "jump", create: createSiteView }
+    { id: "site", label: "Site", glyph: GLYPHS.site, group: "Site", create: createSiteHomeView },
+    { id: "security", label: "Permissions", glyph: GLYPHS.security, group: "Site", create: createSecurityView },
+    { id: "lists", label: "Lists", glyph: GLYPHS.lists, group: "Content", create: createListsView },
+    { id: "pages", label: "Pages", glyph: GLYPHS.pages, group: "Content", create: createPagesView },
+    { id: "files", label: "Files", glyph: GLYPHS.files, group: "Content", create: createBrowserView },
+    { id: "query", label: "Query", glyph: GLYPHS.query, group: "Tools", create: createQueryView },
+    { id: "links", label: "Panels", glyph: GLYPHS.links, group: "Tools", create: createLinksView },
+    { id: "advanced", label: "Advanced", glyph: GLYPHS.advanced, group: "Tools", create: createSiteView }
   ]
 });
 var siteForm = document.getElementById("wb-site-form");

@@ -336,8 +336,10 @@ await check('scriptgen: grids expose the Copy as menu', async () => {
 await check('links: rail lists all eight views in the agreed order', async () => {
   const labels = await page.locator('.wb-rail-btn .wb-rail-label').allTextContents();
   const seps = await page.locator('.wb-rail-sep').count();
+  const groups = await page.locator('.wb-rail-group').allTextContents();
   return labels.join(',') === 'Site,Permissions,Lists,Pages,Files,Query,Panels,Advanced'
-    && seps === 3;
+    && groups.join(',') === 'Site,Content,Tools'
+    && seps === 2;
 });
 
 await check('links: Panels renders the curated quick jumps only', async () => {
@@ -456,6 +458,7 @@ await check('query: pure helpers quote, compose, and round-trip', async () =>
     const parsed = rawToDescriptor('web/lists?$select=Id,Title&$top=5');
     const round = descriptorToRaw(parsed);
     const rejected = rawToDescriptor('web/lists?$skip=5');
+    const malformed = rawToDescriptor('web/lists?$filter=%');
     const col = columnsForSelect(['Editor/Title'])[0];
     return dateClause.startsWith("DueDate ge datetime'2026-01-01")
       && quoteClause === "substringof('O''Brien',Title)"
@@ -463,6 +466,7 @@ await check('query: pure helpers quote, compose, and round-trip', async () =>
       && parsed.options.select.join(',') === 'Id,Title' && parsed.options.top === 5
       && round === 'web/lists?$select=Id,Title&$top=5'
       && rejected === null
+      && malformed === null
       && col.value({ Editor: { Title: 'Pat' } }) === 'Pat';
   }));
 
@@ -665,6 +669,7 @@ await page.close();
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const seenHeaders = [];
+let pageDetailUrl = '';
 
 const listPage1 = {
   value: [
@@ -689,6 +694,47 @@ await live.addInitScript(() => {
 await live.route('**/_api/**', async (route) => {
   const url = route.request().url();
   seenHeaders.push(route.request().headers().accept || '');
+  if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items(7)")) {
+    pageDetailUrl = url;
+    const expand = new URL(url).searchParams.get('$expand') || '';
+    if (!expand.split(',').includes('Author') || !expand.split(',').includes('Editor')) {
+      return route.fulfill({
+        status: 400,
+        json: { 'odata.error': { message: { value: 'Author must be included in $expand.' } } },
+      });
+    }
+    return route.fulfill({ json: {
+      Id: 7,
+      Title: 'Live page',
+      FileLeafRef: 'Live.aspx',
+      FileRef: '/SitePages/Live.aspx',
+      FileDirRef: '/SitePages',
+      Description: 'Live detail fixture',
+      Created: '2026-07-01T00:00:00Z',
+      Modified: '2026-08-01T00:00:00Z',
+      Author: { Title: 'Page Author' },
+      Editor: { Title: 'Page Editor' },
+      CanvasContent1: JSON.stringify([{
+        controlType: 4,
+        position: { zoneIndex: 1, sectionIndex: 1, controlIndex: 1, sectionFactor: 12 },
+        innerHTML: '<p>Live page body</p>',
+      }]),
+      LayoutWebpartsContent: '',
+    } });
+  }
+  if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items")) {
+    return route.fulfill({ json: { value: [{
+      Id: 7,
+      Title: 'Live page',
+      FileLeafRef: 'Live.aspx',
+      FileRef: '/SitePages/Live.aspx',
+      FileDirRef: '/SitePages',
+      PromotedState: 0,
+      Modified: '2026-08-01T00:00:00Z',
+      UniqueId: '77777777-0000-0000-0000-000000000007',
+      Editor: { Title: 'Page Editor' },
+    }] } });
+  }
   if (url.includes('/_api/web/lists')) {
     if (url.includes('page=2')) return route.fulfill({ json: listPage2 });
     const first = { ...listPage1 };
@@ -721,6 +767,16 @@ await check('live: paging links are followed across pages', async () =>
 
 await check('live: rows from the second page render', async () =>
   (await live.locator('.wb-table tbody tr', { hasText: 'Gamma' }).count()) === 1);
+
+await check('live: page detail expands Author and Editor lookup fields', async () => {
+  await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
+  await live.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' })
+    .locator('td').first().click();
+  await live.waitForSelector('.wb-view-pages .wb-text-rendered', { hasText: 'Live page body' });
+  const expand = new URL(pageDetailUrl).searchParams.get('$expand') || '';
+  return expand.split(',').includes('Author') && expand.split(',').includes('Editor');
+});
 
 await check('live: switching sites re-targets every /_api request', async () => {
   seenHeaders.length = 0;

@@ -5,7 +5,7 @@
 // uploads any file type as binary, and reads/edits the full metadata column
 // set through the shared field-editor + sp-write plumbing.
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 import { odataPathLiteral } from '../../sp-odata.js';
 import { createSpWriteClient, MAX_UPLOAD_BYTES } from '../sp-write.js';
@@ -16,6 +16,9 @@ const FIELD_SELECT = [
   'Hidden', 'ReadOnlyField', 'Group', 'DefaultValue', 'Choices', 'Description',
   'FillInChoice',
 ];
+
+const DOCUMENT_LIBRARY_BASE_TYPE = 1;
+const GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 const FOLDER_SELECT = ['Name', 'ServerRelativeUrl', 'ItemCount', 'TimeLastModified'];
 const FILE_SELECT = [
@@ -28,6 +31,54 @@ const el = (tag, cls, text) => {
   if (text !== undefined) n.textContent = text;
   return n;
 };
+
+const icon = (name, size = 15) => {
+  const paths = {
+    folder: [
+      '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    ],
+    file: [
+      '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>',
+      '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+    ],
+    download: [
+      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+      '<path d="m7 10 5 5 5-5"/>', '<path d="M12 15V3"/>',
+    ],
+    link: [
+      '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>',
+      '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    ],
+  };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = (paths[name] || []).join('');
+  return svg;
+};
+
+const fileRole = (row) => {
+  if (row.kind === 'folder') return /^forms$|^_/i.test(row.Name || '') ? 'sys' : 'user';
+  const ext = extOf(row.Name);
+  if (['js', 'mjs', 'cjs', 'ts', 'tsx'].includes(ext)) return 'js';
+  if (['html', 'htm', 'svg'].includes(ext)) return 'html';
+  if (['css', 'scss', 'less'].includes(ext)) return 'css';
+  if (['json', 'csv', 'tsv', 'xml', 'xlsx', 'xls'].includes(ext)) return 'json';
+  if (['doc', 'docx', 'pdf', 'ppt', 'pptx', 'rtf'].includes(ext)) return 'doc';
+  return 'file';
+};
+
+const encodedServerPath = (path) => String(path || '').split('/').map((segment) => {
+  try { return encodeURIComponent(decodeURIComponent(segment)); }
+  catch { return encodeURIComponent(segment); }
+}).join('/');
 
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -83,6 +134,7 @@ export function createBrowserView({ client, navigate }) {
   let currentListing = { folders: [], files: [] };
   let grid = null;
   let librariesLoaded = false;
+  let listingRun = 0;
   const parentListCache = new Map();   // folder path -> Promise<listId>
   const fieldsCache = new Map();       // listId -> Promise<fields>
 
@@ -153,7 +205,7 @@ export function createBrowserView({ client, navigate }) {
         orderby: 'Title',
         top: 5000,
       });
-      libraries = items.filter((l) => l.BaseType === 1 && !l.Hidden);
+      libraries = items.filter((l) => l.BaseType === DOCUMENT_LIBRARY_BASE_TYPE && !l.Hidden);
       librariesLoaded = true;
     } catch { libraries = []; }
     librarySelect.textContent = '';
@@ -181,10 +233,16 @@ export function createBrowserView({ client, navigate }) {
           key: 'Name',
           label: 'Name',
           value: (row) => row.Name,
-          format: (v, row) => `${row.kind === 'folder' ? '📁 ' : ''}${v}`,
+          render: (name, row) => {
+            const wrap = el('span', `wb-file-name wb-node-${fileRole(row)}`);
+            const glyph = icon(row.kind === 'folder' ? 'folder' : 'file');
+            glyph.classList.add('wb-node');
+            wrap.append(glyph, el('span', 'wb-file-name-text', name));
+            return wrap;
+          },
         },
         { key: 'Type', label: 'Type', value: (row) => (row.kind === 'folder' ? 'Folder' : extOf(row.Name)) },
-        { key: 'Length', label: 'Size', value: (row) => (row.kind === 'folder' ? null : Number(row.Length) || 0), format: (v, row) => (row.kind === 'folder' ? '' : formatBytes(v)) },
+        { key: 'Length', label: 'Size', num: true, value: (row) => (row.kind === 'folder' ? null : Number(row.Length) || 0), format: (v, row) => (row.kind === 'folder' ? '' : formatBytes(v)) },
         { key: 'TimeLastModified', label: 'Modified', format: fmtDate },
         { key: 'UIVersionLabel', label: 'Version', value: (row) => (row.kind === 'folder' ? '' : row.UIVersionLabel || '') },
         {
@@ -200,7 +258,8 @@ export function createBrowserView({ client, navigate }) {
             dl.className = 'wb-cell-link';
             dl.href = downloadHref(serverRelativeUrl);
             dl.title = 'Download';
-            dl.textContent = '⤓';
+            dl.setAttribute('aria-label', `Download ${row.Name}`);
+            dl.append(icon('download', 13));
             if (!spWrite.isMock()) dl.setAttribute('download', row.Name);
             dl.addEventListener('click', (e) => e.stopPropagation());
             span.append(dl);
@@ -208,12 +267,13 @@ export function createBrowserView({ client, navigate }) {
             link.type = 'button';
             link.className = 'wb-cell-link wb-cell-copylink';
             link.title = 'Copy the direct URL';
-            link.textContent = '🔗';
+            link.setAttribute('aria-label', `Copy the direct URL for ${row.Name}`);
+            link.append(icon('link', 13));
             link.addEventListener('click', (e) => {
               e.stopPropagation();
               // Direct (non-sharing) URL: web origin + encoded server path.
               const origin = new URL(client.webUrl()).origin;
-              copyText(`${origin}${encodeURI(serverRelativeUrl)}`, link);
+              copyText(`${origin}${encodedServerPath(serverRelativeUrl)}`, link);
             });
             span.append(link);
             return span;
@@ -231,7 +291,7 @@ export function createBrowserView({ client, navigate }) {
     });
 
     // Toolbar: upload button + hidden input, refresh.
-    const uploadBtn = el('button', 'btn btn-xs', 'Upload…');
+    const uploadBtn = el('button', 'btn btn-xs wb-primary', 'Upload…');
     uploadBtn.type = 'button';
     const fileInput = el('input');
     fileInput.type = 'file';
@@ -251,6 +311,7 @@ export function createBrowserView({ client, navigate }) {
 
   async function listFolder(path, { force = false } = {}) {
     void force;
+    const run = ++listingRun;
     currentPath = checkedPath(path);
     renderCrumbs();
     metaPanel.hidden = true;
@@ -264,6 +325,7 @@ export function createBrowserView({ client, navigate }) {
       ]);
       const sortByName = (a, b) =>
         String(a.Name).localeCompare(String(b.Name), undefined, { sensitivity: 'base' });
+      if (run !== listingRun) return;
       currentListing = {
         folders: folders.items.map((f) => ({ ...f, kind: 'folder' })).sort(sortByName),
         files: files.items.map((f) => ({ ...f, kind: 'file' })).sort(sortByName),
@@ -275,6 +337,7 @@ export function createBrowserView({ client, navigate }) {
         && (currentPath === o.value || currentPath.startsWith(`${o.value}/`)));
       librarySelect.value = matching ? matching.value : '';
     } catch (err) {
+      if (run !== listingRun) return;
       grid.setError(err);
     }
   }
@@ -305,6 +368,7 @@ export function createBrowserView({ client, navigate }) {
   }
 
   async function startUpload(file) {
+    const folderPath = currentPath;
     consent.classList.remove('wb-consent-error');
     if (file.size > MAX_UPLOAD_BYTES) {
       uploadNotice(
@@ -319,14 +383,14 @@ export function createBrowserView({ client, navigate }) {
     if (existing) {
       showConsent(
         `“${file.name}” already exists in this folder. Replace it?`,
-        () => doUpload(file, { overwrite: true }),
+        () => doUpload(file, { overwrite: true, folderPath }),
       );
       return;
     }
-    await doUpload(file, { overwrite: false });
+    await doUpload(file, { overwrite: false, folderPath });
   }
 
-  async function doUpload(file, { overwrite }) {
+  async function doUpload(file, { overwrite, folderPath }) {
     uploadNotice(`Uploading “${file.name}”…`);
     let data;
     try {
@@ -336,9 +400,13 @@ export function createBrowserView({ client, navigate }) {
       return;
     }
     try {
-      const result = await spWrite.uploadFile(currentPath, file.name, data, { overwrite });
+      const result = await spWrite.uploadFile(folderPath, file.name, data, { overwrite });
       consent.hidden = true;
-      await listFolder(currentPath, { force: true });
+      if (currentPath !== folderPath) {
+        uploadNotice(`Uploaded “${file.name}” to ${folderPath}.`);
+        return;
+      }
+      await listFolder(folderPath, { force: true });
       const uploaded = currentListing.files.find(
         (f) => String(f.Name).toLowerCase() === file.name.toLowerCase(),
       ) || { kind: 'file', Name: result.fileName, ServerRelativeUrl: result.serverRelativeUrl };
@@ -348,7 +416,7 @@ export function createBrowserView({ client, navigate }) {
         // Race: the file appeared between listing and upload.
         showConsent(
           `“${file.name}” already exists in this folder. Replace it?`,
-          () => doUpload(file, { overwrite: true }),
+          () => doUpload(file, { overwrite: true, folderPath }),
         );
         return;
       }
@@ -363,12 +431,21 @@ export function createBrowserView({ client, navigate }) {
       parentListCache.set(key, client.get(folderApi(folderPath, ''), {
         select: 'ListItemAllFields/ParentList/Id',
         expand: 'ListItemAllFields,ListItemAllFields/ParentList',
-      }).then((data) => {
-        const id = String(
+      }).catch(() => ({})).then(async (data) => {
+        let id = String(
           data?.ListItemAllFields?.ParentList?.Id
           || data?.ListItemAllFields?.ParentList?.ID || '',
         ).replace(/[{}]/g, '').trim();
-        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+
+        // A document-library root has no list item, so ParentList is empty.
+        // Resolve that root by its server-relative list URL instead.
+        if (!GUID.test(id)) {
+          // apiUrl cannot express OData aliases; append the alias to the path.
+          const aliasPath = `web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folderPath)}'&$select=Id`;
+          const viaUrl = await client.get(aliasPath);
+          id = String(viaUrl?.Id || viaUrl?.ID || '').replace(/[{}]/g, '').trim();
+        }
+        if (!GUID.test(id)) {
           throw new Error('SharePoint did not identify this folder’s document library.');
         }
         return id;

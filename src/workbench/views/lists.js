@@ -2,7 +2,7 @@
 // thing the SP UI won't show), with drill-down into fields, views, content
 // types, and the raw entity rendered through the SP-aware inspector.
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 import { LIST_SETTINGS, linkUrl } from '../config-links.js';
 import { principalTypeName } from '../perm-kinds.js';

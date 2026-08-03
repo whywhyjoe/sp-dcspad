@@ -3,7 +3,7 @@
 // BasePermissions), web role assignments, and an explicit
 // broken-inheritance scan across lists.
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 import { decodeBasePermissions, principalTypeName } from '../perm-kinds.js';
 import { createSpWriteClient } from '../sp-write.js';
 import { LINK_GROUPS, linkUrl } from '../config-links.js';

@@ -34,6 +34,8 @@
   --accent-soft: #1e3b35;      /* accent-soft surface (Add button, focus) */
   --accent-soft-line: #35695c;
   --accent-soft-fg: #79e0c6;
+  --accent-soft-hover: #25473f;
+  --accent-soft-fg-hi: #8fe8d1;
   --accent-line: #2c6a5c; /* accent at line weight (splash outline layer) */
   --accent-ring: #182b28; /* focus-ring wash */
   --logo-dim: #233f3a;    /* pixel-logo off cells */
@@ -42,6 +44,8 @@
   --ok-soft: #16321f;
   --ok-soft-line: #2b5a38;
   --warn: #e8b660;
+  --warn-soft: #2a2112;
+  --warn-soft-line: #554323;
   --error: #ff6b62;
   --error-fg: #ff8b82;    /* error text on dark washes */
   --error-bg: #2a1512;    /* error row wash */
@@ -49,13 +53,37 @@
   --error-deep: #2a0705;  /* digits on solid error pills */
   --error-muted: #c9948e; /* stack-trace body text */
   --info: #67a7f7;
+  --info-soft: #1c2a38;
+  --info-soft-line: #2d4761;
+  --info-fg: #9fc7f5;
   /* file-type badges — the one place file type is a color */
   --ft-js-fg: #e3ce7a;   --ft-js-bg: #332e18;   --ft-js-line: #514a28;
   --ft-html-fg: #e5a06a; --ft-html-bg: #33251b; --ft-html-line: #543c2b;
   --ft-css-fg: #7eb6e8;  --ft-css-bg: #1c2a38;  --ft-css-line: #2d4761;
+  --ft-json-fg: #a9c98a; --ft-json-bg: #21281a; --ft-json-line: #3b4a2f;
+  --ft-doc-fg: #b6a8de;  --ft-doc-bg: #241f33;  --ft-doc-line: #3d3557;
+  --ft-sp-fg: #79e0c6;   --ft-sp-bg: #1e3b35;   --ft-sp-line: #35695c;
+  /* file/folder node glyphs — resting and called-out tiers */
+  --node-user: #5b9184; --node-user-fill: #1b2926;
+  --node-lib: #5d7f9e; --node-lib-fill: #1b2430;
+  --node-sys: #565c6a; --node-sys-fill: transparent;
+  --node-file: #7a8190; --node-file-fill: transparent;
+  --node-js: #9a9068; --node-js-fill: #24221a;
+  --node-html: #9d7d64; --node-html-fill: #251f1a;
+  --node-css: #6f8ba6; --node-css-fill: #1b232b;
+  --node-json: #7f9070; --node-json-fill: #1e2119;
+  --node-doc: #86809e; --node-doc-fill: #211f29;
+  --node-open: var(--accent-hi); --node-open-fill: #24463e;
   /* elevation / shape / type */
   --shadow-pop: 0 10px 28px -10px #000d;  /* the only shadow in the app */
   --radius-s: 3px; --radius-m: 4px; --radius-l: 6px;
+  --radius-pill: 999px;
+  --dur-tint: .12s; --dur-move: .22s; --dur-beat: .46s; --dur-scan: .82s;
+  --ease: cubic-bezier(.35, 0, .25, 1);
+  --t-view: 600 17px/1.3 var(--sans);
+  --t-control: 500 12.5px/1 var(--sans);
+  --t-group: 700 9.5px/1 var(--sans);
+  --t-status: 500 11px/1 var(--mono);
   --mono: "Cascadia Code", "Consolas", "SF Mono", Menlo, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
 

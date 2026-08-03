@@ -189,6 +189,12 @@ export function createSpRestClient({
         items.push(entityOf(data));
         break;
       }
+      const remaining = PAGE_CAP - items.length;
+      if (page.length > remaining) {
+        items.push(...page.slice(0, remaining));
+        partial = true;
+        break;
+      }
       items.push(...page);
       const next = nextLinkOf(data);
       if (!next) break;

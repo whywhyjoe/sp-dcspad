@@ -5,17 +5,17 @@
 // tools/build-workbench.mjs) through boot-workbench.js.
 
 import { getSpContext } from '../bridge/sp-context.js';
-import { createSpRestClient } from './sp-rest.js';
+import { createSpRestClient } from './sp-rest.js?v=2';
 import { mockResolver } from './mock-data.js';
-import { createShell } from './shell.js';
+import { createShell } from './shell.js?v=2';
 import { createListsView } from './views/lists.js';
 import { createSecurityView } from './views/security.js';
 import { createSiteView } from './views/site.js';
 import { createSiteHomeView } from './views/site-home.js';
 import { createLinksView } from './views/links.js';
-import { createQueryView } from './views/query.js';
-import { createPagesView } from './views/pages.js';
-import { createBrowserView } from './views/browser.js';
+import { createQueryView } from './views/query.js?v=2';
+import { createPagesView } from './views/pages.js?v=2';
+import { createBrowserView } from './views/browser.js?v=2';
 import {
   getFavorites, getRecents, isFavorite, addFavorite, removeFavorite,
   pushRecent, onQuotaError,
@@ -64,14 +64,14 @@ const shell = createShell({
   views: [
     // Nav order and grouping are Joe's spec (2026-07-31): identity first,
     // then content, then query, then jump-off/diagnostic sections.
-    { id: 'site', label: 'Site', glyph: GLYPHS.site, group: 'identity', create: createSiteHomeView },
-    { id: 'security', label: 'Permissions', glyph: GLYPHS.security, group: 'identity', create: createSecurityView },
-    { id: 'lists', label: 'Lists', glyph: GLYPHS.lists, group: 'content', create: createListsView },
-    { id: 'pages', label: 'Pages', glyph: GLYPHS.pages, group: 'content', create: createPagesView },
-    { id: 'files', label: 'Files', glyph: GLYPHS.files, group: 'content', create: createBrowserView },
-    { id: 'query', label: 'Query', glyph: GLYPHS.query, group: 'query', create: createQueryView },
-    { id: 'links', label: 'Panels', glyph: GLYPHS.links, group: 'jump', create: createLinksView },
-    { id: 'advanced', label: 'Advanced', glyph: GLYPHS.advanced, group: 'jump', create: createSiteView },
+    { id: 'site', label: 'Site', glyph: GLYPHS.site, group: 'Site', create: createSiteHomeView },
+    { id: 'security', label: 'Permissions', glyph: GLYPHS.security, group: 'Site', create: createSecurityView },
+    { id: 'lists', label: 'Lists', glyph: GLYPHS.lists, group: 'Content', create: createListsView },
+    { id: 'pages', label: 'Pages', glyph: GLYPHS.pages, group: 'Content', create: createPagesView },
+    { id: 'files', label: 'Files', glyph: GLYPHS.files, group: 'Content', create: createBrowserView },
+    { id: 'query', label: 'Query', glyph: GLYPHS.query, group: 'Tools', create: createQueryView },
+    { id: 'links', label: 'Panels', glyph: GLYPHS.links, group: 'Tools', create: createLinksView },
+    { id: 'advanced', label: 'Advanced', glyph: GLYPHS.advanced, group: 'Tools', create: createSiteView },
   ],
 });
 

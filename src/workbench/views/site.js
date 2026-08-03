@@ -2,7 +2,7 @@
 // scopes), subwebs, the property bag (OData-encoded keys decoded for
 // display), regional settings, and the current user.
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);

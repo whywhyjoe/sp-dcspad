@@ -162,6 +162,7 @@ const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const LIB_ID = 'ab12cd34-0000-4000-8000-00000000aa01';
 const uploads = [];        // { url, digest, bodyLength }
 const vuliCalls = [];      // { url, digest, body }
+const libraryLookups = [];
 const flags = { failMetadata: false, racyConflictOnce: true };
 
 const LIVE_FILES = [
@@ -232,6 +233,10 @@ await live.route('**/_api/**', async (route) => {
   if (url.includes('/fields') && url.includes("lists(guid'")) {
     return route.fulfill({ json: { value: LIVE_FIELDS } });
   }
+  if (url.includes('/_api/web/GetList(@listUrl)')) {
+    libraryLookups.push(url);
+    return route.fulfill({ json: { Id: LIB_ID } });
+  }
   if (url.includes('GetFileByServerRelativePath(') && url.includes('/ListItemAllFields')) {
     return route.fulfill({ json: { Id: 7, Title: 'Proposal', DocCategory: 'Report' } });
   }
@@ -243,7 +248,7 @@ await live.route('**/_api/**', async (route) => {
       return route.fulfill({ json: { value: LIVE_FILES } });
     }
     return route.fulfill({
-      json: { ListItemAllFields: { ParentList: { Id: LIB_ID } } },
+      json: { ListItemAllFields: null },
     });
   }
   if (url.includes('/_api/web/lists')) {
@@ -267,6 +272,18 @@ await live.goto(WB_URL);
 await live.waitForSelector('.wb-home-cards');
 await live.locator('.wb-rail-btn', { hasText: 'Files' }).click();
 await live.waitForSelector('.wb-view-files .wb-table tbody tr', { hasText: 'proposal.docx' });
+
+await check('live: root-library files resolve metadata through GetList', async () => {
+  await live.locator('.wb-view-files .wb-table tbody tr', { hasText: 'proposal.docx' })
+    .locator('td').first().click();
+  await live.waitForSelector('.wb-file-meta .wb-editor-row[data-internal="Title"]');
+  const title = await live.locator('.wb-file-meta .wb-editor-row[data-internal="Title"] input')
+    .inputValue();
+  await live.locator('.wb-file-meta .wb-file-meta-head .btn', { hasText: 'Close' }).click();
+  return title === 'Proposal'
+    && libraryLookups.length === 1
+    && new URL(libraryLookups[0]).searchParams.get('@listUrl') === "'/Shared Documents'";
+});
 
 await check('live: binary upload posts AddUsingPath with a digest and the raw bytes', async () => {
   await live.setInputFiles('.wb-view-files input[type=file]', {

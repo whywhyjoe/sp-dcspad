@@ -6,7 +6,7 @@
 // The last query per web is remembered in sessionStorage (same per-tab
 // convention as the route and site keys — invariant 6 covers localStorage).
 
-import { createGrid } from '../grid.js';
+import { createGrid } from '../grid.js?v=2';
 
 const QUERY_KEY = 'dcspad.workbench.query';
 const DEFAULT_TOP = 100;
@@ -93,7 +93,10 @@ export function rawToDescriptor(raw) {
     const value = pair.slice(eq + 1);
     if (key === '$select') options.select = value.split(',');
     else if (key === '$expand') options.expand = value.split(',');
-    else if (key === '$filter') options.filter = decodeURIComponent(value);
+    else if (key === '$filter') {
+      try { options.filter = decodeURIComponent(value); }
+      catch { return null; }
+    }
     else if (key === '$orderby') options.orderby = value;
     else if (key === '$top') options.top = Number(value) || undefined;
     else return null;
@@ -199,7 +202,7 @@ export function createQueryView({ client }) {
   rawArea.setAttribute('aria-label', 'Raw query');
   const rawNote = el('span', 'wb-qb-rawnote', 'Editing the raw query overrides the builder.');
   rawNote.hidden = true;
-  const runBtn = el('button', 'btn btn-xs wb-qb-run', 'Run ▶');
+  const runBtn = el('button', 'btn btn-xs wb-qb-run wb-primary', 'Run ▶');
   runBtn.type = 'button';
   const backToBuilder = el('button', 'btn btn-xs', 'Back to builder');
   backToBuilder.type = 'button';
