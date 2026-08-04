@@ -565,12 +565,22 @@ await check('pages: web part inventory names known ids, degrades unknown ones', 
     && text.includes('Docs · Pad');
 });
 
-await check('pages: Extract renders sanitized rich text with raw HTML behind it', async () => {
+await check('pages: Extract merges every part into one content box plus one HTML box', async () => {
   await page.locator('.wb-view-pages .wb-tab', { hasText: 'Extract' }).click();
   await page.waitForSelector('.wb-text-rendered');
+  const boxes = await page.locator('.wb-view-pages .wb-text-block').count();
+  const titles = await page.locator('.wb-view-pages .wb-subpanel-title').allTextContents();
+  const headings = await page.locator('.wb-text-part').allTextContents();
   const rendered = await page.locator('.wb-text-rendered').textContent();
   const raw = await page.locator('.wb-text-raw').textContent();
-  return rendered.includes('Welcome to the mock intranet') && raw.includes('<h2>Welcome</h2>');
+  return boxes === 2 && titles.join(',') === 'Content,HTML'
+    // one heading per non-empty part; 'Mystery part' carries no text and is skipped
+    && headings.join(',') === 'Text,Quick links'
+    && rendered.includes('Welcome to the mock intranet')
+    && rendered.includes('Docs') && rendered.includes('Pad')
+    && !rendered.includes('Mystery part')
+    && !rendered.toLowerCase().includes('web part')
+    && raw.includes('<h2>Welcome</h2>') && raw.includes('<!-- Text -->');
 });
 
 await check('page-export: content export merges metadata and content per spec', async () =>
@@ -595,8 +605,13 @@ await check('page-export: content export merges metadata and content per spec', 
       && md.includes('Created 2026-05-02 by Mock Developer')
       && md.includes('Location: Mock Web | Site Pages')
       && md.includes('Welcome to the mock intranet home page')
-      && md.includes('**[Web part: Quick links]**')
+      && md.includes('## Text')
+      && md.includes('## Quick links')
       && md.includes('- Docs')
+      // empty parts are skipped and the technical framing is gone
+      && !md.includes('Mystery part')
+      && !md.includes('Web part:')
+      && md.includes('1 part could not be read')
       && md.includes('## Metadata')
       && md.includes(`- URL: ${location.origin}/SitePages/Home.aspx`)
       && md.indexOf('## Metadata') > md.indexOf('Welcome to the mock intranet')

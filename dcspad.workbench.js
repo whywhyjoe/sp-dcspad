@@ -4504,25 +4504,55 @@ function pageLocation({ siteTitle, libraryTitle, fileDirRef, libraryRootPath }) 
   if (folder) parts.push(folder);
   return parts.join(" | ");
 }
-function contentBlocks(controls) {
-  const blocks = [];
+function textPartIsEmpty(html) {
+  if (!html) return true;
+  if (/<img\b/i.test(html)) return false;
+  return !textOfControl({ kind: "text", innerHTML: html });
+}
+function contentParts(controls) {
+  const parts = [];
+  let unreadable = 0;
   for (const control of controls || []) {
     if (control.kind === "text") {
       const html = String(control.innerHTML || "").trim();
-      if (html) blocks.push(html);
+      if (!textPartIsEmpty(html)) parts.push({ kind: "text", label: "Text", html, lines: [] });
     } else if (control.kind === "webpart") {
-      const name = webPartName(control.webPartId);
-      const title = control.webPartData?.title;
-      const label = title && title !== name ? `**[Web part: ${name} \u2014 \u201C${title}\u201D]**` : `**[Web part: ${name}]**`;
-      const texts = Object.values(
+      const lines = Object.values(
         control.webPartData?.serverProcessedContent?.searchablePlainTexts || {}
-      ).filter((v) => typeof v === "string" && v.trim());
-      blocks.push(texts.length ? `${label}
-
-${texts.map((t) => `- ${t}`).join("\n")}` : label);
+      ).filter((v) => typeof v === "string" && v.trim()).map((v) => v.trim());
+      if (!lines.length) continue;
+      const title = String(control.webPartData?.title || "").trim();
+      parts.push({
+        kind: "webpart",
+        label: title || webPartName(control.webPartId),
+        html: "",
+        lines
+      });
     } else if (control.kind === "unknown") {
-      blocks.push("*[Unparsed canvas entry \u2014 see the raw export]*");
+      unreadable += 1;
     }
+  }
+  const counts = /* @__PURE__ */ new Map();
+  for (const part of parts) counts.set(part.label, (counts.get(part.label) || 0) + 1);
+  const seen = /* @__PURE__ */ new Map();
+  for (const part of parts) {
+    if (counts.get(part.label) > 1) {
+      const n = (seen.get(part.label) || 0) + 1;
+      seen.set(part.label, n);
+      part.label = `${part.label} ${n}`;
+    }
+  }
+  return { parts, unreadable };
+}
+function contentBlocks(controls) {
+  const { parts, unreadable } = contentParts(controls);
+  const blocks = [];
+  for (const part of parts) {
+    blocks.push(`## ${part.label}`);
+    blocks.push(part.kind === "text" ? part.html : part.lines.map((t) => `- ${t}`).join("\n"));
+  }
+  if (unreadable) {
+    blocks.push(`*[${unreadable} part${unreadable === 1 ? "" : "s"} could not be read \u2014 see the raw export.]*`);
   }
   return blocks;
 }
@@ -4886,24 +4916,40 @@ function createPagesView({ client: client2, navigate }) {
   }
   function textPane(parsed) {
     const wrap = el11("div", "wb-tab-pane wb-text-pane");
-    const texts = parsed.controls.filter((c) => c.kind === "text");
-    if (!texts.length) {
-      wrap.append(el11("div", "wb-grid-status", "No text web parts on this page."));
+    const { parts } = contentParts(parsed.controls);
+    if (!parts.length) {
+      wrap.append(el11("div", "wb-grid-status", "No readable content on this page."));
       return wrap;
     }
-    texts.forEach((control, i) => {
-      const block = el11("div", "wb-text-block");
-      block.append(el11("div", "wb-subpanel-title", `Text web part ${i + 1}`));
-      const rendered = el11("div", "wb-text-rendered");
-      rendered.innerHTML = sanitizeHtml(control.innerHTML);
-      block.append(rendered);
-      const details = document.createElement("details");
-      details.append(el11("summary", "", "Raw HTML"));
-      const pre = el11("pre", "wb-text-raw", control.innerHTML);
-      details.append(pre);
-      block.append(details);
-      wrap.append(block);
-    });
+    const contentBlock = el11("div", "wb-text-block");
+    contentBlock.append(el11("div", "wb-subpanel-title", "Content"));
+    const rendered = el11("div", "wb-text-rendered");
+    for (const part of parts) {
+      rendered.append(el11("h3", "wb-text-part", part.label));
+      if (part.kind === "text") {
+        const body = el11("div", "wb-text-body");
+        body.innerHTML = sanitizeHtml(part.html);
+        rendered.append(body);
+      } else {
+        const list2 = el11("ul", "wb-text-lines");
+        for (const line of part.lines) list2.append(el11("li", "", line));
+        rendered.append(list2);
+      }
+    }
+    contentBlock.append(rendered);
+    wrap.append(contentBlock);
+    const withHtml = parts.filter((p) => p.kind === "text");
+    if (withHtml.length) {
+      const htmlBlock = el11("div", "wb-text-block");
+      htmlBlock.append(el11("div", "wb-subpanel-title", "HTML"));
+      htmlBlock.append(el11(
+        "pre",
+        "wb-text-raw",
+        withHtml.map((p) => `<!-- ${p.label} -->
+${p.html}`).join("\n\n")
+      ));
+      wrap.append(htmlBlock);
+    }
     return wrap;
   }
   function metadataPane(listId, pageId) {
