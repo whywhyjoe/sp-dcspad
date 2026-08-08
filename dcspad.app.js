@@ -341,6 +341,7 @@ function configureWorkers() {
       let file = "editor.worker.js";
       if (label === "css" || label === "scss" || label === "less") file = "css.worker.js";
       else if (label === "html" || label === "handlebars" || label === "razor") file = "html.worker.js";
+      else if (label === "json") file = "json.worker.js";
       else if (label === "typescript" || label === "javascript") file = "ts.worker.js";
       const worker = new Worker(assetUrl(file), {
         name: `dcspad-monaco-${label || "editor"}`
@@ -384,6 +385,45 @@ async function fetchPnpTypeLibraries() {
     throw new Error("PnPjs type payload is invalid or does not match runtime 2.15.0");
   }
   return payload.libs;
+}
+
+// ../src/json-language.js
+var JSON_LANGUAGE_ID = "json";
+var JSON_THEME_RULES = [
+  { token: "string.key.json", foreground: "9CDCFE" },
+  { token: "string.value.json", foreground: "CE9178" },
+  { token: "number.json", foreground: "B5CEA8" },
+  { token: "keyword.json", foreground: "569CD6" },
+  { token: "delimiter.bracket.json", foreground: "D4D4D4" },
+  { token: "delimiter.array.json", foreground: "D4D4D4" },
+  { token: "delimiter.colon.json", foreground: "D4D4D4" },
+  { token: "delimiter.comma.json", foreground: "D4D4D4" }
+];
+function looksLikeJsonUri(model) {
+  return /\.jsonc?$/i.test(model.uri?.path || "");
+}
+function installJsonLanguage(monaco, options = {}) {
+  const allowComments = options.allowComments === true;
+  monaco.json.jsonDefaults.setDiagnosticsOptions({
+    validate: true,
+    allowComments,
+    trailingCommas: options.trailingCommas || (allowComments ? "ignore" : "error"),
+    schemaValidation: "error",
+    // Off by default: fetching a $schema URL would be an outbound request from
+    // a worker on a SharePoint page, which either fails quietly or surprises
+    // the tenant. Callers that want SchemaStore can opt in.
+    enableSchemaRequest: options.enableSchemaRequest === true
+  });
+  if (options.adoptByUri === false) return { dispose: () => {
+  } };
+  const adopt = (model) => {
+    if (!model.isDisposed() && looksLikeJsonUri(model) && model.getLanguageId() !== JSON_LANGUAGE_ID) {
+      monaco.editor.setModelLanguage(model, JSON_LANGUAGE_ID);
+    }
+  };
+  for (const model of monaco.editor.getModels()) adopt(model);
+  const subscription = monaco.editor.onDidCreateModel(adopt);
+  return { dispose: () => subscription.dispose() };
 }
 
 // ../src/intelligence/alpine.js
@@ -1280,6 +1320,7 @@ var MODEL_URIS = {
 };
 async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }) {
   const monaco = await loadMonacoRuntime();
+  const jsonLanguage = installJsonLanguage(monaco);
   const state3 = getState();
   const host = document.getElementById("pane-editor");
   const cursorEl = document.getElementById("status-cursor");
@@ -1322,7 +1363,8 @@ async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }
       { token: "attribute.value.unit.css", foreground: "B5CEA8" },
       { token: "delimiter", foreground: "D4D4D4" },
       { token: "operator", foreground: "D4D4D4" },
-      { token: "invalid", foreground: "F44747" }
+      { token: "invalid", foreground: "F44747" },
+      ...JSON_THEME_RULES
     ],
     colors: {
       "editor.background": "#17191f",
@@ -1364,6 +1406,15 @@ async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }
       "editorError.foreground": "#ff6b62",
       "editorWarning.foreground": "#e8b660",
       "editorInfo.foreground": "#67a7f7",
+      // Overview-ruler marks are themed separately from the squiggles above;
+      // without these they fall back to vs-dark's palette and clash.
+      "editorOverviewRuler.errorForeground": "#ff6b62",
+      "editorOverviewRuler.warningForeground": "#e8b660",
+      "editorOverviewRuler.infoForeground": "#67a7f7",
+      "editorOverviewRuler.findMatchForeground": "#3fd8b4",
+      "editorOverviewRuler.bracketMatchForeground": "#888888",
+      "editorOverviewRuler.background": "#14161b",
+      "editorOverviewRuler.border": "#00000000",
       "editorLink.activeForeground": "#67a7f7",
       "menu.background": "#20242c",
       "menu.foreground": "#d4d9e2",
@@ -1499,7 +1550,12 @@ async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }
     wordWrap: state3.settings.wordWrap ? "on" : "off",
     lineNumbersMinChars: 3,
     minimap: { enabled: false },
-    overviewRulerLanes: 0,
+    // The overview ruler is the scrollbar-strip map of markers. The option is
+    // a lane count, not a boolean: 0 renders nothing at all, which hid every
+    // diagnostic the language services produce. Cursor marks stay suppressed —
+    // the status bar already reports the position.
+    overviewRulerLanes: 3,
+    overviewRulerBorder: false,
     hideCursorInOverviewRuler: true,
     scrollBeyondLastLine: false,
     stickyScroll: { enabled: false },
@@ -1715,6 +1771,7 @@ async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }
     setPnpTypesEnabled,
     dispose: () => {
       resizeObserver.disconnect();
+      jsonLanguage.dispose();
       alpineCompletionRegistration.dispose();
       for (const registration of bspRegistrations) registration.dispose();
       for (const registration of fluentIconRegistrations) registration.dispose();
@@ -5288,8 +5345,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "71" : "dev";
-var injectedRevision = true ? "288f14ef" : "";
+var injectedBuild = true ? "76" : "dev";
+var injectedRevision = true ? "d3721b74" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
