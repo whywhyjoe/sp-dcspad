@@ -1,5 +1,11 @@
 # DCSPad — Claude Code guide
 
+> **Building a *new* app rather than changing this one?** Read the DCS Workbench
+> method docs in the `whywhyjoe/dcs-workbench-tools` repo (`docs/README.md`).
+> They generalize this repo's hosting, boot, composition, SharePoint-access and
+> deploy patterns into the house style for the whole app family. This file stays
+> authoritative for DCSPad itself.
+>
 > **Start here if you're new to this repo:** `HANDOFF.md` — current state plus
 > the open problem (hosting inside a modern-page custom-script web part, which
 > the standalone-page assumptions below do not yet account for).
