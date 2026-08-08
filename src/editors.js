@@ -4,6 +4,7 @@
 
 import { getState, update } from './state.js';
 import { fetchPnpTypeLibraries, loadMonacoRuntime } from './monaco-runtime.js';
+import { JSON_THEME_RULES, installJsonLanguage } from './json-language.js';
 import {
   ALPINE_HTML_DATA,
   ALPINE_JS_LIBRARIES,
@@ -37,6 +38,10 @@ const MODEL_URIS = {
 
 export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }) {
   const monaco = await loadMonacoRuntime();
+  // JSON validation/highlighting comes from Monaco's own language service in
+  // json.worker.js; configure it before any model is created so imported JSON
+  // tokenizes on first paint.
+  const jsonLanguage = installJsonLanguage(monaco);
   const state = getState();
   const host = document.getElementById('pane-editor');
   const cursorEl = document.getElementById('status-cursor');
@@ -85,6 +90,7 @@ export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFon
       { token: 'delimiter', foreground: 'D4D4D4' },
       { token: 'operator', foreground: 'D4D4D4' },
       { token: 'invalid', foreground: 'F44747' },
+      ...JSON_THEME_RULES,
     ],
     colors: {
       'editor.background': '#17191f',
@@ -126,6 +132,15 @@ export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFon
       'editorError.foreground': '#ff6b62',
       'editorWarning.foreground': '#e8b660',
       'editorInfo.foreground': '#67a7f7',
+      // Overview-ruler marks are themed separately from the squiggles above;
+      // without these they fall back to vs-dark's palette and clash.
+      'editorOverviewRuler.errorForeground': '#ff6b62',
+      'editorOverviewRuler.warningForeground': '#e8b660',
+      'editorOverviewRuler.infoForeground': '#67a7f7',
+      'editorOverviewRuler.findMatchForeground': '#3fd8b4',
+      'editorOverviewRuler.bracketMatchForeground': '#888888',
+      'editorOverviewRuler.background': '#14161b',
+      'editorOverviewRuler.border': '#00000000',
       'editorLink.activeForeground': '#67a7f7',
       'menu.background': '#20242c',
       'menu.foreground': '#d4d9e2',
@@ -269,7 +284,12 @@ export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFon
     wordWrap: state.settings.wordWrap ? 'on' : 'off',
     lineNumbersMinChars: 3,
     minimap: { enabled: false },
-    overviewRulerLanes: 0,
+    // The overview ruler is the scrollbar-strip map of markers. The option is
+    // a lane count, not a boolean: 0 renders nothing at all, which hid every
+    // diagnostic the language services produce. Cursor marks stay suppressed —
+    // the status bar already reports the position.
+    overviewRulerLanes: 3,
+    overviewRulerBorder: false,
     hideCursorInOverviewRuler: true,
     scrollBeyondLastLine: false,
     stickyScroll: { enabled: false },
@@ -503,6 +523,7 @@ export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFon
     setPnpTypesEnabled,
     dispose: () => {
       resizeObserver.disconnect();
+      jsonLanguage.dispose();
       alpineCompletionRegistration.dispose();
       for (const registration of bspRegistrations) registration.dispose();
       for (const registration of fluentIconRegistrations) registration.dispose();

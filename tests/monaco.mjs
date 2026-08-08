@@ -430,6 +430,93 @@ await page.waitForTimeout(300);
 await page.click('#editor-tabs .tab[data-editor="css"]');
 await page.waitForTimeout(300);
 
+// JSON language service — highlighting, worker-backed validation, and the
+// .json-URI adoption that lets imported JSON light up without the caller
+// having to set the model language itself.
+const jsonProbe = await page.evaluate(async () => {
+  const monaco = await import('/vendor/monaco/monaco.js');
+  const out = {};
+  out.registered = monaco.languages.getLanguages().some((l) => l.id === 'json');
+
+  const broken = '{\n  "name": "DCSPad",\n  "version": 2,\n}';
+  const model = monaco.editor.createModel(
+    broken, 'json', monaco.Uri.parse('file:///dcspad/probe.json'));
+  const markersFor = async (resource) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const found = monaco.editor.getModelMarkers({ resource });
+      if (found.length) return found;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return [];
+  };
+  out.trailingComma = (await markersFor(model.uri))
+    .map((m) => ({ owner: m.owner, line: m.startLineNumber, col: m.startColumn, message: m.message }));
+
+  // Monaco loads the JSON mode lazily, so tokenization only becomes available
+  // once a JSON model has activated the language.
+  out.tokens = [...new Set(monaco.editor.tokenize(broken, 'json').flat().map((t) => t.type))];
+
+  model.setValue('{\n  "name": "DCSPad",\n  "version": 2\n}');
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (!monaco.editor.getModelMarkers({ resource: model.uri }).length) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  out.markersAfterFix = monaco.editor.getModelMarkers({ resource: model.uri }).length;
+
+  // A model created as plaintext under a .json URI must be adopted.
+  const imported = monaco.editor.createModel(
+    '{"a": 1,}', 'plaintext', monaco.Uri.parse('file:///dcspad/imported.json'));
+  out.adoptedLanguage = imported.getLanguageId();
+  out.adoptedMarkers = (await markersFor(imported.uri)).length;
+
+  out.schemaRequest = monaco.json.jsonDefaults.diagnosticsOptions.enableSchemaRequest;
+  out.trailingCommaOption = monaco.json.jsonDefaults.diagnosticsOptions.trailingCommas;
+
+  // The pad's own three models keep their languages and stay unmarked.
+  out.appModels = monaco.editor.getModels()
+    .filter((m) => /index\.html|styles\.css|script\.js/.test(m.uri.path))
+    .map((m) => m.getLanguageId()).sort();
+
+  model.dispose();
+  imported.dispose();
+  return out;
+});
+
+await check('JSON language service is registered', () => jsonProbe.registered);
+await check('JSON keys, values and numbers tokenize distinctly', () =>
+  ['string.key.json', 'string.value.json', 'number.json', 'delimiter.comma.json']
+    .every((token) => jsonProbe.tokens.includes(token)));
+await check('a trailing comma is reported on the comma itself', () =>
+  jsonProbe.trailingComma.length === 1
+  && jsonProbe.trailingComma[0].line === 3
+  && jsonProbe.trailingComma[0].col === 15
+  && /[Tt]railing comma/.test(jsonProbe.trailingComma[0].message));
+await check('JSON markers clear once the document is valid', () =>
+  jsonProbe.markersAfterFix === 0);
+await check('a .json model created as plaintext is adopted and validated', () =>
+  jsonProbe.adoptedLanguage === 'json' && jsonProbe.adoptedMarkers === 1);
+await check('JSON schema requests stay off inside SharePoint', () =>
+  jsonProbe.schemaRequest === false && jsonProbe.trailingCommaOption === 'error');
+await check('JSON support leaves the HTML/CSS/JS models alone', () =>
+  jsonProbe.appModels.join(',') === 'css,html,javascript');
+
+// The overview ruler is the scrollbar map of markers. overviewRulerLanes is a
+// lane count, so a regression to 0 silently renders nothing — assert both the
+// option and the DOM element that draws it.
+await check('diagnostics reach the scrollbar overview ruler', async () => {
+  await page.click('[data-editor="js"]');
+  await page.waitForFunction(() =>
+    document.querySelectorAll('.monaco-editor .decorationsOverviewRuler').length > 0);
+  return page.evaluate(async () => {
+    const monaco = await import('/vendor/monaco/monaco.js');
+    const ruler = document.querySelector('.monaco-editor .decorationsOverviewRuler');
+    const editor = monaco.editor.getEditors()[0];
+    return !!ruler
+      && editor.getOption(monaco.editor.EditorOption.overviewRulerLanes) === 3
+      && editor.getOption(monaco.editor.EditorOption.overviewRulerBorder) === false;
+  });
+});
+
 await check('Monaco assets are same-origin .js/CSS/font files', () => {
   const origin = new URL(APP_URL).origin;
   return assetRequests.length > 0
@@ -437,7 +524,8 @@ await check('Monaco assets are same-origin .js/CSS/font files', () => {
     && assetRequests.some((url) => /editor\.worker\.js/.test(url))
     && assetRequests.some((url) => /ts\.worker\.js/.test(url))
     && assetRequests.some((url) => /html\.worker\.js/.test(url))
-    && assetRequests.some((url) => /css\.worker\.js/.test(url));
+    && assetRequests.some((url) => /css\.worker\.js/.test(url))
+    && assetRequests.some((url) => /json\.worker\.js/.test(url));
 });
 await check('Monaco integration produces no uncaught page errors', () => {
   // Monaco restarts language workers when extra libraries change and reports

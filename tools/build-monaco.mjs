@@ -30,6 +30,7 @@ const PNPJS_VERSION = '2.15.0';
 const mainEntry = `
 import 'monaco-editor/esm/vs/language/css/monaco.contribution.js';
 import 'monaco-editor/esm/vs/language/html/monaco.contribution.js';
+import 'monaco-editor/esm/vs/language/json/monaco.contribution.js';
 import 'monaco-editor/esm/vs/language/typescript/monaco.contribution.js';
 import 'monaco-editor/esm/vs/basic-languages/css/css.contribution.js';
 import 'monaco-editor/esm/vs/basic-languages/html/html.contribution.js';
@@ -38,6 +39,7 @@ import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.
 export * from 'monaco-editor/esm/vs/editor/editor.api.js';
 export * as css from 'monaco-editor/esm/vs/language/css/monaco.contribution.js';
 export * as html from 'monaco-editor/esm/vs/language/html/monaco.contribution.js';
+export * as json from 'monaco-editor/esm/vs/language/json/monaco.contribution.js';
 export * as typescript from 'monaco-editor/esm/vs/language/typescript/monaco.contribution.js';
 `;
 
@@ -45,6 +47,7 @@ const workerEntries = {
   'editor.worker': join(nodeModules, 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js'),
   'css.worker': join(nodeModules, 'monaco-editor', 'esm', 'vs', 'language', 'css', 'css.worker.js'),
   'html.worker': join(nodeModules, 'monaco-editor', 'esm', 'vs', 'language', 'html', 'html.worker.js'),
+  'json.worker': join(nodeModules, 'monaco-editor', 'esm', 'vs', 'language', 'json', 'json.worker.js'),
   'ts.worker': join(nodeModules, 'monaco-editor', 'esm', 'vs', 'language', 'typescript', 'ts.worker.js'),
 };
 
