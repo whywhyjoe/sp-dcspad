@@ -12,8 +12,7 @@
 >
 > History note: this repo was split out of `whywhyjoe/todo`, where the app lived
 > in a `devpad/` subfolder. Commit history is preserved; paths are now at the
-> repo root. Older entries in `REVIEW-LOG.md` refer to `devpad/…` paths — read
-> those as repo-root-relative.
+> repo root, so pre-split history refers to `devpad/…` paths.
 >
 > UI/design-system changes must also read
 > `design/POST-MONACO-UI-INTEGRATION.md`. It compares the exact pre-Monaco
@@ -142,7 +141,6 @@ src/workbench/            SP Workbench, a site inspector (read + Tier 2 edit too
                           parts/Raw) · browser.js (Files) · query.js · links.js
                           (Panels) · site.js (Advanced sheets)
 tests/                    Playwright verification suites — see tests/README.md
-REVIEW-LOG.md             external-review triage record + accepted low-priority backlog
 ```
 
 ## Dev workflow

@@ -214,7 +214,6 @@ inspector, REPL and network capture all work inside the web part; a live
   (darkens the host page behind the pad — currently invisible and arguably
   nice; the gap around the seated app shows it). SP styles also bleed into the
   pad; nothing visibly broken, but scope properly if oddities appear.
-- Low-priority backlog lives in `REVIEW-LOG.md`.
 
 ## Completed feature work (2026-07-27)
 
