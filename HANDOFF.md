@@ -18,9 +18,8 @@ inspector, REPL and network capture all work inside the web part; a live
 
 ### Hosting model (decided and working)
 
-- Host page: `https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/DCSpad.aspx`
-  (confirmed live on 2026-07-26; the former `DCSpad(1).aspx` duplicate now
-  returns 404).
+- Host page: `https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/tools/DCSpad.aspx`
+  (this page location is unchanged by the runtime-library move).
 - Web part: PnP **Modern Script Editor** (Mikael Svenson), in
   "Use script from an external URL" mode. Despite the field name "Script URL",
   it fetches an **HTML file** and injects it with script re-creation.
@@ -28,9 +27,9 @@ inspector, REPL and network capture all work inside the web part; a live
   absolute `<script src=…/boot.js>`. `boot.js` fetches `index.html`, injects
   the app shell, loads `styles/app.css`, and imports the versioned hosted app
   bundle. `index.html` stays the single source of truth.
-- **Deployment = file copy.** The doc library folder
-  `…/SiteAssets/Code/dcspad-live/` is OneDrive-synced to
-  `C:\Users\other\NERVE\NewNerve - Code\dcspad-live`; copying files there goes
+- **Deployment = file copy.** The application folder
+  `…/FCUPortal/Dev/tools/dcspad/` is OneDrive-synced under the local Dev mirror at
+  `C:\dev\fcuportal-dev\tools\dcspad`; copying files there goes
   live in seconds. **Deploy with `deploy/Sync-Live.ps1`** — it rebuilds
   `dcspad.app.js` (the
   single-file bundle the web part actually runs) and copies everything.
@@ -41,6 +40,9 @@ inspector, REPL and network capture all work inside the web part; a live
   CLAUDE.md). Bump `?v=` in `dcspad.webpart.html` when boot.js itself
   changes. SPO can also serve a just-uploaded file stale for ~15–30s —
   verify with a cache-busted fetch before debugging "my change didn't work".
+  Shared BSP Design, Fluent Icons, and other organization-hosted resources
+  remain in `/Code` or `/Code/tools`. The DCSPad and SP Workbench ASPX pages
+  remain in `/sites/NewNerve/SitePages/tools/`; only the runtime folder moved.
 - Visual seating (deliberate, Joe's call): the SharePoint suite bar is
   **visible by default** (desaturated while the pad runs); clicking the
   `SP: Live` chip slides it away and expands the app to the top edge. Hosted

@@ -1,10 +1,10 @@
 # Builds the hosted bundle and copies all runtime files to the OneDrive-
-# synced folder for …/SiteAssets/Code/dcspad-live/ (goes live in seconds).
+# synced folder for …/FCUPortal/Dev/tools/dcspad/ (goes live in seconds).
 # This is THE deploy command for the web-part hosting. See the cache gotcha
 # in CLAUDE.md for why the bundle exists.
 
 param(
-    [string]$LivePath = "C:\dev\fcuportal-code\tools\dcspad",
+    [string]$LivePath = "C:\dev\fcuportal-dev\tools\dcspad",
     [string]$DesignSystemSource = "",
     [string]$FluentIconsSource = ""
 )
@@ -46,6 +46,20 @@ foreach ($file in $requiredMonaco) {
 
 if (-not (Get-ChildItem (Join-Path $monaco 'assets') -Filter 'codicon-*.ttf' -File -ErrorAction SilentlyContinue)) {
     throw "Missing vendor\monaco\assets\codicon-*.ttf. Run npm run build:monaco from tools first."
+}
+
+if (Test-Path -LiteralPath $LivePath) {
+    if (-not (Test-Path -LiteralPath $LivePath -PathType Container)) {
+        throw "Live destination exists but is not a folder: $LivePath"
+    }
+}
+else {
+    $liveMirrorRoot = Split-Path (Split-Path $LivePath -Parent) -Parent
+    if (-not (Test-Path -LiteralPath $liveMirrorRoot -PathType Container)) {
+        throw "The synced library mirror was not found: $liveMirrorRoot"
+    }
+    New-Item -ItemType Directory -Path $LivePath -Force | Out-Null
+    Write-Host "Created live destination $LivePath" -ForegroundColor DarkGray
 }
 
 $liveRoot = (Resolve-Path -LiteralPath $LivePath).Path.TrimEnd('\')

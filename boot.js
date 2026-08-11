@@ -33,7 +33,7 @@
   // Resolve the library folder from this script's own URL so a folder move
   // only requires re-pointing the web part, never editing this file.
   var FALLBACK_BASE =
-    'https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/Code/dcspad-live/';
+    'https://nervedotnet.sharepoint.com/sites/NewNerve/FCUPortal/Dev/tools/dcspad/';
   var self = document.currentScript;
   var base = (self && self.src)
     ? self.src.slice(0, self.src.lastIndexOf('/') + 1)

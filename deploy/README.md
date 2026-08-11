@@ -12,15 +12,21 @@ The current NewNerve target is already configured as the default:
 .\deploy\Sync-Live.ps1
 ```
 
+This copies the DCSPad runtime to `C:\dev\fcuportal-dev\tools\dcspad`, the local
+mirror for `/sites/NewNerve/FCUPortal/Dev/tools/dcspad`. It does not move shared
+resources: BSP Design and Fluent Icons continue to resolve from `/Code`, and
+other shared tools may continue to live under `/Code/tools`.
+
 To deploy to another SharePoint site or tenant, first sync that site's document
 library with OneDrive and pass the local destination folder:
 
 ```powershell
 .\deploy\Sync-Live.ps1 `
-  -LivePath 'C:\path\to\the-synced-library\dcspad-live'
+  -LivePath 'C:\path\to\the-synced-Dev-library\tools\dcspad'
 ```
 
-The destination folder must already exist. `Sync-Live.ps1` then:
+The synced document-library mirror must already exist. If its `tools\dcspad`
+destination does not exist yet, `Sync-Live.ps1` creates it. The script then:
 
 1. validates the required Monaco runtime;
 2. regenerates design-system intelligence;
@@ -41,12 +47,17 @@ Before the first deployment, update the one site-specific URL in
 `dcspad.webpart.html` so its script points to the new site's hosted `boot.js`:
 
 ```html
-<script src="https://tenant.sharepoint.com/sites/site/SiteAssets/Code/dcspad-live/boot.js?v=1"></script>
+<script src="https://tenant.sharepoint.com/sites/site/Dev/tools/dcspad/boot.js?v=1"></script>
 ```
 
 Then point the Modern Script Editor web part's external Script URL at the
 deployed `dcspad.webpart.html`. Bump the `?v=` value whenever `boot.js` itself
 changes because SharePoint may cache library files for a day.
+
+On NewNerve, the host pages stay outside the runtime library at
+`/sites/NewNerve/SitePages/tools/DCSpad.aspx` and
+`/sites/NewNerve/SitePages/tools/SPWorkbench.aspx`. Moving the runtime to
+`/Dev/tools/dcspad` does not move or recreate either ASPX page.
 
 ## Hosting the SP Workbench (second page)
 

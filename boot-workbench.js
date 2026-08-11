@@ -27,7 +27,7 @@
   window.__DCSPAD_WB_BOOTED__ = true;
 
   var FALLBACK_BASE =
-    'https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/Code/dcspad-live/';
+    'https://nervedotnet.sharepoint.com/sites/NewNerve/FCUPortal/Dev/tools/dcspad/';
   var self = document.currentScript;
   var base = (self && self.src)
     ? self.src.slice(0, self.src.lastIndexOf('/') + 1)

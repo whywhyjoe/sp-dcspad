@@ -6,7 +6,7 @@
     "fallbackToCdn": false,
     "items": {
       "pnpjs2": {
-        "localUrl": "code/lib/pnp2.bundle.js",
+        "localUrl": "Code/lib/pnp2.bundle.js",
         "cdnUrl": "",
         "probeGlobal": "pnp2",
         "intelligence": [
@@ -14,7 +14,7 @@
         ]
       },
       "alpine": {
-        "localUrl": "code/lib/alpine.js",
+        "localUrl": "Code/lib/alpine.js",
         "cdnUrl": "",
         "probeGlobal": "Alpine",
         "intelligence": [
@@ -35,25 +35,25 @@
     {
       "id": "design-system-reference",
       "title": "BSP Design System reference",
-      "url": "code/bsp-design/index.html",
+      "url": "Code/bsp-design/index.html",
       "type": "html"
     },
     {
       "id": "fluent-icons",
       "title": "Fluent Icons library",
-      "url": "code/fluent-icons/index.html",
+      "url": "Code/fluent-icons/index.html",
       "type": "html"
     },
         {
       "id": "abacus-icons",
       "title": "BMO 'Abacus' icons library",
-      "url": "code/bsp-design/abacus-icons/index.html",
+      "url": "Code/bsp-design/abacus-icons/index.html",
       "type": "html"
     },
         {
       "id": "spot-illustrarions",
       "title": "BMO spot illustraions library",
-      "url": "code/bsp-design/spot-illustrations/index.html",
+      "url": "Code/bsp-design/spot-illustrations/index.html",
       "type": "html"
     }
   ],
@@ -67,7 +67,7 @@
   "assets": {
     "designSystem": {
       "prefer": "local",
-      "localBaseUrl": "code/bsp-design/",
+      "localBaseUrl": "Code/bsp-design/",
       "hostedBaseUrl": "",
       "intelligence": [
         "bsp-design"
@@ -85,7 +85,7 @@
     },
     "fluentIcons": {
       "prefer": "local",
-      "localBaseUrl": "code/fluent-icons/",
+      "localBaseUrl": "Code/fluent-icons/",
       "hostedBaseUrl": "",
       "intelligence": [
         "fluent-icons"

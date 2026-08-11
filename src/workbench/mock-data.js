@@ -431,7 +431,7 @@ const ALL_PROPERTIES = {
   vti_x005f_defaultlanguage: 'en-us',
   vti_x005f_extenderversion: '16.0.0.26000',
   taxonomyhiddenlist: '{5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e99}',
-  dcspad_x005f_deployfolder: '/SiteAssets/Code/dcspad-live',
+  dcspad_x005f_deployfolder: '/Dev/tools/dcspad',
 };
 
 const REGIONAL_SETTINGS = {

@@ -78,12 +78,13 @@ URLs without editing or rebuilding the application.
 - `intelligence` explicitly associates editor metadata with the runtime. The
   custom PnPjs rollup can therefore keep `["pnpjs-2.15.0"]` even when its URL
   does not contain a recognizable package/version path.
-- The maintained PnPjs and Alpine entries are pinned to
-  `lib-mirror/pnp2.bundle.js` (PnPjs 2.15.0) and
-  `lib-mirror/alpine.js` (Alpine 3.15.2), with no CDN fallback. The PnPjs
-  intelligence pack types both the rollup's `pnp2` global and its standardized
-  `pnp` alias. Keep `pnp2.bundle.js.map` beside the bundle for browser
-  debugging.
+- The supplied configuration points the maintained PnPjs and Alpine entries
+  at `/Code/lib/pnp2.bundle.js` (PnPjs 2.15.0) and `/Code/lib/alpine.js`
+  (Alpine 3.15.2), with no CDN fallback. If configuration cannot load, their
+  built-in catalog defaults use DCSPad's deployed `lib-mirror/` copies. The
+  PnPjs intelligence pack types both the rollup's `pnp2` global and its
+  standardized `pnp` alias. Keep `pnp2.bundle.js.map` beside the bundle for
+  browser debugging.
 - `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
   hosted base folders. Relative local paths resolve from `siteURL` when it is
   set, otherwise from `dcspad.config.json`; hosted locations may be absolute
@@ -113,9 +114,8 @@ URLs without editing or rebuilding the application.
 - `workbench.url` controls the SP Workbench shortcut. It can be absolute or
   relative to `siteURL`, for example `"_layouts/15/SPWorkbench.aspx"`.
 
-Blank URLs are ignored. With the supplied file, PnPjs and Alpine continue using
-their existing CDN URLs until local copies are filled in. Hosted mode versions
-the JSON independently, and `deploy/Sync-Live.ps1` copies it automatically.
+Blank URLs are ignored. Hosted mode versions the JSON independently, and
+`deploy/Sync-Live.ps1` copies it automatically.
 
 ## Local development
 
@@ -136,10 +136,17 @@ first-deployment checks.
 .\deploy\Sync-Live.ps1
 ```
 
+The configured target is the `Dev` library's local mirror at
+`C:\dev\fcuportal-dev\tools\dcspad`, which publishes the application runtime to
+`/sites/NewNerve/FCUPortal/Dev/tools/dcspad`. The BSP design system, Fluent icons,
+and other organization-hosted dependencies remain under `/Code` (or
+`/Code/tools`) as configured in `dcspad.config.json`. The DCSPad and SP
+Workbench host pages remain under `/sites/NewNerve/SitePages/tools/`.
+
 For another synced site or tenant, supply its local target folder:
 
 ```powershell
-.\deploy\Sync-Live.ps1 -LivePath 'C:\path\to\the-synced-library\dcspad-live'
+.\deploy\Sync-Live.ps1 -LivePath 'C:\path\to\the-synced-Dev-library\tools\dcspad'
 ```
 
 The script rebuilds the hosted bundle and design-system intelligence before
@@ -164,7 +171,7 @@ window.__DCSPAD_SP_CONTEXT__ = {
   webAbsoluteUrl: "https://contoso.sharepoint.com/sites/dev"
 };
 </script>
-<script src="/sites/dev/SiteAssets/dcspad/boot.js"></script>
+<script src="/sites/dev/Dev/tools/dcspad/boot.js"></script>
 ```
 
 An SPFx host can populate it dynamically:
