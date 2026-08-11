@@ -19,8 +19,8 @@ This version:
 ## Saving, loading, exporting
 
 Workspace state lives in your browser's localStorage. Project files and local
-code exports are ordinary downloads; HTML/CSS/JS panes can also be transferred
-to SharePoint. There is no DCSPad backend.
+code exports are ordinary downloads; editor text can also be transferred to
+SharePoint in the built-in or configured file types. There is no DCSPad backend.
 
 - **Project name and project file** — a new workspace starts as
   **Project (untitled)**. Click the title to set or edit it; the name is
@@ -39,13 +39,15 @@ to SharePoint. There is no DCSPad backend.
   non-empty** to trigger a separate download for every non-empty pane. A named
   project supplies the filename slug; an untitled project falls back to
   `dcspad.html`, `dcspad.css`, and `dcspad.js`.
-- **SharePoint code files** — when the chip reads **SP: Live**, enter any
+- **SharePoint code files** — when SharePoint context is connected, enter any
   SharePoint site URL on the same tenant origin, then browse that web's
   libraries/folders to import or upload editor contents. The selected site and
-  last folder persist. Imports require replacement confirmation. SharePoint
-  export requires a filename but does not add or validate its extension; an
-  untitled project starts with a blank filename unless an existing destination
-  file is selected. Before upload, DCSPad resolves the destination library,
+  last folder persist. HTML, CSS, and JavaScript are built in; additional types
+  can be mapped to those editors in runtime configuration. The supplied config
+  maps `.json` to the JS editor. Imports require replacement confirmation.
+  SharePoint export selects a file type and requires a filename but does not
+  validate its extension; an untitled project starts with a blank filename
+  unless an existing destination file is selected. Before upload, DCSPad resolves the destination library,
   checks for writable `Title`, `Description`, and `DocVersion` fields, and opens
   a metadata dialog. Missing or incompatible fields remain visible but disabled.
   Existing files supply their current values; an existing destination Title wins
@@ -113,6 +115,15 @@ URLs without editing or rebuilding the application.
   reusable named tab because the service does not permit iframe embedding.
 - `workbench.url` controls the SP Workbench shortcut. It can be absolute or
   relative to `siteURL`, for example `"_layouts/15/SPWorkbench.aspx"`.
+- `sharePointFiles.additionalTypes` adds SharePoint import/export file types
+  without restating or overriding built-in HTML, CSS, and JavaScript. Each
+  entry has a display `label`, an `extensions` array (without dots), and a
+  target `pane` of `"html"`, `"css"`, or `"js"`. For example,
+  `{ "label": "JSON", "extensions": ["json"], "pane": "js" }` lists
+  `.json` files, imports them into the JS editor after confirmation, and adds a
+  JSON export option backed by JS editor text. These mappings apply only to
+  SharePoint transfer; local code import remains HTML/CSS/JS. Content is moved
+  as raw text, so JSON here is not parsed as a project, catalog, or snippet file.
 
 Blank URLs are ignored. Hosted mode versions the JSON independently, and
 `deploy/Sync-Live.ps1` copies it automatically.

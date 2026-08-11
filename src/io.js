@@ -43,13 +43,65 @@ export function wireJsonImport(inputId, onDoc) {
   return input;
 }
 
-export function paneForFileName(fileName) {
+export const BUILT_IN_SHAREPOINT_FILE_TYPES = Object.freeze([
+  Object.freeze({
+    id: 'html',
+    label: 'HTML',
+    extensions: Object.freeze(['html', 'htm']),
+    pane: 'html',
+    defaultExtension: 'html',
+  }),
+  Object.freeze({
+    id: 'css',
+    label: 'CSS',
+    extensions: Object.freeze(['css']),
+    pane: 'css',
+    defaultExtension: 'css',
+  }),
+  Object.freeze({
+    id: 'javascript',
+    label: 'JavaScript',
+    extensions: Object.freeze(['js']),
+    pane: 'js',
+    defaultExtension: 'js',
+  }),
+]);
+
+export function sharePointFileTypes(additionalTypes = []) {
+  const usedExtensions = new Set(
+    BUILT_IN_SHAREPOINT_FILE_TYPES.flatMap((type) => type.extensions),
+  );
+  const types = [...BUILT_IN_SHAREPOINT_FILE_TYPES];
+
+  for (const [index, raw] of additionalTypes.entries()) {
+    if (!raw || typeof raw !== 'object') continue;
+    const extensions = (Array.isArray(raw.extensions) ? raw.extensions : [])
+      .map((extension) => String(extension || '').trim().replace(/^\./, '').toLowerCase())
+      .filter((extension) => extension && !usedExtensions.has(extension));
+    if (!extensions.length || !['html', 'css', 'js'].includes(raw.pane)) continue;
+    for (const extension of extensions) usedExtensions.add(extension);
+    types.push(Object.freeze({
+      id: `additional-${index}-${extensions[0]}`,
+      label: String(raw.label || '').trim() || extensions[0].toUpperCase(),
+      extensions: Object.freeze(extensions),
+      pane: raw.pane,
+      defaultExtension: extensions[0],
+    }));
+  }
+
+  return types;
+}
+
+export function fileTypeForFileName(fileName, additionalTypes = []) {
   const match = /\.([^.]+)$/i.exec(String(fileName || '').trim());
   const extension = match?.[1]?.toLowerCase();
-  if (extension === 'html' || extension === 'htm') return 'html';
-  if (extension === 'css') return 'css';
-  if (extension === 'js') return 'js';
-  return '';
+  if (!extension) return null;
+  return sharePointFileTypes(additionalTypes)
+    .find((type) => type.extensions.includes(extension)) || null;
+}
+
+export function paneForFileName(fileName, additionalTypes = []) {
+  return fileTypeForFileName(fileName, additionalTypes)?.pane || '';
 }
 
 // Wire one picker for all three editor file types. The callback receives a

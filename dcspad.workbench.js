@@ -974,13 +974,54 @@ function downloadText(filename, text, type = "application/json") {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1e3);
 }
-function paneForFileName(fileName) {
+var BUILT_IN_SHAREPOINT_FILE_TYPES = Object.freeze([
+  Object.freeze({
+    id: "html",
+    label: "HTML",
+    extensions: Object.freeze(["html", "htm"]),
+    pane: "html",
+    defaultExtension: "html"
+  }),
+  Object.freeze({
+    id: "css",
+    label: "CSS",
+    extensions: Object.freeze(["css"]),
+    pane: "css",
+    defaultExtension: "css"
+  }),
+  Object.freeze({
+    id: "javascript",
+    label: "JavaScript",
+    extensions: Object.freeze(["js"]),
+    pane: "js",
+    defaultExtension: "js"
+  })
+]);
+function sharePointFileTypes(additionalTypes = []) {
+  const usedExtensions = new Set(
+    BUILT_IN_SHAREPOINT_FILE_TYPES.flatMap((type) => type.extensions)
+  );
+  const types = [...BUILT_IN_SHAREPOINT_FILE_TYPES];
+  for (const [index, raw] of additionalTypes.entries()) {
+    if (!raw || typeof raw !== "object") continue;
+    const extensions = (Array.isArray(raw.extensions) ? raw.extensions : []).map((extension) => String(extension || "").trim().replace(/^\./, "").toLowerCase()).filter((extension) => extension && !usedExtensions.has(extension));
+    if (!extensions.length || !["html", "css", "js"].includes(raw.pane)) continue;
+    for (const extension of extensions) usedExtensions.add(extension);
+    types.push(Object.freeze({
+      id: `additional-${index}-${extensions[0]}`,
+      label: String(raw.label || "").trim() || extensions[0].toUpperCase(),
+      extensions: Object.freeze(extensions),
+      pane: raw.pane,
+      defaultExtension: extensions[0]
+    }));
+  }
+  return types;
+}
+function fileTypeForFileName(fileName, additionalTypes = []) {
   const match = /\.([^.]+)$/i.exec(String(fileName || "").trim());
   const extension = match?.[1]?.toLowerCase();
-  if (extension === "html" || extension === "htm") return "html";
-  if (extension === "css") return "css";
-  if (extension === "js") return "js";
-  return "";
+  if (!extension) return null;
+  return sharePointFileTypes(additionalTypes).find((type) => type.extensions.includes(extension)) || null;
 }
 
 // ../src/workbench/export.js
@@ -2385,7 +2426,7 @@ function createSpFilesClient({
     }
     return (await fetchContextInfo(target.webUrl)).value;
   }
-  async function listFolder(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code" } = {}) {
+  async function listFolder(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code", additionalTypes = [] } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
     const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/Length,Files/TimeLastModified&$expand=Folders,Files`;
@@ -2399,15 +2440,19 @@ function createSpFilesClient({
       name: String(item2.Name || ""),
       serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath)
     })).filter((item2) => item2.name).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
-    const files = resultArray(data.Files).map((item2) => ({
-      kind: "file",
-      name: String(item2.Name || ""),
-      pane: paneForFileName(item2.Name),
-      browserType: browserTypeForFileName(item2.Name),
-      serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath),
-      length: Number(item2.Length) || 0,
-      modified: item2.TimeLastModified || ""
-    })).filter((item2) => item2.name && (purpose === "browser" ? item2.browserType : item2.pane)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    const files = resultArray(data.Files).map((item2) => {
+      const fileType = fileTypeForFileName(item2.Name, additionalTypes);
+      return {
+        kind: "file",
+        name: String(item2.Name || ""),
+        pane: fileType?.pane || "",
+        fileType,
+        browserType: browserTypeForFileName(item2.Name),
+        serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath),
+        length: Number(item2.Length) || 0,
+        modified: item2.TimeLastModified || ""
+      };
+    }).filter((item2) => item2.name && (purpose === "browser" ? item2.browserType : item2.fileType)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
     return {
       path: checkedPath(data.ServerRelativeUrl || path, rootPath),
       rootPath,
@@ -2415,13 +2460,13 @@ function createSpFilesClient({
       files
     };
   }
-  async function readTextFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+  async function readTextFile(serverRelativePath, { webUrl: targetWebUrl = "", additionalTypes = [] } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
-    const pane = paneForFileName(path);
-    if (!pane) {
+    const fileType = fileTypeForFileName(path, additionalTypes);
+    if (!fileType) {
       throw new SpFileError(
-        "Only HTML, CSS, and JavaScript files can be imported.",
+        "That file type is not supported for SharePoint import.",
         { code: "unsupported-file" }
       );
     }
@@ -2444,7 +2489,8 @@ function createSpFilesClient({
     }
     return {
       fileName: path.slice(path.lastIndexOf("/") + 1),
-      pane,
+      pane: fileType.pane,
+      fileType,
       text,
       serverRelativeUrl: path
     };

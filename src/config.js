@@ -19,6 +19,9 @@ const EMPTY_CONFIG = Object.freeze({
   workbench: Object.freeze({
     url: '',
   }),
+  sharePointFiles: Object.freeze({
+    additionalTypes: Object.freeze([]),
+  }),
 });
 
 let activeConfig = EMPTY_CONFIG;
@@ -153,6 +156,43 @@ function normalizeWorkbench(value, configUrl, siteUrl) {
   };
 }
 
+function normalizeSharePointFiles(value, warnings) {
+  if (value !== undefined && !isRecord(value)) {
+    warnings.push('sharePointFiles config was ignored because it is not an object');
+    return { additionalTypes: [] };
+  }
+  const source = isRecord(value) ? value : {};
+  if (source.additionalTypes !== undefined && !Array.isArray(source.additionalTypes)) {
+    warnings.push('sharePointFiles.additionalTypes was ignored because it is not an array');
+    return { additionalTypes: [] };
+  }
+
+  const additionalTypes = [];
+  for (const [index, raw] of (source.additionalTypes || []).entries()) {
+    if (!isRecord(raw)) {
+      warnings.push(`SharePoint file type ${index + 1} was ignored because it is not an object`);
+      continue;
+    }
+    const label = cleanString(raw.label);
+    const pane = cleanString(raw.pane).toLowerCase();
+    const rawExtensions = Array.isArray(raw.extensions) ? raw.extensions : [];
+    const extensions = [...new Set(rawExtensions
+      .map((extension) => cleanString(extension).replace(/^\./, '').toLowerCase())
+      .filter((extension) => /^[a-z0-9][a-z0-9_-]*$/.test(extension)))];
+    if (!label || !['html', 'css', 'js'].includes(pane) || !extensions.length) {
+      warnings.push(
+        `SharePoint file type ${index + 1} was ignored because label, extensions, and a valid pane are required`,
+      );
+      continue;
+    }
+    if (extensions.length !== rawExtensions.length) {
+      warnings.push(`SharePoint file type "${label}" contains duplicate or invalid extensions`);
+    }
+    additionalTypes.push({ label, extensions, pane });
+  }
+  return { additionalTypes };
+}
+
 function normalizeConfig(raw, configUrl) {
   const warnings = [];
   if (!isRecord(raw)) {
@@ -178,6 +218,7 @@ function normalizeConfig(raw, configUrl) {
       docs: normalizeDocs(raw.docs, configUrl, siteUrl, warnings),
       copilot: normalizeCopilot(raw.copilot, configUrl),
       workbench: normalizeWorkbench(raw.workbench, configUrl, siteUrl),
+      sharePointFiles: normalizeSharePointFiles(raw.sharePointFiles, warnings),
     },
     warnings,
   };

@@ -5,7 +5,7 @@
 // and keeps all paths inside that web's server-relative boundary.
 
 import { getSpContext } from './bridge/sp-context.js';
-import { MAX_IMPORT_BYTES, paneForFileName } from './io.js?v=2';
+import { MAX_IMPORT_BYTES, fileTypeForFileName } from './io.js?v=2';
 import {
   ACCEPT_JSON, SpFileError, odataPathLiteral, resultArray, unwrapJson, requireOk,
 } from './sp-odata.js';
@@ -195,7 +195,7 @@ export function createSpFilesClient({
 
   async function listFolder(
     serverRelativePath,
-    { webUrl: targetWebUrl = '', purpose = 'code' } = {},
+    { webUrl: targetWebUrl = '', purpose = 'code', additionalTypes = [] } = {},
   ) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
@@ -219,17 +219,21 @@ export function createSpFilesClient({
       .filter((item) => item.name)
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     const files = resultArray(data.Files)
-      .map((item) => ({
-        kind: 'file',
-        name: String(item.Name || ''),
-        pane: paneForFileName(item.Name),
-        browserType: browserTypeForFileName(item.Name),
-        serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
-        length: Number(item.Length) || 0,
-        modified: item.TimeLastModified || '',
-      }))
+      .map((item) => {
+        const fileType = fileTypeForFileName(item.Name, additionalTypes);
+        return {
+          kind: 'file',
+          name: String(item.Name || ''),
+          pane: fileType?.pane || '',
+          fileType,
+          browserType: browserTypeForFileName(item.Name),
+          serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
+          length: Number(item.Length) || 0,
+          modified: item.TimeLastModified || '',
+        };
+      })
       .filter((item) =>
-        item.name && (purpose === 'browser' ? item.browserType : item.pane))
+        item.name && (purpose === 'browser' ? item.browserType : item.fileType))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     return {
       path: checkedPath(data.ServerRelativeUrl || path, rootPath),
@@ -239,13 +243,16 @@ export function createSpFilesClient({
     };
   }
 
-  async function readTextFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+  async function readTextFile(
+    serverRelativePath,
+    { webUrl: targetWebUrl = '', additionalTypes = [] } = {},
+  ) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
-    const pane = paneForFileName(path);
-    if (!pane) {
+    const fileType = fileTypeForFileName(path, additionalTypes);
+    if (!fileType) {
       throw new SpFileError(
-        'Only HTML, CSS, and JavaScript files can be imported.',
+        'That file type is not supported for SharePoint import.',
         { code: 'unsupported-file' },
       );
     }
@@ -269,7 +276,8 @@ export function createSpFilesClient({
     }
     return {
       fileName: path.slice(path.lastIndexOf('/') + 1),
-      pane,
+      pane: fileType.pane,
+      fileType,
       text,
       serverRelativeUrl: path,
     };

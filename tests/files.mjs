@@ -50,6 +50,15 @@ await check('unsupported local file is rejected in-app', async () =>
   && (await page.locator('#app-toast').textContent()).includes('not an HTML, CSS, or JavaScript'));
 
 await page.setInputFiles('#import-pane-file', {
+  name: 'settings.json',
+  mimeType: 'application/json',
+  buffer: Buffer.from('{"localJsonMarker":true}'),
+});
+await check('configured SharePoint JSON support does not widen local imports', async () =>
+  await page.locator('#app-toast').isVisible()
+  && (await page.locator('#app-toast').textContent()).includes('not an HTML, CSS, or JavaScript'));
+
+await page.setInputFiles('#import-pane-file', {
   name: 'too-large.js',
   mimeType: 'text/javascript',
   buffer: Buffer.alloc((5 * 1024 * 1024) + 1, 32),
@@ -205,10 +214,13 @@ await page.route('**/_api/**', async (route) => {
   }
   if (url.includes('/GetFileByServerRelativePath(') && url.includes('/$value')) {
     const otherSite = url.includes('/sites/other/_api/');
+    const jsonFile = decodeURIComponent(url).includes('settings.json');
     await route.fulfill({
       status: 200,
-      contentType: 'text/javascript',
-      body: otherSite
+      contentType: jsonFile ? 'application/json' : 'text/javascript',
+      body: jsonFile
+        ? '{"sharepointJsonMarker":true}\n'
+        : otherSite
         ? 'console.log("other-site-import-marker");\n'
         : 'console.log("sharepoint-import-marker");\n',
     });
@@ -311,6 +323,11 @@ await page.route('**/_api/**', async (route) => {
             ServerRelativeUrl: '/sites/other/other-site.js',
             Length: 52,
           },
+          {
+            Name: 'settings.json',
+            ServerRelativeUrl: '/sites/other/settings.json',
+            Length: 36,
+          },
         ],
       } : hashFolder ? {
         ServerRelativeUrl: '/Code#One',
@@ -363,7 +380,7 @@ await page.addInitScript(() => {
 await page.reload();
 await page.waitForSelector('.monaco-editor');
 await check('explicit host adapter enables SharePoint file actions', async () =>
-  (await page.locator('#sp-chip-text').textContent()) === 'SP: Live'
+  (await page.locator('#sp-chip-text').textContent()) === 'SP'
   && !(await page.locator('#mi-sp-import').isDisabled())
   && (await page.locator('#sp-chip').getAttribute('data-context')).includes('context: host'));
 
@@ -377,7 +394,9 @@ await page.waitForFunction(() =>
   !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
 await check('SharePoint picker filters out unsupported files', async () => {
   const text = await page.locator('#sp-files-list').textContent();
-  return text.includes('sample.js') && text.includes('existing.css') && !text.includes('ignore.txt');
+  return text.includes('sample.js')
+    && text.includes('existing.css')
+    && !text.includes('ignore.txt');
 });
 await check('SharePoint folder query uses supported expanded-property syntax', () => {
   const requestUrl = apiRequests.find((url) =>
@@ -433,6 +452,25 @@ await check('successful SharePoint import closes both dialogs', async () =>
   !(await page.locator('#sp-files-dialog').evaluate((dialog) => dialog.open))
   && !(await page.locator('#pane-replace-dialog').evaluate((dialog) => dialog.open)));
 
+await page.click('#btn-file');
+await page.click('#mi-sp-import');
+await page.waitForSelector('#sp-files-dialog[open]');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+await check('configured JSON files appear in the SharePoint picker with their label', async () => {
+  const row = page.locator('.sp-file-row', { hasText: 'settings.json' });
+  return await row.isVisible()
+    && (await row.locator('.sp-file-row__meta').textContent()).startsWith('JSON');
+});
+await page.locator('.sp-file-row', { hasText: 'settings.json' }).click();
+await page.click('#sp-files-primary');
+await page.waitForSelector('#pane-replace-dialog[open]');
+await check('SharePoint JSON import uses the JS replacement confirmation', async () =>
+  (await page.locator('#pane-replace-title').textContent()) === 'Replace JS code?');
+await page.click('#pane-replace-confirm');
+await check('confirmed SharePoint JSON import replaces the JS editor as text', async () =>
+  (await editorText()).includes('sharepointJsonMarker'));
+
 // An untitled project does not invent a SharePoint file name. Selecting an
 // existing file is the explicit overwrite action and proceeds directly to the
 // metadata dialog, where the destructive action is called out.
@@ -444,7 +482,13 @@ await page.waitForFunction(() =>
 await check('untitled SharePoint export requires a user-supplied file name', async () =>
   (await page.locator('#sp-export-name').inputValue()) === ''
   && (await page.locator('#sp-export-name').getAttribute('required')) !== null
-  && (await page.locator('#sp-files-primary').isDisabled()));
+  && (await page.locator('#sp-files-primary').isDisabled())
+  && (await page.locator('#sp-export-type option').allTextContents()).includes('JSON'));
+await page.locator('.sp-file-row', { hasText: 'settings.json' }).click();
+await check('choosing an existing JSON file selects its configured export type', async () =>
+  (await page.locator('#sp-export-type').inputValue()) === 'additional-0-json'
+  && (await page.locator('#sp-export-name').inputValue()) === 'settings.json'
+  && (await page.locator('#sp-files-primary').textContent()) === 'Review overwrite');
 await page.locator('.sp-file-row', { hasText: 'existing.css' }).click();
 await check('choosing an existing file supplies its name as the overwrite target', async () =>
   (await page.locator('#sp-export-name').inputValue()) === 'existing.css'
@@ -475,7 +519,27 @@ await page.waitForSelector('#sp-files-dialog[open]');
 // or these checks race the stub under load.
 await page.waitForFunction(() =>
   !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
-await page.selectOption('#sp-export-pane', 'css');
+await page.selectOption('#sp-export-type', { label: 'JSON' });
+await check('JSON export maps the JS editor and defaults to a JSON file name', async () =>
+  (await page.locator('#sp-export-name').inputValue()) === 'current-project-title.json');
+await page.click('#sp-files-primary');
+await page.waitForSelector('#sp-metadata-dialog[open]');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-save')?.disabled);
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+await check('SharePoint JSON export uploads the JS editor text', () =>
+  upload?.body.includes('sharepointJsonMarker')
+  && decodeURIComponent(upload.url).includes("decodedUrl='current-project-title.json'"));
+
+await page.click('#btn-file');
+await page.click('#mi-sp-export');
+await page.waitForSelector('#sp-files-dialog[open]');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+await page.selectOption('#sp-export-type', 'css');
 await page.fill('#sp-export-name', 'existing.css');
 await page.click('#sp-files-primary');
 await page.waitForSelector('#sp-metadata-dialog[open]');
@@ -548,7 +612,7 @@ await page.click('#mi-sp-export');
 await page.waitForSelector('#sp-files-dialog[open]');
 await page.waitForFunction(() =>
   !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
-await page.selectOption('#sp-export-pane', 'css');
+await page.selectOption('#sp-export-type', 'css');
 await page.fill('#sp-export-name', 'metadata-failure');
 const uploadsBeforeMetadataFailure = uploads.length;
 await page.click('#sp-files-primary');
@@ -638,7 +702,7 @@ await page.evaluate(() => sessionStorage.setItem('dcspad-context-test', 'modern'
 await page.reload();
 await page.waitForSelector('.monaco-editor');
 await check('guarded Modern legacyPageContext works when globals are absent', async () =>
-  (await page.locator('#sp-chip-text').textContent()) === 'SP: Live'
+  (await page.locator('#sp-chip-text').textContent()) === 'SP'
   && (await page.locator('#sp-chip').getAttribute('data-context')).includes('context: modern-legacy'));
 
 await browser.close();

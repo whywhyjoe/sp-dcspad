@@ -228,6 +228,10 @@ inspector, REPL and network capture all work inside the web part; a live
   `src/sp-files.js`, including explicit/global/Modern context resolution,
   selectable same-tenant sites, per-web digest handling, ResourcePath
   browsing/reads/uploads, replacement confirmation, and overwrite consent.
+  `sharePointFiles.additionalTypes` in `dcspad.config.json` maps extra
+  extensions onto an editor pane for SharePoint transfer only (the supplied
+  config maps `.json` to the JS pane; built-ins can't be overridden and local
+  disk import stays HTML/CSS/JS).
   See `plans/file-sp-import-export.md`, which is now an implementation record.
 - Framework rows use drag-and-drop ordering without up/down controls; snippets
   are always displayed alphabetically regardless of file type.

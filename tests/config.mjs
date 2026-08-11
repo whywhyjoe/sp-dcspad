@@ -125,6 +125,13 @@ await page.route('**/dcspad.config.json*', (route) => route.fulfill({
     workbench: {
       url: '_layouts/15/SPWorkbench.aspx',
     },
+    sharePointFiles: {
+      additionalTypes: [{
+        label: ' JSON ',
+        extensions: ['.JSON'],
+        pane: 'JS',
+      }],
+    },
     assets: {
       designSystem: {
         prefer: 'local',
@@ -208,6 +215,29 @@ await check('Browser bookmarks and Copilot URLs normalize from dcspad.config.jso
       && config.copilot.enabled
       && config.copilot.url === 'https://m365.cloud.microsoft/chat';
   }, { doc: `${docsRoot}/design-reference.html` }));
+
+await check('SharePoint file types normalize additively and cannot override built-ins', () =>
+  page.evaluate(async () => {
+    const [{ getAppConfig }, { sharePointFileTypes }] = await Promise.all([
+      import('/src/config.js?v=2'),
+      import('/src/io.js?v=2'),
+    ]);
+    const additional = getAppConfig().sharePointFiles.additionalTypes;
+    const types = sharePointFileTypes([
+      ...additional,
+      { label: 'JS override', extensions: ['js'], pane: 'html' },
+    ]);
+    const json = types.find((type) => type.extensions.includes('json'));
+    const javascript = types.find((type) => type.extensions.includes('js'));
+    return additional.length === 1
+      && additional[0].label === 'JSON'
+      && additional[0].extensions.join(',') === 'json'
+      && additional[0].pane === 'js'
+      && json?.pane === 'js'
+      && javascript?.id === 'javascript'
+      && javascript?.pane === 'js'
+      && types.filter((type) => type.extensions.includes('js')).length === 1;
+  }));
 
 await page.click('#btn-docs');
 await page.click('#docs-menu-items [data-doc-id="design-reference"]');

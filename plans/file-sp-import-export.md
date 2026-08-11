@@ -14,7 +14,8 @@ This record covers three related additions:
 1. inline project naming and required-name `.dcspad.json` saves;
 2. one local **Import file…** action that accepts HTML, CSS, or JavaScript
    and replaces the matching editor pane; and
-3. HTML/CSS/JS import and export against a SharePoint document library.
+3. built-in HTML/CSS/JS plus configured text-file import and export against a
+  SharePoint document library.
 
 Project saves (`*.dcspad.json`) stay local-only. Catalog and snippet JSON files
 also remain unchanged.
@@ -98,12 +99,18 @@ flows.
 
 ### Scope
 
-The SharePoint feature moves plain HTML, CSS, and JS text only:
+The SharePoint feature moves text associated with the three editor panes:
 
-- **Export to SharePoint** uploads/overwrites one selected pane.
+- **Export to SharePoint** uploads/overwrites one selected file type, backed by
+  its configured editor pane.
 - **Import from SharePoint** downloads one selected file, infers its pane from
   the extension, shows the same replacement confirmation, and replaces that
   pane.
+- HTML (`.html`, `.htm`), CSS (`.css`), and JavaScript (`.js`) remain built in.
+  `sharePointFiles.additionalTypes` can add extension/label mappings to an
+  existing `html`, `css`, or `js` pane. Built-ins cannot be overridden.
+- The supplied runtime config maps `.json` to the JS pane. JSON is transferred
+  as opaque text; it is not parsed or formatted.
 - Project JSON, snippet JSON, and framework-catalog JSON never appear in this
   picker.
 - Standalone/mock mode keeps these actions visible but disabled with a
@@ -208,11 +215,11 @@ File-menu submenus:
 - persisted **SharePoint site** URL field, validated with `/_api/contextinfo`;
 - breadcrumb/path field beginning at the selected web;
 - folder list with parent navigation;
-- file list filtered to `.html`, `.htm`, `.css`, and `.js`;
+- file list filtered to built-in and configured SharePoint transfer types;
 - import mode: select one file, then Continue to the replacement confirmation;
-- export mode: pane selector (HTML/CSS/JS), safe file-name field prefilled from
-  the project slug, explicit **Overwrite existing file** confirmation when a
-  matching file exists;
+- export mode: file-type selector populated from built-ins and config, safe
+  file-name field prefilled from the project slug and selected type, explicit
+  overwrite review when a matching file exists;
 - loading, empty, permission-denied, stale-digest retry, and network-error
   states inside the dialog;
 - remember the selected web and last folder path in
@@ -272,7 +279,8 @@ focus ring, and native `<dialog>` behavior. It has no framework dependency.
 - Folder browsing never leaves the currently selected web/site boundary.
 - Same-origin sites elsewhere on the tenant can be selected, browsed, imported
   from, and exported to without reusing the host web's digest.
-- Only HTML/CSS/JS files are shown or accepted.
+- Only built-in or configured SharePoint transfer types are shown or accepted;
+  configured additions do not widen local disk import.
 - Import never mutates a pane before explicit confirmation.
 - Export never silently overwrites an existing SharePoint file.
 - A 403 explains whether the likely issue is permissions or digest refresh

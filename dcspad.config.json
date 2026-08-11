@@ -64,6 +64,17 @@
   "workbench": {
     "url": "https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/tools/SPWorkbench.aspx"
   },
+  "sharePointFiles": {
+    "additionalTypes": [
+      {
+        "label": "JSON",
+        "extensions": [
+          "json"
+        ],
+        "pane": "js"
+      }
+    ]
+  },
   "assets": {
     "designSystem": {
       "prefer": "local",

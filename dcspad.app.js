@@ -2632,6 +2632,9 @@ var EMPTY_CONFIG = Object.freeze({
   }),
   workbench: Object.freeze({
     url: ""
+  }),
+  sharePointFiles: Object.freeze({
+    additionalTypes: Object.freeze([])
   })
 });
 var activeConfig = EMPTY_CONFIG;
@@ -3379,6 +3382,29 @@ function wireJsonImport(inputId, onDoc) {
   });
   return input;
 }
+var BUILT_IN_SHAREPOINT_FILE_TYPES = Object.freeze([
+  Object.freeze({
+    id: "html",
+    label: "HTML",
+    extensions: Object.freeze(["html", "htm"]),
+    pane: "html",
+    defaultExtension: "html"
+  }),
+  Object.freeze({
+    id: "css",
+    label: "CSS",
+    extensions: Object.freeze(["css"]),
+    pane: "css",
+    defaultExtension: "css"
+  }),
+  Object.freeze({
+    id: "javascript",
+    label: "JavaScript",
+    extensions: Object.freeze(["js"]),
+    pane: "js",
+    defaultExtension: "js"
+  })
+]);
 
 // ../src/snippets.js?v=2
 var doc = null;
@@ -3583,13 +3609,57 @@ function wireJsonImport2(inputId, onDoc) {
   });
   return input;
 }
-function paneForFileName(fileName) {
+var BUILT_IN_SHAREPOINT_FILE_TYPES2 = Object.freeze([
+  Object.freeze({
+    id: "html",
+    label: "HTML",
+    extensions: Object.freeze(["html", "htm"]),
+    pane: "html",
+    defaultExtension: "html"
+  }),
+  Object.freeze({
+    id: "css",
+    label: "CSS",
+    extensions: Object.freeze(["css"]),
+    pane: "css",
+    defaultExtension: "css"
+  }),
+  Object.freeze({
+    id: "javascript",
+    label: "JavaScript",
+    extensions: Object.freeze(["js"]),
+    pane: "js",
+    defaultExtension: "js"
+  })
+]);
+function sharePointFileTypes(additionalTypes = []) {
+  const usedExtensions = new Set(
+    BUILT_IN_SHAREPOINT_FILE_TYPES2.flatMap((type) => type.extensions)
+  );
+  const types = [...BUILT_IN_SHAREPOINT_FILE_TYPES2];
+  for (const [index, raw] of additionalTypes.entries()) {
+    if (!raw || typeof raw !== "object") continue;
+    const extensions = (Array.isArray(raw.extensions) ? raw.extensions : []).map((extension) => String(extension || "").trim().replace(/^\./, "").toLowerCase()).filter((extension) => extension && !usedExtensions.has(extension));
+    if (!extensions.length || !["html", "css", "js"].includes(raw.pane)) continue;
+    for (const extension of extensions) usedExtensions.add(extension);
+    types.push(Object.freeze({
+      id: `additional-${index}-${extensions[0]}`,
+      label: String(raw.label || "").trim() || extensions[0].toUpperCase(),
+      extensions: Object.freeze(extensions),
+      pane: raw.pane,
+      defaultExtension: extensions[0]
+    }));
+  }
+  return types;
+}
+function fileTypeForFileName(fileName, additionalTypes = []) {
   const match = /\.([^.]+)$/i.exec(String(fileName || "").trim());
   const extension = match?.[1]?.toLowerCase();
-  if (extension === "html" || extension === "htm") return "html";
-  if (extension === "css") return "css";
-  if (extension === "js") return "js";
-  return "";
+  if (!extension) return null;
+  return sharePointFileTypes(additionalTypes).find((type) => type.extensions.includes(extension)) || null;
+}
+function paneForFileName(fileName, additionalTypes = []) {
+  return fileTypeForFileName(fileName, additionalTypes)?.pane || "";
 }
 function wirePaneImport(inputId, onCandidate, onError = () => {
 }) {
@@ -4013,7 +4083,7 @@ function createSpFilesClient({
     }
     return (await fetchContextInfo(target.webUrl)).value;
   }
-  async function listFolder2(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code" } = {}) {
+  async function listFolder2(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code", additionalTypes = [] } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
     const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/Length,Files/TimeLastModified&$expand=Folders,Files`;
@@ -4027,15 +4097,19 @@ function createSpFilesClient({
       name: String(item.Name || ""),
       serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath)
     })).filter((item) => item.name).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
-    const files = resultArray(data.Files).map((item) => ({
-      kind: "file",
-      name: String(item.Name || ""),
-      pane: paneForFileName(item.Name),
-      browserType: browserTypeForFileName(item.Name),
-      serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
-      length: Number(item.Length) || 0,
-      modified: item.TimeLastModified || ""
-    })).filter((item) => item.name && (purpose === "browser" ? item.browserType : item.pane)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    const files = resultArray(data.Files).map((item) => {
+      const fileType = fileTypeForFileName(item.Name, additionalTypes);
+      return {
+        kind: "file",
+        name: String(item.Name || ""),
+        pane: fileType?.pane || "",
+        fileType,
+        browserType: browserTypeForFileName(item.Name),
+        serverRelativeUrl: checkedPath(item.ServerRelativeUrl, rootPath),
+        length: Number(item.Length) || 0,
+        modified: item.TimeLastModified || ""
+      };
+    }).filter((item) => item.name && (purpose === "browser" ? item.browserType : item.fileType)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
     return {
       path: checkedPath(data.ServerRelativeUrl || path, rootPath),
       rootPath,
@@ -4043,13 +4117,13 @@ function createSpFilesClient({
       files
     };
   }
-  async function readTextFile2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+  async function readTextFile2(serverRelativePath, { webUrl: targetWebUrl = "", additionalTypes = [] } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
     const path = checkedPath(serverRelativePath, rootPath);
-    const pane = paneForFileName(path);
-    if (!pane) {
+    const fileType = fileTypeForFileName(path, additionalTypes);
+    if (!fileType) {
       throw new SpFileError(
-        "Only HTML, CSS, and JavaScript files can be imported.",
+        "That file type is not supported for SharePoint import.",
         { code: "unsupported-file" }
       );
     }
@@ -4072,7 +4146,8 @@ function createSpFilesClient({
     }
     return {
       fileName: path.slice(path.lastIndexOf("/") + 1),
-      pane,
+      pane: fileType.pane,
+      fileType,
       text,
       serverRelativeUrl: path
     };
@@ -4370,6 +4445,9 @@ var EMPTY_CONFIG2 = Object.freeze({
   }),
   workbench: Object.freeze({
     url: ""
+  }),
+  sharePointFiles: Object.freeze({
+    additionalTypes: Object.freeze([])
   })
 });
 var activeConfig2 = EMPTY_CONFIG2;
@@ -4476,6 +4554,39 @@ function normalizeWorkbench(value, configUrl2, siteUrl) {
     url: resolveUrl(source.url, siteUrl || configUrl2)
   };
 }
+function normalizeSharePointFiles(value, warnings) {
+  if (value !== void 0 && !isRecord2(value)) {
+    warnings.push("sharePointFiles config was ignored because it is not an object");
+    return { additionalTypes: [] };
+  }
+  const source = isRecord2(value) ? value : {};
+  if (source.additionalTypes !== void 0 && !Array.isArray(source.additionalTypes)) {
+    warnings.push("sharePointFiles.additionalTypes was ignored because it is not an array");
+    return { additionalTypes: [] };
+  }
+  const additionalTypes = [];
+  for (const [index, raw] of (source.additionalTypes || []).entries()) {
+    if (!isRecord2(raw)) {
+      warnings.push(`SharePoint file type ${index + 1} was ignored because it is not an object`);
+      continue;
+    }
+    const label = cleanString(raw.label);
+    const pane = cleanString(raw.pane).toLowerCase();
+    const rawExtensions = Array.isArray(raw.extensions) ? raw.extensions : [];
+    const extensions = [...new Set(rawExtensions.map((extension) => cleanString(extension).replace(/^\./, "").toLowerCase()).filter((extension) => /^[a-z0-9][a-z0-9_-]*$/.test(extension)))];
+    if (!label || !["html", "css", "js"].includes(pane) || !extensions.length) {
+      warnings.push(
+        `SharePoint file type ${index + 1} was ignored because label, extensions, and a valid pane are required`
+      );
+      continue;
+    }
+    if (extensions.length !== rawExtensions.length) {
+      warnings.push(`SharePoint file type "${label}" contains duplicate or invalid extensions`);
+    }
+    additionalTypes.push({ label, extensions, pane });
+  }
+  return { additionalTypes };
+}
 function normalizeConfig(raw, configUrl2) {
   const warnings = [];
   if (!isRecord2(raw)) {
@@ -4498,7 +4609,8 @@ function normalizeConfig(raw, configUrl2) {
       assets,
       docs: normalizeDocs(raw.docs, configUrl2, siteUrl, warnings),
       copilot: normalizeCopilot(raw.copilot, configUrl2),
-      workbench: normalizeWorkbench(raw.workbench, configUrl2, siteUrl)
+      workbench: normalizeWorkbench(raw.workbench, configUrl2, siteUrl),
+      sharePointFiles: normalizeSharePointFiles(raw.sharePointFiles, warnings)
     },
     warnings
   };
@@ -5288,8 +5400,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "71" : "dev";
-var injectedRevision = true ? "288f14ef" : "";
+var injectedBuild = true ? "74-dirty" : "dev";
+var injectedRevision = true ? "f576f9fb-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5371,6 +5483,8 @@ var networkApi = initNetworkPanel({
   isNetworkVisible: () => isDiagVisible("network")
 });
 var configResult = await configReady;
+var spAdditionalFileTypes = configResult.config.sharePointFiles.additionalTypes;
+var spTransferFileTypes = sharePointFileTypes(spAdditionalFileTypes);
 initLibraries({
   config: configResult.config,
   onChange: () => {
@@ -5881,7 +5995,7 @@ var spSiteForm = document.getElementById("sp-site-form");
 var spSiteUrl = document.getElementById("sp-site-url");
 var spSiteOpen = document.getElementById("sp-site-open");
 var spExportControls = document.getElementById("sp-export-controls");
-var spExportPane = document.getElementById("sp-export-pane");
+var spExportType = document.getElementById("sp-export-type");
 var spExportName = document.getElementById("sp-export-name");
 var spFolderPath = document.getElementById("sp-folder-path");
 var spFolderUp = document.getElementById("sp-folder-up");
@@ -5923,6 +6037,13 @@ var spFilesBusy = false;
 var spTargetWebUrl = "";
 var spPendingExport = null;
 var spMetadataBusy = false;
+var spTransferTypeById = new Map(spTransferFileTypes.map((type) => [type.id, type]));
+for (const type of spTransferFileTypes) {
+  const option = document.createElement("option");
+  option.value = type.id;
+  option.textContent = type.label;
+  spExportType.append(option);
+}
 var FOLDER_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2h4l1.3 1.4h7.1v7.2H1.8z"/><path d="M1.8 4.2V2.8h4.4l1.2 1.4"/></svg>';
 var FILE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" aria-hidden="true"><path d="M3 1.8h6.2L13 5.6v8.6H3z"/><path d="M9.2 1.8v3.8H13"/></svg>';
 var browserFileLabel = (type) => ({
@@ -6008,7 +6129,7 @@ function renderSpFolder() {
     name.textContent = entry.name;
     const meta = document.createElement("span");
     meta.className = "sp-file-row__meta";
-    meta.textContent = entry.kind === "folder" ? "folder" : `${spFilesMode === "browser" ? browserFileLabel(entry.browserType) : entry.pane.toUpperCase()} \xB7 ${formatBytes(entry.length)}`;
+    meta.textContent = entry.kind === "folder" ? "folder" : `${spFilesMode === "browser" ? browserFileLabel(entry.browserType) : entry.fileType.label} \xB7 ${formatBytes(entry.length)}`;
     row.append(icon, name, meta);
     if (entry.kind === "folder") {
       row.addEventListener("click", () => loadSpFolder(entry.serverRelativeUrl));
@@ -6023,7 +6144,7 @@ function renderSpFolder() {
         if (spFilesMode === "import" || spFilesMode === "browser") {
           spFilesPrimary.disabled = false;
         } else {
-          if (entry.pane) spExportPane.value = entry.pane;
+          if (entry.fileType) spExportType.value = entry.fileType.id;
           spExportName.value = entry.name;
           resetSpExportAction();
           syncSpExportAction();
@@ -6045,7 +6166,8 @@ async function loadSpFolder(path) {
   try {
     spFolder = await listFolder(path, {
       webUrl: spTargetWebUrl,
-      purpose: spFilesMode === "browser" ? "browser" : "code"
+      purpose: spFilesMode === "browser" ? "browser" : "code",
+      additionalTypes: spAdditionalFileTypes
     });
     updateNested("settings", { spFilesFolder: spFolder.path });
     renderSpFolder();
@@ -6090,11 +6212,11 @@ async function connectSpSite(candidateWebUrl, { restoreFolder = true } = {}) {
   }
   if (startPath) await loadSpFolder(startPath);
 }
-function exportExtension(pane) {
-  return pane === "js" ? "js" : pane;
+function selectedSpExportType() {
+  return spTransferTypeById.get(spExportType.value) || spTransferFileTypes[0];
 }
 function defaultSpExportName() {
-  return projectName() ? `${filenameBase()}.${exportExtension(spExportPane.value)}` : "";
+  return projectName() ? `${filenameBase()}.${selectedSpExportType().defaultExtension}` : "";
 }
 async function openSpFiles(mode) {
   closeFileMenu();
@@ -6112,13 +6234,13 @@ async function openSpFiles(mode) {
   spFilesPrimary.textContent = mode === "import" ? "Continue" : mode === "browser" ? "Open file" : "Review metadata";
   spFilesList.setAttribute(
     "aria-label",
-    mode === "browser" ? "SharePoint folders and Browser-supported files" : "SharePoint folders and code files"
+    mode === "browser" ? "SharePoint folders and Browser-supported files" : "SharePoint folders and supported transfer files"
   );
-  spFilesEmpty.textContent = mode === "browser" ? "No Browser-supported files in this folder." : "No HTML, CSS, or JavaScript files in this folder.";
+  spFilesEmpty.textContent = mode === "browser" ? "No Browser-supported files in this folder." : "No supported transfer files in this folder.";
   spFilesPrimary.disabled = true;
   if (mode === "export") {
     const activePane = ["html", "css", "js"].includes(getState().layout.editorTab) ? getState().layout.editorTab : "html";
-    spExportPane.value = activePane;
+    spExportType.value = spTransferFileTypes.find((type) => type.pane === activePane).id;
     spExportName.value = defaultSpExportName();
   }
   if (!spFilesDialog.open) spFilesDialog.showModal();
@@ -6159,7 +6281,7 @@ spSiteUrl.addEventListener("input", () => {
     if (spFilesMode === "browser" && spSelectedFile) spFilesPrimary.disabled = false;
   }
 });
-spExportPane.addEventListener("change", () => {
+spExportType.addEventListener("change", () => {
   spExportName.value = defaultSpExportName();
   resetSpExportAction();
   syncSpExportAction();
@@ -6398,7 +6520,7 @@ spFilesPrimary.addEventListener("click", async () => {
     try {
       const candidate = await readTextFile(
         spSelectedFile.serverRelativeUrl,
-        { webUrl: spTargetWebUrl }
+        { webUrl: spTargetWebUrl, additionalTypes: spAdditionalFileTypes }
       );
       confirmPaneReplacement(candidate, () => {
         if (spFilesDialog.open) spFilesDialog.close();
@@ -6411,7 +6533,7 @@ spFilesPrimary.addEventListener("click", async () => {
     }
     return;
   }
-  const pane = spExportPane.value;
+  const pane = selectedSpExportType().pane;
   const name = spExportName.value.trim();
   if (!name) {
     setSpError("Enter a file name.");
