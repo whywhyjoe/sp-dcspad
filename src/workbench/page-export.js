@@ -3,12 +3,18 @@
 // Two artifacts per page:
 //   Content (.md)  — for human reading and archiving. Human-oriented
 //     metadata on top (title, description, created, location), the merged
-//     content of every canvas control in document order, then a
-//     standardized metadata block at the bottom. Text web parts contribute
-//     their HTML (readable raw AND rendered by md viewers); other web parts
-//     contribute a labelled block with whatever searchable text they carry.
+//     content of every part in document order under a heading per part, then
+//     a standardized metadata block at the bottom. Text parts contribute
+//     their HTML (readable raw AND rendered by md viewers); other parts
+//     contribute whatever searchable text they carry. Parts with nothing to
+//     read are skipped — this artifact is for reading, not for inventory.
 //   Raw (.json)    — the list item plus the normalized controls, for later
 //     script analysis.
+//
+// `contentParts()` is the shared reading model behind both the content export
+// and the Pages → Extract tab, so the two never drift. It deliberately drops
+// the technical framing ("web part", ids, control types): those live on the
+// Web parts, Structure and Raw tabs.
 
 import { webPartName, textOfControl } from './canvas.js';
 
@@ -27,28 +33,65 @@ export function pageLocation({ siteTitle, libraryTitle, fileDirRef, libraryRootP
   return parts.join(' | ');
 }
 
-function contentBlocks(controls) {
-  const blocks = [];
+// A text part is empty when it renders nothing a reader would see; markup that
+// only carries an image still counts as content.
+function textPartIsEmpty(html) {
+  if (!html) return true;
+  if (/<img\b/i.test(html)) return false;
+  return !textOfControl({ kind: 'text', innerHTML: html });
+}
+
+// Ordered reading model of a page's canvas:
+//   parts:      [{ kind, label, html, lines }] in document order, empty parts
+//               dropped, repeated labels numbered ('Text 1', 'Text 2').
+//   unreadable: count of canvas entries the parser could not make sense of.
+// `html` is only ever set for text parts; `lines` carries the readable text of
+// every other part.
+export function contentParts(controls) {
+  const parts = [];
+  let unreadable = 0;
   for (const control of controls || []) {
     if (control.kind === 'text') {
       const html = String(control.innerHTML || '').trim();
-      if (html) blocks.push(html);
+      if (!textPartIsEmpty(html)) parts.push({ kind: 'text', label: 'Text', html, lines: [] });
     } else if (control.kind === 'webpart') {
-      const name = webPartName(control.webPartId);
-      const title = control.webPartData?.title;
-      const label = title && title !== name
-        ? `**[Web part: ${name} — “${title}”]**`
-        : `**[Web part: ${name}]**`;
-      const texts = Object.values(
+      const lines = Object.values(
         control.webPartData?.serverProcessedContent?.searchablePlainTexts || {},
-      ).filter((v) => typeof v === 'string' && v.trim());
-      blocks.push(texts.length
-        ? `${label}\n\n${texts.map((t) => `- ${t}`).join('\n')}`
-        : label);
+      ).filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim());
+      if (!lines.length) continue;   // nothing to read — skipped by design
+      const title = String(control.webPartData?.title || '').trim();
+      parts.push({
+        kind: 'webpart', label: title || webPartName(control.webPartId), html: '', lines,
+      });
     } else if (control.kind === 'unknown') {
-      blocks.push('*[Unparsed canvas entry — see the raw export]*');
+      unreadable += 1;
     }
     // 'section' and 'pageSettings' entries carry no content.
+  }
+
+  const counts = new Map();
+  for (const part of parts) counts.set(part.label, (counts.get(part.label) || 0) + 1);
+  const seen = new Map();
+  for (const part of parts) {
+    if (counts.get(part.label) > 1) {
+      const n = (seen.get(part.label) || 0) + 1;
+      seen.set(part.label, n);
+      part.label = `${part.label} ${n}`;
+    }
+  }
+  return { parts, unreadable };
+}
+
+function contentBlocks(controls) {
+  const { parts, unreadable } = contentParts(controls);
+  const blocks = [];
+  for (const part of parts) {
+    blocks.push(`## ${part.label}`);
+    blocks.push(part.kind === 'text' ? part.html : part.lines.map((t) => `- ${t}`).join('\n'));
+  }
+  if (unreadable) {
+    blocks.push(`*[${unreadable} part${unreadable === 1 ? '' : 's'} could not be read — `
+      + 'see the raw export.]*');
   }
   return blocks;
 }

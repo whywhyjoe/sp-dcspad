@@ -10,7 +10,9 @@ import {
 } from '../canvas.js';
 import { createSpWriteClient } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
-import { buildContentExport, buildRawExport, exportFileStem } from '../page-export.js';
+import {
+  buildContentExport, buildRawExport, exportFileStem, contentParts,
+} from '../page-export.js';
 import { downloadText } from '../../io.js?v=2';
 import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
@@ -299,26 +301,44 @@ export function createPagesView({ client, navigate }) {
     return wrap;
   }
 
+  // Extract is the reading tab: one box with the whole page's content in
+  // document order under a heading per part, and one box with the underlying
+  // HTML. Empty parts are skipped, and nothing here names ids or control
+  // types — that lives on Web parts, Structure and Raw.
   function textPane(parsed) {
     const wrap = el('div', 'wb-tab-pane wb-text-pane');
-    const texts = parsed.controls.filter((c) => c.kind === 'text');
-    if (!texts.length) {
-      wrap.append(el('div', 'wb-grid-status', 'No text web parts on this page.'));
+    const { parts } = contentParts(parsed.controls);
+    if (!parts.length) {
+      wrap.append(el('div', 'wb-grid-status', 'No readable content on this page.'));
       return wrap;
     }
-    texts.forEach((control, i) => {
-      const block = el('div', 'wb-text-block');
-      block.append(el('div', 'wb-subpanel-title', `Text web part ${i + 1}`));
-      const rendered = el('div', 'wb-text-rendered');
-      rendered.innerHTML = sanitizeHtml(control.innerHTML);
-      block.append(rendered);
-      const details = document.createElement('details');
-      details.append(el('summary', '', 'Raw HTML'));
-      const pre = el('pre', 'wb-text-raw', control.innerHTML);
-      details.append(pre);
-      block.append(details);
-      wrap.append(block);
-    });
+
+    const contentBlock = el('div', 'wb-text-block');
+    contentBlock.append(el('div', 'wb-subpanel-title', 'Content'));
+    const rendered = el('div', 'wb-text-rendered');
+    for (const part of parts) {
+      rendered.append(el('h3', 'wb-text-part', part.label));
+      if (part.kind === 'text') {
+        const body = el('div', 'wb-text-body');
+        body.innerHTML = sanitizeHtml(part.html);
+        rendered.append(body);
+      } else {
+        const list = el('ul', 'wb-text-lines');
+        for (const line of part.lines) list.append(el('li', '', line));
+        rendered.append(list);
+      }
+    }
+    contentBlock.append(rendered);
+    wrap.append(contentBlock);
+
+    const withHtml = parts.filter((p) => p.kind === 'text');
+    if (withHtml.length) {
+      const htmlBlock = el('div', 'wb-text-block');
+      htmlBlock.append(el('div', 'wb-subpanel-title', 'HTML'));
+      htmlBlock.append(el('pre', 'wb-text-raw',
+        withHtml.map((p) => `<!-- ${p.label} -->\n${p.html}`).join('\n\n')));
+      wrap.append(htmlBlock);
+    }
     return wrap;
   }
 

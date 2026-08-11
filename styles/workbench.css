@@ -324,16 +324,23 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-text-block { display: flex; flex-direction: column; gap: 6px; flex: none; }
 .wb-text-rendered {
   background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-m);
-  padding: 10px 14px; color: var(--fg); max-height: 320px; overflow: auto;
+  padding: 10px 14px; color: var(--fg); overflow: auto;
 }
 .wb-text-rendered a { color: var(--accent); }
+/* Part headings inside the merged content box: separators, not page titles. */
+.wb-text-part {
+  margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  font: 600 11px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.wb-text-rendered > .wb-text-part:first-child { margin-top: 0; }
+.wb-text-lines { margin: 0; padding-left: 18px; }
 .wb-text-raw {
   margin: 0; background: var(--bg-1); border: 1px solid var(--border);
   border-radius: var(--radius-m); padding: 8px 10px;
   font: 11px/1.6 var(--mono); color: var(--fg-dim);
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto;
 }
-.wb-text-block summary { cursor: pointer; color: var(--fg-dim); font-size: 11.5px; }
 
 /* ---- query builder ---- */
 .wb-qb {
