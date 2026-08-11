@@ -58,6 +58,7 @@ function configureWorkers() {
       let file = 'editor.worker.js';
       if (label === 'css' || label === 'scss' || label === 'less') file = 'css.worker.js';
       else if (label === 'html' || label === 'handlebars' || label === 'razor') file = 'html.worker.js';
+      else if (label === 'json') file = 'json.worker.js';
       else if (label === 'typescript' || label === 'javascript') file = 'ts.worker.js';
 
       const worker = new Worker(assetUrl(file), {
