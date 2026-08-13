@@ -141,6 +141,27 @@ await check('items: the max-items input caps the fetched rows', async () => {
   return ids.join(',') === '6,5,4';
 });
 
+await check('items: a typed OData $orderby drives the query', async () => {
+  await page.fill('.wb-items-query', '$orderby=Budget desc');
+  await page.locator('.wb-items-query').dispatchEvent('change');
+  await page.waitForFunction(() => document.querySelector(
+    '.wb-items-grid .wb-table tbody tr td:nth-child(1)')?.textContent === 'Records migration');
+  const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
+    .allTextContents()).map((s) => s.trim());
+  return ids.join(',') === '2,6,1';   // Budget desc, still capped at 3
+});
+
+await check('items: unsupported query keys are rejected inline', async () => {
+  await page.fill('.wb-items-query', '$top=5');
+  await page.locator('.wb-items-query').dispatchEvent('change');
+  await page.waitForFunction(() =>
+    document.querySelector('.wb-items-error')?.textContent.length > 0);
+  const error = await page.locator('.wb-items-error').textContent();
+  const first = await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(1)')
+    .first().textContent();
+  return error.includes('$filter and $orderby') && first === 'Records migration';
+});
+
 await check('item-export: markdown document follows the content spec', async () =>
   page.evaluate(async () => {
     const { buildItemsMarkdown, htmlToMarkdown } = await import('/src/workbench/item-export.js');
@@ -182,6 +203,19 @@ await check('item-export: markdown document follows the content spec', async () 
       && viewMd.includes('view “All Items”')
       && viewMd.includes('Project Status: Active')
       && !viewMd.includes('Budget:')            // the view chose the columns
+      && (() => {
+        // A typed query is stamped into the document's source line.
+        const queried = buildItemsMarkdown({
+          listTitle: 'Projects',
+          webUrl: location.origin,
+          items,
+          fields,
+          filter: "ProjectStatus eq 'Active'",
+          orderby: 'Budget desc',
+        });
+        return queried.includes("filter: ProjectStatus eq 'Active'")
+          && queried.includes('order: Budget desc');
+      })()
       && htmlToMarkdown('<p>a<br>b</p><h2>T</h2>') === 'a\nb\n\n**T**';
   }));
 

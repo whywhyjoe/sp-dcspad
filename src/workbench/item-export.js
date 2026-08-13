@@ -269,6 +269,7 @@ export function htmlToMarkdown(html) {
 export function buildItemsMarkdown({
   listTitle = 'List', webUrl = '', viewTitle = '',
   items = [], fields = [], viewFieldNames = null,
+  filter = '', orderby = '',
 } = {}) {
   const columns = viewFieldNames
     ? viewColumnFields(fields, viewFieldNames)
@@ -280,6 +281,8 @@ export function buildItemsMarkdown({
   const source = [
     webUrl,
     viewTitle ? `view “${viewTitle}”` : 'all columns',
+    filter ? `filter: ${filter}` : '',
+    orderby ? `order: ${orderby}` : '',
     `${items.length} item${items.length === 1 ? '' : 's'}`,
   ].filter(Boolean).join(' · ');
   lines.push(source, '');

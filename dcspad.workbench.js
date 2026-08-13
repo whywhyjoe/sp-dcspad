@@ -817,7 +817,12 @@ function mockResolver(rawUrl) {
     }
     if (path.includes("/items")) {
       const rows = [...ITEMS[found.Id] || []];
-      if (/\$orderby=id(%20| )desc/.test(path)) rows.sort((a, b) => b.Id - a.Id);
+      const order = /\$orderby=([a-z0-9_]+)(?:(?:%20| +)(asc|desc))?/.exec(path);
+      if (order) {
+        const key2 = Object.keys(rows[0] || {}).find((k) => k.toLowerCase() === order[1]) || order[1];
+        const dir = order[2] === "desc" ? -1 : 1;
+        rows.sort((a, b) => a[key2] > b[key2] ? dir : a[key2] < b[key2] ? -dir : 0);
+      }
       return { value: rows };
     }
     if (path.includes("/fields")) return { value: FIELDS[found.Id] || DEFAULT_FIELDS };
@@ -1679,7 +1684,9 @@ function buildItemsMarkdown({
   viewTitle = "",
   items = [],
   fields = [],
-  viewFieldNames = null
+  viewFieldNames = null,
+  filter = "",
+  orderby = ""
 } = {}) {
   const columns = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
   let origin = "";
@@ -1691,6 +1698,8 @@ function buildItemsMarkdown({
   const source = [
     webUrl,
     viewTitle ? `view \u201C${viewTitle}\u201D` : "all columns",
+    filter ? `filter: ${filter}` : "",
+    orderby ? `order: ${orderby}` : "",
     `${items.length} item${items.length === 1 ? "" : "s"}`
   ].filter(Boolean).join(" \xB7 ");
   lines.push(source, "");
@@ -2408,15 +2417,42 @@ function createListsView({ client: client2, navigate }) {
     maxIn.value = "500";
     maxIn.setAttribute("aria-label", "Maximum items to fetch");
     maxLabel.append(maxIn);
+    const queryLabel = el4("label", "wb-items-label", "Query ");
+    const queryIn = el4("input", "wb-items-query");
+    queryIn.type = "text";
+    queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
+    queryIn.setAttribute("aria-label", "OData $filter and $orderby for the item query");
+    queryIn.title = "Raw OData clauses for the item query: $filter=\u2026 and/or $orderby=\u2026, joined with &. A bare expression counts as $filter. Order defaults to ID desc; columns and row cap keep their own controls.";
+    queryLabel.append(queryIn);
+    const queryErr = el4("span", "wb-items-error");
     const dlBtn = el4("button", "btn btn-xs wb-items-download", "Download .md");
     dlBtn.type = "button";
     dlBtn.title = "Download the visible items as a markdown document";
     const copyBtn = el4("button", "btn btn-xs wb-items-copymd", "Copy Markdown");
     copyBtn.type = "button";
     copyBtn.title = "Copy the visible items as a markdown document";
-    bar.append(viewLabel, maxLabel, dlBtn, copyBtn);
+    bar.append(viewLabel, maxLabel, queryLabel, dlBtn, copyBtn, queryErr);
     const gridBox = el4("div", "wb-items-grid");
     wrap.append(bar, gridBox);
+    function parseItemsQuery(text) {
+      const out = { filter: "", orderby: "", error: "" };
+      const raw = String(text || "").trim().replace(/^\?/, "");
+      if (!raw) return out;
+      for (const part of raw.split("&")) {
+        const piece = part.trim();
+        if (!piece) continue;
+        const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
+        if (clause) {
+          out[clause[1].toLowerCase()] = clause[2].trim();
+        } else if (piece.startsWith("$")) {
+          out.error = "Only $filter and $orderby are supported here \u2014 columns and max items have their own controls.";
+          return out;
+        } else {
+          out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
+        }
+      }
+      return out;
+    }
     let itemsGrid = null;
     let current = null;
     let viewsFilled = false;
@@ -2433,7 +2469,9 @@ function createListsView({ client: client2, navigate }) {
       viewTitle: current.viewTitle,
       items: itemsGrid.getVisibleRows(),
       fields: current.fields,
-      viewFieldNames: current.viewFieldNames
+      viewFieldNames: current.viewFieldNames,
+      filter: current.filter,
+      orderby: current.orderby
     }) : "";
     dlBtn.addEventListener("click", () => {
       const md = exportDoc();
@@ -2444,6 +2482,9 @@ function createListsView({ client: client2, navigate }) {
       if (md) copyText(md, copyBtn);
     });
     async function reload() {
+      const parsed = parseItemsQuery(queryIn.value);
+      queryErr.textContent = parsed.error;
+      if (parsed.error) return;
       const seq = ++loadSeq;
       const max = clampMax();
       itemsGrid = null;
@@ -2477,11 +2518,19 @@ function createListsView({ client: client2, navigate }) {
         const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
         const query = {
           path: guidPath(listId, "/items"),
-          options: { select: ["*", ...expand], expand, orderby: "ID desc", top: max }
+          options: {
+            select: ["*", ...expand],
+            expand,
+            ...parsed.filter ? { filter: parsed.filter } : {},
+            orderby: parsed.orderby || "ID desc",
+            top: max
+          }
         };
         const { items, partial } = await client2.getAll(query.path, query.options, { cap: max });
         if (seq !== loadSeq) return;
-        items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        if (!parsed.orderby) {
+          items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        }
         const content = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
         const filesOf = (row) => Array.isArray(row.AttachmentFiles) ? row.AttachmentFiles : row.AttachmentFiles?.results || [];
         const anyAttachments = items.some((row) => filesOf(row).length);
@@ -2514,7 +2563,13 @@ function createListsView({ client: client2, navigate }) {
         gridBox.textContent = "";
         gridBox.append(itemsGrid.el);
         itemsGrid.setRows(items, { partial });
-        current = { fields, viewFieldNames, viewTitle };
+        current = {
+          fields,
+          viewFieldNames,
+          viewTitle,
+          filter: parsed.filter,
+          orderby: parsed.orderby
+        };
       } catch (err) {
         if (seq !== loadSeq) return;
         status.textContent = err?.message || String(err);
@@ -2527,6 +2582,10 @@ function createListsView({ client: client2, navigate }) {
     }
     viewSel.addEventListener("change", reload);
     maxIn.addEventListener("change", reload);
+    queryIn.addEventListener("change", reload);
+    queryIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") reload();
+    });
     reload();
   }
   const TABS = [

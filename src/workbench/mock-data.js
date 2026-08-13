@@ -478,11 +478,18 @@ export function mockResolver(rawUrl) {
       return single ?? null;
     }
     // The mock ignores $filter/$select on items — live-stub tests assert the
-    // real query URLs instead. $orderby=ID desc IS honored: the Items tab
-    // caps row counts, and live SharePoint orders before the cap applies.
+    // real query URLs instead. A single-field $orderby IS honored: the Items
+    // tab caps row counts, and live SharePoint orders before the cap applies.
     if (path.includes('/items')) {
       const rows = [...(ITEMS[found.Id] || [])];
-      if (/\$orderby=id(%20| )desc/.test(path)) rows.sort((a, b) => b.Id - a.Id);
+      const order = /\$orderby=([a-z0-9_]+)(?:(?:%20| +)(asc|desc))?/.exec(path);
+      if (order) {
+        // The URL was lowercased for routing — recover the item key case.
+        const key = Object.keys(rows[0] || {})
+          .find((k) => k.toLowerCase() === order[1]) || order[1];
+        const dir = order[2] === 'desc' ? -1 : 1;
+        rows.sort((a, b) => (a[key] > b[key] ? dir : a[key] < b[key] ? -dir : 0));
+      }
       return { value: rows };
     }
     if (path.includes('/fields')) return { value: FIELDS[found.Id] || DEFAULT_FIELDS };

@@ -190,6 +190,17 @@ export function createListsView({ client, navigate }) {
     maxIn.setAttribute('aria-label', 'Maximum items to fetch');
     maxLabel.append(maxIn);
 
+    const queryLabel = el('label', 'wb-items-label', 'Query ');
+    const queryIn = el('input', 'wb-items-query');
+    queryIn.type = 'text';
+    queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
+    queryIn.setAttribute('aria-label', 'OData $filter and $orderby for the item query');
+    queryIn.title = 'Raw OData clauses for the item query: $filter=… and/or '
+      + '$orderby=…, joined with &. A bare expression counts as $filter. '
+      + 'Order defaults to ID desc; columns and row cap keep their own controls.';
+    queryLabel.append(queryIn);
+    const queryErr = el('span', 'wb-items-error');
+
     const dlBtn = el('button', 'btn btn-xs wb-items-download', 'Download .md');
     dlBtn.type = 'button';
     dlBtn.title = 'Download the visible items as a markdown document';
@@ -197,9 +208,33 @@ export function createListsView({ client, navigate }) {
     copyBtn.type = 'button';
     copyBtn.title = 'Copy the visible items as a markdown document';
 
-    bar.append(viewLabel, maxLabel, dlBtn, copyBtn);
+    bar.append(viewLabel, maxLabel, queryLabel, dlBtn, copyBtn, queryErr);
     const gridBox = el('div', 'wb-items-grid');
     wrap.append(bar, gridBox);
+
+    // Raw OData input → { filter, orderby, error }. Only the two clauses the
+    // tab doesn't already own are accepted; anything else $-prefixed is
+    // rejected so a typo'd $select/$top can't silently fight the controls.
+    function parseItemsQuery(text) {
+      const out = { filter: '', orderby: '', error: '' };
+      const raw = String(text || '').trim().replace(/^\?/, '');
+      if (!raw) return out;
+      for (const part of raw.split('&')) {
+        const piece = part.trim();
+        if (!piece) continue;
+        const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
+        if (clause) {
+          out[clause[1].toLowerCase()] = clause[2].trim();
+        } else if (piece.startsWith('$')) {
+          out.error = 'Only $filter and $orderby are supported here — columns and max items have their own controls.';
+          return out;
+        } else {
+          // A bare expression is the common case: treat it as the filter.
+          out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
+        }
+      }
+      return out;
+    }
 
     let itemsGrid = null;
     let current = null;   // { fields, viewFieldNames, viewTitle } of the loaded rows
@@ -221,6 +256,8 @@ export function createListsView({ client, navigate }) {
         items: itemsGrid.getVisibleRows(),
         fields: current.fields,
         viewFieldNames: current.viewFieldNames,
+        filter: current.filter,
+        orderby: current.orderby,
       })
       : '');
     dlBtn.addEventListener('click', () => {
@@ -233,6 +270,9 @@ export function createListsView({ client, navigate }) {
     });
 
     async function reload() {
+      const parsed = parseItemsQuery(queryIn.value);
+      queryErr.textContent = parsed.error;
+      if (parsed.error) return;   // keep whatever is loaded until the input is fixed
       const seq = ++loadSeq;
       const max = clampMax();
       itemsGrid = null;
@@ -270,12 +310,21 @@ export function createListsView({ client, navigate }) {
         const expand = ['FieldValuesAsText', ...(hasAttachments ? ['AttachmentFiles'] : [])];
         const query = {
           path: guidPath(listId, '/items'),
-          options: { select: ['*', ...expand], expand, orderby: 'ID desc', top: max },
+          options: {
+            select: ['*', ...expand],
+            expand,
+            ...(parsed.filter ? { filter: parsed.filter } : {}),
+            orderby: parsed.orderby || 'ID desc',
+            top: max,
+          },
         };
         const { items, partial } = await client.getAll(query.path, query.options, { cap: max });
         if (seq !== loadSeq) return;
-        // The mock resolver ignores $orderby; sort defensively either way.
-        items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        // Default ordering gets a defensive client-side sort; a typed
+        // $orderby is the server's to honor (re-sorting would undo it).
+        if (!parsed.orderby) {
+          items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        }
 
         const content = viewFieldNames
           ? viewColumnFields(fields, viewFieldNames)
@@ -312,7 +361,10 @@ export function createListsView({ client, navigate }) {
         gridBox.textContent = '';
         gridBox.append(itemsGrid.el);
         itemsGrid.setRows(items, { partial });
-        current = { fields, viewFieldNames, viewTitle };
+        current = {
+          fields, viewFieldNames, viewTitle,
+          filter: parsed.filter, orderby: parsed.orderby,
+        };
       } catch (err) {
         if (seq !== loadSeq) return;
         status.textContent = err?.message || String(err);
@@ -326,6 +378,8 @@ export function createListsView({ client, navigate }) {
 
     viewSel.addEventListener('change', reload);
     maxIn.addEventListener('change', reload);
+    queryIn.addEventListener('change', reload);
+    queryIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') reload(); });
     reload();
   }
 
