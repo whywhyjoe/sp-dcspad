@@ -37,6 +37,10 @@ const SITE_SELECT = ['Id', 'Url', 'ServerRelativeUrl', 'ReadOnly', 'ShareByEmail
 
 export function createSiteView({ client }) {
   const root = el('section', 'wb-view wb-view-site');
+  const absUrl = (rel) => {
+    try { return rel ? `${new URL(client.webUrl()).origin}${encodeURI(String(rel))}` : ''; }
+    catch { return ''; }
+  };
 
   const head = el('div', 'wb-view-head');
   head.innerHTML = '<h2>Site overview</h2>'
@@ -139,7 +143,7 @@ export function createSiteView({ client }) {
     const grid = createGrid({
       columns: [
         { key: 'Title', label: 'Title' },
-        { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true },
+        { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true, link: absUrl },
         { key: 'WebTemplate', label: 'Template' },
         { key: 'Language', label: 'Language' },
         { key: 'Created', label: 'Created', format: (v) => (v ? String(v).slice(0, 10) : '') },

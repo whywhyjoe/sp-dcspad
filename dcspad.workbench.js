@@ -357,7 +357,8 @@ function createSpRestClient({
   async function get(path, opts) {
     return entityOf(await rawGet(apiUrl(path, opts)));
   }
-  async function getAll(path, opts) {
+  async function getAll(path, opts, { cap = PAGE_CAP } = {}) {
+    const limit = Math.min(Math.max(1, Number(cap) || PAGE_CAP), PAGE_CAP);
     let url = apiUrl(path, opts);
     const items = [];
     let partial = false;
@@ -368,7 +369,7 @@ function createSpRestClient({
         items.push(entityOf(data));
         break;
       }
-      const remaining = PAGE_CAP - items.length;
+      const remaining = limit - items.length;
       if (page.length > remaining) {
         items.push(...page.slice(0, remaining));
         partial = true;
@@ -377,7 +378,7 @@ function createSpRestClient({
       items.push(...page);
       const next = nextLinkOf(data);
       if (!next) break;
-      if (items.length >= PAGE_CAP) {
+      if (items.length >= limit) {
         partial = true;
         break;
       }
@@ -427,6 +428,7 @@ var FIELDS = {
     field("Due Date", "DueDate", "DateTime", 4),
     field("Owner", "ProjectOwner", "User", 20),
     field("Budget", "Budget", "Currency", 10),
+    field("Details", "ProjectDetails", "Note", 3, { RichText: true }),
     field("ID", "ID", "Counter", 5, { ReadOnlyField: true, Hidden: false }),
     field("Content Type", "ContentType", "Computed", 12, { Hidden: true, ReadOnlyField: true })
   ],
@@ -490,7 +492,17 @@ function field(title, internal, type, kind, extra = {}) {
   };
 }
 var PROJECT_ITEMS = [
-  item(1, "Intranet refresh", { ProjectStatus: "Active", DueDate: "2026-09-15T00:00:00Z", Budget: 12e3 }),
+  item(1, "Intranet refresh", {
+    ProjectStatus: "Active",
+    DueDate: "2026-09-15T00:00:00Z",
+    Budget: 12e3,
+    // Rich text + attachments: the item-export markdown path needs both.
+    ProjectDetails: '<div><p>Kickoff <strong>done</strong>.</p><ul><li>Phase 1</li><li>Phase 2</li></ul><p>See the <a href="https://example.com/plan">plan</a>.</p></div>',
+    AttachmentFiles: [
+      { FileName: "kickoff.pptx", ServerRelativeUrl: "/Lists/Projects/Attachments/1/kickoff.pptx" }
+    ],
+    FieldValuesAsText: { Author: "Mock Developer", Editor: "Pat Example", ProjectOwner: "Mock Developer" }
+  }),
   item(2, "Records migration", { ProjectStatus: "Planned", DueDate: "2026-11-01T00:00:00Z", Budget: 4e4 }),
   item(3, "Team site cleanup", { ProjectStatus: "Done", DueDate: "2026-03-30T00:00:00Z", Budget: 1500 }),
   item(4, "Permission audit", { ProjectStatus: "Blocked", DueDate: "2026-08-05T00:00:00Z", Budget: 0 }),
@@ -803,7 +815,11 @@ function mockResolver(rawUrl) {
       const single = (ITEMS[found.Id] || []).find((i) => i.Id === Number(itemId));
       return single ?? null;
     }
-    if (path.includes("/items")) return { value: ITEMS[found.Id] || [] };
+    if (path.includes("/items")) {
+      const rows = [...ITEMS[found.Id] || []];
+      if (/\$orderby=id(%20| )desc/.test(path)) rows.sort((a, b) => b.Id - a.Id);
+      return { value: rows };
+    }
     if (path.includes("/fields")) return { value: FIELDS[found.Id] || DEFAULT_FIELDS };
     if (/\/views\(guid'/.test(path) && path.includes("/viewfields")) {
       return { Items: ["LinkTitle", "ProjectStatus", "DueDate"] };
@@ -1091,6 +1107,9 @@ function downloadCsv(name, rows, columns) {
 function downloadJson(name, rows, columns) {
   downloadText(`${name}.json`, toJson(rows, columns), "application/json");
 }
+function downloadMarkdown(name, text) {
+  downloadText(`${name}.md`, text, "text/markdown;charset=utf-8");
+}
 
 // ../src/workbench/scriptgen.js
 var join = (v) => Array.isArray(v) ? v.join(",") : String(v);
@@ -1377,7 +1396,25 @@ function createGrid({
           tr.append(td);
           continue;
         }
-        if (col.copyable && text) {
+        const href = typeof col.link === "function" && text ? String(col.link(cellValue2(row, col), row) || "") : "";
+        if (href) {
+          const a = el2("a", "wb-cell-url", text);
+          a.href = href;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.title = "Open in a new tab";
+          a.addEventListener("click", (e) => e.stopPropagation());
+          td.append(a);
+          if (col.copyable) {
+            const glyph = el2("span", "sp-copy wb-cell-copy", "\u29C9");
+            glyph.title = "Click to copy";
+            glyph.addEventListener("click", (e) => {
+              e.stopPropagation();
+              copyText(text, glyph);
+            });
+            td.append(glyph);
+          }
+        } else if (col.copyable && text) {
           const span = el2("span", "sp-copy", text);
           span.title = "Click to copy";
           span.addEventListener("click", (e) => {
@@ -1418,6 +1455,267 @@ function createGrid({
     getVisibleRows: () => [...visible],
     getColumns: () => columns
   };
+}
+
+// ../src/workbench/item-export.js
+var EXCLUDED_TYPES = /* @__PURE__ */ new Set(["Computed", "Attachments"]);
+var EXCLUDED_INTERNAL = /* @__PURE__ */ new Set([
+  "ContentType",
+  "Attachments",
+  "ComplianceAssetId",
+  "AppAuthor",
+  "AppEditor",
+  "Edit",
+  "DocIcon",
+  "ItemChildCount",
+  "FolderChildCount",
+  "_ColorTag",
+  "_UIVersionString",
+  "LinkTitle",
+  "LinkTitleNoMenu",
+  "LinkFilename",
+  "LinkFilenameNoMenu"
+]);
+var SYSTEM_INTERNAL = /* @__PURE__ */ new Set(["ID", "Id", "Title", "Created", "Modified", "Author", "Editor"]);
+var VIEW_FIELD_ALIAS = {
+  LinkTitle: "Title",
+  LinkTitleNoMenu: "Title",
+  LinkFilename: "FileLeafRef",
+  LinkFilenameNoMenu: "FileLeafRef"
+};
+function contentFields(fields) {
+  return (fields || []).filter((f) => f && !f.Hidden && !f.ReadOnlyField && !EXCLUDED_TYPES.has(f.TypeAsString) && !EXCLUDED_INTERNAL.has(f.InternalName) && !SYSTEM_INTERNAL.has(f.InternalName));
+}
+function viewColumnFields(fields, viewFieldNames) {
+  const byName = new Map((fields || []).map((f) => [f.InternalName, f]));
+  const out = [];
+  for (const raw of viewFieldNames || []) {
+    const name = VIEW_FIELD_ALIAS[raw] || String(raw);
+    if (SYSTEM_INTERNAL.has(name) || EXCLUDED_INTERNAL.has(name)) continue;
+    const field2 = byName.get(name);
+    if (field2 && !EXCLUDED_TYPES.has(field2.TypeAsString) && !out.includes(field2)) out.push(field2);
+  }
+  return out;
+}
+var asTextKey = (name) => String(name).replaceAll("_", "_x005f_");
+function textOf(item2, internalName) {
+  const fvt = item2?.FieldValuesAsText;
+  if (!fvt || typeof fvt !== "object") return void 0;
+  return fvt[internalName] ?? fvt[asTextKey(internalName)];
+}
+function scalarText(v) {
+  if (v === null || v === void 0) return "";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (Array.isArray(v)) return v.map(scalarText).filter(Boolean).join(", ");
+  if (typeof v === "object") {
+    if (Array.isArray(v.results)) return scalarText(v.results);
+    if (v.Title) return String(v.Title);
+    if (v.Url) {
+      const desc = String(v.Description || "");
+      return desc && desc !== v.Url ? `${desc} (${v.Url})` : String(v.Url);
+    }
+    return "";
+  }
+  return String(v);
+}
+function itemTitle(item2) {
+  const title = textOf(item2, "Title") ?? scalarText(item2?.Title);
+  return String(title || "").trim();
+}
+function personText(item2, internalName) {
+  return String(textOf(item2, internalName) ?? scalarText(item2?.[internalName]) ?? "").trim();
+}
+function fieldText(item2, field2) {
+  const name = field2.InternalName;
+  const raw = item2?.[name];
+  if (field2.TypeAsString === "Note") {
+    const text2 = textOf(item2, name);
+    if (text2 !== void 0) return String(text2).replace(/\s+/g, " ").trim();
+    return htmlToMarkdown(typeof raw === "string" ? raw : "").replace(/\s+/g, " ").trim();
+  }
+  if (field2.TypeAsString === "URL") {
+    return scalarText(raw) || String(textOf(item2, name) ?? "");
+  }
+  const text = textOf(item2, name);
+  return String(text !== void 0 ? text : scalarText(raw)).trim();
+}
+function fieldMarkdown(item2, field2) {
+  const name = field2.InternalName;
+  const raw = item2?.[name];
+  if (field2.TypeAsString === "Note") {
+    if (typeof raw === "string" && raw.includes("<")) return htmlToMarkdown(raw);
+    return String(raw ?? textOf(item2, name) ?? "").trim();
+  }
+  if (field2.TypeAsString === "URL") {
+    const url = String(raw?.Url ?? raw?.url ?? "").trim();
+    if (url) {
+      const desc = String(raw?.Description ?? raw?.description ?? "").trim();
+      return desc && desc !== url ? `[${desc}](${url})` : url;
+    }
+    return String(textOf(item2, name) ?? "").trim();
+  }
+  return fieldText(item2, field2);
+}
+function attachmentLinks(item2, origin = "") {
+  const value = item2?.AttachmentFiles;
+  const files = Array.isArray(value) ? value : value?.results || [];
+  return files.map((f) => {
+    const rel = String(f?.ServerRelativeUrl || "");
+    if (!rel) return "";
+    const name = String(f?.FileName || rel.split("/").pop() || rel);
+    return `[${name}](${origin}${encodeURI(rel)})`;
+  }).filter(Boolean);
+}
+var BLOCK_TAGS = /* @__PURE__ */ new Set([
+  "p",
+  "div",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "ul",
+  "ol",
+  "table",
+  "blockquote",
+  "pre",
+  "section",
+  "article",
+  "header",
+  "footer",
+  "hr"
+]);
+var collapse = (s) => s.replace(/[ \t]*\n[ \t]*/g, "\n").replace(/[ \t]{2,}/g, " ").replace(/^[ \t]+|[ \t]+$/g, "").replace(/^\n+|\n+$/g, "");
+function inlineChildren(node) {
+  let out = "";
+  for (const child of node.childNodes) out += inlineNode(child);
+  return out;
+}
+function inlineNode(node) {
+  if (node.nodeType === 3) return String(node.nodeValue).replace(/\s+/g, " ");
+  if (node.nodeType !== 1) return "";
+  const tag = node.tagName.toLowerCase();
+  if (tag === "br") return "\n";
+  if (tag === "script" || tag === "style") return "";
+  if (BLOCK_TAGS.has(tag)) {
+    const block = blockNode(node);
+    return block ? `
+${block}
+` : "";
+  }
+  const body = inlineChildren(node);
+  const core = body.trim();
+  if (tag === "strong" || tag === "b") return core ? `**${core}**` : "";
+  if (tag === "em" || tag === "i") return core ? `*${core}*` : "";
+  if (tag === "a") {
+    const href = String(node.getAttribute("href") || "");
+    const label = core || href;
+    return href && !/^javascript:/i.test(href) ? `[${label}](${href})` : label;
+  }
+  if (tag === "img") {
+    const src = String(node.getAttribute("src") || "");
+    return src ? `![${node.getAttribute("alt") || ""}](${src})` : "";
+  }
+  return body;
+}
+function blockNode(node) {
+  const tag = node.tagName.toLowerCase();
+  if (tag === "hr") return "---";
+  if (tag === "ul" || tag === "ol") {
+    const items = [...node.children].filter((c) => c.tagName?.toLowerCase() === "li");
+    return items.map((li, i) => `${tag === "ol" ? `${i + 1}.` : "-"} ${collapse(inlineChildren(li)).replace(/\n+/g, " ")}`).join("\n");
+  }
+  if (/^h[1-6]$/.test(tag)) {
+    const core = collapse(inlineChildren(node)).replace(/\n+/g, " ");
+    return core ? `**${core}**` : "";
+  }
+  if (tag === "blockquote") {
+    return blockChildren(node).split("\n").map((l) => `> ${l}`).join("\n");
+  }
+  if (tag === "pre") {
+    return `\`\`\`
+${String(node.textContent).replace(/\s+$/, "")}
+\`\`\``;
+  }
+  if (tag === "table") {
+    return [...node.querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => collapse(inlineChildren(td)).replace(/\n+/g, " ")).join(" | ")).join("\n");
+  }
+  return blockChildren(node);
+}
+function blockChildren(container) {
+  const parts = [];
+  let run = "";
+  const flush = () => {
+    const text = collapse(run);
+    if (text) parts.push(text);
+    run = "";
+  };
+  for (const child of container.childNodes) {
+    const tag = child.nodeType === 1 ? child.tagName.toLowerCase() : "";
+    if (BLOCK_TAGS.has(tag)) {
+      flush();
+      const block = blockNode(child);
+      if (block) parts.push(block);
+    } else {
+      run += inlineNode(child);
+    }
+  }
+  flush();
+  return parts.join("\n\n");
+}
+function htmlToMarkdown(html) {
+  const source = String(html ?? "");
+  if (!source.trim()) return "";
+  if (typeof DOMParser === "undefined") {
+    return source.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  const doc = new DOMParser().parseFromString(source, "text/html");
+  return blockChildren(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+}
+function buildItemsMarkdown({
+  listTitle = "List",
+  webUrl = "",
+  viewTitle = "",
+  items = [],
+  fields = [],
+  viewFieldNames = null
+} = {}) {
+  const columns = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
+  let origin = "";
+  try {
+    origin = new URL(webUrl).origin;
+  } catch {
+  }
+  const lines = [`# ${listTitle}`, ""];
+  const source = [
+    webUrl,
+    viewTitle ? `view \u201C${viewTitle}\u201D` : "all columns",
+    `${items.length} item${items.length === 1 ? "" : "s"}`
+  ].filter(Boolean).join(" \xB7 ");
+  lines.push(source, "");
+  for (const item2 of items) {
+    const id = item2?.ID ?? item2?.Id;
+    const title = itemTitle(item2);
+    lines.push(`## ${title || (id !== void 0 && id !== null ? `Item ${id}` : "Item")}`, "");
+    const put = (label, value) => {
+      const v = String(value ?? "").trim();
+      if (!v) return;
+      if (v.includes("\n")) lines.push(`${label}:`, "", v, "");
+      else lines.push(`${label}: ${v}  `);
+    };
+    put("ID", id);
+    for (const field2 of columns) put(field2.Title || field2.InternalName, fieldMarkdown(item2, field2));
+    const attachments = attachmentLinks(item2, origin);
+    if (attachments.length) put("Attachments", attachments.join(", "));
+    put("Created", textOf(item2, "Created") ?? item2?.Created);
+    put("Created By", personText(item2, "Author"));
+    put("Modified", textOf(item2, "Modified") ?? item2?.Modified);
+    put("Modified By", personText(item2, "Editor"));
+    lines.push("");
+  }
+  return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}
+`;
 }
 
 // ../src/workbench/config-links.js
@@ -2014,6 +2312,14 @@ var el4 = (tag, cls, text) => {
 var guidPath = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function createListsView({ client: client2, navigate }) {
   const root = el4("section", "wb-view wb-view-lists");
+  const webOrigin = () => {
+    try {
+      return new URL(client2.webUrl()).origin;
+    } catch {
+      return "";
+    }
+  };
+  const absUrl = (rel) => rel ? `${webOrigin()}${encodeURI(String(rel))}` : "";
   const gridPane = el4("div", "wb-pane");
   const head = el4("div", "wb-view-head");
   head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web, hidden ones included. Click a row for fields, views, and content types.</p>';
@@ -2023,7 +2329,7 @@ function createListsView({ client: client2, navigate }) {
       { key: "BaseTemplate", label: "Template", format: (v) => BASE_TEMPLATE_NAMES[v] || String(v ?? "") },
       { key: "ItemCount", label: "Items" },
       { key: "Hidden", label: "Hidden" },
-      { key: "Url", label: "Url", value: (row) => row.RootFolder?.ServerRelativeUrl || "", mono: true, copyable: true },
+      { key: "Url", label: "Url", value: (row) => row.RootFolder?.ServerRelativeUrl || "", mono: true, copyable: true, link: absUrl },
       { key: "Id", label: "Id", mono: true, copyable: true },
       { key: "LastItemModifiedDate", label: "Modified", format: fmtDate },
       // Appended last: tests address earlier columns positionally.
@@ -2088,6 +2394,141 @@ function createListsView({ client: client2, navigate }) {
     }
     return tabCache.get(key2);
   }
+  function buildItemsPane(wrap, listId, listTitle) {
+    const bar = el4("div", "wb-items-bar");
+    const viewLabel = el4("label", "wb-items-label", "Columns ");
+    const viewSel = el4("select", "wb-items-view");
+    viewSel.setAttribute("aria-label", "Column source: a view or all columns");
+    viewLabel.append(viewSel);
+    const maxLabel = el4("label", "wb-items-label", "Max items ");
+    const maxIn = el4("input", "wb-items-max");
+    maxIn.type = "number";
+    maxIn.min = "1";
+    maxIn.max = "5000";
+    maxIn.value = "500";
+    maxIn.setAttribute("aria-label", "Maximum items to fetch");
+    maxLabel.append(maxIn);
+    const dlBtn = el4("button", "btn btn-xs wb-items-download", "Download .md");
+    dlBtn.type = "button";
+    dlBtn.title = "Download the visible items as a markdown document";
+    const copyBtn = el4("button", "btn btn-xs wb-items-copymd", "Copy Markdown");
+    copyBtn.type = "button";
+    copyBtn.title = "Copy the visible items as a markdown document";
+    bar.append(viewLabel, maxLabel, dlBtn, copyBtn);
+    const gridBox = el4("div", "wb-items-grid");
+    wrap.append(bar, gridBox);
+    let itemsGrid = null;
+    let current = null;
+    let viewsFilled = false;
+    let loadSeq = 0;
+    const clampMax = () => {
+      const n = Math.floor(Number(maxIn.value));
+      const max = Number.isFinite(n) ? Math.min(Math.max(n, 1), 5e3) : 500;
+      maxIn.value = String(max);
+      return max;
+    };
+    const exportDoc = () => itemsGrid && current ? buildItemsMarkdown({
+      listTitle,
+      webUrl: client2.webUrl(),
+      viewTitle: current.viewTitle,
+      items: itemsGrid.getVisibleRows(),
+      fields: current.fields,
+      viewFieldNames: current.viewFieldNames
+    }) : "";
+    dlBtn.addEventListener("click", () => {
+      const md = exportDoc();
+      if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+    });
+    copyBtn.addEventListener("click", () => {
+      const md = exportDoc();
+      if (md) copyText(md, copyBtn);
+    });
+    async function reload() {
+      const seq = ++loadSeq;
+      const max = clampMax();
+      itemsGrid = null;
+      gridBox.textContent = "";
+      const status = el4("div", "wb-grid-status", "Loading items\u2026");
+      gridBox.append(status);
+      try {
+        const [{ items: fields }, { items: views }] = await Promise.all([
+          cached2(listId, "fields", () => client2.getAll(guidPath(listId, "/fields"), { select: FIELD_SELECT })),
+          cached2(listId, "views", () => client2.getAll(guidPath(listId, "/views"), { select: VIEW_SELECT }))
+        ]);
+        if (!viewsFilled) {
+          viewsFilled = true;
+          const none = el4("option", "", "All columns");
+          none.value = "";
+          viewSel.append(none);
+          for (const view of views.filter((v) => !v.PersonalView)) {
+            const opt = el4("option", "", view.DefaultView ? `${view.Title} (default)` : view.Title);
+            opt.value = view.Id;
+            viewSel.append(opt);
+          }
+        }
+        let viewFieldNames = null;
+        let viewTitle = "";
+        if (viewSel.value) {
+          const vf = await cached2(listId, `viewfields::${viewSel.value}`, () => client2.get(guidPath(listId, `/views(guid'${viewSel.value}')/viewfields`)));
+          viewFieldNames = vf?.Items?.results || vf?.Items || [];
+          viewTitle = views.find((v) => v.Id === viewSel.value)?.Title || "";
+        }
+        const hasAttachments = fields.some((f) => f.TypeAsString === "Attachments");
+        const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
+        const query = {
+          path: guidPath(listId, "/items"),
+          options: { select: ["*", ...expand], expand, orderby: "ID desc", top: max }
+        };
+        const { items, partial } = await client2.getAll(query.path, query.options, { cap: max });
+        if (seq !== loadSeq) return;
+        items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        const content = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
+        const filesOf = (row) => Array.isArray(row.AttachmentFiles) ? row.AttachmentFiles : row.AttachmentFiles?.results || [];
+        const anyAttachments = items.some((row) => filesOf(row).length);
+        const columns = [
+          { key: "Title", label: "Title", value: (row) => itemTitle(row) },
+          { key: "ID", label: "ID", num: true, value: (row) => row.ID ?? row.Id },
+          ...content.map((f) => ({
+            key: f.InternalName,
+            label: f.Title || f.InternalName,
+            value: (row) => fieldText(row, f)
+          })),
+          ...anyAttachments ? [{
+            key: "Attachments",
+            label: "Attachments",
+            value: (row) => filesOf(row).map((f) => f?.FileName || "").filter(Boolean).join(", ")
+          }] : [],
+          { key: "Created", label: "Created", format: fmtDate },
+          { key: "CreatedBy", label: "Created By", value: (row) => personText(row, "Author") },
+          { key: "Modified", label: "Modified", format: fmtDate },
+          { key: "ModifiedBy", label: "Modified By", value: (row) => personText(row, "Editor") }
+        ];
+        itemsGrid = createGrid({
+          columns,
+          rowKey: "ID",
+          emptyText: "No items in this list.",
+          filterPlaceholder: "Filter items\u2026",
+          exportName: `items-${fileStem(listTitle)}`,
+          descriptor: { ...query, webUrl: client2.webUrl() }
+        });
+        gridBox.textContent = "";
+        gridBox.append(itemsGrid.el);
+        itemsGrid.setRows(items, { partial });
+        current = { fields, viewFieldNames, viewTitle };
+      } catch (err) {
+        if (seq !== loadSeq) return;
+        status.textContent = err?.message || String(err);
+        status.classList.add("wb-error");
+        if (!status.isConnected) {
+          gridBox.textContent = "";
+          gridBox.append(status);
+        }
+      }
+    }
+    viewSel.addEventListener("change", reload);
+    maxIn.addEventListener("change", reload);
+    reload();
+  }
   const TABS = [
     {
       id: "fields",
@@ -2118,7 +2559,7 @@ function createListsView({ client: client2, navigate }) {
           { key: "Hidden", label: "Hidden" },
           { key: "PersonalView", label: "Personal" },
           { key: "RowLimit", label: "Row limit" },
-          { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true },
+          { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true, link: absUrl },
           { key: "ViewQuery", label: "CAML query", mono: true, copyable: true }
         ],
         exportName: `views-${fileStem(title)}`,
@@ -2174,6 +2615,7 @@ function createListsView({ client: client2, navigate }) {
         }
       })
     },
+    { id: "items", label: "Items" },
     { id: "raw", label: "Raw" }
   ];
   function showDetail(route) {
@@ -2213,6 +2655,10 @@ function createListsView({ client: client2, navigate }) {
       if (panes.has(tab.id)) return panes.get(tab.id);
       const wrap = el4("div", "wb-tab-pane");
       panes.set(tab.id, wrap);
+      if (tab.id === "items") {
+        buildItemsPane(wrap, listId, route.listTitle || "List");
+        return wrap;
+      }
       if (tab.id === "raw") {
         const status = el4("div", "wb-grid-status", "Loading raw list entity\u2026");
         wrap.append(status);
@@ -3217,6 +3663,13 @@ var WEB_SELECT = [
 var SITE_SELECT = ["Id", "Url", "ServerRelativeUrl", "ReadOnly", "ShareByEmailEnabled"];
 function createSiteView({ client: client2 }) {
   const root = el6("section", "wb-view wb-view-site");
+  const absUrl = (rel) => {
+    try {
+      return rel ? `${new URL(client2.webUrl()).origin}${encodeURI(String(rel))}` : "";
+    } catch {
+      return "";
+    }
+  };
   const head = el6("div", "wb-view-head");
   head.innerHTML = '<h2>Site overview</h2><p class="wb-view-hint">Web and site collection properties, features, subwebs, and the property bag.</p>';
   const tabsBar = el6("div", "wb-tabs");
@@ -3304,7 +3757,7 @@ function createSiteView({ client: client2 }) {
     const grid = createGrid({
       columns: [
         { key: "Title", label: "Title" },
-        { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true },
+        { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true, link: absUrl },
         { key: "WebTemplate", label: "Template" },
         { key: "Language", label: "Language" },
         { key: "Created", label: "Created", format: (v) => v ? String(v).slice(0, 10) : "" },
@@ -3404,6 +3857,13 @@ var el7 = (tag, cls, text) => {
 var fmtDate2 = (v) => v ? String(v).slice(0, 10) : "";
 function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSite2 }) {
   const root = el7("section", "wb-view wb-view-sitehome");
+  const absUrl = (rel) => {
+    try {
+      return rel ? `${new URL(client2.webUrl()).origin}${encodeURI(String(rel))}` : "";
+    } catch {
+      return "";
+    }
+  };
   const head = el7("div", "wb-view-head");
   head.innerHTML = '<h2>Site</h2><p class="wb-view-hint">The inspected web at a glance. Full property sheets are under Advanced.</p>';
   const cards = el7("div", "wb-home-cards");
@@ -3480,7 +3940,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
     const grid = createGrid({
       columns: [
         { key: "Title", label: "Subweb" },
-        { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true },
+        { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true, link: absUrl },
         { key: "Created", label: "Created", format: fmtDate2 },
         {
           key: "Inspect",

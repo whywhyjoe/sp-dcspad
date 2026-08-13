@@ -175,9 +175,11 @@ export function createSpRestClient({
     return entityOf(await rawGet(apiUrl(path, opts)));
   }
 
-  // Full collection: follows paging links up to PAGE_CAP items.
-  // Returns { items, partial } — partial=true means a paging link remained.
-  async function getAll(path, opts) {
+  // Full collection: follows paging links up to `cap` items (default and
+  // ceiling PAGE_CAP — callers can only lower it, e.g. a max-items export).
+  // Returns { items, partial } — partial=true means more rows remained.
+  async function getAll(path, opts, { cap = PAGE_CAP } = {}) {
+    const limit = Math.min(Math.max(1, Number(cap) || PAGE_CAP), PAGE_CAP);
     let url = apiUrl(path, opts);
     const items = [];
     let partial = false;
@@ -189,7 +191,7 @@ export function createSpRestClient({
         items.push(entityOf(data));
         break;
       }
-      const remaining = PAGE_CAP - items.length;
+      const remaining = limit - items.length;
       if (page.length > remaining) {
         items.push(...page.slice(0, remaining));
         partial = true;
@@ -198,7 +200,7 @@ export function createSpRestClient({
       items.push(...page);
       const next = nextLinkOf(data);
       if (!next) break;
-      if (items.length >= PAGE_CAP) { partial = true; break; }
+      if (items.length >= limit) { partial = true; break; }
       url = next;
     }
     return { items, partial };

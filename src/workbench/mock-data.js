@@ -47,6 +47,7 @@ const FIELDS = {
     field('Due Date', 'DueDate', 'DateTime', 4),
     field('Owner', 'ProjectOwner', 'User', 20),
     field('Budget', 'Budget', 'Currency', 10),
+    field('Details', 'ProjectDetails', 'Note', 3, { RichText: true }),
     field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true, Hidden: false }),
     field('Content Type', 'ContentType', 'Computed', 12, { Hidden: true, ReadOnlyField: true }),
   ],
@@ -113,7 +114,18 @@ function field(title, internal, type, kind, extra = {}) {
 // List items, keyed by list id. Only the lists a Tier 2 view exercises need
 // fixtures; unknown lists resolve to an empty collection.
 const PROJECT_ITEMS = [
-  item(1, 'Intranet refresh', { ProjectStatus: 'Active', DueDate: '2026-09-15T00:00:00Z', Budget: 12000 }),
+  item(1, 'Intranet refresh', {
+    ProjectStatus: 'Active',
+    DueDate: '2026-09-15T00:00:00Z',
+    Budget: 12000,
+    // Rich text + attachments: the item-export markdown path needs both.
+    ProjectDetails: '<div><p>Kickoff <strong>done</strong>.</p><ul><li>Phase 1</li>'
+      + '<li>Phase 2</li></ul><p>See the <a href="https://example.com/plan">plan</a>.</p></div>',
+    AttachmentFiles: [
+      { FileName: 'kickoff.pptx', ServerRelativeUrl: '/Lists/Projects/Attachments/1/kickoff.pptx' },
+    ],
+    FieldValuesAsText: { Author: 'Mock Developer', Editor: 'Pat Example', ProjectOwner: 'Mock Developer' },
+  }),
   item(2, 'Records migration', { ProjectStatus: 'Planned', DueDate: '2026-11-01T00:00:00Z', Budget: 40000 }),
   item(3, 'Team site cleanup', { ProjectStatus: 'Done', DueDate: '2026-03-30T00:00:00Z', Budget: 1500 }),
   item(4, 'Permission audit', { ProjectStatus: 'Blocked', DueDate: '2026-08-05T00:00:00Z', Budget: 0 }),
@@ -466,8 +478,13 @@ export function mockResolver(rawUrl) {
       return single ?? null;
     }
     // The mock ignores $filter/$select on items — live-stub tests assert the
-    // real query URLs instead.
-    if (path.includes('/items')) return { value: ITEMS[found.Id] || [] };
+    // real query URLs instead. $orderby=ID desc IS honored: the Items tab
+    // caps row counts, and live SharePoint orders before the cap applies.
+    if (path.includes('/items')) {
+      const rows = [...(ITEMS[found.Id] || [])];
+      if (/\$orderby=id(%20| )desc/.test(path)) rows.sort((a, b) => b.Id - a.Id);
+      return { value: rows };
+    }
     if (path.includes('/fields')) return { value: FIELDS[found.Id] || DEFAULT_FIELDS };
     if (/\/views\(guid'/.test(path) && path.includes('/viewfields')) {
       return { Items: ['LinkTitle', 'ProjectStatus', 'DueDate'] };

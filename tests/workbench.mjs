@@ -88,14 +88,14 @@ await check('drill: opening a list shows the detail tabs', async () => {
   await page.locator('.wb-table tbody tr', { hasText: 'Projects' }).locator('td').first().click();
   await page.waitForSelector('.wb-tab');
   const tabs = await page.locator('.wb-tab').allTextContents();
-  return tabs.join(',') === 'Fields,Views,Content types,Permissions,Raw';
+  return tabs.join(',') === 'Fields,Views,Content types,Permissions,Items,Raw';
 });
 
 await check('drill: fields grid lists internal names and joined choices', async () => {
   await page.waitForSelector('.wb-tab-pane .wb-table tbody tr');
   const rows = await page.locator('.wb-tab-pane .wb-table tbody tr').count();
   const text = await page.locator('.wb-tab-pane .wb-table').textContent();
-  return rows === 7 && text.includes('ProjectStatus') && text.includes('Planned | Active | Blocked | Done');
+  return rows === 8 && text.includes('ProjectStatus') && text.includes('Planned | Active | Blocked | Done');
 });
 
 await check('drill: raw tab renders the SP.List smart view', async () => {
@@ -105,10 +105,101 @@ await check('drill: raw tab renders the SP.List smart view', async () => {
   return text.includes('SP.List') && text.includes('Projects');
 });
 
+// ---- Items tab: list-content markdown export ----
+
+const headerText = (cells) => cells.map((h) => h.replace(/[▲▼]/g, '').trim());
+
+await check('items: tab loads rows newest-first with the agreed column order', async () => {
+  await page.locator('.wb-tab', { hasText: 'Items' }).click();
+  await page.waitForSelector('.wb-items-grid .wb-table tbody tr');
+  const headers = headerText(await page.locator('.wb-items-grid .wb-table th').allTextContents());
+  const firstId = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
+    .first().textContent()).trim();
+  const rows = await page.locator('.wb-items-grid .wb-table tbody tr').count();
+  const buttons = await page.locator('.wb-items-download, .wb-items-copymd').count();
+  return rows === 6 && firstId === '6' && buttons === 2
+    && headers.join(',') === 'Title,ID,Project Status,Due Date,Owner,Budget,Details,'
+      + 'Attachments,Created,Created By,Modified,Modified By';
+});
+
+await check('items: choosing a view narrows the content columns to its fields', async () => {
+  await page.selectOption('.wb-items-view', 'bb0e2c1d-3333-4444-8888-000000000001');
+  await page.waitForFunction(() =>
+    document.querySelectorAll('.wb-items-grid .wb-table th').length === 9);
+  const headers = headerText(await page.locator('.wb-items-grid .wb-table th').allTextContents());
+  return headers.join(',')
+    === 'Title,ID,Project Status,Due Date,Attachments,Created,Created By,Modified,Modified By';
+});
+
+await check('items: the max-items input caps the fetched rows', async () => {
+  await page.fill('.wb-items-max', '3');
+  await page.locator('.wb-items-max').dispatchEvent('change');
+  await page.waitForFunction(() =>
+    document.querySelectorAll('.wb-items-grid .wb-table tbody tr').length === 3);
+  const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
+    .allTextContents()).map((s) => s.trim());
+  return ids.join(',') === '6,5,4';
+});
+
+await check('item-export: markdown document follows the content spec', async () =>
+  page.evaluate(async () => {
+    const { buildItemsMarkdown, htmlToMarkdown } = await import('/src/workbench/item-export.js');
+    const { mockResolver } = await import('/src/workbench/mock-data.js');
+    const base = `${location.origin}/_api/web/lists(guid'5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03')`;
+    const fields = mockResolver(`${base}/fields`).value;
+    const items = [...mockResolver(`${base}/items`).value].sort((a, b) => b.ID - a.ID);
+    const md = buildItemsMarkdown({ listTitle: 'Projects', webUrl: location.origin, items, fields });
+    const audit = md.slice(md.indexOf('## Permission audit'), md.indexOf('## Team site cleanup'));
+    const refresh = md.slice(md.indexOf('## Intranet refresh'));
+    const viewMd = buildItemsMarkdown({
+      listTitle: 'Projects',
+      webUrl: location.origin,
+      items,
+      fields,
+      viewTitle: 'All Items',
+      viewFieldNames: ['LinkTitle', 'ProjectStatus', 'DueDate'],
+    });
+    return md.startsWith('# Projects')
+      && md.includes('all columns · 6 items')
+      && md.indexOf('## Archive rollout') < md.indexOf('## Search tuning')   // ID desc
+      && refresh.includes('ID: 1')
+      && refresh.includes('Project Status: Active')
+      && refresh.includes('Owner: Mock Developer')
+      // rich text became markdown, links intact
+      && refresh.includes('Kickoff **done**.')
+      && refresh.includes('- Phase 1')
+      && refresh.includes('[plan](https://example.com/plan)')
+      && refresh.includes(
+        `Attachments: [kickoff.pptx](${location.origin}/Lists/Projects/Attachments/1/kickoff.pptx)`)
+      && refresh.includes('Created By: Mock Developer')
+      && refresh.includes('Modified By: Pat Example')
+      // fixed frame: ID first, dates last
+      && refresh.indexOf('ID: 1') < refresh.indexOf('Project Status:')
+      && refresh.indexOf('Details:') < refresh.indexOf('Created: ')
+      && audit.includes('Budget: 0')            // zero is content, not empty
+      && !audit.includes('Details')             // empty fields are skipped
+      && !md.includes('Content Type')           // control fields stay out
+      && viewMd.includes('view “All Items”')
+      && viewMd.includes('Project Status: Active')
+      && !viewMd.includes('Budget:')            // the view chose the columns
+      && htmlToMarkdown('<p>a<br>b</p><h2>T</h2>') === 'a\nb\n\n**T**';
+  }));
+
 await check('drill: back returns to the lists grid', async () => {
   await page.locator('.wb-back').click();
   await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
   return (await page.locator('.wb-pane:not([hidden]) .wb-table tbody tr').count()) === 8;
+});
+
+await check('links: url cells are real links opening in a new tab, copy kept', async () => {
+  const row = page.locator('.wb-pane:not([hidden]) .wb-table tbody tr', { hasText: 'Projects' });
+  const a = row.locator('.wb-cell-url');
+  const href = await a.getAttribute('href');
+  const target = await a.getAttribute('target');
+  const rel = await a.getAttribute('rel');
+  const copy = await row.locator('.wb-cell-copy').count();
+  return href === `${new URL(WB_URL).origin}/Lists/Projects`
+    && target === '_blank' && rel === 'noopener' && copy === 1;
 });
 
 // ---- export (M2) ----
@@ -419,7 +510,7 @@ await check('query: list picker and field checkboxes load', async () => {
   });
   await page.waitForSelector('.wb-qb-fieldopt');
   const fields = await page.locator('.wb-qb-fieldopt').count();
-  return options === 9 && fields === 6;
+  return options === 9 && fields === 7;
 });
 
 await check('query: composed filter quotes by type and runs into the grid', async () => {

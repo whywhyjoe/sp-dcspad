@@ -414,6 +414,23 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-cell-link:hover { color: var(--accent); }
 .wb-detail-settings { margin-left: auto; text-decoration: none; }
 
+/* URL cells render as real links (new tab) with a copy glyph beside them. */
+.wb-cell-url { color: inherit; text-decoration: none; }
+.wb-cell-url:hover { color: var(--accent); text-decoration: underline; }
+.wb-cell-copy { margin-left: 6px; font-size: 11px; }
+
+/* ---- Items tab (list-content markdown export) ---- */
+.wb-items-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.wb-items-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--fg-dim); font: 500 12.5px/1.4 var(--sans);
+}
+.wb-items-max { width: 72px; }
+.wb-items-grid { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
 /* ---- metadata field editors (pages metadata tab, file browser) ---- */
 .wb-editor-form { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
 .wb-editor-rows {
