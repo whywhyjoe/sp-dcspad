@@ -2,7 +2,7 @@
 // scopes), subwebs, the property bag (OData-encoded keys decoded for
 // display), regional settings, and the current user.
 
-import { createGrid } from '../grid.js?v=2';
+import { createGrid, encodeSpPath } from '../grid.js?v=2';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -38,7 +38,7 @@ const SITE_SELECT = ['Id', 'Url', 'ServerRelativeUrl', 'ReadOnly', 'ShareByEmail
 export function createSiteView({ client }) {
   const root = el('section', 'wb-view wb-view-site');
   const absUrl = (rel) => {
-    try { return rel ? `${new URL(client.webUrl()).origin}${encodeURI(String(rel))}` : ''; }
+    try { return rel ? `${new URL(client.webUrl()).origin}${encodeSpPath(rel)}` : ''; }
     catch { return ''; }
   };
 

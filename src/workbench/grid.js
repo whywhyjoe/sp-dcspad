@@ -19,6 +19,12 @@ const el = (tag, cls, text) => {
 
 export { copyText };
 
+// Decoded server-relative path → href path, one encode per segment.
+// encodeURI would leave '#' unescaped, turning a legal SharePoint file
+// name like "A#B.docx" into a URL fragment.
+export const encodeSpPath = (path) =>
+  String(path).split('/').map(encodeURIComponent).join('/');
+
 const cellValue = (row, col) =>
   typeof col.value === 'function' ? col.value(row) : row[col.key];
 
@@ -188,7 +194,9 @@ export function createGrid({
         tr.className = 'wb-row-openable';
         tr.tabIndex = 0;
         tr.addEventListener('click', () => onOpen(row));
-        tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') onOpen(row); });
+        // Enter on a focused cell link must open the link, not also drill
+        // into the row — only act when the row itself has focus.
+        tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === tr) onOpen(row); });
       }
       tr.dataset.key = String(row[rowKey] ?? '');
       for (const col of columns) {

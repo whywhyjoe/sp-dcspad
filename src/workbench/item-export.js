@@ -39,29 +39,43 @@ const VIEW_FIELD_ALIAS = {
   LinkFilenameNoMenu: 'FileLeafRef',
 };
 
-// Content columns for the no-view export: every visible, writable field
-// that isn't system framing or control noise, in the order the server
-// returned the field collection.
-export function contentFields(fields) {
-  return (fields || []).filter((f) => f
+// Read-only fields a view may still legitimately export as content — the
+// filename of a library item is content even though SharePoint marks the
+// field read-only. Deliberately tiny; grow only with a reason.
+const VIEW_ALLOWED_READONLY = new Set(['FileLeafRef']);
+
+// The one content-field predicate: visible, writable, not system framing,
+// not control noise. Both column paths run through it so choosing a view
+// can only ever *narrow* the exported set, never widen it.
+function isContentField(f) {
+  return Boolean(f)
     && !f.Hidden && !f.ReadOnlyField
     && !EXCLUDED_TYPES.has(f.TypeAsString)
     && !EXCLUDED_INTERNAL.has(f.InternalName)
-    && !SYSTEM_INTERNAL.has(f.InternalName));
+    && !SYSTEM_INTERNAL.has(f.InternalName);
+}
+
+// Content columns for the no-view export: every content field, in the
+// order the server returned the field collection.
+export function contentFields(fields) {
+  return (fields || []).filter(isContentField);
 }
 
 // Content columns for a view export: the view's field names (aliases
 // resolved) mapped onto the list's field metadata, view order preserved.
-// System framing and control noise drop out here too — the view only ever
-// chooses *content* columns.
+// Only content fields (plus the narrow read-only allow-list) survive — a
+// view naming a hidden or read-only control field must not reintroduce it.
 export function viewColumnFields(fields, viewFieldNames) {
-  const byName = new Map((fields || []).map((f) => [f.InternalName, f]));
+  const byName = new Map((fields || [])
+    .filter((f) => isContentField(f)
+      || (f && !f.Hidden && VIEW_ALLOWED_READONLY.has(f.InternalName)))
+    .map((f) => [f.InternalName, f]));
   const out = [];
   for (const raw of viewFieldNames || []) {
     const name = VIEW_FIELD_ALIAS[raw] || String(raw);
     if (SYSTEM_INTERNAL.has(name) || EXCLUDED_INTERNAL.has(name)) continue;
     const field = byName.get(name);
-    if (field && !EXCLUDED_TYPES.has(field.TypeAsString) && !out.includes(field)) out.push(field);
+    if (field && !out.includes(field)) out.push(field);
   }
   return out;
 }
@@ -121,6 +135,18 @@ export function fieldText(item, field) {
   return String(text !== undefined ? text : scalarText(raw)).trim();
 }
 
+// Markdown link with the characters that would break the syntax escaped:
+// ']' in the label, parentheses in the target (encodeURIComponent leaves
+// them alone, and SharePoint file names may contain them).
+const mdLink = (label, url) =>
+  `[${String(label).replace(/\]/g, '\\]')}](${String(url).replace(/\(/g, '%28').replace(/\)/g, '%29')})`;
+
+// Decoded server-relative path → href path, one encode per segment.
+// encodeURI would leave '#' to become a URL fragment — SharePoint allows
+// '#' and '%' in file and folder names.
+const encodeSpPath = (path) =>
+  String(path).split('/').map(encodeURIComponent).join('/');
+
 // Markdown value for the export document. Rich text keeps its structure;
 // URL fields become links; everything else is the plain text value.
 export function fieldMarkdown(item, field) {
@@ -131,12 +157,13 @@ export function fieldMarkdown(item, field) {
     return String(raw ?? textOf(item, name) ?? '').trim();
   }
   if (field.TypeAsString === 'URL') {
+    if (typeof raw === 'string') return raw.trim();
     const url = String(raw?.Url ?? raw?.url ?? '').trim();
     if (url) {
       const desc = String(raw?.Description ?? raw?.description ?? '').trim();
-      return desc && desc !== url ? `[${desc}](${url})` : url;
+      return desc && desc !== url ? mdLink(desc, url) : url;
     }
-    return String(textOf(item, name) ?? '').trim();
+    return String(textOf(item, name) ?? scalarText(raw)).trim();
   }
   return fieldText(item, field);
 }
@@ -150,15 +177,17 @@ export function attachmentLinks(item, origin = '') {
     const rel = String(f?.ServerRelativeUrl || '');
     if (!rel) return '';
     const name = String(f?.FileName || rel.split('/').pop() || rel);
-    return `[${name}](${origin}${encodeURI(rel)})`;
+    return mdLink(name, `${origin}${encodeSpPath(rel)}`);
   }).filter(Boolean);
 }
 
 // ---- HTML → markdown ------------------------------------------------------
 // Light conversion tuned for SharePoint rich-text values: paragraphs, line
-// breaks, bold/italic, links, images, lists, blockquotes, pre, and tables
-// survive; headings flatten to bold lines (real headings would fight the
-// per-item `##` structure); everything else contributes its text.
+// breaks, bold/italic, links, images, lists, blockquotes, and pre survive;
+// headings flatten to bold lines (real headings would fight the per-item
+// `##` structure); nested lists flatten to their top level; tables render
+// as pipe-joined rows without a separator line (readable, not re-parseable);
+// everything else contributes its text.
 
 const BLOCK_TAGS = new Set([
   'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table',
@@ -254,13 +283,16 @@ function blockChildren(container) {
   return parts.join('\n\n');
 }
 
+let sharedParser = null;
+
 export function htmlToMarkdown(html) {
   const source = String(html ?? '');
   if (!source.trim()) return '';
   if (typeof DOMParser === 'undefined') {
     return source.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   }
-  const doc = new DOMParser().parseFromString(source, 'text/html');
+  sharedParser = sharedParser || new DOMParser();
+  const doc = sharedParser.parseFromString(source, 'text/html');
   return blockChildren(doc.body).replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -287,16 +319,25 @@ export function buildItemsMarkdown({
   ].filter(Boolean).join(' · ');
   lines.push(source, '');
 
+  // Headings and labels must stay one line, whatever the value contains.
+  const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
   for (const item of items) {
     const id = item?.ID ?? item?.Id;
-    const title = itemTitle(item);
+    const title = oneLine(itemTitle(item));
     lines.push(`## ${title || (id !== undefined && id !== null ? `Item ${id}` : 'Item')}`, '');
     // Two trailing spaces = markdown hard break, so the field lines stack.
+    // Multiline values render inside a blockquote: field content — even a
+    // line starting with '##' — can never masquerade as document structure.
     const put = (label, value) => {
       const v = String(value ?? '').trim();
       if (!v) return;   // empty fields are skipped by design
-      if (v.includes('\n')) lines.push(`${label}:`, '', v, '');
-      else lines.push(`${label}: ${v}  `);
+      if (v.includes('\n')) {
+        lines.push(`${oneLine(label)}:`, '',
+          ...v.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')), '');
+      } else {
+        lines.push(`${oneLine(label)}: ${v}  `);
+      }
     };
     put('ID', id);
     for (const field of columns) put(field.Title || field.InternalName, fieldMarkdown(item, field));

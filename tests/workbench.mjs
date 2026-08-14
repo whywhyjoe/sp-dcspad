@@ -186,9 +186,9 @@ await check('item-export: markdown document follows the content spec', async () 
       && refresh.includes('ID: 1')
       && refresh.includes('Project Status: Active')
       && refresh.includes('Owner: Mock Developer')
-      // rich text became markdown, links intact
-      && refresh.includes('Kickoff **done**.')
-      && refresh.includes('- Phase 1')
+      // rich text became markdown (blockquoted so it can't forge structure)
+      && refresh.includes('> Kickoff **done**.')
+      && refresh.includes('> - Phase 1')
       && refresh.includes('[plan](https://example.com/plan)')
       && refresh.includes(
         `Attachments: [kickoff.pptx](${location.origin}/Lists/Projects/Attachments/1/kickoff.pptx)`)
@@ -219,6 +219,104 @@ await check('item-export: markdown document follows the content spec', async () 
       && htmlToMarkdown('<p>a<br>b</p><h2>T</h2>') === 'a\nb\n\n**T**';
   }));
 
+await check('items: query parser respects quoted literals and rejects duplicates', async () =>
+  page.evaluate(async () => {
+    const { parseItemsQuery } = await import('/src/workbench/views/lists.js');
+    const amp = parseItemsQuery("$filter=Title eq 'R&D'&$orderby=ID desc");
+    const doubled = parseItemsQuery("$filter=Title eq 'O''Brien & Sons'");
+    const dup = parseItemsQuery('$filter=A eq 1&$filter=B eq 2');
+    const bare = parseItemsQuery("?Budget gt 100 & Status eq 'Open'");
+    const bad = parseItemsQuery('$top=5');
+    return amp.filter === "Title eq 'R&D'" && amp.orderby === 'ID desc' && !amp.error
+      && doubled.filter === "Title eq 'O''Brien & Sons'" && !doubled.error
+      && dup.error.includes('Duplicate $filter')
+      && bare.filter === "Budget gt 100 and Status eq 'Open'" && !bare.error
+      && bad.error.includes('$filter and $orderby');
+  }));
+
+await check('item-export: hardened builders — encoded keys, hostile markdown, odd paths', async () =>
+  page.evaluate(async () => {
+    const { buildItemsMarkdown, viewColumnFields, attachmentLinks, fieldMarkdown } =
+      await import('/src/workbench/item-export.js');
+    // FieldValuesAsText OData-encodes underscores in its keys
+    const viaKey = fieldMarkdown(
+      { FieldValuesAsText: { My_x005f_Field: 'enc' } },
+      { InternalName: 'My_Field', Title: 'My Field', TypeAsString: 'Text' },
+    ) === 'enc';
+    // hidden/read-only control fields can't ride back in on a view;
+    // the filename of a library item is the one allowed read-only column
+    const narrowed = viewColumnFields([
+      { InternalName: '_ModerationStatus', TypeAsString: 'ModStat', ReadOnlyField: true },
+      { InternalName: 'Secret', TypeAsString: 'Text', Hidden: true },
+      { InternalName: 'FileLeafRef', TypeAsString: 'File', ReadOnlyField: true },
+      { InternalName: 'Body', TypeAsString: 'Text' },
+    ], ['_ModerationStatus', 'Secret', 'LinkFilename', 'Body'])
+      .map((f) => f.InternalName).join(',');
+    // multiline values are blockquoted, so '##' inside a value can't forge
+    // an item heading; a Title-less item falls back to its ID
+    const md = buildItemsMarkdown({
+      listTitle: 'L',
+      webUrl: location.origin,
+      fields: [{ InternalName: 'Notes', Title: 'Notes', TypeAsString: 'Note' }],
+      items: [{ ID: 9, Notes: '<p>line 1</p><p>## forged item</p>' }],
+    });
+    // '#' in an attachment path percent-encodes; parens escape for markdown
+    const links = attachmentLinks({
+      AttachmentFiles: [
+        { FileName: 'A#B (v2).docx', ServerRelativeUrl: '/Lists/L/Attachments/9/A#B (v2).docx' },
+      ],
+    }, 'https://x.example');
+    const urlScalar = fieldMarkdown(
+      { Link: 'https://plain.example/a' },
+      { InternalName: 'Link', TypeAsString: 'URL' },
+    );
+    return viaKey
+      && narrowed === 'FileLeafRef,Body'
+      && md.includes('## Item 9')
+      && md.includes('> ## forged item')
+      && !/\n## forged item/.test(md)
+      && links[0] === '[A#B (v2).docx](https://x.example/Lists/L/Attachments/9/A%23B%20%28v2%29.docx)'
+      && urlScalar === 'https://plain.example/a';
+  }));
+
+await check('sp-rest: a lowered getAll cap stops paging early', async () =>
+  page.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js?v=2');
+    const calls = [];
+    const client = createSpRestClient({
+      getContext: () => ({ live: true, pageContext: { webAbsoluteUrl: 'https://t.example/sites/x' } }),
+      fetchImpl: async (url) => {
+        calls.push(url);
+        const n = Number(/page=(\d+)/.exec(url)?.[1] || 1);
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({
+            value: [{ Id: n * 2 - 1 }, { Id: n * 2 }],
+            'odata.nextLink': n < 4 ? `https://t.example/sites/x/_api/web/lists?page=${n + 1}` : '',
+          }),
+        };
+      },
+    });
+    const { items, partial } = await client.getAll('web/lists', {}, { cap: 3 });
+    return calls.length === 2
+      && items.map((x) => x.Id).join(',') === '1,2,3'
+      && partial === true;
+  }));
+
+await check('scriptgen: orderby clauses emit field + direction for PnPjs', async () =>
+  page.evaluate(async () => {
+    const { toPnpjs2 } = await import('/src/workbench/scriptgen.js');
+    const code = toPnpjs2({
+      path: "web/lists(guid'5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03')/items",
+      options: { orderby: 'Budget desc, Title', top: 3 },
+    });
+    return code.includes('.orderBy("Budget", false)')
+      && code.includes('.orderBy("Title", true)')
+      && !code.includes('"Budget desc"');
+  }));
+
 await check('drill: back returns to the lists grid', async () => {
   await page.locator('.wb-back').click();
   await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
@@ -235,6 +333,14 @@ await check('links: url cells are real links opening in a new tab, copy kept', a
   return href === `${new URL(WB_URL).origin}/Lists/Projects`
     && target === '_blank' && rel === 'noopener' && copy === 1;
 });
+
+await check('links: Enter on a url anchor does not drill into the row', async () =>
+  page.evaluate(() => {
+    const a = document.querySelector('.wb-pane:not([hidden]) .wb-table .wb-cell-url');
+    a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    // the all-lists pane must still be the visible one (no drill-down)
+    return !a.closest('.wb-pane').hidden;
+  }));
 
 // ---- export (M2) ----
 
@@ -809,6 +915,7 @@ await page.close();
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const seenHeaders = [];
+const liveUrls = [];
 let pageDetailUrl = '';
 
 const listPage1 = {
@@ -834,6 +941,7 @@ await live.addInitScript(() => {
 await live.route('**/_api/**', async (route) => {
   const url = route.request().url();
   seenHeaders.push(route.request().headers().accept || '');
+  liveUrls.push(url);
   if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items(7)")) {
     pageDetailUrl = url;
     const expand = new URL(url).searchParams.get('$expand') || '';
@@ -907,6 +1015,35 @@ await check('live: paging links are followed across pages', async () =>
 
 await check('live: rows from the second page render', async () =>
   (await live.locator('.wb-table tbody tr', { hasText: 'Gamma' }).count()) === 1);
+
+await check('live: Items tab sends the typed query and projection in the request', async () => {
+  // Registered after the generic /_api route, so it wins for Alpha's
+  // sub-collections — their URLs contain '/_api/web/lists' and would
+  // otherwise fall into the lists-paging branch above.
+  await live.route(/lists\(guid'11111111-0000-0000-0000-000000000001'\)\/(items|fields|views)/, (route) => {
+    liveUrls.push(route.request().url());
+    return route.fulfill({ json: { value: [] } });
+  });
+  await live.locator('.wb-table tbody tr', { hasText: 'Alpha' }).locator('td').first().click();
+  await live.locator('.wb-tab', { hasText: 'Items' }).click();
+  await live.waitForSelector('.wb-items-grid .wb-empty');
+  // Bare filter with a quoted '&' plus a typed order — through the real UI.
+  await live.fill('.wb-items-query', "Title eq 'R&D'&$orderby=Modified desc");
+  await live.locator('.wb-items-query').dispatchEvent('change');
+  const deadline = Date.now() + 5000;
+  let url = '';
+  while (!url && Date.now() < deadline) {
+    url = liveUrls.find((u) => u.includes('/items?') && u.includes('R%26D')) || '';
+    if (!url) await new Promise((r) => setTimeout(r, 100));
+  }
+  await live.locator('.wb-back').click();   // restore the all-lists grid
+  return Boolean(url)
+    && url.includes('Title%20eq%20%27R%26D%27')
+    && url.includes('$orderby=Modified%20desc')
+    && url.includes('$select=ID,Title,Created,Modified,FieldValuesAsText')
+    && url.includes('$expand=FieldValuesAsText')
+    && url.includes('$top=500');
+});
 
 await check('live: page detail expands Author and Editor lookup fields', async () => {
   await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();

@@ -1168,8 +1168,14 @@ function toPnpjs2({ path, options = {} }) {
   .expand(${join(options.expand).split(",").map((s) => `"${s}"`).join(", ")})`;
   if (options.filter) chain += `
   .filter("${String(options.filter).replaceAll('"', '\\"')}")`;
-  if (options.orderby) chain += `
-  .orderBy("${join(options.orderby)}")`;
+  if (options.orderby) {
+    for (const clause of join(options.orderby).split(",")) {
+      const m = /^\s*(.+?)(?:\s+(asc|desc))?\s*$/i.exec(clause);
+      if (!m || !m[1]) continue;
+      chain += `
+  .orderBy(${JSON.stringify(m[1])}, ${String(m[2]).toLowerCase() !== "desc"})`;
+    }
+  }
   if (options.top) chain += `
   .top(${options.top})`;
   return [
@@ -1231,6 +1237,7 @@ var el2 = (tag, cls, text) => {
   if (text !== void 0) n.textContent = text;
   return n;
 };
+var encodeSpPath = (path) => String(path).split("/").map(encodeURIComponent).join("/");
 var cellValue2 = (row, col) => typeof col.value === "function" ? col.value(row) : row[col.key];
 function displayValue(row, col) {
   const v = cellValue2(row, col);
@@ -1388,7 +1395,7 @@ function createGrid({
         tr.tabIndex = 0;
         tr.addEventListener("click", () => onOpen(row));
         tr.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") onOpen(row);
+          if (e.key === "Enter" && e.target === tr) onOpen(row);
         });
       }
       tr.dataset.key = String(row[rowKey] ?? "");
@@ -1488,17 +1495,21 @@ var VIEW_FIELD_ALIAS = {
   LinkFilename: "FileLeafRef",
   LinkFilenameNoMenu: "FileLeafRef"
 };
+var VIEW_ALLOWED_READONLY = /* @__PURE__ */ new Set(["FileLeafRef"]);
+function isContentField(f) {
+  return Boolean(f) && !f.Hidden && !f.ReadOnlyField && !EXCLUDED_TYPES.has(f.TypeAsString) && !EXCLUDED_INTERNAL.has(f.InternalName) && !SYSTEM_INTERNAL.has(f.InternalName);
+}
 function contentFields(fields) {
-  return (fields || []).filter((f) => f && !f.Hidden && !f.ReadOnlyField && !EXCLUDED_TYPES.has(f.TypeAsString) && !EXCLUDED_INTERNAL.has(f.InternalName) && !SYSTEM_INTERNAL.has(f.InternalName));
+  return (fields || []).filter(isContentField);
 }
 function viewColumnFields(fields, viewFieldNames) {
-  const byName = new Map((fields || []).map((f) => [f.InternalName, f]));
+  const byName = new Map((fields || []).filter((f) => isContentField(f) || f && !f.Hidden && VIEW_ALLOWED_READONLY.has(f.InternalName)).map((f) => [f.InternalName, f]));
   const out = [];
   for (const raw of viewFieldNames || []) {
     const name = VIEW_FIELD_ALIAS[raw] || String(raw);
     if (SYSTEM_INTERNAL.has(name) || EXCLUDED_INTERNAL.has(name)) continue;
     const field2 = byName.get(name);
-    if (field2 && !EXCLUDED_TYPES.has(field2.TypeAsString) && !out.includes(field2)) out.push(field2);
+    if (field2 && !out.includes(field2)) out.push(field2);
   }
   return out;
 }
@@ -1544,6 +1555,8 @@ function fieldText(item2, field2) {
   const text = textOf(item2, name);
   return String(text !== void 0 ? text : scalarText(raw)).trim();
 }
+var mdLink = (label, url) => `[${String(label).replace(/\]/g, "\\]")}](${String(url).replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+var encodeSpPath2 = (path) => String(path).split("/").map(encodeURIComponent).join("/");
 function fieldMarkdown(item2, field2) {
   const name = field2.InternalName;
   const raw = item2?.[name];
@@ -1552,12 +1565,13 @@ function fieldMarkdown(item2, field2) {
     return String(raw ?? textOf(item2, name) ?? "").trim();
   }
   if (field2.TypeAsString === "URL") {
+    if (typeof raw === "string") return raw.trim();
     const url = String(raw?.Url ?? raw?.url ?? "").trim();
     if (url) {
       const desc = String(raw?.Description ?? raw?.description ?? "").trim();
-      return desc && desc !== url ? `[${desc}](${url})` : url;
+      return desc && desc !== url ? mdLink(desc, url) : url;
     }
-    return String(textOf(item2, name) ?? "").trim();
+    return String(textOf(item2, name) ?? scalarText(raw)).trim();
   }
   return fieldText(item2, field2);
 }
@@ -1568,7 +1582,7 @@ function attachmentLinks(item2, origin = "") {
     const rel = String(f?.ServerRelativeUrl || "");
     if (!rel) return "";
     const name = String(f?.FileName || rel.split("/").pop() || rel);
-    return `[${name}](${origin}${encodeURI(rel)})`;
+    return mdLink(name, `${origin}${encodeSpPath2(rel)}`);
   }).filter(Boolean);
 }
 var BLOCK_TAGS = /* @__PURE__ */ new Set([
@@ -1669,13 +1683,15 @@ function blockChildren(container) {
   flush();
   return parts.join("\n\n");
 }
+var sharedParser = null;
 function htmlToMarkdown(html) {
   const source = String(html ?? "");
   if (!source.trim()) return "";
   if (typeof DOMParser === "undefined") {
     return source.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   }
-  const doc = new DOMParser().parseFromString(source, "text/html");
+  sharedParser = sharedParser || new DOMParser();
+  const doc = sharedParser.parseFromString(source, "text/html");
   return blockChildren(doc.body).replace(/\n{3,}/g, "\n\n").trim();
 }
 function buildItemsMarkdown({
@@ -1703,15 +1719,24 @@ function buildItemsMarkdown({
     `${items.length} item${items.length === 1 ? "" : "s"}`
   ].filter(Boolean).join(" \xB7 ");
   lines.push(source, "");
+  const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
   for (const item2 of items) {
     const id = item2?.ID ?? item2?.Id;
-    const title = itemTitle(item2);
+    const title = oneLine(itemTitle(item2));
     lines.push(`## ${title || (id !== void 0 && id !== null ? `Item ${id}` : "Item")}`, "");
     const put = (label, value) => {
       const v = String(value ?? "").trim();
       if (!v) return;
-      if (v.includes("\n")) lines.push(`${label}:`, "", v, "");
-      else lines.push(`${label}: ${v}  `);
+      if (v.includes("\n")) {
+        lines.push(
+          `${oneLine(label)}:`,
+          "",
+          ...v.split("\n").map((l) => l.trim() ? `> ${l}` : ">"),
+          ""
+        );
+      } else {
+        lines.push(`${oneLine(label)}: ${v}  `);
+      }
     };
     put("ID", id);
     for (const field2 of columns) put(field2.Title || field2.InternalName, fieldMarkdown(item2, field2));
@@ -2319,6 +2344,48 @@ var el4 = (tag, cls, text) => {
   return n;
 };
 var guidPath = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+function parseItemsQuery(text) {
+  const out = { filter: "", orderby: "", error: "" };
+  const raw = String(text || "").trim().replace(/^\?/, "");
+  if (!raw) return out;
+  const parts = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === "'") {
+      if (quoted && raw[i + 1] === "'") {
+        i++;
+        continue;
+      }
+      quoted = !quoted;
+    } else if (raw[i] === "&" && !quoted) {
+      parts.push(raw.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(raw.slice(start));
+  const seen = /* @__PURE__ */ new Set();
+  for (const part of parts) {
+    const piece = part.trim();
+    if (!piece) continue;
+    const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
+    if (clause) {
+      const name = clause[1].toLowerCase();
+      if (seen.has(name)) {
+        out.error = `Duplicate $${name} clause \u2014 combine them into one.`;
+        return out;
+      }
+      seen.add(name);
+      out[name] = clause[2].trim();
+    } else if (piece.startsWith("$")) {
+      out.error = "Only $filter and $orderby are supported here \u2014 columns and max items have their own controls.";
+      return out;
+    } else {
+      out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
+    }
+  }
+  return out;
+}
 function createListsView({ client: client2, navigate }) {
   const root = el4("section", "wb-view wb-view-lists");
   const webOrigin = () => {
@@ -2328,7 +2395,7 @@ function createListsView({ client: client2, navigate }) {
       return "";
     }
   };
-  const absUrl = (rel) => rel ? `${webOrigin()}${encodeURI(String(rel))}` : "";
+  const absUrl = (rel) => rel ? `${webOrigin()}${encodeSpPath(rel)}` : "";
   const gridPane = el4("div", "wb-pane");
   const head = el4("div", "wb-view-head");
   head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web, hidden ones included. Click a row for fields, views, and content types.</p>';
@@ -2434,29 +2501,11 @@ function createListsView({ client: client2, navigate }) {
     bar.append(viewLabel, maxLabel, queryLabel, dlBtn, copyBtn, queryErr);
     const gridBox = el4("div", "wb-items-grid");
     wrap.append(bar, gridBox);
-    function parseItemsQuery(text) {
-      const out = { filter: "", orderby: "", error: "" };
-      const raw = String(text || "").trim().replace(/^\?/, "");
-      if (!raw) return out;
-      for (const part of raw.split("&")) {
-        const piece = part.trim();
-        if (!piece) continue;
-        const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
-        if (clause) {
-          out[clause[1].toLowerCase()] = clause[2].trim();
-        } else if (piece.startsWith("$")) {
-          out.error = "Only $filter and $orderby are supported here \u2014 columns and max items have their own controls.";
-          return out;
-        } else {
-          out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
-        }
-      }
-      return out;
-    }
     let itemsGrid = null;
     let current = null;
     let viewsFilled = false;
     let loadSeq = 0;
+    let itemsCache = { key: "", items: null, partial: false };
     const clampMax = () => {
       const n = Math.floor(Number(maxIn.value));
       const max = Number.isFinite(n) ? Math.min(Math.max(n, 1), 5e3) : 500;
@@ -2482,10 +2531,10 @@ function createListsView({ client: client2, navigate }) {
       if (md) copyText(md, copyBtn);
     });
     async function reload() {
+      const seq = ++loadSeq;
       const parsed = parseItemsQuery(queryIn.value);
       queryErr.textContent = parsed.error;
       if (parsed.error) return;
-      const seq = ++loadSeq;
       const max = clampMax();
       itemsGrid = null;
       gridBox.textContent = "";
@@ -2516,21 +2565,39 @@ function createListsView({ client: client2, navigate }) {
         }
         const hasAttachments = fields.some((f) => f.TypeAsString === "Attachments");
         const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
+        const select = [
+          "ID",
+          "Title",
+          "Created",
+          "Modified",
+          ...contentFields(fields).map((f) => f.InternalName),
+          ...fields.some((f) => f.InternalName === "FileLeafRef") ? ["FileLeafRef"] : [],
+          ...expand
+        ];
         const query = {
           path: guidPath(listId, "/items"),
           options: {
-            select: ["*", ...expand],
+            select,
             expand,
             ...parsed.filter ? { filter: parsed.filter } : {},
             orderby: parsed.orderby || "ID desc",
             top: max
           }
         };
-        const { items, partial } = await client2.getAll(query.path, query.options, { cap: max });
-        if (seq !== loadSeq) return;
-        if (!parsed.orderby) {
-          items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        const dataKey = JSON.stringify([max, parsed.filter, parsed.orderby]);
+        let items;
+        let partial;
+        if (itemsCache.items && itemsCache.key === dataKey) {
+          ({ items, partial } = itemsCache);
+        } else {
+          ({ items, partial } = await client2.getAll(query.path, query.options, { cap: max }));
+          if (seq !== loadSeq) return;
+          if (!parsed.orderby) {
+            items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+          }
+          itemsCache = { key: dataKey, items, partial };
         }
+        if (seq !== loadSeq) return;
         const content = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
         const filesOf = (row) => Array.isArray(row.AttachmentFiles) ? row.AttachmentFiles : row.AttachmentFiles?.results || [];
         const anyAttachments = items.some((row) => filesOf(row).length);
@@ -2572,7 +2639,8 @@ function createListsView({ client: client2, navigate }) {
         };
       } catch (err) {
         if (seq !== loadSeq) return;
-        status.textContent = err?.message || String(err);
+        const raw = err?.message || String(err);
+        status.textContent = /SPQueryThrottledException|list view threshold/i.test(raw) ? `SharePoint throttled this query \u2014 filter/order by an indexed column and keep the matched set under 5,000. (${raw})` : raw;
         status.classList.add("wb-error");
         if (!status.isConnected) {
           gridBox.textContent = "";
@@ -3724,7 +3792,7 @@ function createSiteView({ client: client2 }) {
   const root = el6("section", "wb-view wb-view-site");
   const absUrl = (rel) => {
     try {
-      return rel ? `${new URL(client2.webUrl()).origin}${encodeURI(String(rel))}` : "";
+      return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
     } catch {
       return "";
     }
@@ -3918,7 +3986,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
   const root = el7("section", "wb-view wb-view-sitehome");
   const absUrl = (rel) => {
     try {
-      return rel ? `${new URL(client2.webUrl()).origin}${encodeURI(String(rel))}` : "";
+      return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
     } catch {
       return "";
     }

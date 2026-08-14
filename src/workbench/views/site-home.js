@@ -2,7 +2,7 @@
 // who and where you are, the essential web facts, and subwebs you can jump
 // into with one click. The exhaustive property sheets live under Advanced.
 
-import { createGrid } from '../grid.js?v=2';
+import { createGrid, encodeSpPath } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 
 const el = (tag, cls, text) => {
@@ -17,7 +17,7 @@ const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 export function createSiteHomeView({ client, navigate, inspectSite }) {
   const root = el('section', 'wb-view wb-view-sitehome');
   const absUrl = (rel) => {
-    try { return rel ? `${new URL(client.webUrl()).origin}${encodeURI(String(rel))}` : ''; }
+    try { return rel ? `${new URL(client.webUrl()).origin}${encodeSpPath(rel)}` : ''; }
     catch { return ''; }
   };
   const head = el('div', 'wb-view-head');

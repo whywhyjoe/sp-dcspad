@@ -59,7 +59,15 @@ export function toPnpjs2({ path, options = {} }) {
   if (options.select) chain += `\n  .select(${join(options.select).split(',').map((s) => `"${s}"`).join(', ')})`;
   if (options.expand) chain += `\n  .expand(${join(options.expand).split(',').map((s) => `"${s}"`).join(', ')})`;
   if (options.filter) chain += `\n  .filter("${String(options.filter).replaceAll('"', '\\"')}")`;
-  if (options.orderby) chain += `\n  .orderBy("${join(options.orderby)}")`;
+  if (options.orderby) {
+    // PnPjs 2 takes orderBy(field, ascending) — "ID desc" as one string
+    // would ask for a field literally named "ID desc". One call per clause.
+    for (const clause of join(options.orderby).split(',')) {
+      const m = /^\s*(.+?)(?:\s+(asc|desc))?\s*$/i.exec(clause);
+      if (!m || !m[1]) continue;
+      chain += `\n  .orderBy(${JSON.stringify(m[1])}, ${String(m[2]).toLowerCase() !== 'desc'})`;
+    }
+  }
   if (options.top) chain += `\n  .top(${options.top})`;
   return [
     '// PnPjs 2.x — paste into the DCSPad JS pane (pnpjs2 framework enabled)',

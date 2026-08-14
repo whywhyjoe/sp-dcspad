@@ -2,7 +2,7 @@
 // thing the SP UI won't show), with drill-down into fields, views, content
 // types, and the raw entity rendered through the SP-aware inspector.
 
-import { createGrid } from '../grid.js?v=2';
+import { createGrid, encodeSpPath } from '../grid.js?v=2';
 import { copyText, downloadMarkdown } from '../export.js';
 import {
   buildItemsMarkdown, contentFields, viewColumnFields,
@@ -74,6 +74,54 @@ const el = (tag, cls, text) => {
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 
+// Raw OData input for the Items tab → { filter, orderby, error }. Only the
+// two clauses the tab doesn't already own are accepted; anything else
+// $-prefixed is rejected so a typo'd $select/$top can't silently fight the
+// controls. Splitting respects OData single-quoted literals (with doubled
+// apostrophes), so a filter like Title eq 'R&D' survives intact.
+export function parseItemsQuery(text) {
+  const out = { filter: '', orderby: '', error: '' };
+  const raw = String(text || '').trim().replace(/^\?/, '');
+  if (!raw) return out;
+
+  const parts = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === "'") {
+      if (quoted && raw[i + 1] === "'") { i++; continue; }   // '' = escaped '
+      quoted = !quoted;
+    } else if (raw[i] === '&' && !quoted) {
+      parts.push(raw.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(raw.slice(start));
+
+  const seen = new Set();
+  for (const part of parts) {
+    const piece = part.trim();
+    if (!piece) continue;
+    const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
+    if (clause) {
+      const name = clause[1].toLowerCase();
+      if (seen.has(name)) {
+        out.error = `Duplicate $${name} clause — combine them into one.`;
+        return out;
+      }
+      seen.add(name);
+      out[name] = clause[2].trim();
+    } else if (piece.startsWith('$')) {
+      out.error = 'Only $filter and $orderby are supported here — columns and max items have their own controls.';
+      return out;
+    } else {
+      // A bare expression is the common case: treat it as the filter.
+      out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
+    }
+  }
+  return out;
+}
+
 export function createListsView({ client, navigate }) {
   const root = el('section', 'wb-view wb-view-lists');
 
@@ -82,7 +130,7 @@ export function createListsView({ client, navigate }) {
   const webOrigin = () => {
     try { return new URL(client.webUrl()).origin; } catch { return ''; }
   };
-  const absUrl = (rel) => (rel ? `${webOrigin()}${encodeURI(String(rel))}` : '');
+  const absUrl = (rel) => (rel ? `${webOrigin()}${encodeSpPath(rel)}` : '');
 
   // ---- all-lists grid pane ----
   const gridPane = el('div', 'wb-pane');
@@ -212,34 +260,13 @@ export function createListsView({ client, navigate }) {
     const gridBox = el('div', 'wb-items-grid');
     wrap.append(bar, gridBox);
 
-    // Raw OData input → { filter, orderby, error }. Only the two clauses the
-    // tab doesn't already own are accepted; anything else $-prefixed is
-    // rejected so a typo'd $select/$top can't silently fight the controls.
-    function parseItemsQuery(text) {
-      const out = { filter: '', orderby: '', error: '' };
-      const raw = String(text || '').trim().replace(/^\?/, '');
-      if (!raw) return out;
-      for (const part of raw.split('&')) {
-        const piece = part.trim();
-        if (!piece) continue;
-        const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
-        if (clause) {
-          out[clause[1].toLowerCase()] = clause[2].trim();
-        } else if (piece.startsWith('$')) {
-          out.error = 'Only $filter and $orderby are supported here — columns and max items have their own controls.';
-          return out;
-        } else {
-          // A bare expression is the common case: treat it as the filter.
-          out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
-        }
-      }
-      return out;
-    }
-
     let itemsGrid = null;
     let current = null;   // { fields, viewFieldNames, viewTitle } of the loaded rows
     let viewsFilled = false;
     let loadSeq = 0;
+    // Rows are cached by the parameters that shape the *data* — a view
+    // change only re-picks columns, so it never refetches items.
+    let itemsCache = { key: '', items: null, partial: false };
 
     const clampMax = () => {
       const n = Math.floor(Number(maxIn.value));
@@ -270,10 +297,12 @@ export function createListsView({ client, navigate }) {
     });
 
     async function reload() {
+      // Claim the sequence before validating: an invalid input must also
+      // orphan any in-flight load, or its rows would land under the error.
+      const seq = ++loadSeq;
       const parsed = parseItemsQuery(queryIn.value);
       queryErr.textContent = parsed.error;
       if (parsed.error) return;   // keep whatever is loaded until the input is fixed
-      const seq = ++loadSeq;
       const max = clampMax();
       itemsGrid = null;
       gridBox.textContent = '';
@@ -308,23 +337,41 @@ export function createListsView({ client, navigate }) {
 
         const hasAttachments = fields.some((f) => f.TypeAsString === 'Attachments');
         const expand = ['FieldValuesAsText', ...(hasAttachments ? ['AttachmentFiles'] : [])];
+        // Explicit projection instead of $select=* — only the exportable
+        // fields travel. Always the full content set (not the view's): the
+        // row cache below is shared across view switches.
+        const select = [
+          'ID', 'Title', 'Created', 'Modified',
+          ...contentFields(fields).map((f) => f.InternalName),
+          ...(fields.some((f) => f.InternalName === 'FileLeafRef') ? ['FileLeafRef'] : []),
+          ...expand,
+        ];
         const query = {
           path: guidPath(listId, '/items'),
           options: {
-            select: ['*', ...expand],
+            select,
             expand,
             ...(parsed.filter ? { filter: parsed.filter } : {}),
             orderby: parsed.orderby || 'ID desc',
             top: max,
           },
         };
-        const { items, partial } = await client.getAll(query.path, query.options, { cap: max });
-        if (seq !== loadSeq) return;
-        // Default ordering gets a defensive client-side sort; a typed
-        // $orderby is the server's to honor (re-sorting would undo it).
-        if (!parsed.orderby) {
-          items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        const dataKey = JSON.stringify([max, parsed.filter, parsed.orderby]);
+        let items;
+        let partial;
+        if (itemsCache.items && itemsCache.key === dataKey) {
+          ({ items, partial } = itemsCache);
+        } else {
+          ({ items, partial } = await client.getAll(query.path, query.options, { cap: max }));
+          if (seq !== loadSeq) return;
+          // Default ordering gets a defensive client-side sort; a typed
+          // $orderby is the server's to honor (re-sorting would undo it).
+          if (!parsed.orderby) {
+            items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+          }
+          itemsCache = { key: dataKey, items, partial };
         }
+        if (seq !== loadSeq) return;
 
         const content = viewFieldNames
           ? viewColumnFields(fields, viewFieldNames)
@@ -367,7 +414,11 @@ export function createListsView({ client, navigate }) {
         };
       } catch (err) {
         if (seq !== loadSeq) return;
-        status.textContent = err?.message || String(err);
+        const raw = err?.message || String(err);
+        // Large-list throttling reads as a cryptic server error — translate.
+        status.textContent = /SPQueryThrottledException|list view threshold/i.test(raw)
+          ? `SharePoint throttled this query — filter/order by an indexed column and keep the matched set under 5,000. (${raw})`
+          : raw;
         status.classList.add('wb-error');
         if (!status.isConnected) {
           gridBox.textContent = '';
