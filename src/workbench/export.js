@@ -80,3 +80,9 @@ export function downloadCsv(name, rows, columns) {
 export function downloadJson(name, rows, columns) {
   downloadText(`${name}.json`, toJson(rows, columns), 'application/json');
 }
+
+// Prebuilt markdown documents (e.g. the list-content export) — the text is
+// already assembled, this just names the bytes.
+export function downloadMarkdown(name, text) {
+  downloadText(`${name}.md`, text, 'text/markdown;charset=utf-8');
+}

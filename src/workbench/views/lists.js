@@ -3,7 +3,11 @@
 // types, and the raw entity rendered through the SP-aware inspector.
 
 import { createGrid } from '../grid.js?v=2';
-import { copyText } from '../export.js';
+import { copyText, downloadMarkdown } from '../export.js';
+import {
+  buildItemsMarkdown, contentFields, viewColumnFields,
+  fieldText, itemTitle, personText,
+} from '../item-export.js';
 import { LIST_SETTINGS, linkUrl } from '../config-links.js';
 import { principalTypeName } from '../perm-kinds.js';
 import { enhance } from '../../inspect/sp-shapes.js';
@@ -73,6 +77,13 @@ const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 export function createListsView({ client, navigate }) {
   const root = el('section', 'wb-view wb-view-lists');
 
+  // Server-relative paths become real links: absolute against the inspected
+  // web's origin, opened in a new tab (the cell text stays the relative path).
+  const webOrigin = () => {
+    try { return new URL(client.webUrl()).origin; } catch { return ''; }
+  };
+  const absUrl = (rel) => (rel ? `${webOrigin()}${encodeURI(String(rel))}` : '');
+
   // ---- all-lists grid pane ----
   const gridPane = el('div', 'wb-pane');
   const head = el('div', 'wb-view-head');
@@ -86,7 +97,7 @@ export function createListsView({ client, navigate }) {
       { key: 'BaseTemplate', label: 'Template', format: (v) => BASE_TEMPLATE_NAMES[v] || String(v ?? '') },
       { key: 'ItemCount', label: 'Items' },
       { key: 'Hidden', label: 'Hidden' },
-      { key: 'Url', label: 'Url', value: (row) => row.RootFolder?.ServerRelativeUrl || '', mono: true, copyable: true },
+      { key: 'Url', label: 'Url', value: (row) => row.RootFolder?.ServerRelativeUrl || '', mono: true, copyable: true, link: absUrl },
       { key: 'Id', label: 'Id', mono: true, copyable: true },
       { key: 'LastItemModifiedDate', label: 'Modified', format: fmtDate },
       // Appended last: tests address earlier columns positionally.
@@ -157,6 +168,221 @@ export function createListsView({ client, navigate }) {
     return tabCache.get(key);
   }
 
+  // Items tab: list-content markdown export. A view supplies the content
+  // columns when chosen; otherwise every content field exports, ordered
+  // Title, ID, content columns as returned, then the Created/Modified pairs.
+  // Ordering is ID desc, capped by the max-items input. The grid is a
+  // preview of the same rows — filter it and the export follows.
+  function buildItemsPane(wrap, listId, listTitle) {
+    const bar = el('div', 'wb-items-bar');
+
+    const viewLabel = el('label', 'wb-items-label', 'Columns ');
+    const viewSel = el('select', 'wb-items-view');
+    viewSel.setAttribute('aria-label', 'Column source: a view or all columns');
+    viewLabel.append(viewSel);
+
+    const maxLabel = el('label', 'wb-items-label', 'Max items ');
+    const maxIn = el('input', 'wb-items-max');
+    maxIn.type = 'number';
+    maxIn.min = '1';
+    maxIn.max = '5000';
+    maxIn.value = '500';
+    maxIn.setAttribute('aria-label', 'Maximum items to fetch');
+    maxLabel.append(maxIn);
+
+    const queryLabel = el('label', 'wb-items-label', 'Query ');
+    const queryIn = el('input', 'wb-items-query');
+    queryIn.type = 'text';
+    queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
+    queryIn.setAttribute('aria-label', 'OData $filter and $orderby for the item query');
+    queryIn.title = 'Raw OData clauses for the item query: $filter=… and/or '
+      + '$orderby=…, joined with &. A bare expression counts as $filter. '
+      + 'Order defaults to ID desc; columns and row cap keep their own controls.';
+    queryLabel.append(queryIn);
+    const queryErr = el('span', 'wb-items-error');
+
+    const dlBtn = el('button', 'btn btn-xs wb-items-download', 'Download .md');
+    dlBtn.type = 'button';
+    dlBtn.title = 'Download the visible items as a markdown document';
+    const copyBtn = el('button', 'btn btn-xs wb-items-copymd', 'Copy Markdown');
+    copyBtn.type = 'button';
+    copyBtn.title = 'Copy the visible items as a markdown document';
+
+    bar.append(viewLabel, maxLabel, queryLabel, dlBtn, copyBtn, queryErr);
+    const gridBox = el('div', 'wb-items-grid');
+    wrap.append(bar, gridBox);
+
+    // Raw OData input → { filter, orderby, error }. Only the two clauses the
+    // tab doesn't already own are accepted; anything else $-prefixed is
+    // rejected so a typo'd $select/$top can't silently fight the controls.
+    function parseItemsQuery(text) {
+      const out = { filter: '', orderby: '', error: '' };
+      const raw = String(text || '').trim().replace(/^\?/, '');
+      if (!raw) return out;
+      for (const part of raw.split('&')) {
+        const piece = part.trim();
+        if (!piece) continue;
+        const clause = /^\$?(filter|orderby)\s*=\s*(.+)$/i.exec(piece);
+        if (clause) {
+          out[clause[1].toLowerCase()] = clause[2].trim();
+        } else if (piece.startsWith('$')) {
+          out.error = 'Only $filter and $orderby are supported here — columns and max items have their own controls.';
+          return out;
+        } else {
+          // A bare expression is the common case: treat it as the filter.
+          out.filter = out.filter ? `${out.filter} and ${piece}` : piece;
+        }
+      }
+      return out;
+    }
+
+    let itemsGrid = null;
+    let current = null;   // { fields, viewFieldNames, viewTitle } of the loaded rows
+    let viewsFilled = false;
+    let loadSeq = 0;
+
+    const clampMax = () => {
+      const n = Math.floor(Number(maxIn.value));
+      const max = Number.isFinite(n) ? Math.min(Math.max(n, 1), 5000) : 500;
+      maxIn.value = String(max);
+      return max;
+    };
+
+    const exportDoc = () => (itemsGrid && current
+      ? buildItemsMarkdown({
+        listTitle,
+        webUrl: client.webUrl(),
+        viewTitle: current.viewTitle,
+        items: itemsGrid.getVisibleRows(),
+        fields: current.fields,
+        viewFieldNames: current.viewFieldNames,
+        filter: current.filter,
+        orderby: current.orderby,
+      })
+      : '');
+    dlBtn.addEventListener('click', () => {
+      const md = exportDoc();
+      if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+    });
+    copyBtn.addEventListener('click', () => {
+      const md = exportDoc();
+      if (md) copyText(md, copyBtn);
+    });
+
+    async function reload() {
+      const parsed = parseItemsQuery(queryIn.value);
+      queryErr.textContent = parsed.error;
+      if (parsed.error) return;   // keep whatever is loaded until the input is fixed
+      const seq = ++loadSeq;
+      const max = clampMax();
+      itemsGrid = null;
+      gridBox.textContent = '';
+      const status = el('div', 'wb-grid-status', 'Loading items…');
+      gridBox.append(status);
+      try {
+        const [{ items: fields }, { items: views }] = await Promise.all([
+          cached(listId, 'fields', () =>
+            client.getAll(guidPath(listId, '/fields'), { select: FIELD_SELECT })),
+          cached(listId, 'views', () =>
+            client.getAll(guidPath(listId, '/views'), { select: VIEW_SELECT })),
+        ]);
+        if (!viewsFilled) {
+          viewsFilled = true;
+          const none = el('option', '', 'All columns');
+          none.value = '';
+          viewSel.append(none);
+          for (const view of views.filter((v) => !v.PersonalView)) {
+            const opt = el('option', '', view.DefaultView ? `${view.Title} (default)` : view.Title);
+            opt.value = view.Id;
+            viewSel.append(opt);
+          }
+        }
+        let viewFieldNames = null;
+        let viewTitle = '';
+        if (viewSel.value) {
+          const vf = await cached(listId, `viewfields::${viewSel.value}`, () =>
+            client.get(guidPath(listId, `/views(guid'${viewSel.value}')/viewfields`)));
+          viewFieldNames = vf?.Items?.results || vf?.Items || [];
+          viewTitle = views.find((v) => v.Id === viewSel.value)?.Title || '';
+        }
+
+        const hasAttachments = fields.some((f) => f.TypeAsString === 'Attachments');
+        const expand = ['FieldValuesAsText', ...(hasAttachments ? ['AttachmentFiles'] : [])];
+        const query = {
+          path: guidPath(listId, '/items'),
+          options: {
+            select: ['*', ...expand],
+            expand,
+            ...(parsed.filter ? { filter: parsed.filter } : {}),
+            orderby: parsed.orderby || 'ID desc',
+            top: max,
+          },
+        };
+        const { items, partial } = await client.getAll(query.path, query.options, { cap: max });
+        if (seq !== loadSeq) return;
+        // Default ordering gets a defensive client-side sort; a typed
+        // $orderby is the server's to honor (re-sorting would undo it).
+        if (!parsed.orderby) {
+          items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
+        }
+
+        const content = viewFieldNames
+          ? viewColumnFields(fields, viewFieldNames)
+          : contentFields(fields);
+        const filesOf = (row) => (Array.isArray(row.AttachmentFiles)
+          ? row.AttachmentFiles : row.AttachmentFiles?.results || []);
+        const anyAttachments = items.some((row) => filesOf(row).length);
+        const columns = [
+          { key: 'Title', label: 'Title', value: (row) => itemTitle(row) },
+          { key: 'ID', label: 'ID', num: true, value: (row) => row.ID ?? row.Id },
+          ...content.map((f) => ({
+            key: f.InternalName,
+            label: f.Title || f.InternalName,
+            value: (row) => fieldText(row, f),
+          })),
+          ...(anyAttachments ? [{
+            key: 'Attachments',
+            label: 'Attachments',
+            value: (row) => filesOf(row).map((f) => f?.FileName || '').filter(Boolean).join(', '),
+          }] : []),
+          { key: 'Created', label: 'Created', format: fmtDate },
+          { key: 'CreatedBy', label: 'Created By', value: (row) => personText(row, 'Author') },
+          { key: 'Modified', label: 'Modified', format: fmtDate },
+          { key: 'ModifiedBy', label: 'Modified By', value: (row) => personText(row, 'Editor') },
+        ];
+        itemsGrid = createGrid({
+          columns,
+          rowKey: 'ID',
+          emptyText: 'No items in this list.',
+          filterPlaceholder: 'Filter items…',
+          exportName: `items-${fileStem(listTitle)}`,
+          descriptor: { ...query, webUrl: client.webUrl() },
+        });
+        gridBox.textContent = '';
+        gridBox.append(itemsGrid.el);
+        itemsGrid.setRows(items, { partial });
+        current = {
+          fields, viewFieldNames, viewTitle,
+          filter: parsed.filter, orderby: parsed.orderby,
+        };
+      } catch (err) {
+        if (seq !== loadSeq) return;
+        status.textContent = err?.message || String(err);
+        status.classList.add('wb-error');
+        if (!status.isConnected) {
+          gridBox.textContent = '';
+          gridBox.append(status);
+        }
+      }
+    }
+
+    viewSel.addEventListener('change', reload);
+    maxIn.addEventListener('change', reload);
+    queryIn.addEventListener('change', reload);
+    queryIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') reload(); });
+    reload();
+  }
+
   const TABS = [
     {
       id: 'fields',
@@ -187,7 +413,7 @@ export function createListsView({ client, navigate }) {
           { key: 'Hidden', label: 'Hidden' },
           { key: 'PersonalView', label: 'Personal' },
           { key: 'RowLimit', label: 'Row limit' },
-          { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true },
+          { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true, link: absUrl },
           { key: 'ViewQuery', label: 'CAML query', mono: true, copyable: true },
         ],
         exportName: `views-${fileStem(title)}`,
@@ -239,6 +465,7 @@ export function createListsView({ client, navigate }) {
         },
       }),
     },
+    { id: 'items', label: 'Items' },
     { id: 'raw', label: 'Raw' },
   ];
 
@@ -287,6 +514,11 @@ export function createListsView({ client, navigate }) {
       if (panes.has(tab.id)) return panes.get(tab.id);
       const wrap = el('div', 'wb-tab-pane');
       panes.set(tab.id, wrap);
+
+      if (tab.id === 'items') {
+        buildItemsPane(wrap, listId, route.listTitle || 'List');
+        return wrap;
+      }
 
       if (tab.id === 'raw') {
         const status = el('div', 'wb-grid-status', 'Loading raw list entity…');

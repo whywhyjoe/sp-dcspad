@@ -16,6 +16,10 @@ const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 
 export function createSiteHomeView({ client, navigate, inspectSite }) {
   const root = el('section', 'wb-view wb-view-sitehome');
+  const absUrl = (rel) => {
+    try { return rel ? `${new URL(client.webUrl()).origin}${encodeURI(String(rel))}` : ''; }
+    catch { return ''; }
+  };
   const head = el('div', 'wb-view-head');
   head.innerHTML = '<h2>Site</h2>'
     + '<p class="wb-view-hint">The inspected web at a glance. '
@@ -96,7 +100,7 @@ export function createSiteHomeView({ client, navigate, inspectSite }) {
     const grid = createGrid({
       columns: [
         { key: 'Title', label: 'Subweb' },
-        { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true },
+        { key: 'ServerRelativeUrl', label: 'Url', mono: true, copyable: true, link: absUrl },
         { key: 'Created', label: 'Created', format: fmtDate },
         {
           key: 'Inspect',

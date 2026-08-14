@@ -31,7 +31,9 @@ function displayValue(row, col) {
 }
 
 // columns: [{ key, label, value?(row), format?(v,row), render?(v,row)=>Node,
-//             copyable?, mono?, num?, width? }]
+//             link?(v,row)=>href, copyable?, mono?, num?, width? }]
+// link renders the cell text as an anchor opening href in a new tab (URL
+// columns stay real URLs); copyable then adds a ⧉ copy glyph beside it.
 // exportName enables the toolbar export menu; it's the download file stem.
 // descriptor { path, options, webUrl } enables the "Copy as…" script menu.
 export function createGrid({
@@ -200,7 +202,24 @@ export function createGrid({
           tr.append(td);
           continue;
         }
-        if (col.copyable && text) {
+        const href = typeof col.link === 'function' && text
+          ? String(col.link(cellValue(row, col), row) || '')
+          : '';
+        if (href) {
+          const a = el('a', 'wb-cell-url', text);
+          a.href = href;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.title = 'Open in a new tab';
+          a.addEventListener('click', (e) => e.stopPropagation());
+          td.append(a);
+          if (col.copyable) {
+            const glyph = el('span', 'sp-copy wb-cell-copy', '⧉');
+            glyph.title = 'Click to copy';
+            glyph.addEventListener('click', (e) => { e.stopPropagation(); copyText(text, glyph); });
+            td.append(glyph);
+          }
+        } else if (col.copyable && text) {
           const span = el('span', 'sp-copy', text);
           span.title = 'Click to copy';
           span.addEventListener('click', (e) => { e.stopPropagation(); copyText(text, span); });
