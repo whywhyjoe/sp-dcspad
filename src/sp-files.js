@@ -11,7 +11,9 @@ import {
 } from './sp-odata.js';
 
 const DIGEST_SAFETY_MS = 60_000;
-const FILE_METADATA_SPECS = Object.freeze([
+// Exported: the SP Workbench upload dialog shares these specs so the two
+// implementations can't drift on availability rules or internal names.
+export const FILE_METADATA_SPECS = Object.freeze([
   { key: 'title', label: 'Title', internalName: 'Title', types: ['Text'] },
   { key: 'description', label: 'Description', internalName: '_ExtendedDescription', types: ['Note', 'Text'] },
   { key: 'docVersion', label: 'DocVersion', internalName: 'DocVersion', types: ['Text'] },

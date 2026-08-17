@@ -33,8 +33,13 @@ export function bindNewTab(a) {
   a.target = '_blank';
   a.rel = 'noopener';
   a.addEventListener('click', (e) => {
-    e.preventDefault();
+    // Hiding the click from the host's router is enough for modified
+    // clicks — let the browser keep its native ctrl/cmd/shift semantics
+    // (background tab, new window). Plain clicks open explicitly, which
+    // the host page cannot cancel.
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) return;
+    e.preventDefault();
     window.open(a.href, '_blank', 'noopener');
   });
   return a;

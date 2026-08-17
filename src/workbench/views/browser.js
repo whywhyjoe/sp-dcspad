@@ -15,9 +15,9 @@ import {
 } from '../upload-metadata.js';
 
 const FIELD_SELECT = [
-  'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
-  'Hidden', 'ReadOnlyField', 'Group', 'DefaultValue', 'Choices', 'Description',
-  'FillInChoice',
+  'Id', 'Title', 'InternalName', 'EntityPropertyName', 'TypeAsString',
+  'FieldTypeKind', 'Required', 'Hidden', 'ReadOnlyField', 'Group',
+  'DefaultValue', 'Choices', 'Description', 'FillInChoice',
 ];
 
 const DOCUMENT_LIBRARY_BASE_TYPE = 1;
@@ -447,10 +447,14 @@ export function createBrowserView({ client, navigate }) {
       return;
     }
 
-    const values = carriedValues
-      || (overwrite ? await prefillUploadValues(states, folderPath, file.name)
-        : { title: '', description: '', docVersion: '' });
-    const initial = { ...values };
+    // The changed-only diff must compare against the FILE's baseline, never
+    // against carried user input — otherwise a 409-race retry would treat
+    // the user's typed values as "unchanged" and silently drop them.
+    const baseline = overwrite
+      ? await prefillUploadValues(states, folderPath, file.name)
+      : { title: '', description: '', docVersion: '' };
+    const values = carriedValues || baseline;
+    const initial = { ...baseline };
     const filePath = `${folderPath}/${file.name}`;
     try {
       const outcome = await openUploadMetadataDialog({

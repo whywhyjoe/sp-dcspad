@@ -136,10 +136,10 @@ export function fieldText(item, field) {
 }
 
 // Markdown link with the characters that would break the syntax escaped:
-// ']' in the label, parentheses in the target (encodeURIComponent leaves
-// them alone, and SharePoint file names may contain them).
+// brackets in the label, parentheses in the target (encodeURIComponent
+// leaves them alone, and SharePoint file names may contain them).
 const mdLink = (label, url) =>
-  `[${String(label).replace(/\]/g, '\\]')}](${String(url).replace(/\(/g, '%28').replace(/\)/g, '%29')})`;
+  `[${String(label).replace(/([[\]])/g, '\\$1')}](${String(url).replace(/\(/g, '%28').replace(/\)/g, '%29')})`;
 
 // Decoded server-relative path → href path, one encode per segment.
 // encodeURI would leave '#' to become a URL fragment — SharePoint allows
@@ -223,11 +223,13 @@ function inlineNode(node) {
   if (tag === 'a') {
     const href = String(node.getAttribute('href') || '');
     const label = core || href;
-    return href && !/^javascript:/i.test(href) ? `[${label}](${href})` : label;
+    // mdLink escapes brackets/parens — rich-text anchors get the same
+    // hardening as attachment and URL-field links.
+    return href && !/^javascript:/i.test(href) ? mdLink(label, href) : label;
   }
   if (tag === 'img') {
     const src = String(node.getAttribute('src') || '');
-    return src ? `![${node.getAttribute('alt') || ''}](${src})` : '';
+    return src ? `!${mdLink(node.getAttribute('alt') || '', src)}` : '';
   }
   return body;
 }

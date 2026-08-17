@@ -133,6 +133,17 @@ await check('mock: upload shows the pad-style dialog, greys the unavailable fiel
     && metaBody.bNewDocumentUpdate === true;
 });
 
+await check('mock: cancelling the dialog before upload produces zero writes', async () => {
+  const before = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
+  await page.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'never.txt', mimeType: 'text/plain', buffer: Buffer.from('n'),
+  });
+  await page.waitForSelector('.wb-upload-metadata');
+  await page.locator('.wb-upload-metadata .btn', { hasText: 'Cancel' }).click();
+  const after = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
+  return (await page.locator('.wb-upload-metadata').count()) === 0 && after === before;
+});
+
 await check('mock: same-name upload asks consent, then prefills the dialog', async () => {
   const before = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
   await page.setInputFiles('.wb-view-files input[type=file]', {
@@ -208,6 +219,7 @@ const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const LIB_ID = 'ab12cd34-0000-4000-8000-00000000aa01';
 const uploads = [];        // { url, digest, bodyLength }
 const vuliCalls = [];      // { url, digest, body }
+const prefillUrls = [];
 const libraryLookups = [];
 const flags = { failMetadata: false, racyConflictOnce: true };
 
@@ -225,6 +237,9 @@ const LIVE_FILES = [
 const LIVE_FIELDS = [
   { Id: 'f1', Title: 'Title', InternalName: 'Title', TypeAsString: 'Text', FieldTypeKind: 2, Required: false, Hidden: false, ReadOnlyField: false },
   { Id: 'f2', Title: 'Category', InternalName: 'DocCategory', TypeAsString: 'Choice', FieldTypeKind: 6, Required: false, Hidden: false, ReadOnlyField: false, Choices: ['Contract', 'Report'] },
+  // Underscore-prefixed internal names get an OData_ entity property — the
+  // prefill $select must use it, not the internal name.
+  { Id: 'f3', Title: 'Description', InternalName: '_ExtendedDescription', EntityPropertyName: 'OData__ExtendedDescription', TypeAsString: 'Note', FieldTypeKind: 3, Required: false, Hidden: false, ReadOnlyField: false },
 ];
 
 await live.addInitScript(() => {
@@ -284,7 +299,10 @@ await live.route('**/_api/**', async (route) => {
     return route.fulfill({ json: { Id: LIB_ID } });
   }
   if (url.includes('GetFileByServerRelativePath(') && url.includes('/ListItemAllFields')) {
-    return route.fulfill({ json: { Id: 7, Title: 'Proposal', DocCategory: 'Report' } });
+    prefillUrls.push(url);
+    return route.fulfill({ json: {
+      Id: 7, Title: 'Proposal', DocCategory: 'Report', OData__ExtendedDescription: 'Live desc',
+    } });
   }
   if (url.includes('GetFolderByServerRelativePath(')) {
     if (url.includes('/Folders')) {
@@ -336,13 +354,13 @@ await check('live: upload dialog shows library availability, uploads with digest
     name: 'new.bin', mimeType: 'application/octet-stream', buffer: Buffer.from([1, 2, 3]),
   });
   await live.waitForSelector('.wb-upload-metadata');
-  // The live library exposes Title only — Description/DocVersion greyed.
+  // The live library exposes Title + Description — DocVersion greyed.
   const available = await live.locator('.wb-upload-metadata .sp-metadata-field.available').count();
   await live.locator('.wb-upload-meta-go').click();
   await live.waitForFunction(() =>
     document.querySelector('.wb-consent')?.textContent.includes('Uploaded “new.bin” ✓'));
   const upload = uploads[0];
-  return available === 1
+  return available === 2
     && uploads.length === 1
     && upload.url.includes("AddUsingPath(decodedUrl='new.bin',overwrite=false)")
     && upload.digest === 'WB-DIGEST'
@@ -386,11 +404,17 @@ await check('live: keep-without-metadata closes the dialog and keeps the file', 
   await live.fill('.wb-upload-metadata .wb-upload-meta-title', 'K');
   await live.locator('.wb-upload-meta-go').click();
   await live.waitForSelector('.wb-upload-metadata .wb-upload-meta-keep:not([hidden])');
+  // After the upload exists, Esc and ✕ must NOT silently mean "keep" —
+  // only the explicit buttons decide.
+  await live.keyboard.press('Escape');
+  const stillOpen = (await live.locator('.wb-upload-metadata').count()) === 1;
+  const closeHidden = await live.locator('.wb-upload-metadata .app-dialog__head .btn').isHidden();
   await live.locator('.wb-upload-meta-keep').click();
   flags.failMetadata = false;
   await live.waitForFunction(() =>
     document.querySelector('.wb-consent')?.textContent.includes('kept without metadata'));
-  return (await live.locator('.wb-upload-metadata').count()) === 0;
+  return stillOpen && closeHidden
+    && (await live.locator('.wb-upload-metadata').count()) === 0;
 });
 
 await check('live: a same-name upload asks first and prefills from the live file', async () => {
@@ -404,6 +428,7 @@ await check('live: a same-name upload asks first and prefills from the live file
   await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
   await live.waitForSelector('.wb-upload-metadata');
   const prefill = await live.locator('.wb-upload-metadata .wb-upload-meta-title').inputValue();
+  const descPrefill = await live.locator('.wb-upload-metadata .wb-upload-meta-description').inputValue();
   await live.locator('.wb-upload-meta-go').click();
   const landed = await until(() => uploads.length > during);
   const replaced = uploads[uploads.length - 1];
@@ -411,8 +436,14 @@ await check('live: a same-name upload asks first and prefills from the live file
   await live.waitForFunction(() =>
     document.querySelector('.wb-consent')?.textContent.includes('Uploaded “proposal.docx” ✓'));
   await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  // The prefill $select must address _ExtendedDescription by its entity
+  // property (OData__ExtendedDescription), or live tenants 400 the request.
+  const prefillSelect = prefillUrls.find((u) =>
+    u.includes('proposal.docx') && u.includes('$select='));
   return landed && during === before
-    && prefill === 'Proposal'   // read from the file being replaced
+    && prefill === 'Proposal'          // read from the file being replaced
+    && descPrefill === 'Live desc'     // via the entity property name
+    && Boolean(prefillSelect) && prefillSelect.includes('OData__ExtendedDescription')
     && replaced.url.includes('overwrite=true');
 });
 
@@ -433,7 +464,12 @@ await check('live: a 409 race re-consents and the retry keeps the typed values',
   const landed = await until(() =>
     uploads.filter((u) => u.url.includes('racy.bin')).length === 2);
   const attempts = uploads.filter((u) => u.url.includes('racy.bin'));
-  return landed && consentText.includes('already exists')
+  // The carried value must not just DISPLAY — it must WRITE. The diff runs
+  // against the replaced file's baseline, so 'Racy T' posts as metadata.
+  const wrote = await until(() => vuliCalls.some((c) =>
+    c.url.includes('racy.bin')
+    && c.body.formValues?.some((fv) => fv.FieldName === 'Title' && fv.FieldValue === 'Racy T')));
+  return landed && wrote && consentText.includes('already exists')
     && carried === 'Racy T'   // values survive the race retry
     && attempts[0].url.includes('overwrite=false')
     && attempts[1].url.includes('overwrite=true');

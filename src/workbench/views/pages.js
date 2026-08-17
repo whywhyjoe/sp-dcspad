@@ -46,6 +46,7 @@ export function pickPagesLibrary(items) {
   return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden)
     || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE)
     || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden)
+    || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE)
     || lists.find((l) => String(l.Title).toLowerCase() === 'pages' && !l.Hidden)
     || null;
 }

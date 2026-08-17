@@ -11,11 +11,11 @@
 // rules; the dialog itself is plain DOM riding app.css's .app-dialog and
 // .sp-metadata-* styles (workbench.html loads app.css before workbench.css).
 
-export const FILE_METADATA_SPECS = Object.freeze([
-  { key: 'title', label: 'Title', internalName: 'Title', types: ['Text'] },
-  { key: 'description', label: 'Description', internalName: '_ExtendedDescription', types: ['Note', 'Text'] },
-  { key: 'docVersion', label: 'DocVersion', internalName: 'DocVersion', types: ['Text'] },
-]);
+// The three curated specs are the pad's own (sp-files.js exports them) —
+// one source of truth, so the availability rules can't drift again.
+import { FILE_METADATA_SPECS } from '../sp-files.js';
+
+export { FILE_METADATA_SPECS };
 
 export function metadataFieldStates(libraryFields) {
   const fields = Array.isArray(libraryFields) ? libraryFields : [];
@@ -152,7 +152,11 @@ export function openUploadMetadataDialog({
         finish('saved');
       } catch (err) {
         busy = false;
-        cancel.hidden = true;      // the file exists now — cancelling is over
+        // The file exists now: Retry and Keep are the ONLY exits. Hiding
+        // Cancel/✕ (and no-op'ing Esc below) keeps a dismiss-looking action
+        // from silently committing "keep without metadata".
+        cancel.hidden = true;
+        closeBtn.hidden = true;
         keep.hidden = false;
         keep.disabled = false;
         primary.textContent = 'Retry metadata';
@@ -167,8 +171,9 @@ export function openUploadMetadataDialog({
     keep.addEventListener('click', () => { if (!busy) finish('kept'); });
     const dismiss = () => {
       if (busy) return;
-      if (uploaded) finish('kept');
-      else finish('cancelled');
+      // Once uploaded, only the explicit Keep/Retry buttons decide.
+      if (uploaded) return;
+      finish('cancelled');
     };
     cancel.addEventListener('click', dismiss);
     closeBtn.addEventListener('click', dismiss);

@@ -265,8 +265,9 @@ await check('items: query parser respects quoted literals and rejects duplicates
 
 await check('item-export: hardened builders — encoded keys, hostile markdown, odd paths', async () =>
   page.evaluate(async () => {
-    const { buildItemsMarkdown, viewColumnFields, attachmentLinks, fieldMarkdown } =
+    const { buildItemsMarkdown, viewColumnFields, attachmentLinks, fieldMarkdown, htmlToMarkdown } =
       await import('/src/workbench/item-export.js');
+    const hostileAnchor = htmlToMarkdown('<p><a href="https://x.test/a(b)">A]B</a></p>');
     // FieldValuesAsText OData-encodes underscores in its keys
     const viaKey = fieldMarkdown(
       { FieldValuesAsText: { My_x005f_Field: 'enc' } },
@@ -305,7 +306,9 @@ await check('item-export: hardened builders — encoded keys, hostile markdown, 
       && md.includes('> ## forged item')
       && !/\n## forged item/.test(md)
       && links[0] === '[A#B (v2).docx](https://x.example/Lists/L/Attachments/9/A%23B%20%28v2%29.docx)'
-      && urlScalar === 'https://plain.example/a';
+      && urlScalar === 'https://plain.example/a'
+      // rich-text anchors get the same bracket/paren hardening as links
+      && hostileAnchor === '[A\\]B](https://x.test/a%28b%29)';
   }));
 
 await check('sp-rest: a lowered getAll cap stops paging early', async () =>
@@ -645,7 +648,11 @@ await check('pages: pickPagesLibrary falls back to classic Pages libraries', asy
     const titled = pickPagesLibrary([
       { Id: 'e', Title: 'Pages', BaseTemplate: 101, Hidden: false },
     ]);
+    const hidden850 = pickPagesLibrary([
+      { Id: 'f', Title: 'Pages', BaseTemplate: 850, Hidden: true },
+    ]);
     return modern?.Id === 'b' && classic?.Id === 'd' && titled?.Id === 'e'
+      && hidden850?.Id === 'f'
       && pickPagesLibrary([]) === null;
   }));
 

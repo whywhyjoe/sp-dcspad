@@ -165,6 +165,13 @@ export function createSpWriteClient({
         { code: 'invalid-name' },
       );
     }
+    // Names SharePoint reserves outright (legacy device names, _vti_).
+    if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)(\..*)?$/i.test(clean) || /_vti_/i.test(clean)) {
+      throw new SpFileError(
+        'That folder name is reserved by SharePoint.',
+        { code: 'invalid-name' },
+      );
+    }
     const parent = String(parentServerRelativeUrl || '/').replace(/\/+$/, '') || '';
     const path = `${parent}/${clean}`;
     const endpoint = `${client.webUrl()}/_api/web/Folders/AddUsingPath(`
