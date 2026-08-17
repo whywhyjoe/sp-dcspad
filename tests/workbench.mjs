@@ -62,6 +62,27 @@ await check('mock: internal lists sit behind the bottom expander', async () => {
     && expanded === 8 && internal === 1 && collapsed === 5;
 });
 
+await check('mock: isInternalList classifies by flag, catalog, template, and curated titles', async () =>
+  page.evaluate(async () => {
+    const { isInternalList } = await import('/src/workbench/views/lists.js');
+    const lib = (over) => ({
+      Title: 'X', BaseTemplate: 100, Hidden: false,
+      RootFolder: { ServerRelativeUrl: '/Lists/X' }, ...over,
+    });
+    return isInternalList(lib({ Hidden: true }))
+      && isInternalList(lib({ IsCatalog: true }))                       // SP's own gallery flag
+      && isInternalList(lib({ RootFolder: { ServerRelativeUrl: '/_catalogs/theme' } }))
+      && isInternalList(lib({ RootFolder: { ServerRelativeUrl: '/FormServerTemplates' } }))
+      && isInternalList(lib({ BaseTemplate: 544 }))                     // MicroFeed
+      && isInternalList(lib({ Title: 'Style Library', BaseTemplate: 101, RootFolder: { ServerRelativeUrl: '/Style Library' } }))
+      && isInternalList(lib({ Title: 'Cache Profiles' }))
+      // …while real user content stays in the main grid:
+      && !isInternalList(lib({ Title: 'Documents', BaseTemplate: 101, RootFolder: { ServerRelativeUrl: '/Shared Documents' } }))
+      && !isInternalList(lib({ Title: 'Workflow Tasks', BaseTemplate: 171 }))   // real user tasks
+      && !isInternalList(lib({ Title: 'Forms', BaseTemplate: 115 }))            // InfoPath libraries are content
+      && !isInternalList(lib({ Title: 'Pages', BaseTemplate: 850 }));           // publishing pages are content
+  }));
+
 await check('mock: template numbers render as names', async () =>
   (await page.locator('.wb-table tbody tr', { hasText: 'Document library' }).count()) >= 1);
 

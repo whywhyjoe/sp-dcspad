@@ -39,21 +39,51 @@ export const BASE_TEMPLATE_NAMES = {
 };
 
 const LIST_SELECT = [
-  'Id', 'Title', 'BaseTemplate', 'BaseType', 'ItemCount', 'Hidden',
+  'Id', 'Title', 'BaseTemplate', 'BaseType', 'ItemCount', 'Hidden', 'IsCatalog',
   'Created', 'LastItemModifiedDate', 'EntityTypeName', 'Description',
   'DefaultViewUrl', 'RootFolder/ServerRelativeUrl',
 ];
 
-// Deep-internal plumbing SharePoint keeps for itself — hidden lists, the
-// /_catalogs galleries (theme, web part, master page, solutions…), and the
-// taxonomy cache. The main grid hides these behind a bottom expander;
-// user-facing libraries (Documents, Site Pages, Pages, Site Assets) stay.
-const INTERNAL_TEMPLATES = new Set([112, 113, 114, 116, 121, 122, 123, 124]);
+// Deep-internal plumbing SharePoint keeps for itself, collapsed behind the
+// grid's bottom expander. Detection layers, strongest first:
+//   1. Hidden        — SharePoint marks nearly all system lists hidden
+//                      (appdata, TaxonomyHiddenList, Sharing Links, …).
+//   2. IsCatalog     — SharePoint's own flag on gallery lists; locale-proof.
+//   3. /_catalogs, /FormServerTemplates paths + gallery/social templates —
+//                      belt and braces for older shapes (112 user info,
+//                      113 web part, 114 list template, 116 master page,
+//                      121 solutions, 122 no-code public, 123 theme,
+//                      124 design, 125 app data, 175 maintenance logs,
+//                      544 MicroFeed).
+//   4. INTERNAL_TITLES — visible classic-publishing infrastructure no flag
+//                      catches. English titles only; the mechanical signals
+//                      above carry non-English sites. Curated — trim or grow
+//                      deliberately, one line per decision.
+// Deliberately NOT internal: Workflow Tasks (real user tasks live there),
+// XML form libraries (115 — users create InfoPath libraries as content),
+// publishing Pages (850) and Images (851).
+export const INTERNAL_TEMPLATES = new Set([112, 113, 114, 116, 121, 122, 123, 124, 125, 175, 544]);
+export const INTERNAL_TITLES = new Set([
+  'TaxonomyHiddenList',
+  'Style Library',
+  'Form Templates',
+  'Cache Profiles',
+  'Device Channels',
+  'Quick Deploy Items',
+  'Reusable Content',
+  'Content and Structure Reports',
+  'Site Collection Documents',
+  'Site Collection Images',
+  'Suggested Content Browser Locations',
+]);
 export function isInternalList(list) {
+  const path = String(list?.RootFolder?.ServerRelativeUrl || '').toLowerCase();
   return Boolean(list?.Hidden)
+    || Boolean(list?.IsCatalog)
     || INTERNAL_TEMPLATES.has(list?.BaseTemplate)
-    || String(list?.RootFolder?.ServerRelativeUrl || '').toLowerCase().includes('/_catalogs')
-    || list?.Title === 'TaxonomyHiddenList';
+    || path.includes('/_catalogs')
+    || path.endsWith('/formservertemplates')
+    || INTERNAL_TITLES.has(list?.Title);
 }
 
 const FIELD_SELECT = [
