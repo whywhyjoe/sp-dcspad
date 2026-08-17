@@ -5457,8 +5457,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "75-dirty" : "dev";
-var injectedRevision = true ? "e7c9c0d5-dirty" : "";
+var injectedBuild = true ? "88-dirty" : "dev";
+var injectedRevision = true ? "987711e6-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -6343,10 +6343,21 @@ spExportType.addEventListener("change", () => {
   resetSpExportAction();
   syncSpExportAction();
 });
+function syncSpExportSelection() {
+  if (spFilesMode !== "export") return;
+  const name = spExportName.value.trim();
+  for (const row of spFilesList.querySelectorAll(".sp-file-row")) {
+    const rowName = row.querySelector(".sp-file-row__name")?.textContent || "";
+    const match = row.dataset.kind === "file" && name !== "" && rowName.localeCompare(name, void 0, { sensitivity: "base" }) === 0;
+    row.classList.toggle("selected", match);
+    row.setAttribute("aria-selected", String(match));
+  }
+}
 spExportName.addEventListener("input", () => {
   setSpError("");
   resetSpExportAction();
   syncSpExportAction();
+  syncSpExportSelection();
 });
 function setSpMetadataNotice(message = "") {
   spMetadataNotice.textContent = message;

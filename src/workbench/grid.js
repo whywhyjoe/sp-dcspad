@@ -25,6 +25,21 @@ export { copyText };
 export const encodeSpPath = (path) =>
   String(path).split('/').map(encodeURIComponent).join('/');
 
+// New-tab anchors: modern SharePoint pages intercept link clicks at the
+// document level for SPA routing and can swallow same-origin
+// target="_blank" navigations. Opening explicitly from our own handler is
+// deterministic; the target/rel attributes stay as semantics + fallback.
+export function bindNewTab(a) {
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    window.open(a.href, '_blank', 'noopener');
+  });
+  return a;
+}
+
 const cellValue = (row, col) =>
   typeof col.value === 'function' ? col.value(row) : row[col.key];
 
@@ -222,10 +237,8 @@ export function createGrid({
         if (href) {
           const a = el('a', 'wb-cell-url', text);
           a.href = href;
-          a.target = '_blank';
-          a.rel = 'noopener';
           a.title = 'Open in a new tab';
-          a.addEventListener('click', (e) => e.stopPropagation());
+          bindNewTab(a);
           td.append(a);
           if (col.copyable) {
             const glyph = el('span', 'sp-copy wb-cell-copy', '⧉');

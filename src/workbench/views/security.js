@@ -3,7 +3,7 @@
 // BasePermissions), web role assignments, and an explicit
 // broken-inheritance scan across lists.
 
-import { createGrid } from '../grid.js?v=2';
+import { createGrid, bindNewTab } from '../grid.js?v=2';
 import { decodeBasePermissions, principalTypeName } from '../perm-kinds.js';
 import { createSpWriteClient } from '../sp-write.js';
 import { LINK_GROUPS, linkUrl } from '../config-links.js';
@@ -34,8 +34,7 @@ export function createSecurityView({ client }) {
   const permGroup = LINK_GROUPS.find((g) => g.title === 'Permissions & people');
   for (const link of (permGroup?.links || []).filter((l) => l.label !== 'Access requests')) {
     const a = el('a', 'btn btn-xs wb-head-link', `${link.label} ↗`);
-    a.target = '_blank';
-    a.rel = 'noopener';
+    bindNewTab(a);
     a.dataset.path = link.path;
     headLinks.append(a);
   }

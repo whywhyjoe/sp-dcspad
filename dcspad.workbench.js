@@ -1238,6 +1238,16 @@ var el2 = (tag, cls, text) => {
   return n;
 };
 var encodeSpPath = (path) => String(path).split("/").map(encodeURIComponent).join("/");
+function bindNewTab(a) {
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    window.open(a.href, "_blank", "noopener");
+  });
+  return a;
+}
 var cellValue2 = (row, col) => typeof col.value === "function" ? col.value(row) : row[col.key];
 function displayValue(row, col) {
   const v = cellValue2(row, col);
@@ -1415,10 +1425,8 @@ function createGrid({
         if (href) {
           const a = el2("a", "wb-cell-url", text);
           a.href = href;
-          a.target = "_blank";
-          a.rel = "noopener";
           a.title = "Open in a new tab";
-          a.addEventListener("click", (e) => e.stopPropagation());
+          bindNewTab(a);
           td.append(a);
           if (col.copyable) {
             const glyph = el2("span", "sp-copy wb-cell-copy", "\u29C9");
@@ -2306,6 +2314,10 @@ var LIST_SELECT = [
   "DefaultViewUrl",
   "RootFolder/ServerRelativeUrl"
 ];
+var INTERNAL_TEMPLATES = /* @__PURE__ */ new Set([112, 113, 114, 116, 121, 122, 123, 124]);
+function isInternalList(list2) {
+  return Boolean(list2?.Hidden) || INTERNAL_TEMPLATES.has(list2?.BaseTemplate) || String(list2?.RootFolder?.ServerRelativeUrl || "").toLowerCase().includes("/_catalogs") || list2?.Title === "TaxonomyHiddenList";
+}
 var FIELD_SELECT = [
   "Id",
   "Title",
@@ -2401,7 +2413,7 @@ function createListsView({ client: client2, navigate }) {
   const absUrl = (rel) => rel ? `${webOrigin()}${encodeSpPath(rel)}` : "";
   const gridPane = el4("div", "wb-pane");
   const head = el4("div", "wb-view-head");
-  head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web, hidden ones included. Click a row for fields, views, and content types.</p>';
+  head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web \u2014 SharePoint-internal plumbing sits behind the expander below the grid. Click a row for fields, views, content types, and items.</p>';
   const grid = createGrid({
     columns: [
       { key: "Title", label: "Title" },
@@ -2422,11 +2434,9 @@ function createListsView({ client: client2, navigate }) {
           const a = document.createElement("a");
           a.className = "wb-cell-link";
           a.href = linkUrl(client2.webUrl(), LIST_SETTINGS, { guid: id });
-          a.target = "_blank";
-          a.rel = "noopener";
           a.title = "Open list settings in a new tab";
           a.textContent = "\u2699";
-          a.addEventListener("click", (e) => e.stopPropagation());
+          bindNewTab(a);
           return a;
         }
       }
@@ -2441,12 +2451,33 @@ function createListsView({ client: client2, navigate }) {
       webUrl: client2.webUrl()
     }
   });
-  gridPane.append(head, grid.el);
+  const moreBtn = el4("button", "btn btn-xs wb-lists-more");
+  moreBtn.type = "button";
+  moreBtn.hidden = true;
+  gridPane.append(head, grid.el, moreBtn);
   const detailPane = el4("div", "wb-pane");
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
   let listsLoaded = false;
+  let allLists = [];
+  let listsPartial = false;
+  let showInternal = false;
   const tabCache = /* @__PURE__ */ new Map();
+  function renderLists() {
+    const internal = allLists.filter(isInternalList);
+    grid.setRows(
+      showInternal ? allLists : allLists.filter((l) => !isInternalList(l)),
+      { partial: listsPartial }
+    );
+    moreBtn.hidden = internal.length === 0;
+    const label = `${internal.length} internal list${internal.length === 1 ? "" : "s"}`;
+    moreBtn.textContent = showInternal ? `Hide ${label} \u25B4` : `Show ${label} \u25BE`;
+    moreBtn.title = "SharePoint-internal plumbing: hidden lists, galleries, the taxonomy cache";
+  }
+  moreBtn.addEventListener("click", () => {
+    showInternal = !showInternal;
+    renderLists();
+  });
   async function loadLists() {
     if (listsLoaded) return;
     grid.setLoading("Loading lists\u2026");
@@ -2457,7 +2488,9 @@ function createListsView({ client: client2, navigate }) {
         orderby: "Title",
         top: 5e3
       });
-      grid.setRows(items, { partial });
+      allLists = items;
+      listsPartial = partial;
+      renderLists();
       listsLoaded = true;
     } catch (err) {
       grid.setError(err);
@@ -2794,8 +2827,7 @@ function createListsView({ client: client2, navigate }) {
     sub.addEventListener("click", () => copyText(listId, sub));
     const settingsLink = el4("a", "btn btn-xs wb-detail-settings", "List settings \u2197");
     settingsLink.href = linkUrl(client2.webUrl(), LIST_SETTINGS, { guid: listId });
-    settingsLink.target = "_blank";
-    settingsLink.rel = "noopener";
+    bindNewTab(settingsLink);
     settingsLink.title = "Open this list\u2019s settings page in a new tab";
     const headRow = el4("div", "wb-detail-head");
     headRow.append(back, title, sub, settingsLink);
@@ -3397,11 +3429,29 @@ function createSpWriteClient({
       serverRelativeUrl: result.ServerRelativeUrl || `${folder === "/" ? "" : folder}/${safeName}`
     };
   }
+  async function createFolder(parentServerRelativeUrl, name) {
+    const clean = String(name || "").trim();
+    if (!clean || /["*:<>?/\\|]/.test(clean) || clean.startsWith(".") || clean.endsWith(".")) {
+      throw new SpFileError(
+        'Folder names cannot contain " * : < > ? / \\ | or start or end with a dot.',
+        { code: "invalid-name" }
+      );
+    }
+    const parent = String(parentServerRelativeUrl || "/").replace(/\/+$/, "") || "";
+    const path = `${parent}/${clean}`;
+    const endpoint = `${client2.webUrl()}/_api/web/Folders/AddUsingPath(decodedUrl='${odataPathLiteral(path)}')`;
+    await post(
+      endpoint,
+      { body: "" },
+      { fallback: "Could not create the folder", code: "write" }
+    );
+    return { name: clean, serverRelativeUrl: path };
+  }
   async function postJson(path, body = {}, { fallback = "SharePoint write failed", code = "write" } = {}) {
     const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
     return post(url, { body: JSON.stringify(body) }, { fallback, code });
   }
-  return { validateUpdateListItem, uploadFile, postJson, isMock };
+  return { validateUpdateListItem, uploadFile, createFolder, postJson, isMock };
 }
 
 // ../src/workbench/views/security.js
@@ -3421,8 +3471,7 @@ function createSecurityView({ client: client2 }) {
   const permGroup = LINK_GROUPS.find((g) => g.title === "Permissions & people");
   for (const link of (permGroup?.links || []).filter((l) => l.label !== "Access requests")) {
     const a = el5("a", "btn btn-xs wb-head-link", `${link.label} \u2197`);
-    a.target = "_blank";
-    a.rel = "noopener";
+    bindNewTab(a);
     a.dataset.path = link.path;
     headLinks.append(a);
   }
@@ -4166,8 +4215,7 @@ function createLinksView({ client: client2 }) {
       for (const link of group.links) {
         const row = el8("a", "wb-link");
         row.href = linkUrl(webUrl, link);
-        row.target = "_blank";
-        row.rel = "noopener";
+        bindNewTab(row);
         row.append(el8("span", "wb-link-label", link.label));
         row.append(el8("span", "wb-link-go", "\u2197"));
         row.title = link.hint ? `${link.path}
@@ -5344,6 +5392,11 @@ var FIELD_SELECT3 = [
   "FillInChoice"
 ];
 var SITE_PAGES_BASE_TEMPLATE = 119;
+var PUBLISHING_PAGES_BASE_TEMPLATE = 850;
+function pickPagesLibrary(items) {
+  const lists = items || [];
+  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden) || null;
+}
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
 var el11 = (tag, cls, text) => {
@@ -5367,8 +5420,7 @@ function createPagesView({ client: client2, navigate }) {
   const head = el11("div", "wb-view-head");
   head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Modern pages in this web\u2019s Site Pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
   const libraryLink = el11("a", "btn btn-xs wb-head-link", "Open Site Pages library \u2197");
-  libraryLink.target = "_blank";
-  libraryLink.rel = "noopener";
+  bindNewTab(libraryLink);
   libraryLink.hidden = true;
   head.append(libraryLink);
   const masterStatus = el11("div", "wb-grid-status");
@@ -5390,7 +5442,7 @@ function createPagesView({ client: client2, navigate }) {
         expand: "RootFolder",
         top: 5e3
       }).then(({ items }) => {
-        const found = items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden) || items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE);
+        const found = pickPagesLibrary(items);
         return found ? {
           listId: found.Id,
           title: found.Title,
@@ -5463,11 +5515,9 @@ function createPagesView({ client: client2, navigate }) {
                 const a = document.createElement("a");
                 a.className = "wb-cell-link";
                 a.href = fileRef;
-                a.target = "_blank";
-                a.rel = "noopener";
                 a.title = "Open the page in a new tab";
                 a.textContent = "\u2197";
-                a.addEventListener("click", (e) => e.stopPropagation());
+                bindNewTab(a);
                 return a;
               }
             }
@@ -5717,8 +5767,7 @@ ${fullUrl}`;
     if (item2.FileRef) {
       const open = el11("a", "btn btn-xs", "Open page \u2197");
       open.href = item2.FileRef;
-      open.target = "_blank";
-      open.rel = "noopener";
+      bindNewTab(open);
       actions.append(open);
     }
     headRow.append(actions);
@@ -5794,6 +5843,172 @@ ${fullUrl}`;
   return { el: root, load: load2 };
 }
 
+// ../src/workbench/upload-metadata.js
+var FILE_METADATA_SPECS2 = Object.freeze([
+  { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
+  { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
+  { key: "docVersion", label: "DocVersion", internalName: "DocVersion", types: ["Text"] }
+]);
+function metadataFieldStates(libraryFields) {
+  const fields = Array.isArray(libraryFields) ? libraryFields : [];
+  const states = {};
+  for (const spec of FILE_METADATA_SPECS2) {
+    const match = fields.find((f) => String(f.InternalName || "").toLowerCase() === spec.internalName.toLowerCase());
+    let reason = "";
+    if (!match) reason = `${spec.internalName} is not available in this library.`;
+    else if (match.ReadOnlyField) reason = `${spec.internalName} is read-only.`;
+    else if (match.Hidden) reason = `${spec.internalName} is hidden in this library.`;
+    else if (!spec.types.includes(String(match.TypeAsString || ""))) {
+      reason = `${spec.internalName} is not a supported text field.`;
+    }
+    states[spec.key] = {
+      key: spec.key,
+      label: spec.label,
+      internalName: match?.InternalName || spec.internalName,
+      entityPropertyName: match?.EntityPropertyName || match?.InternalName || spec.internalName,
+      available: !reason,
+      reason
+    };
+  }
+  return states;
+}
+var anyMetadataAvailable = (states) => Object.values(states || {}).some((s) => s.available);
+var el12 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+function openUploadMetadataDialog({
+  fileName,
+  overwrite = false,
+  states,
+  values = {},
+  doUpload,
+  doMetadata
+}) {
+  return new Promise((resolve, reject) => {
+    const dialog = el12("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
+    const panel = el12("div", "app-dialog__panel");
+    const head = el12("div", "app-dialog__head");
+    head.append(el12("h2", "", "File metadata"));
+    const closeBtn = el12("button", "btn btn-ghost btn-xs", "\u2715");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    head.append(closeBtn);
+    const context = el12("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
+    panel.append(head, context);
+    const inputs = {};
+    for (const state2 of Object.values(states)) {
+      const label = el12(
+        "label",
+        `app-dialog__field sp-metadata-field ${state2.available ? "available" : "unavailable"}`
+      );
+      const headRow = el12("span", "sp-metadata-field__head");
+      headRow.append(el12("span", "", state2.label));
+      headRow.append(el12(
+        "span",
+        "sp-metadata-field__state",
+        state2.available ? "Available" : "Unavailable"
+      ));
+      const input = state2.key === "description" ? el12("textarea") : el12("input");
+      if (state2.key === "description") input.rows = 4;
+      else {
+        input.type = "text";
+        input.maxLength = 255;
+        input.autocomplete = "off";
+      }
+      input.className = `wb-upload-meta-${state2.key}`;
+      input.disabled = !state2.available;
+      input.value = state2.available ? String(values[state2.key] ?? "") : "";
+      const hint = el12("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
+      label.append(headRow, input, hint);
+      panel.append(label);
+      inputs[state2.key] = input;
+    }
+    const error = el12("div", "sp-files-error");
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+    const actions = el12("div", "app-dialog__actions sp-metadata-actions");
+    const cancel = el12("button", "btn btn-ghost", "Cancel");
+    cancel.type = "button";
+    const keep = el12("button", "btn wb-upload-meta-keep", "Keep file without metadata");
+    keep.type = "button";
+    keep.hidden = true;
+    const primary = el12("button", "btn btn-run wb-upload-meta-go", "Upload file");
+    primary.type = "button";
+    actions.append(cancel, keep, primary);
+    panel.append(error, actions);
+    dialog.append(panel);
+    document.body.append(dialog);
+    const readValues = () => Object.fromEntries(
+      Object.entries(inputs).map(([key2, input]) => [key2, input.value])
+    );
+    const finish = (outcome) => {
+      dialog.close();
+      dialog.remove();
+      resolve(outcome);
+    };
+    const fail = (err) => {
+      dialog.close();
+      dialog.remove();
+      reject(err);
+    };
+    let uploaded = false;
+    let busy = false;
+    async function run() {
+      if (busy) return;
+      busy = true;
+      error.hidden = true;
+      primary.disabled = true;
+      cancel.disabled = true;
+      keep.disabled = true;
+      if (!uploaded) {
+        primary.textContent = "Uploading\u2026";
+        try {
+          await doUpload();
+          uploaded = true;
+        } catch (err) {
+          if (err && typeof err === "object") err.uploadMetadataValues = readValues();
+          fail(err);
+          return;
+        }
+      }
+      primary.textContent = "Saving metadata\u2026";
+      try {
+        await doMetadata(readValues());
+        finish("saved");
+      } catch (err) {
+        busy = false;
+        cancel.hidden = true;
+        keep.hidden = false;
+        keep.disabled = false;
+        primary.textContent = "Retry metadata";
+        primary.disabled = false;
+        error.textContent = `The file was uploaded, but its metadata could not be saved: ${err?.message || err}`;
+        error.hidden = false;
+      }
+    }
+    primary.addEventListener("click", run);
+    keep.addEventListener("click", () => {
+      if (!busy) finish("kept");
+    });
+    const dismiss = () => {
+      if (busy) return;
+      if (uploaded) finish("kept");
+      else finish("cancelled");
+    };
+    cancel.addEventListener("click", dismiss);
+    closeBtn.addEventListener("click", dismiss);
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      dismiss();
+    });
+    dialog.showModal();
+    Object.values(inputs).find((input) => !input.disabled)?.focus();
+  });
+}
+
 // ../src/workbench/views/browser.js?v=2
 var FIELD_SELECT4 = [
   "Id",
@@ -5821,7 +6036,7 @@ var FILE_SELECT = [
   "UIVersionLabel",
   "CheckOutType"
 ];
-var el12 = (tag, cls, text) => {
+var el13 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -5897,19 +6112,19 @@ function normalizedPath2(value) {
   return path;
 }
 function createBrowserView({ client: client2, navigate }) {
-  const root = el12("section", "wb-view wb-view-files");
+  const root = el13("section", "wb-view wb-view-files");
   const spWrite = createSpWriteClient({ client: client2 });
-  const head = el12("div", "wb-view-head");
-  head.innerHTML = '<h2>Files</h2><p class="wb-view-hint">Browse any library or folder of this web \u2014 every file type, with download, binary upload, and full metadata editing.</p>';
-  const bar = el12("div", "wb-crumbs-bar");
-  const librarySelect = el12("select", "wb-lib-select");
+  const head = el13("div", "wb-view-head");
+  head.innerHTML = '<h2>Files</h2><p class="wb-view-hint">Browse any library or folder of this web \u2014 every file type, with download, binary upload, folder creation, and full metadata editing.</p>';
+  const bar = el13("div", "wb-crumbs-bar");
+  const librarySelect = el13("select", "wb-lib-select");
   librarySelect.setAttribute("aria-label", "Jump to a document library");
-  const crumbs = el12("div", "wb-crumbs");
+  const crumbs = el13("div", "wb-crumbs");
   bar.append(librarySelect, crumbs);
-  const consent = el12("div", "wb-consent");
+  const consent = el13("div", "wb-consent");
   consent.hidden = true;
-  const gridWrap = el12("div", "wb-files-grid");
-  const metaPanel = el12("div", "wb-subpanel wb-file-meta");
+  const gridWrap = el13("div", "wb-files-grid");
+  const metaPanel = el13("div", "wb-subpanel wb-file-meta");
   metaPanel.hidden = true;
   root.append(head, bar, consent, gridWrap, metaPanel);
   let libraries = [];
@@ -5946,7 +6161,7 @@ function createBrowserView({ client: client2, navigate }) {
     const rootPath = webRootPath();
     const segments = currentPath === "/" ? [] : currentPath.slice(1).split("/");
     let acc = "";
-    const rootBtn = el12("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
+    const rootBtn = el13("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
     rootBtn.type = "button";
     rootBtn.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
     let started = rootPath === "/";
@@ -5956,16 +6171,16 @@ function createBrowserView({ client: client2, navigate }) {
       if (!started) {
         if (normalizedPath2(acc) === rootPath) {
           started = true;
-          const btn2 = el12("button", "wb-crumb", rootPath);
+          const btn2 = el13("button", "wb-crumb", rootPath);
           btn2.type = "button";
           btn2.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
           crumbs.append(btn2);
         }
         continue;
       }
-      crumbs.append(el12("span", "wb-crumb-sep", "/"));
+      crumbs.append(el13("span", "wb-crumb-sep", "/"));
       const target = acc;
-      const btn = el12("button", "wb-crumb", segment);
+      const btn = el13("button", "wb-crumb", segment);
       btn.type = "button";
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
@@ -5986,13 +6201,13 @@ function createBrowserView({ client: client2, navigate }) {
       libraries = [];
     }
     librarySelect.textContent = "";
-    const blank = el12("option", "", "Libraries\u2026");
+    const blank = el13("option", "", "Libraries\u2026");
     blank.value = "";
     librarySelect.append(blank);
     for (const lib of libraries) {
       const url = lib.RootFolder?.ServerRelativeUrl;
       if (!url) continue;
-      const opt = el12("option", "", lib.Title);
+      const opt = el13("option", "", lib.Title);
       opt.value = url;
       librarySelect.append(opt);
     }
@@ -6008,10 +6223,10 @@ function createBrowserView({ client: client2, navigate }) {
           label: "Name",
           value: (row) => row.Name,
           render: (name, row) => {
-            const wrap = el12("span", `wb-file-name wb-node-${fileRole(row)}`);
+            const wrap = el13("span", `wb-file-name wb-node-${fileRole(row)}`);
             const glyph = icon(row.kind === "folder" ? "folder" : "file");
             glyph.classList.add("wb-node");
-            wrap.append(glyph, el12("span", "wb-file-name-text", name));
+            wrap.append(glyph, el13("span", "wb-file-name-text", name));
             return wrap;
           }
         },
@@ -6062,9 +6277,9 @@ function createBrowserView({ client: client2, navigate }) {
       filterPlaceholder: "Filter files\u2026",
       exportName: "sp-files"
     });
-    const uploadBtn = el12("button", "btn btn-xs wb-primary", "Upload\u2026");
+    const uploadBtn = el13("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";
-    const fileInput = el12("input");
+    const fileInput = el13("input");
     fileInput.type = "file";
     fileInput.hidden = true;
     fileInput.setAttribute("aria-label", "Choose a file to upload");
@@ -6073,10 +6288,13 @@ function createBrowserView({ client: client2, navigate }) {
       if (fileInput.files?.length) startUpload(fileInput.files[0]);
       fileInput.value = "";
     });
-    const refreshBtn = el12("button", "btn btn-xs", "Refresh");
+    const newFolderBtn = el13("button", "btn btn-xs wb-newfolder", "New folder\u2026");
+    newFolderBtn.type = "button";
+    newFolderBtn.addEventListener("click", promptNewFolder);
+    const refreshBtn = el13("button", "btn btn-xs", "Refresh");
     refreshBtn.type = "button";
     refreshBtn.addEventListener("click", () => listFolder(currentPath, { force: true }));
-    grid.actionsEl.prepend(uploadBtn, fileInput, refreshBtn);
+    grid.actionsEl.prepend(uploadBtn, fileInput, newFolderBtn, refreshBtn);
     gridWrap.append(grid.el);
   }
   async function listFolder(path, { force = false } = {}) {
@@ -6112,14 +6330,14 @@ function createBrowserView({ client: client2, navigate }) {
   function showConsent(message, onConfirm) {
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el12("span", "wb-consent-text", message));
-    const replace = el12("button", "btn btn-xs", "Replace");
+    consent.append(el13("span", "wb-consent-text", message));
+    const replace = el13("button", "btn btn-xs", "Replace");
     replace.type = "button";
     replace.addEventListener("click", () => {
       consent.hidden = true;
       onConfirm();
     });
-    const cancel = el12("button", "btn btn-xs", "Cancel");
+    const cancel = el13("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
@@ -6130,8 +6348,8 @@ function createBrowserView({ client: client2, navigate }) {
     consent.textContent = "";
     consent.hidden = false;
     consent.classList.toggle("wb-consent-error", isError);
-    consent.append(el12("span", "wb-consent-text", message));
-    const dismiss = el12("button", "btn btn-xs", "Dismiss");
+    consent.append(el13("span", "wb-consent-text", message));
+    const dismiss = el13("button", "btn btn-xs", "Dismiss");
     dismiss.type = "button";
     dismiss.addEventListener("click", () => {
       consent.hidden = true;
@@ -6154,14 +6372,38 @@ function createBrowserView({ client: client2, navigate }) {
     if (existing) {
       showConsent(
         `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-        () => doUpload(file, { overwrite: true, folderPath })
+        () => runUpload(file, { overwrite: true, folderPath })
       );
       return;
     }
-    await doUpload(file, { overwrite: false, folderPath });
+    await runUpload(file, { overwrite: false, folderPath });
   }
-  async function doUpload(file, { overwrite, folderPath }) {
-    uploadNotice(`Uploading \u201C${file.name}\u201D\u2026`);
+  async function uploadMetadataStates(folderPath) {
+    try {
+      const listId = await parentListId(folderPath);
+      const fields = await listFields(listId);
+      const states = metadataFieldStates(fields);
+      return anyMetadataAvailable(states) ? states : null;
+    } catch {
+      return null;
+    }
+  }
+  async function prefillUploadValues(states, folderPath, fileName) {
+    const values = { title: "", description: "", docVersion: "" };
+    const available = Object.values(states).filter((s) => s.available);
+    try {
+      const item2 = await client2.get(
+        fileApi(`${folderPath}/${fileName}`, "/ListItemAllFields"),
+        { select: available.map((s) => s.entityPropertyName) }
+      );
+      for (const s of available) {
+        values[s.key] = String(item2?.[s.entityPropertyName] ?? item2?.[s.internalName] ?? "");
+      }
+    } catch {
+    }
+    return values;
+  }
+  async function runUpload(file, { overwrite, folderPath, carriedValues = null }) {
     let data;
     try {
       data = await file.arrayBuffer();
@@ -6169,28 +6411,98 @@ function createBrowserView({ client: client2, navigate }) {
       uploadNotice(`Could not read the file: ${err?.message || err}`, true);
       return;
     }
-    try {
-      const result = await spWrite.uploadFile(folderPath, file.name, data, { overwrite });
-      consent.hidden = true;
-      if (currentPath !== folderPath) {
-        uploadNotice(`Uploaded \u201C${file.name}\u201D to ${folderPath}.`);
-        return;
+    const bareUpload = () => spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    const states = await uploadMetadataStates(folderPath);
+    if (!states) {
+      uploadNotice(`Uploading \u201C${file.name}\u201D\u2026`);
+      try {
+        await bareUpload();
+        await finishUpload(file, folderPath, `Uploaded \u201C${file.name}\u201D \u2713`);
+      } catch (err) {
+        handleUploadError(err, file, folderPath, overwrite, null);
       }
-      await listFolder(folderPath, { force: true });
-      const uploaded = currentListing.files.find(
-        (f) => String(f.Name).toLowerCase() === file.name.toLowerCase()
-      ) || { kind: "file", Name: result.fileName, ServerRelativeUrl: result.serverRelativeUrl };
-      openMetadata(uploaded, { justUploaded: true });
-    } catch (err) {
-      if (err?.code === "conflict" && !overwrite) {
-        showConsent(
-          `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-          () => doUpload(file, { overwrite: true, folderPath })
-        );
-        return;
-      }
-      uploadNotice(`Upload failed: ${err?.message || err}`, true);
+      return;
     }
+    const values = carriedValues || (overwrite ? await prefillUploadValues(states, folderPath, file.name) : { title: "", description: "", docVersion: "" });
+    const initial = { ...values };
+    const filePath = `${folderPath}/${file.name}`;
+    try {
+      const outcome = await openUploadMetadataDialog({
+        fileName: file.name,
+        overwrite,
+        states,
+        values,
+        doUpload: bareUpload,
+        // Write only what the user changed against the prefill (a cleared
+        // prefill still writes ''); untouched values cost no request.
+        doMetadata: async (entered) => {
+          const formValues = Object.values(states).filter((s) => s.available && String(entered[s.key] ?? "") !== String(initial[s.key] ?? "")).map((s) => ({ FieldName: s.internalName, FieldValue: String(entered[s.key] ?? "") }));
+          if (!formValues.length) return;
+          await spWrite.validateUpdateListItem(
+            { fileServerRelativeUrl: filePath },
+            formValues,
+            { newDocumentUpdate: true }
+          );
+        }
+      });
+      if (outcome === "cancelled") return;
+      await finishUpload(file, folderPath, outcome === "saved" ? `Uploaded \u201C${file.name}\u201D \u2713` : `Uploaded \u201C${file.name}\u201D \u2713 (kept without metadata)`);
+    } catch (err) {
+      handleUploadError(err, file, folderPath, overwrite, err?.uploadMetadataValues || null);
+    }
+  }
+  async function finishUpload(file, folderPath, message) {
+    if (currentPath === folderPath) await listFolder(folderPath, { force: true });
+    uploadNotice(message);
+  }
+  function handleUploadError(err, file, folderPath, overwrite, carriedValues) {
+    if (err?.code === "conflict" && !overwrite) {
+      showConsent(
+        `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
+        () => runUpload(file, { overwrite: true, folderPath, carriedValues })
+      );
+      return;
+    }
+    uploadNotice(`Upload failed: ${err?.message || err}`, true);
+  }
+  function promptNewFolder() {
+    const folderPath = currentPath;
+    consent.classList.remove("wb-consent-error");
+    consent.textContent = "";
+    consent.hidden = false;
+    consent.append(el13("span", "wb-consent-text", `New folder in ${folderPath}:`));
+    const nameIn = el13("input", "wb-folder-name");
+    nameIn.type = "text";
+    nameIn.placeholder = "Folder name";
+    nameIn.setAttribute("aria-label", "New folder name");
+    const create = el13("button", "btn btn-xs wb-primary", "Create");
+    create.type = "button";
+    const cancel = el13("button", "btn btn-xs", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => {
+      consent.hidden = true;
+    });
+    const submit = async () => {
+      const name = nameIn.value.trim();
+      if (!name) {
+        nameIn.focus();
+        return;
+      }
+      create.disabled = true;
+      try {
+        await spWrite.createFolder(folderPath, name);
+        await listFolder(folderPath, { force: true });
+        uploadNotice(`Created folder \u201C${name}\u201D.`);
+      } catch (err) {
+        uploadNotice(`Could not create the folder: ${err?.message || err}`, true);
+      }
+    };
+    create.addEventListener("click", submit);
+    nameIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+    consent.append(nameIn, create, cancel);
+    nameIn.focus();
   }
   function parentListId(folderPath) {
     const key2 = folderPath.toLowerCase();
@@ -6229,25 +6541,21 @@ function createBrowserView({ client: client2, navigate }) {
     }
     return fieldsCache.get(listId);
   }
-  async function openMetadata(row, { justUploaded = false } = {}) {
+  async function openMetadata(row) {
     metaPanel.hidden = false;
     metaPanel.textContent = "";
-    const titleRow = el12("div", "wb-file-meta-head");
-    titleRow.append(el12(
-      "h3",
-      "wb-subpanel-title",
-      `${justUploaded ? "Uploaded \u2713 \u2014 metadata for" : "Metadata for"} ${row.Name}`
-    ));
-    const close = el12("button", "btn btn-xs", justUploaded ? "Keep without metadata" : "Close");
+    const titleRow = el13("div", "wb-file-meta-head");
+    titleRow.append(el13("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
+    const close = el13("button", "btn btn-xs", "Close");
     close.type = "button";
     close.addEventListener("click", () => {
       metaPanel.hidden = true;
     });
     titleRow.append(close);
     metaPanel.append(titleRow);
-    const body = el12("div", "wb-subpanel-body");
+    const body = el13("div", "wb-subpanel-body");
     metaPanel.append(body);
-    const status = el12("div", "wb-grid-status", "Loading metadata\u2026");
+    const status = el13("div", "wb-grid-status", "Loading metadata\u2026");
     body.append(status);
     try {
       const listId = await parentListId(currentPath);
@@ -6279,7 +6587,7 @@ function createBrowserView({ client: client2, navigate }) {
       });
       body.append(form.el);
     } catch (err) {
-      status.textContent = justUploaded ? `The file was uploaded, but its metadata could not be loaded: ${err?.message || err}` : err?.message || String(err);
+      status.textContent = err?.message || String(err);
       status.classList.add("wb-error");
     }
   }

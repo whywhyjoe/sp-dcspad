@@ -105,19 +105,35 @@ await check('mock: metadata save posts the file-path ValidateUpdateListItem', as
     && body.formValues[0].FieldName === 'Title';
 });
 
-await check('mock: uploading a new file routes through the mock writer', async () => {
+await check('mock: upload shows the pad-style dialog, greys the unavailable field', async () => {
   await page.setInputFiles('.wb-view-files input[type=file]', {
     name: 'hello.txt', mimeType: 'text/plain', buffer: Buffer.from('hello'),
   });
-  await page.waitForSelector('.wb-file-meta .wb-subpanel-title', { hasText: 'Uploaded' });
+  await page.waitForSelector('.wb-upload-metadata');
+  // Mock Documents library: Title and DocVersion exist, _ExtendedDescription
+  // doesn't — exactly one greyed field with a disabled input.
+  const unavailable = await page.locator('.wb-upload-metadata .sp-metadata-field.unavailable').count();
+  const descDisabled = await page.locator('.wb-upload-metadata .wb-upload-meta-description').isDisabled();
+  await page.fill('.wb-upload-metadata .wb-upload-meta-title', 'Hello note');
+  await page.locator('.wb-upload-meta-go').click();
+  await page.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “hello.txt” ✓'));
   const writes = await page.evaluate(() => globalThis.__DCSPAD_WB_WRITES__ || []);
-  const upload = writes.find((w) => w.url.includes('AddUsingPath'));
-  return Boolean(upload)
-    && upload.url.includes("overwrite=false")
-    && upload.contentType === 'application/octet-stream';
+  const upload = writes.find((w) => w.url.includes('AddUsingPath') && w.url.includes('hello.txt'));
+  const meta = writes.find((w) =>
+    w.url.includes('hello.txt') && w.url.includes('ValidateUpdateListItem'));
+  const metaBody = meta ? JSON.parse(meta.body) : null;
+  await page.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  return unavailable === 1 && descDisabled
+    && upload?.url.includes('overwrite=false')
+    && upload?.contentType === 'application/octet-stream'
+    && metaBody?.formValues.length === 1
+    && metaBody.formValues[0].FieldName === 'Title'
+    && metaBody.formValues[0].FieldValue === 'Hello note'
+    && metaBody.bNewDocumentUpdate === true;
 });
 
-await check('mock: same-name upload asks for overwrite consent first', async () => {
+await check('mock: same-name upload asks consent, then prefills the dialog', async () => {
   const before = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
   await page.setInputFiles('.wb-view-files input[type=file]', {
     name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('x'),
@@ -126,14 +142,44 @@ await check('mock: same-name upload asks for overwrite consent first', async () 
   const consentText = await page.locator('.wb-consent').textContent();
   const during = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
   await page.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
-  await page.waitForFunction(
-    (n) => (globalThis.__DCSPAD_WB_WRITES__ || []).length > n, during,
-  );
+  await page.waitForSelector('.wb-upload-metadata');
+  const title = await page.locator('.wb-upload-metadata .wb-upload-meta-title').inputValue();
+  const docVersion = await page.locator('.wb-upload-metadata .wb-upload-meta-docVersion').inputValue();
+  await page.locator('.wb-upload-meta-go').click();
+  await page.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “proposal.docx” ✓'));
   const writes = await page.evaluate(() => globalThis.__DCSPAD_WB_WRITES__ || []);
-  const replaced = writes[writes.length - 1];
+  const uploadIndex = writes.findLastIndex((w) =>
+    w.url.includes('AddUsingPath') && w.url.includes('proposal.docx'));
+  const afterUpload = writes.slice(uploadIndex + 1);
+  await page.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
   return consentText.includes('already exists')
     && during === before   // no write until consent
-    && replaced.url.includes('overwrite=true');
+    && title === 'Project proposal' && docVersion === '1.4'   // prefilled
+    && writes[uploadIndex].url.includes('overwrite=true')
+    // untouched prefill → no metadata write after the upload
+    && !afterUpload.some((w) => w.url.includes('ValidateUpdateListItem'));
+});
+
+await check('mock: new-folder prompt validates, then posts Folders/AddUsingPath', async () => {
+  await page.locator('.wb-view-files .wb-newfolder').click();
+  const before = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
+  await page.fill('.wb-consent input', 'bad:name');
+  await page.locator('.wb-consent .btn', { hasText: 'Create' }).click();
+  await page.waitForSelector('.wb-consent-error');
+  const rejected = await page.evaluate(() => (globalThis.__DCSPAD_WB_WRITES__ || []).length);
+  await page.locator('.wb-view-files .wb-newfolder').click();
+  await page.fill('.wb-consent input', 'Reports 2026');
+  await page.locator('.wb-consent .btn', { hasText: 'Create' }).click();
+  await page.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Created folder'));
+  const writes = await page.evaluate(() => globalThis.__DCSPAD_WB_WRITES__ || []);
+  const created = writes[writes.length - 1];
+  await page.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  return rejected === before   // invalid name never reaches the writer
+    // odataPathLiteral percent-encodes the path inside the literal
+    && decodeURIComponent(created.url)
+      .includes("/_api/web/Folders/AddUsingPath(decodedUrl='/Shared Documents/Reports 2026')");
 });
 
 await check('mock: oversized uploads are rejected client-side with no write', async () => {
@@ -285,70 +331,110 @@ await check('live: root-library files resolve metadata through GetList', async (
     && new URL(libraryLookups[0]).searchParams.get('@listUrl') === "'/Shared Documents'";
 });
 
-await check('live: binary upload posts AddUsingPath with a digest and the raw bytes', async () => {
+await check('live: upload dialog shows library availability, uploads with digest', async () => {
   await live.setInputFiles('.wb-view-files input[type=file]', {
     name: 'new.bin', mimeType: 'application/octet-stream', buffer: Buffer.from([1, 2, 3]),
   });
-  await live.waitForSelector('.wb-file-meta .wb-subpanel-title', { hasText: 'Uploaded' });
+  await live.waitForSelector('.wb-upload-metadata');
+  // The live library exposes Title only — Description/DocVersion greyed.
+  const available = await live.locator('.wb-upload-metadata .sp-metadata-field.available').count();
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “new.bin” ✓'));
   const upload = uploads[0];
-  return uploads.length === 1
+  return available === 1
+    && uploads.length === 1
     && upload.url.includes("AddUsingPath(decodedUrl='new.bin',overwrite=false)")
     && upload.digest === 'WB-DIGEST'
-    && upload.bodyLength === 3;
+    && upload.bodyLength === 3
+    && vuliCalls.length === 0;   // nothing typed → no metadata write
 });
 
 await check('live: metadata failure keeps the file and retry re-posts only metadata', async () => {
   flags.failMetadata = true;
-  await live.fill('.wb-file-meta .wb-editor-row[data-internal="Title"] input', 'New title');
-  await live.locator('.wb-file-meta .wb-editor-bar .btn').click();
-  await live.waitForSelector('.wb-file-meta .wb-editor-status.wb-editor-failed');
-  const fieldError = await live
-    .locator('.wb-file-meta .wb-editor-row[data-internal="Title"] .wb-editor-error')
-    .textContent();
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'meta.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('m'),
+  });
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.fill('.wb-upload-metadata .wb-upload-meta-title', 'New title');
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForSelector('.wb-upload-metadata .sp-files-error:not([hidden])');
+  const errorText = await live.locator('.wb-upload-metadata .sp-files-error').textContent();
+  const retryLabel = await live.locator('.wb-upload-meta-go').textContent();
   const uploadsAfterFail = uploads.length;
   flags.failMetadata = false;
-  await live.locator('.wb-file-meta .wb-editor-bar .btn').click();
-  await live.waitForSelector('.wb-file-meta .wb-editor-status.wb-editor-saved');
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “meta.bin” ✓'));
   const retryCall = vuliCalls[vuliCalls.length - 1];
-  return fieldError.includes('The server said no')
+  return errorText.includes('could not be saved')
+    && retryLabel.includes('Retry metadata')
     && vuliCalls.length === 2
     && uploads.length === uploadsAfterFail   // retry never re-uploads
     && retryCall.url.includes('GetFileByServerRelativePath(')
+    && retryCall.body.formValues[0].FieldValue === 'New title'
     && retryCall.body.bNewDocumentUpdate === true
     && retryCall.digest === 'WB-DIGEST';
 });
 
-await check('live: keep-without-metadata dismisses the panel', async () => {
-  const closeLabel = await live.locator('.wb-file-meta .wb-file-meta-head .btn').textContent();
-  await live.locator('.wb-file-meta .wb-file-meta-head .btn').click();
-  const hidden = await live.locator('.wb-file-meta').isHidden();
-  return closeLabel.includes('Keep without metadata') && hidden;
+await check('live: keep-without-metadata closes the dialog and keeps the file', async () => {
+  flags.failMetadata = true;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'kept.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('k'),
+  });
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.fill('.wb-upload-metadata .wb-upload-meta-title', 'K');
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForSelector('.wb-upload-metadata .wb-upload-meta-keep:not([hidden])');
+  await live.locator('.wb-upload-meta-keep').click();
+  flags.failMetadata = false;
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('kept without metadata'));
+  return (await live.locator('.wb-upload-metadata').count()) === 0;
 });
 
-await check('live: a same-name upload asks before replacing', async () => {
+await check('live: a same-name upload asks first and prefills from the live file', async () => {
   const before = uploads.length;
   await live.setInputFiles('.wb-view-files input[type=file]', {
     name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('zz'),
   });
-  await live.waitForSelector('.wb-consent:not([hidden])');
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent:not([hidden])')?.textContent.includes('already exists'));
   const during = uploads.length;
   await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  const prefill = await live.locator('.wb-upload-metadata .wb-upload-meta-title').inputValue();
+  await live.locator('.wb-upload-meta-go').click();
   const landed = await until(() => uploads.length > during);
   const replaced = uploads[uploads.length - 1];
-  return landed && during === before && replaced.url.includes('overwrite=true');
+  // Clear the success notice so the next check's consent-wait can't race it.
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “proposal.docx” ✓'));
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  return landed && during === before
+    && prefill === 'Proposal'   // read from the file being replaced
+    && replaced.url.includes('overwrite=true');
 });
 
-await check('live: a 409 race surfaces the same consent and retries with overwrite', async () => {
+await check('live: a 409 race re-consents and the retry keeps the typed values', async () => {
   await live.setInputFiles('.wb-view-files input[type=file]', {
     name: 'racy.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('r'),
   });
-  await live.waitForSelector('.wb-consent:not([hidden])');
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.fill('.wb-upload-metadata .wb-upload-meta-title', 'Racy T');
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent:not([hidden])')?.textContent.includes('already exists'));
   const consentText = await live.locator('.wb-consent').textContent();
   await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  const carried = await live.locator('.wb-upload-metadata .wb-upload-meta-title').inputValue();
+  await live.locator('.wb-upload-meta-go').click();
   const landed = await until(() =>
     uploads.filter((u) => u.url.includes('racy.bin')).length === 2);
   const attempts = uploads.filter((u) => u.url.includes('racy.bin'));
   return landed && consentText.includes('already exists')
+    && carried === 'Racy T'   // values survive the race retry
     && attempts[0].url.includes('overwrite=false')
     && attempts[1].url.includes('overwrite=true');
 });

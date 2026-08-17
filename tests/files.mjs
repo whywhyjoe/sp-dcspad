@@ -494,6 +494,17 @@ await check('choosing an existing file supplies its name as the overwrite target
   (await page.locator('#sp-export-name').inputValue()) === 'existing.css'
   && (await page.locator('#sp-files-primary').textContent()) === 'Review overwrite'
   && !(await page.locator('#sp-files-primary').isDisabled()));
+await check('editing the name away from the selected file clears its highlight', async () => {
+  const row = page.locator('.sp-file-row', { hasText: 'existing.css' });
+  const highlighted = await row.evaluate((n) => n.classList.contains('selected'));
+  await page.fill('#sp-export-name', 'brand-new.css');
+  const cleared = await row.evaluate((n) => n.classList.contains('selected'));
+  const action = await page.locator('#sp-files-primary').textContent();
+  // typing a matching name again re-highlights — selection mirrors the name
+  await page.fill('#sp-export-name', 'existing.css');
+  const restored = await row.evaluate((n) => n.classList.contains('selected'));
+  return highlighted && !cleared && action === 'Review metadata' && restored;
+});
 await page.click('#sp-files-primary');
 await page.waitForSelector('#sp-metadata-dialog[open]');
 await check('overwrite proceeds directly to metadata with a clear warning', async () =>

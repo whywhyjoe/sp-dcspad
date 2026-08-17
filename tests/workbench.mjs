@@ -47,21 +47,30 @@ await check('mock: rail renders the Lists section', async () => {
   return (await page.locator('.wb-rail-btn.active .wb-rail-label').textContent()) === 'Lists';
 });
 
-await check('mock: lists grid shows the mock lists', async () =>
-  (await page.locator('.wb-table tbody tr').count()) === 8);
+await check('mock: lists grid shows the user-facing lists only', async () =>
+  (await page.locator('.wb-table tbody tr').count()) === 5
+  && (await page.locator('.wb-table tbody tr', { hasText: 'User Information List' }).count()) === 0);
 
-await check('mock: hidden lists are included', async () =>
-  (await page.locator('.wb-table tbody tr', { hasText: 'User Information List' }).count()) === 1);
+await check('mock: internal lists sit behind the bottom expander', async () => {
+  const label = await page.locator('.wb-lists-more').textContent();
+  await page.locator('.wb-lists-more').click();
+  const expanded = await page.locator('.wb-table tbody tr').count();
+  const internal = await page.locator('.wb-table tbody tr', { hasText: 'User Information List' }).count();
+  await page.locator('.wb-lists-more').click();   // collapse again for later checks
+  const collapsed = await page.locator('.wb-table tbody tr').count();
+  return label.includes('Show 3 internal lists')
+    && expanded === 8 && internal === 1 && collapsed === 5;
+});
 
 await check('mock: template numbers render as names', async () =>
   (await page.locator('.wb-table tbody tr', { hasText: 'Document library' }).count()) >= 1);
 
 await check('mock: filter narrows rows and updates the count', async () => {
-  await page.fill('.wb-grid-filter', 'gallery');
+  await page.fill('.wb-grid-filter', 'assets');
   const rows = await page.locator('.wb-table tbody tr').count();
   const count = await page.locator('.wb-grid-count').textContent();
   await page.fill('.wb-grid-filter', '');
-  return rows === 1 && count === '1 / 8';
+  return rows === 1 && count === '1 / 5';
 });
 
 await check('mock: sorting by Items toggles asc/desc', async () => {
@@ -340,7 +349,7 @@ await check('scriptgen: orderby clauses emit field + direction for PnPjs', async
 await check('drill: back returns to the lists grid', async () => {
   await page.locator('.wb-back').click();
   await page.waitForSelector('.wb-pane:not([hidden]) .wb-table tbody tr');
-  return (await page.locator('.wb-pane:not([hidden]) .wb-table tbody tr').count()) === 8;
+  return (await page.locator('.wb-pane:not([hidden]) .wb-table tbody tr').count()) === 5;
 });
 
 await check('links: url cells are real links opening in a new tab, copy kept', async () => {
@@ -609,6 +618,36 @@ await check('links: Panels renders the curated quick jumps only', async () => {
     && !text.includes('Change the look') && !text.includes('Site features')
     && !text.includes('Term store') && !text.includes('Master page');
 });
+
+await check('links: a Panels click opens a new tab, not the current one', async () => {
+  // bindNewTab opens explicitly via window.open, so hosted SharePoint's
+  // document-level click interception can't swallow the navigation.
+  const before = page.url();
+  const [popup] = await Promise.all([
+    page.context().waitForEvent('page'),
+    page.locator('.wb-link').first().click(),
+  ]);
+  await popup.close();
+  return page.url() === before;
+});
+
+await check('pages: pickPagesLibrary falls back to classic Pages libraries', async () =>
+  page.evaluate(async () => {
+    const { pickPagesLibrary } = await import('/src/workbench/views/pages.js');
+    const modern = pickPagesLibrary([
+      { Id: 'a', Title: 'Pages', BaseTemplate: 850, Hidden: false },
+      { Id: 'b', Title: 'Site Pages', BaseTemplate: 119, Hidden: false },
+    ]);
+    const classic = pickPagesLibrary([
+      { Id: 'c', Title: 'Documents', BaseTemplate: 101, Hidden: false },
+      { Id: 'd', Title: 'Pages', BaseTemplate: 850, Hidden: false },
+    ]);
+    const titled = pickPagesLibrary([
+      { Id: 'e', Title: 'Pages', BaseTemplate: 101, Hidden: false },
+    ]);
+    return modern?.Id === 'b' && classic?.Id === 'd' && titled?.Id === 'e'
+      && pickPagesLibrary([]) === null;
+  }));
 
 await check('links: lists grid rows carry a list-settings link', async () => {
   await page.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
@@ -1031,10 +1070,13 @@ await check('live: /_api requests send the nometadata Accept header', () =>
   && seenHeaders.every((h) => h.includes('application/json;odata=nometadata')));
 
 await check('live: paging links are followed across pages', async () =>
-  (await live.locator('.wb-table tbody tr').count()) === 3);
+  (await live.locator('.wb-table tbody tr').count()) === 2   // Gamma is hidden → internal
+  && (await live.locator('.wb-lists-more').textContent()).includes('Show 1 internal list'));
 
-await check('live: rows from the second page render', async () =>
-  (await live.locator('.wb-table tbody tr', { hasText: 'Gamma' }).count()) === 1);
+await check('live: rows from the second page render behind the expander', async () => {
+  await live.locator('.wb-lists-more').click();
+  return (await live.locator('.wb-table tbody tr', { hasText: 'Gamma' }).count()) === 1;
+});
 
 await check('live: Items tab sends the typed query and projection in the request', async () => {
   // Registered after the generic /_api route, so it wins for Alpha's

@@ -4,6 +4,7 @@
 // local origin).
 
 import { LINK_GROUPS, linkUrl } from '../config-links.js';
+import { bindNewTab } from '../grid.js?v=2';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -34,8 +35,7 @@ export function createLinksView({ client }) {
       for (const link of group.links) {
         const row = el('a', 'wb-link');
         row.href = linkUrl(webUrl, link);
-        row.target = '_blank';
-        row.rel = 'noopener';
+        bindNewTab(row);
         // Label-first for scanning; the path (and any hint) lives in the
         // tooltip instead of competing with the label.
         row.append(el('span', 'wb-link-label', link.label));

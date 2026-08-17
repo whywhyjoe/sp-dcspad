@@ -154,6 +154,26 @@ export function createSpWriteClient({
     };
   }
 
+  // Create a subfolder. '#' and '%' are legal in modern SPO names (hence
+  // ResourcePath addressing); the rejected set is what SharePoint itself
+  // refuses: " * : < > ? / \ | plus leading/trailing dots.
+  async function createFolder(parentServerRelativeUrl, name) {
+    const clean = String(name || '').trim();
+    if (!clean || /["*:<>?/\\|]/.test(clean) || clean.startsWith('.') || clean.endsWith('.')) {
+      throw new SpFileError(
+        'Folder names cannot contain " * : < > ? / \\ | or start or end with a dot.',
+        { code: 'invalid-name' },
+      );
+    }
+    const parent = String(parentServerRelativeUrl || '/').replace(/\/+$/, '') || '';
+    const path = `${parent}/${clean}`;
+    const endpoint = `${client.webUrl()}/_api/web/Folders/AddUsingPath(`
+      + `decodedUrl='${odataPathLiteral(path)}')`;
+    await post(endpoint, { body: '' },
+      { fallback: 'Could not create the folder', code: 'write' });
+    return { name: clean, serverRelativeUrl: path };
+  }
+
   // Generic JSON POST against a /_api-relative path (group membership ops
   // and other small writes). Returns the parsed response body.
   async function postJson(path, body = {}, { fallback = 'SharePoint write failed', code = 'write' } = {}) {
@@ -161,5 +181,5 @@ export function createSpWriteClient({
     return post(url, { body: JSON.stringify(body) }, { fallback, code });
   }
 
-  return { validateUpdateListItem, uploadFile, postJson, isMock };
+  return { validateUpdateListItem, uploadFile, createFolder, postJson, isMock };
 }

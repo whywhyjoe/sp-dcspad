@@ -3,7 +3,7 @@
 // section/column structure tree, a web-part inventory, extracted text
 // content, an editable metadata sheet, and the raw entity.
 
-import { createGrid } from '../grid.js?v=2';
+import { createGrid, bindNewTab } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 import {
   parseCanvasContent, buildSectionTree, textOfControl, webPartName, sanitizeHtml,
@@ -36,6 +36,19 @@ const FIELD_SELECT = [
 ];
 
 const SITE_PAGES_BASE_TEMPLATE = 119;
+const PUBLISHING_PAGES_BASE_TEMPLATE = 850;
+
+// Locate the web's pages library: modern Site Pages (119) first, then the
+// classic publishing "Pages" library (850), then any visible library that
+// is simply titled Pages — older sites use all three shapes.
+export function pickPagesLibrary(items) {
+  const lists = items || [];
+  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden)
+    || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE)
+    || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden)
+    || lists.find((l) => String(l.Title).toLowerCase() === 'pages' && !l.Hidden)
+    || null;
+}
 
 const promotedLabel = (v) => ({ 0: '', 1: 'News (pending)', 2: 'News' }[v] ?? String(v ?? ''));
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
@@ -65,8 +78,7 @@ export function createPagesView({ client, navigate }) {
     + '<p class="wb-view-hint">Modern pages in this web’s Site Pages library, '
     + 'subfolders included. Click a row to inspect content, metadata, and structure.</p>';
   const libraryLink = el('a', 'btn btn-xs wb-head-link', 'Open Site Pages library ↗');
-  libraryLink.target = '_blank';
-  libraryLink.rel = 'noopener';
+  bindNewTab(libraryLink);
   libraryLink.hidden = true;
   head.append(libraryLink);
   const masterStatus = el('div', 'wb-grid-status');
@@ -93,8 +105,7 @@ export function createPagesView({ client, navigate }) {
       }).then(({ items }) => {
         // Client-side filter: the mock resolver ignores $filter, and the
         // library is cheap to find in the full list either way.
-        const found = items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden)
-          || items.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE);
+        const found = pickPagesLibrary(items);
         return found ? {
           listId: found.Id,
           title: found.Title,
@@ -170,11 +181,9 @@ export function createPagesView({ client, navigate }) {
                 const a = document.createElement('a');
                 a.className = 'wb-cell-link';
                 a.href = fileRef;
-                a.target = '_blank';
-                a.rel = 'noopener';
                 a.title = 'Open the page in a new tab';
                 a.textContent = '↗';
-                a.addEventListener('click', (e) => e.stopPropagation());
+                bindNewTab(a);
                 return a;
               },
             },
@@ -445,8 +454,7 @@ export function createPagesView({ client, navigate }) {
     if (item.FileRef) {
       const open = el('a', 'btn btn-xs', 'Open page ↗');
       open.href = item.FileRef;
-      open.target = '_blank';
-      open.rel = 'noopener';
+      bindNewTab(open);
       actions.append(open);
     }
     headRow.append(actions);

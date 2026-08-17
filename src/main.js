@@ -1046,10 +1046,27 @@ spExportType.addEventListener('change', () => {
   resetSpExportAction();
   syncSpExportAction();
 });
+// The row highlight must always mirror what the typed name resolves to:
+// clicking a file fills the name box, but editing the name afterwards means
+// a NEW file will be created — leaving the old row highlighted would read
+// as "this file gets overwritten" when it won't be.
+function syncSpExportSelection() {
+  if (spFilesMode !== 'export') return;
+  const name = spExportName.value.trim();
+  for (const row of spFilesList.querySelectorAll('.sp-file-row')) {
+    const rowName = row.querySelector('.sp-file-row__name')?.textContent || '';
+    const match = row.dataset.kind === 'file' && name !== ''
+      && rowName.localeCompare(name, undefined, { sensitivity: 'base' }) === 0;
+    row.classList.toggle('selected', match);
+    row.setAttribute('aria-selected', String(match));
+  }
+}
+
 spExportName.addEventListener('input', () => {
   setSpError('');
   resetSpExportAction();
   syncSpExportAction();
+  syncSpExportSelection();
 });
 
 function setSpMetadataNotice(message = '') {

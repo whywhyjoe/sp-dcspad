@@ -10,6 +10,9 @@ import { copyText } from '../export.js';
 import { odataPathLiteral } from '../../sp-odata.js';
 import { createSpWriteClient, MAX_UPLOAD_BYTES } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
+import {
+  metadataFieldStates, anyMetadataAvailable, openUploadMetadataDialog,
+} from '../upload-metadata.js';
 
 const FIELD_SELECT = [
   'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
@@ -111,7 +114,8 @@ export function createBrowserView({ client, navigate }) {
   const head = el('div', 'wb-view-head');
   head.innerHTML = '<h2>Files</h2>'
     + '<p class="wb-view-hint">Browse any library or folder of this web — every '
-    + 'file type, with download, binary upload, and full metadata editing.</p>';
+    + 'file type, with download, binary upload, folder creation, and full '
+    + 'metadata editing.</p>';
 
   const bar = el('div', 'wb-crumbs-bar');
   const librarySelect = el('select', 'wb-lib-select');
@@ -302,10 +306,13 @@ export function createBrowserView({ client, navigate }) {
       if (fileInput.files?.length) startUpload(fileInput.files[0]);
       fileInput.value = '';
     });
+    const newFolderBtn = el('button', 'btn btn-xs wb-newfolder', 'New folder…');
+    newFolderBtn.type = 'button';
+    newFolderBtn.addEventListener('click', promptNewFolder);
     const refreshBtn = el('button', 'btn btn-xs', 'Refresh');
     refreshBtn.type = 'button';
     refreshBtn.addEventListener('click', () => listFolder(currentPath, { force: true }));
-    grid.actionsEl.prepend(uploadBtn, fileInput, refreshBtn);
+    grid.actionsEl.prepend(uploadBtn, fileInput, newFolderBtn, refreshBtn);
     gridWrap.append(grid.el);
   }
 
@@ -383,15 +390,42 @@ export function createBrowserView({ client, navigate }) {
     if (existing) {
       showConsent(
         `“${file.name}” already exists in this folder. Replace it?`,
-        () => doUpload(file, { overwrite: true, folderPath }),
+        () => runUpload(file, { overwrite: true, folderPath }),
       );
       return;
     }
-    await doUpload(file, { overwrite: false, folderPath });
+    await runUpload(file, { overwrite: false, folderPath });
   }
 
-  async function doUpload(file, { overwrite, folderPath }) {
-    uploadNotice(`Uploading “${file.name}”…`);
+  // Probe the destination library for the pad's three curated metadata
+  // columns (Title, _ExtendedDescription, DocVersion); null skips the
+  // dialog and uploads bare.
+  async function uploadMetadataStates(folderPath) {
+    try {
+      const listId = await parentListId(folderPath);
+      const fields = await listFields(listId);
+      const states = metadataFieldStates(fields);
+      return anyMetadataAvailable(states) ? states : null;
+    } catch { return null; }
+  }
+
+  // Prefill from the file being replaced — best-effort, blanks otherwise.
+  async function prefillUploadValues(states, folderPath, fileName) {
+    const values = { title: '', description: '', docVersion: '' };
+    const available = Object.values(states).filter((s) => s.available);
+    try {
+      const item = await client.get(
+        fileApi(`${folderPath}/${fileName}`, '/ListItemAllFields'),
+        { select: available.map((s) => s.entityPropertyName) },
+      );
+      for (const s of available) {
+        values[s.key] = String(item?.[s.entityPropertyName] ?? item?.[s.internalName] ?? '');
+      }
+    } catch { /* prefill only */ }
+    return values;
+  }
+
+  async function runUpload(file, { overwrite, folderPath, carriedValues = null }) {
     let data;
     try {
       data = await file.arrayBuffer();
@@ -399,29 +433,106 @@ export function createBrowserView({ client, navigate }) {
       uploadNotice(`Could not read the file: ${err?.message || err}`, true);
       return;
     }
-    try {
-      const result = await spWrite.uploadFile(folderPath, file.name, data, { overwrite });
-      consent.hidden = true;
-      if (currentPath !== folderPath) {
-        uploadNotice(`Uploaded “${file.name}” to ${folderPath}.`);
-        return;
+    const bareUpload = () => spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    const states = await uploadMetadataStates(folderPath);
+
+    if (!states) {
+      uploadNotice(`Uploading “${file.name}”…`);
+      try {
+        await bareUpload();
+        await finishUpload(file, folderPath, `Uploaded “${file.name}” ✓`);
+      } catch (err) {
+        handleUploadError(err, file, folderPath, overwrite, null);
       }
-      await listFolder(folderPath, { force: true });
-      const uploaded = currentListing.files.find(
-        (f) => String(f.Name).toLowerCase() === file.name.toLowerCase(),
-      ) || { kind: 'file', Name: result.fileName, ServerRelativeUrl: result.serverRelativeUrl };
-      openMetadata(uploaded, { justUploaded: true });
-    } catch (err) {
-      if (err?.code === 'conflict' && !overwrite) {
-        // Race: the file appeared between listing and upload.
-        showConsent(
-          `“${file.name}” already exists in this folder. Replace it?`,
-          () => doUpload(file, { overwrite: true, folderPath }),
-        );
-        return;
-      }
-      uploadNotice(`Upload failed: ${err?.message || err}`, true);
+      return;
     }
+
+    const values = carriedValues
+      || (overwrite ? await prefillUploadValues(states, folderPath, file.name)
+        : { title: '', description: '', docVersion: '' });
+    const initial = { ...values };
+    const filePath = `${folderPath}/${file.name}`;
+    try {
+      const outcome = await openUploadMetadataDialog({
+        fileName: file.name,
+        overwrite,
+        states,
+        values,
+        doUpload: bareUpload,
+        // Write only what the user changed against the prefill (a cleared
+        // prefill still writes ''); untouched values cost no request.
+        doMetadata: async (entered) => {
+          const formValues = Object.values(states)
+            .filter((s) => s.available
+              && String(entered[s.key] ?? '') !== String(initial[s.key] ?? ''))
+            .map((s) => ({ FieldName: s.internalName, FieldValue: String(entered[s.key] ?? '') }));
+          if (!formValues.length) return;
+          await spWrite.validateUpdateListItem(
+            { fileServerRelativeUrl: filePath },
+            formValues,
+            { newDocumentUpdate: true },
+          );
+        },
+      });
+      if (outcome === 'cancelled') return;
+      await finishUpload(file, folderPath, outcome === 'saved'
+        ? `Uploaded “${file.name}” ✓`
+        : `Uploaded “${file.name}” ✓ (kept without metadata)`);
+    } catch (err) {
+      handleUploadError(err, file, folderPath, overwrite, err?.uploadMetadataValues || null);
+    }
+  }
+
+  async function finishUpload(file, folderPath, message) {
+    if (currentPath === folderPath) await listFolder(folderPath, { force: true });
+    uploadNotice(message);
+  }
+
+  function handleUploadError(err, file, folderPath, overwrite, carriedValues) {
+    if (err?.code === 'conflict' && !overwrite) {
+      // Race: the file appeared between listing and upload. The retry
+      // carries the values the user already typed into the dialog.
+      showConsent(
+        `“${file.name}” already exists in this folder. Replace it?`,
+        () => runUpload(file, { overwrite: true, folderPath, carriedValues }),
+      );
+      return;
+    }
+    uploadNotice(`Upload failed: ${err?.message || err}`, true);
+  }
+
+  // ---- new folder ----
+  function promptNewFolder() {
+    const folderPath = currentPath;
+    consent.classList.remove('wb-consent-error');
+    consent.textContent = '';
+    consent.hidden = false;
+    consent.append(el('span', 'wb-consent-text', `New folder in ${folderPath}:`));
+    const nameIn = el('input', 'wb-folder-name');
+    nameIn.type = 'text';
+    nameIn.placeholder = 'Folder name';
+    nameIn.setAttribute('aria-label', 'New folder name');
+    const create = el('button', 'btn btn-xs wb-primary', 'Create');
+    create.type = 'button';
+    const cancel = el('button', 'btn btn-xs', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => { consent.hidden = true; });
+    const submit = async () => {
+      const name = nameIn.value.trim();
+      if (!name) { nameIn.focus(); return; }
+      create.disabled = true;
+      try {
+        await spWrite.createFolder(folderPath, name);
+        await listFolder(folderPath, { force: true });
+        uploadNotice(`Created folder “${name}”.`);
+      } catch (err) {
+        uploadNotice(`Could not create the folder: ${err?.message || err}`, true);
+      }
+    };
+    create.addEventListener('click', submit);
+    nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    consent.append(nameIn, create, cancel);
+    nameIn.focus();
   }
 
   // ---- metadata ----
@@ -469,13 +580,12 @@ export function createBrowserView({ client, navigate }) {
     return fieldsCache.get(listId);
   }
 
-  async function openMetadata(row, { justUploaded = false } = {}) {
+  async function openMetadata(row) {
     metaPanel.hidden = false;
     metaPanel.textContent = '';
     const titleRow = el('div', 'wb-file-meta-head');
-    titleRow.append(el('h3', 'wb-subpanel-title',
-      `${justUploaded ? 'Uploaded ✓ — metadata for' : 'Metadata for'} ${row.Name}`));
-    const close = el('button', 'btn btn-xs', justUploaded ? 'Keep without metadata' : 'Close');
+    titleRow.append(el('h3', 'wb-subpanel-title', `Metadata for ${row.Name}`));
+    const close = el('button', 'btn btn-xs', 'Close');
     close.type = 'button';
     close.addEventListener('click', () => { metaPanel.hidden = true; });
     titleRow.append(close);
@@ -513,9 +623,7 @@ export function createBrowserView({ client, navigate }) {
       });
       body.append(form.el);
     } catch (err) {
-      status.textContent = justUploaded
-        ? `The file was uploaded, but its metadata could not be loaded: ${err?.message || err}`
-        : (err?.message || String(err));
+      status.textContent = err?.message || String(err);
       status.classList.add('wb-error');
     }
   }

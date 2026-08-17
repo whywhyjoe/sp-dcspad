@@ -456,6 +456,20 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-items-query { width: min(320px, 40vw); font-family: var(--mono); }
 .wb-items-query::placeholder { color: var(--fg-faint); font-family: var(--sans); }
 .wb-items-error { color: var(--error-fg); font-size: 12px; }
+
+/* Lists view: internal-plumbing expander under the grid. */
+.wb-lists-more { margin-top: 8px; align-self: flex-start; color: var(--fg-dim); }
+.wb-lists-more:hover { color: var(--fg); }
+
+/* Inline inputs in the consent strip (new-folder prompt). */
+.wb-consent input[type="text"] {
+  height: 24px; padding: 0 8px; width: 220px;
+  background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--radius-m);
+  color: var(--fg); font: 12px/1 var(--sans);
+}
+.wb-consent input[type="text"]:focus {
+  outline: none; border-color: var(--accent-soft-line); box-shadow: 0 0 0 3px var(--accent-ring);
+}
 .wb-items-grid { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- metadata field editors (pages metadata tab, file browser) ---- */

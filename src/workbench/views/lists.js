@@ -2,7 +2,7 @@
 // thing the SP UI won't show), with drill-down into fields, views, content
 // types, and the raw entity rendered through the SP-aware inspector.
 
-import { createGrid, encodeSpPath } from '../grid.js?v=2';
+import { createGrid, encodeSpPath, bindNewTab } from '../grid.js?v=2';
 import { copyText, downloadMarkdown } from '../export.js';
 import {
   buildItemsMarkdown, contentFields, viewColumnFields,
@@ -43,6 +43,18 @@ const LIST_SELECT = [
   'Created', 'LastItemModifiedDate', 'EntityTypeName', 'Description',
   'DefaultViewUrl', 'RootFolder/ServerRelativeUrl',
 ];
+
+// Deep-internal plumbing SharePoint keeps for itself — hidden lists, the
+// /_catalogs galleries (theme, web part, master page, solutions…), and the
+// taxonomy cache. The main grid hides these behind a bottom expander;
+// user-facing libraries (Documents, Site Pages, Pages, Site Assets) stay.
+const INTERNAL_TEMPLATES = new Set([112, 113, 114, 116, 121, 122, 123, 124]);
+export function isInternalList(list) {
+  return Boolean(list?.Hidden)
+    || INTERNAL_TEMPLATES.has(list?.BaseTemplate)
+    || String(list?.RootFolder?.ServerRelativeUrl || '').toLowerCase().includes('/_catalogs')
+    || list?.Title === 'TaxonomyHiddenList';
+}
 
 const FIELD_SELECT = [
   'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
@@ -136,8 +148,9 @@ export function createListsView({ client, navigate }) {
   const gridPane = el('div', 'wb-pane');
   const head = el('div', 'wb-view-head');
   head.innerHTML = '<h2>Lists &amp; libraries</h2>'
-    + '<p class="wb-view-hint">Every list in this web, hidden ones included. '
-    + 'Click a row for fields, views, and content types.</p>';
+    + '<p class="wb-view-hint">Every list in this web — SharePoint-internal '
+    + 'plumbing sits behind the expander below the grid. Click a row for '
+    + 'fields, views, content types, and items.</p>';
 
   const grid = createGrid({
     columns: [
@@ -158,11 +171,9 @@ export function createListsView({ client, navigate }) {
           const a = document.createElement('a');
           a.className = 'wb-cell-link';
           a.href = linkUrl(client.webUrl(), LIST_SETTINGS, { guid: id });
-          a.target = '_blank';
-          a.rel = 'noopener';
           a.title = 'Open list settings in a new tab';
           a.textContent = '⚙';
-          a.addEventListener('click', (e) => e.stopPropagation());
+          bindNewTab(a);
           return a;
         },
       },
@@ -177,7 +188,10 @@ export function createListsView({ client, navigate }) {
       webUrl: client.webUrl(),
     },
   });
-  gridPane.append(head, grid.el);
+  const moreBtn = el('button', 'btn btn-xs wb-lists-more');
+  moreBtn.type = 'button';
+  moreBtn.hidden = true;
+  gridPane.append(head, grid.el, moreBtn);
 
   // ---- detail pane (rebuilt per list) ----
   const detailPane = el('div', 'wb-pane');
@@ -186,7 +200,26 @@ export function createListsView({ client, navigate }) {
   root.append(gridPane, detailPane);
 
   let listsLoaded = false;
+  let allLists = [];
+  let listsPartial = false;
+  let showInternal = false;
   const tabCache = new Map();   // `${listId}::${tab}` -> Promise<rows|json>
+
+  function renderLists() {
+    const internal = allLists.filter(isInternalList);
+    grid.setRows(
+      showInternal ? allLists : allLists.filter((l) => !isInternalList(l)),
+      { partial: listsPartial },
+    );
+    moreBtn.hidden = internal.length === 0;
+    const label = `${internal.length} internal list${internal.length === 1 ? '' : 's'}`;
+    moreBtn.textContent = showInternal ? `Hide ${label} ▴` : `Show ${label} ▾`;
+    moreBtn.title = 'SharePoint-internal plumbing: hidden lists, galleries, the taxonomy cache';
+  }
+  moreBtn.addEventListener('click', () => {
+    showInternal = !showInternal;
+    renderLists();
+  });
 
   async function loadLists() {
     if (listsLoaded) return;
@@ -198,7 +231,9 @@ export function createListsView({ client, navigate }) {
         orderby: 'Title',
         top: 5000,
       });
-      grid.setRows(items, { partial });
+      allLists = items;
+      listsPartial = partial;
+      renderLists();
       listsLoaded = true;
     } catch (err) {
       grid.setError(err);
@@ -584,8 +619,7 @@ export function createListsView({ client, navigate }) {
 
     const settingsLink = el('a', 'btn btn-xs wb-detail-settings', 'List settings ↗');
     settingsLink.href = linkUrl(client.webUrl(), LIST_SETTINGS, { guid: listId });
-    settingsLink.target = '_blank';
-    settingsLink.rel = 'noopener';
+    bindNewTab(settingsLink);
     settingsLink.title = 'Open this list’s settings page in a new tab';
 
     const headRow = el('div', 'wb-detail-head');
