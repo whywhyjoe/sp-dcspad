@@ -419,28 +419,41 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-cell-url:hover { color: var(--accent); text-decoration: underline; }
 .wb-cell-copy { margin-left: 6px; font-size: 11px; }
 
-/* ---- Items tab (list-content markdown export) ---- */
-.wb-items-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-bottom: 8px;
+/* ---- Items tab (list-content markdown export) ----
+   The tab's controls ride the grid's own toolbar row (count · filter ·
+   controls · actions) so the filter box keeps its standard slot; the row
+   wraps when the advanced query input is expanded on narrow panes. */
+.wb-items-grid .wb-grid-toolbar { flex-wrap: wrap; row-gap: 6px; }
+.wb-items-controls {
+  display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 .wb-items-label {
   display: inline-flex; align-items: center; gap: 6px;
-  color: var(--fg-dim); font: 500 12.5px/1.4 var(--sans);
+  color: var(--fg-dim); font: 500 12px/1 var(--sans); white-space: nowrap;
 }
 /* Standard design-system field recipe (see #wb-site-input / .wb-grid-filter)
    — without it the controls fall back to the browser's own dark-widget
    colors, which read as a highlight instead of a field. */
-.wb-items-bar select, .wb-items-bar input {
+.wb-items-controls select, .wb-items-controls input {
   height: 26px; padding: 0 9px;
   background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--radius-m);
   color: var(--fg); font: 12px/1 var(--sans);
 }
-.wb-items-bar select:focus, .wb-items-bar input:focus {
+.wb-items-controls select:focus, .wb-items-controls input:focus {
   outline: none; border-color: var(--accent-soft-line); box-shadow: 0 0 0 3px var(--accent-ring);
 }
-.wb-items-max { width: 72px; }
-.wb-items-query { width: 300px; font-family: var(--mono); }
+.wb-items-max { width: 64px; }
+/* Advanced-query expander: quiet link until applied, accent while a query
+   actively shapes the rows. */
+.wb-items-querytoggle {
+  background: none; border: none; cursor: pointer; padding: 2px 4px;
+  color: var(--fg-dim); font: 500 12px/1 var(--sans); border-radius: var(--radius-s);
+  white-space: nowrap;
+}
+.wb-items-querytoggle:hover { color: var(--accent); }
+.wb-items-querytoggle.wb-applied { color: var(--accent); }
+.wb-items-querywrap { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.wb-items-query { width: min(320px, 40vw); font-family: var(--mono); }
 .wb-items-query::placeholder { color: var(--fg-faint); font-family: var(--sans); }
 .wb-items-error { color: var(--error-fg); font-size: 12px; }
 .wb-items-grid { flex: 1; min-height: 0; display: flex; flex-direction: column; }

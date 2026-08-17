@@ -116,8 +116,15 @@ await check('items: tab loads rows newest-first with the agreed column order', a
   const firstId = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
     .first().textContent()).trim();
   const rows = await page.locator('.wb-items-grid .wb-table tbody tr').count();
-  const buttons = await page.locator('.wb-items-download, .wb-items-copymd').count();
-  return rows === 6 && firstId === '6' && buttons === 2
+  // One toolbar row: the controls ride the grid's own toolbar, the advanced
+  // query starts collapsed, and the .md document exports live in Export ▾.
+  const inToolbar = await page.locator('.wb-items-grid .wb-grid-toolbar .wb-items-view').count();
+  const queryHidden = await page.locator('.wb-items-querywrap').isHidden();
+  await page.locator('.wb-items-grid .wb-menu-wrap .btn', { hasText: 'Export' }).click();
+  const menu = await page.locator('.wb-items-grid .wb-menu:not([hidden]) .wb-menu-item').allTextContents();
+  await page.locator('body').click();
+  return rows === 6 && firstId === '6' && inToolbar === 1 && queryHidden
+    && menu.slice(0, 2).join(',') === 'Download .md,Copy .md'
     && headers.join(',') === 'Title,ID,Project Status,Due Date,Owner,Budget,Details,'
       + 'Attachments,Created,Created By,Modified,Modified By';
 });
@@ -152,13 +159,16 @@ await check('items: the max-items input caps the fetched rows', async () => {
 });
 
 await check('items: a typed OData $orderby drives the query', async () => {
+  await page.locator('.wb-items-querytoggle').click();   // expand the advanced box
   await page.fill('.wb-items-query', '$orderby=Budget desc');
   await page.locator('.wb-items-query').dispatchEvent('change');
   await page.waitForFunction(() => document.querySelector(
     '.wb-items-grid .wb-table tbody tr td:nth-child(1)')?.textContent === 'Records migration');
   const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
     .allTextContents()).map((s) => s.trim());
-  return ids.join(',') === '2,6,1';   // Budget desc, still capped at 3
+  const applied = await page.locator('.wb-items-querytoggle.wb-applied').count();
+  return ids.join(',') === '2,6,1'    // Budget desc, still capped at 3
+    && applied === 1;                 // toggle marks the active query
 });
 
 await check('items: unsupported query keys are rejected inline', async () => {
@@ -1038,6 +1048,7 @@ await check('live: Items tab sends the typed query and projection in the request
   await live.locator('.wb-tab', { hasText: 'Items' }).click();
   await live.waitForSelector('.wb-items-grid .wb-empty');
   // Bare filter with a quoted '&' plus a typed order — through the real UI.
+  await live.locator('.wb-items-querytoggle').click();
   await live.fill('.wb-items-query', "Title eq 'R&D'&$orderby=Modified desc");
   await live.locator('.wb-items-query').dispatchEvent('change');
   const deadline = Date.now() + 5000;

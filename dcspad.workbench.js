@@ -1253,7 +1253,9 @@ function createGrid({
   emptyText = "No rows.",
   filterPlaceholder = "Filter\u2026",
   exportName = "",
-  descriptor = null
+  descriptor = null,
+  toolbarExtras = null,
+  exportExtras = []
 } = {}) {
   let rows = [];
   let visible = [];
@@ -1268,7 +1270,7 @@ function createGrid({
   filter.placeholder = filterPlaceholder;
   filter.setAttribute("aria-label", "Filter rows");
   const actions = el2("span", "wb-grid-actions");
-  toolbar.append(count, filter, actions);
+  toolbar.append(count, filter, ...toolbarExtras ? [toolbarExtras] : [], actions);
   function menuButton(label, title, items) {
     const wrap = el2("span", "wb-menu-wrap");
     const btn = el2("button", "btn btn-xs", label);
@@ -1304,6 +1306,7 @@ function createGrid({
   }
   if (exportName) {
     menuButton("Export \u25BE", "Export the visible rows", [
+      ...exportExtras,
       ["Download CSV", () => downloadCsv(exportName, visible, columns)],
       ["Download JSON", () => downloadJson(exportName, visible, columns)],
       ["Copy CSV", (btn) => copyText(toCsv(visible, columns), btn)],
@@ -2471,12 +2474,12 @@ function createListsView({ client: client2, navigate }) {
     return tabCache.get(key2);
   }
   function buildItemsPane(wrap, listId, listTitle) {
-    const bar = el4("div", "wb-items-bar");
+    const controls = el4("span", "wb-items-controls");
     const viewLabel = el4("label", "wb-items-label", "Columns ");
     const viewSel = el4("select", "wb-items-view");
     viewSel.setAttribute("aria-label", "Column source: a view or all columns");
     viewLabel.append(viewSel);
-    const maxLabel = el4("label", "wb-items-label", "Max items ");
+    const maxLabel = el4("label", "wb-items-label", "Max ");
     const maxIn = el4("input", "wb-items-max");
     maxIn.type = "number";
     maxIn.min = "1";
@@ -2484,23 +2487,38 @@ function createListsView({ client: client2, navigate }) {
     maxIn.value = "500";
     maxIn.setAttribute("aria-label", "Maximum items to fetch");
     maxLabel.append(maxIn);
-    const queryLabel = el4("label", "wb-items-label", "Query ");
+    const queryToggle = el4("button", "wb-items-querytoggle", "Query \u25BE");
+    queryToggle.type = "button";
+    const QUERY_HINT = "Advanced: raw OData clauses for the item query \u2014 $filter=\u2026 and/or $orderby=\u2026, joined with &. A bare expression counts as $filter. Order defaults to ID desc.";
+    queryToggle.title = QUERY_HINT;
+    queryToggle.setAttribute("aria-expanded", "false");
+    const queryWrap = el4("span", "wb-items-querywrap");
+    queryWrap.hidden = true;
     const queryIn = el4("input", "wb-items-query");
     queryIn.type = "text";
     queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
     queryIn.setAttribute("aria-label", "OData $filter and $orderby for the item query");
-    queryIn.title = "Raw OData clauses for the item query: $filter=\u2026 and/or $orderby=\u2026, joined with &. A bare expression counts as $filter. Order defaults to ID desc; columns and row cap keep their own controls.";
-    queryLabel.append(queryIn);
+    queryIn.title = QUERY_HINT;
     const queryErr = el4("span", "wb-items-error");
-    const dlBtn = el4("button", "btn btn-xs wb-items-download", "Download .md");
-    dlBtn.type = "button";
-    dlBtn.title = "Download the visible items as a markdown document";
-    const copyBtn = el4("button", "btn btn-xs wb-items-copymd", "Copy Markdown");
-    copyBtn.type = "button";
-    copyBtn.title = "Copy the visible items as a markdown document";
-    bar.append(viewLabel, maxLabel, queryLabel, dlBtn, copyBtn, queryErr);
+    queryWrap.append(queryIn, queryErr);
+    controls.append(viewLabel, maxLabel, queryToggle, queryWrap);
     const gridBox = el4("div", "wb-items-grid");
-    wrap.append(bar, gridBox);
+    wrap.append(gridBox);
+    function setQueryOpen(open) {
+      queryWrap.hidden = !open;
+      queryToggle.textContent = open ? "Query \u25B4" : "Query \u25BE";
+      queryToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) queryIn.focus();
+    }
+    queryToggle.addEventListener("click", () => {
+      const opening = queryWrap.hidden;
+      if (!opening && queryErr.textContent) {
+        queryIn.value = "";
+        queryErr.textContent = "";
+        reload();
+      }
+      setQueryOpen(opening);
+    });
     let itemsGrid = null;
     let current = null;
     let viewsFilled = false;
@@ -2522,24 +2540,25 @@ function createListsView({ client: client2, navigate }) {
       filter: current.filter,
       orderby: current.orderby
     }) : "";
-    dlBtn.addEventListener("click", () => {
-      const md = exportDoc();
-      if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
-    });
-    copyBtn.addEventListener("click", () => {
-      const md = exportDoc();
-      if (md) copyText(md, copyBtn);
-    });
+    function markApplied() {
+      const applied = Boolean(current && (current.filter || current.orderby));
+      queryToggle.classList.toggle("wb-applied", applied);
+      queryToggle.title = applied ? `Active query: ${queryIn.value.trim()}` : QUERY_HINT;
+    }
     async function reload() {
       const seq = ++loadSeq;
       const parsed = parseItemsQuery(queryIn.value);
       queryErr.textContent = parsed.error;
       if (parsed.error) return;
       const max = clampMax();
-      itemsGrid = null;
-      gridBox.textContent = "";
-      const status = el4("div", "wb-grid-status", "Loading items\u2026");
-      gridBox.append(status);
+      let status = null;
+      if (itemsGrid) {
+        itemsGrid.setLoading("Loading items\u2026");
+      } else {
+        gridBox.textContent = "";
+        status = el4("div", "wb-grid-status", "Loading items\u2026");
+        gridBox.append(status);
+      }
       try {
         const [{ items: fields }, { items: views }] = await Promise.all([
           cached2(listId, "fields", () => client2.getAll(guidPath(listId, "/fields"), { select: FIELD_SELECT })),
@@ -2619,17 +2638,31 @@ function createListsView({ client: client2, navigate }) {
           { key: "Modified", label: "Modified", format: fmtDate },
           { key: "ModifiedBy", label: "Modified By", value: (row) => personText(row, "Editor") }
         ];
-        itemsGrid = createGrid({
+        const newGrid = createGrid({
           columns,
           rowKey: "ID",
           emptyText: "No items in this list.",
           filterPlaceholder: "Filter items\u2026",
           exportName: `items-${fileStem(listTitle)}`,
-          descriptor: { ...query, webUrl: client2.webUrl() }
+          descriptor: { ...query, webUrl: client2.webUrl() },
+          toolbarExtras: controls,
+          exportExtras: [
+            ["Download .md", () => {
+              const md = exportDoc();
+              if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+            }],
+            ["Copy .md", (btn) => {
+              const md = exportDoc();
+              if (md) copyText(md, btn);
+            }]
+          ]
         });
+        const focused = controls.contains(document.activeElement) ? document.activeElement : null;
         gridBox.textContent = "";
-        gridBox.append(itemsGrid.el);
+        gridBox.append(newGrid.el);
+        itemsGrid = newGrid;
         itemsGrid.setRows(items, { partial });
+        if (focused) focused.focus();
         current = {
           fields,
           viewFieldNames,
@@ -2637,14 +2670,16 @@ function createListsView({ client: client2, navigate }) {
           filter: parsed.filter,
           orderby: parsed.orderby
         };
+        markApplied();
       } catch (err) {
         if (seq !== loadSeq) return;
         const raw = err?.message || String(err);
-        status.textContent = /SPQueryThrottledException|list view threshold/i.test(raw) ? `SharePoint throttled this query \u2014 filter/order by an indexed column and keep the matched set under 5,000. (${raw})` : raw;
-        status.classList.add("wb-error");
-        if (!status.isConnected) {
-          gridBox.textContent = "";
-          gridBox.append(status);
+        const message = /SPQueryThrottledException|list view threshold/i.test(raw) ? `SharePoint throttled this query \u2014 filter/order by an indexed column and keep the matched set under 5,000. (${raw})` : raw;
+        if (itemsGrid) {
+          itemsGrid.setError({ message });
+        } else if (status) {
+          status.textContent = message;
+          status.classList.add("wb-error");
         }
       }
     }

@@ -42,6 +42,9 @@ function displayValue(row, col) {
 // columns stay real URLs); copyable then adds a ⧉ copy glyph beside it.
 // exportName enables the toolbar export menu; it's the download file stem.
 // descriptor { path, options, webUrl } enables the "Copy as…" script menu.
+// toolbarExtras: a Node adopted into the toolbar after the filter box, so a
+// view's own controls share the grid's single toolbar row (Items tab).
+// exportExtras: [[label, run]] entries prepended to the Export menu.
 export function createGrid({
   columns,
   rowKey = 'Id',
@@ -50,6 +53,8 @@ export function createGrid({
   filterPlaceholder = 'Filter…',
   exportName = '',
   descriptor = null,
+  toolbarExtras = null,
+  exportExtras = [],
 } = {}) {
   let rows = [];
   let visible = [];
@@ -65,7 +70,7 @@ export function createGrid({
   filter.placeholder = filterPlaceholder;
   filter.setAttribute('aria-label', 'Filter rows');
   const actions = el('span', 'wb-grid-actions');
-  toolbar.append(count, filter, actions);
+  toolbar.append(count, filter, ...(toolbarExtras ? [toolbarExtras] : []), actions);
 
   function menuButton(label, title, items) {
     const wrap = el('span', 'wb-menu-wrap');
@@ -99,6 +104,7 @@ export function createGrid({
 
   if (exportName) {
     menuButton('Export ▾', 'Export the visible rows', [
+      ...exportExtras,
       ['Download CSV', () => downloadCsv(exportName, visible, columns)],
       ['Download JSON', () => downloadJson(exportName, visible, columns)],
       ['Copy CSV', (btn) => copyText(toCsv(visible, columns), btn)],

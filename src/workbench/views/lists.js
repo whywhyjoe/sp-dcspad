@@ -222,14 +222,18 @@ export function createListsView({ client, navigate }) {
   // Ordering is ID desc, capped by the max-items input. The grid is a
   // preview of the same rows — filter it and the export follows.
   function buildItemsPane(wrap, listId, listTitle) {
-    const bar = el('div', 'wb-items-bar');
+    // Every control shares the grid's own single toolbar row (count · filter
+    // · controls · actions) so the tab reads like every other grid, with the
+    // filter box in its standard slot. The controls node is persistent and
+    // adopted by each rebuilt grid via toolbarExtras.
+    const controls = el('span', 'wb-items-controls');
 
     const viewLabel = el('label', 'wb-items-label', 'Columns ');
     const viewSel = el('select', 'wb-items-view');
     viewSel.setAttribute('aria-label', 'Column source: a view or all columns');
     viewLabel.append(viewSel);
 
-    const maxLabel = el('label', 'wb-items-label', 'Max items ');
+    const maxLabel = el('label', 'wb-items-label', 'Max ');
     const maxIn = el('input', 'wb-items-max');
     maxIn.type = 'number';
     maxIn.min = '1';
@@ -238,27 +242,49 @@ export function createListsView({ client, navigate }) {
     maxIn.setAttribute('aria-label', 'Maximum items to fetch');
     maxLabel.append(maxIn);
 
-    const queryLabel = el('label', 'wb-items-label', 'Query ');
+    // Advanced, so collapsed by default: a quiet toggle that expands the raw
+    // OData input in place. While a query is applied, the toggle stays
+    // accent-marked — a hidden active query must never silently shape rows.
+    const queryToggle = el('button', 'wb-items-querytoggle', 'Query ▾');
+    queryToggle.type = 'button';
+    const QUERY_HINT = 'Advanced: raw OData clauses for the item query — '
+      + '$filter=… and/or $orderby=…, joined with &. A bare expression '
+      + 'counts as $filter. Order defaults to ID desc.';
+    queryToggle.title = QUERY_HINT;
+    queryToggle.setAttribute('aria-expanded', 'false');
+
+    const queryWrap = el('span', 'wb-items-querywrap');
+    queryWrap.hidden = true;
     const queryIn = el('input', 'wb-items-query');
     queryIn.type = 'text';
     queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
     queryIn.setAttribute('aria-label', 'OData $filter and $orderby for the item query');
-    queryIn.title = 'Raw OData clauses for the item query: $filter=… and/or '
-      + '$orderby=…, joined with &. A bare expression counts as $filter. '
-      + 'Order defaults to ID desc; columns and row cap keep their own controls.';
-    queryLabel.append(queryIn);
+    queryIn.title = QUERY_HINT;
     const queryErr = el('span', 'wb-items-error');
+    queryWrap.append(queryIn, queryErr);
 
-    const dlBtn = el('button', 'btn btn-xs wb-items-download', 'Download .md');
-    dlBtn.type = 'button';
-    dlBtn.title = 'Download the visible items as a markdown document';
-    const copyBtn = el('button', 'btn btn-xs wb-items-copymd', 'Copy Markdown');
-    copyBtn.type = 'button';
-    copyBtn.title = 'Copy the visible items as a markdown document';
+    controls.append(viewLabel, maxLabel, queryToggle, queryWrap);
 
-    bar.append(viewLabel, maxLabel, queryLabel, dlBtn, copyBtn, queryErr);
     const gridBox = el('div', 'wb-items-grid');
-    wrap.append(bar, gridBox);
+    wrap.append(gridBox);
+
+    function setQueryOpen(open) {
+      queryWrap.hidden = !open;
+      queryToggle.textContent = open ? 'Query ▴' : 'Query ▾';
+      queryToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) queryIn.focus();
+    }
+    queryToggle.addEventListener('click', () => {
+      const opening = queryWrap.hidden;
+      if (!opening && queryErr.textContent) {
+        // Collapsing an erroneous (never-applied) query discards it, so no
+        // error can hide behind a closed toggle.
+        queryIn.value = '';
+        queryErr.textContent = '';
+        reload();
+      }
+      setQueryOpen(opening);
+    });
 
     let itemsGrid = null;
     let current = null;   // { fields, viewFieldNames, viewTitle } of the loaded rows
@@ -287,14 +313,12 @@ export function createListsView({ client, navigate }) {
         orderby: current.orderby,
       })
       : '');
-    dlBtn.addEventListener('click', () => {
-      const md = exportDoc();
-      if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
-    });
-    copyBtn.addEventListener('click', () => {
-      const md = exportDoc();
-      if (md) copyText(md, copyBtn);
-    });
+
+    function markApplied() {
+      const applied = Boolean(current && (current.filter || current.orderby));
+      queryToggle.classList.toggle('wb-applied', applied);
+      queryToggle.title = applied ? `Active query: ${queryIn.value.trim()}` : QUERY_HINT;
+    }
 
     async function reload() {
       // Claim the sequence before validating: an invalid input must also
@@ -304,10 +328,16 @@ export function createListsView({ client, navigate }) {
       queryErr.textContent = parsed.error;
       if (parsed.error) return;   // keep whatever is loaded until the input is fixed
       const max = clampMax();
-      itemsGrid = null;
-      gridBox.textContent = '';
-      const status = el('div', 'wb-grid-status', 'Loading items…');
-      gridBox.append(status);
+      // Keep the current grid (and the controls riding its toolbar) in place
+      // while fetching; the first load shows a bare status instead.
+      let status = null;
+      if (itemsGrid) {
+        itemsGrid.setLoading('Loading items…');
+      } else {
+        gridBox.textContent = '';
+        status = el('div', 'wb-grid-status', 'Loading items…');
+        gridBox.append(status);
+      }
       try {
         const [{ items: fields }, { items: views }] = await Promise.all([
           cached(listId, 'fields', () =>
@@ -397,32 +427,49 @@ export function createListsView({ client, navigate }) {
           { key: 'Modified', label: 'Modified', format: fmtDate },
           { key: 'ModifiedBy', label: 'Modified By', value: (row) => personText(row, 'Editor') },
         ];
-        itemsGrid = createGrid({
+        const newGrid = createGrid({
           columns,
           rowKey: 'ID',
           emptyText: 'No items in this list.',
           filterPlaceholder: 'Filter items…',
           exportName: `items-${fileStem(listTitle)}`,
           descriptor: { ...query, webUrl: client.webUrl() },
+          toolbarExtras: controls,
+          exportExtras: [
+            ['Download .md', () => {
+              const md = exportDoc();
+              if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+            }],
+            ['Copy .md', (btn) => {
+              const md = exportDoc();
+              if (md) copyText(md, btn);
+            }],
+          ],
         });
+        // Swapping grids re-parents the controls; don't drop the user's focus.
+        const focused = controls.contains(document.activeElement) ? document.activeElement : null;
         gridBox.textContent = '';
-        gridBox.append(itemsGrid.el);
+        gridBox.append(newGrid.el);
+        itemsGrid = newGrid;
         itemsGrid.setRows(items, { partial });
+        if (focused) focused.focus();
         current = {
           fields, viewFieldNames, viewTitle,
           filter: parsed.filter, orderby: parsed.orderby,
         };
+        markApplied();
       } catch (err) {
         if (seq !== loadSeq) return;
         const raw = err?.message || String(err);
         // Large-list throttling reads as a cryptic server error — translate.
-        status.textContent = /SPQueryThrottledException|list view threshold/i.test(raw)
+        const message = /SPQueryThrottledException|list view threshold/i.test(raw)
           ? `SharePoint throttled this query — filter/order by an indexed column and keep the matched set under 5,000. (${raw})`
           : raw;
-        status.classList.add('wb-error');
-        if (!status.isConnected) {
-          gridBox.textContent = '';
-          gridBox.append(status);
+        if (itemsGrid) {
+          itemsGrid.setError({ message });
+        } else if (status) {
+          status.textContent = message;
+          status.classList.add('wb-error');
         }
       }
     }
