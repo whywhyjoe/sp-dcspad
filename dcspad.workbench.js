@@ -2308,6 +2308,7 @@ var LIST_SELECT = [
   "BaseType",
   "ItemCount",
   "Hidden",
+  "IsCatalog",
   "Created",
   "LastItemModifiedDate",
   "EntityTypeName",
@@ -2315,9 +2316,23 @@ var LIST_SELECT = [
   "DefaultViewUrl",
   "RootFolder/ServerRelativeUrl"
 ];
-var INTERNAL_TEMPLATES = /* @__PURE__ */ new Set([112, 113, 114, 116, 121, 122, 123, 124]);
+var INTERNAL_TEMPLATES = /* @__PURE__ */ new Set([112, 113, 114, 116, 121, 122, 123, 124, 125, 175, 544]);
+var INTERNAL_TITLES = /* @__PURE__ */ new Set([
+  "TaxonomyHiddenList",
+  "Style Library",
+  "Form Templates",
+  "Cache Profiles",
+  "Device Channels",
+  "Quick Deploy Items",
+  "Reusable Content",
+  "Content and Structure Reports",
+  "Site Collection Documents",
+  "Site Collection Images",
+  "Suggested Content Browser Locations"
+]);
 function isInternalList(list2) {
-  return Boolean(list2?.Hidden) || INTERNAL_TEMPLATES.has(list2?.BaseTemplate) || String(list2?.RootFolder?.ServerRelativeUrl || "").toLowerCase().includes("/_catalogs") || list2?.Title === "TaxonomyHiddenList";
+  const path = String(list2?.RootFolder?.ServerRelativeUrl || "").toLowerCase();
+  return Boolean(list2?.Hidden) || Boolean(list2?.IsCatalog) || INTERNAL_TEMPLATES.has(list2?.BaseTemplate) || path.includes("/_catalogs") || path.endsWith("/formservertemplates") || INTERNAL_TITLES.has(list2?.Title);
 }
 var FIELD_SELECT = [
   "Id",
