@@ -1242,8 +1242,9 @@ function bindNewTab(a) {
   a.target = "_blank";
   a.rel = "noopener";
   a.addEventListener("click", (e) => {
-    e.preventDefault();
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) return;
+    e.preventDefault();
     window.open(a.href, "_blank", "noopener");
   });
   return a;
@@ -1566,7 +1567,7 @@ function fieldText(item2, field2) {
   const text = textOf(item2, name);
   return String(text !== void 0 ? text : scalarText(raw)).trim();
 }
-var mdLink = (label, url) => `[${String(label).replace(/\]/g, "\\]")}](${String(url).replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+var mdLink = (label, url) => `[${String(label).replace(/([[\]])/g, "\\$1")}](${String(url).replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
 var encodeSpPath2 = (path) => String(path).split("/").map(encodeURIComponent).join("/");
 function fieldMarkdown(item2, field2) {
   const name = field2.InternalName;
@@ -1641,11 +1642,11 @@ ${block}
   if (tag === "a") {
     const href = String(node.getAttribute("href") || "");
     const label = core || href;
-    return href && !/^javascript:/i.test(href) ? `[${label}](${href})` : label;
+    return href && !/^javascript:/i.test(href) ? mdLink(label, href) : label;
   }
   if (tag === "img") {
     const src = String(node.getAttribute("src") || "");
-    return src ? `![${node.getAttribute("alt") || ""}](${src})` : "";
+    return src ? `!${mdLink(node.getAttribute("alt") || "", src)}` : "";
   }
   return body;
 }
@@ -3434,6 +3435,12 @@ function createSpWriteClient({
     if (!clean || /["*:<>?/\\|]/.test(clean) || clean.startsWith(".") || clean.endsWith(".")) {
       throw new SpFileError(
         'Folder names cannot contain " * : < > ? / \\ | or start or end with a dot.',
+        { code: "invalid-name" }
+      );
+    }
+    if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)(\..*)?$/i.test(clean) || /_vti_/i.test(clean)) {
+      throw new SpFileError(
+        "That folder name is reserved by SharePoint.",
         { code: "invalid-name" }
       );
     }
@@ -5395,7 +5402,7 @@ var SITE_PAGES_BASE_TEMPLATE = 119;
 var PUBLISHING_PAGES_BASE_TEMPLATE = 850;
 function pickPagesLibrary(items) {
   const lists = items || [];
-  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden) || null;
+  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE) || lists.find((l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden) || null;
 }
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
@@ -5844,15 +5851,10 @@ ${fullUrl}`;
 }
 
 // ../src/workbench/upload-metadata.js
-var FILE_METADATA_SPECS2 = Object.freeze([
-  { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
-  { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
-  { key: "docVersion", label: "DocVersion", internalName: "DocVersion", types: ["Text"] }
-]);
 function metadataFieldStates(libraryFields) {
   const fields = Array.isArray(libraryFields) ? libraryFields : [];
   const states = {};
-  for (const spec of FILE_METADATA_SPECS2) {
+  for (const spec of FILE_METADATA_SPECS) {
     const match = fields.find((f) => String(f.InternalName || "").toLowerCase() === spec.internalName.toLowerCase());
     let reason = "";
     if (!match) reason = `${spec.internalName} is not available in this library.`;
@@ -5981,6 +5983,7 @@ function openUploadMetadataDialog({
       } catch (err) {
         busy = false;
         cancel.hidden = true;
+        closeBtn.hidden = true;
         keep.hidden = false;
         keep.disabled = false;
         primary.textContent = "Retry metadata";
@@ -5995,8 +5998,8 @@ function openUploadMetadataDialog({
     });
     const dismiss = () => {
       if (busy) return;
-      if (uploaded) finish("kept");
-      else finish("cancelled");
+      if (uploaded) return;
+      finish("cancelled");
     };
     cancel.addEventListener("click", dismiss);
     closeBtn.addEventListener("click", dismiss);
@@ -6014,6 +6017,7 @@ var FIELD_SELECT4 = [
   "Id",
   "Title",
   "InternalName",
+  "EntityPropertyName",
   "TypeAsString",
   "FieldTypeKind",
   "Required",
@@ -6423,8 +6427,9 @@ function createBrowserView({ client: client2, navigate }) {
       }
       return;
     }
-    const values = carriedValues || (overwrite ? await prefillUploadValues(states, folderPath, file.name) : { title: "", description: "", docVersion: "" });
-    const initial = { ...values };
+    const baseline = overwrite ? await prefillUploadValues(states, folderPath, file.name) : { title: "", description: "", docVersion: "" };
+    const values = carriedValues || baseline;
+    const initial = { ...baseline };
     const filePath = `${folderPath}/${file.name}`;
     try {
       const outcome = await openUploadMetadataDialog({

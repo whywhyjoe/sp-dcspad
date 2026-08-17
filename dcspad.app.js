@@ -5457,8 +5457,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "88-dirty" : "dev";
-var injectedRevision = true ? "987711e6-dirty" : "";
+var injectedBuild = true ? "90" : "dev";
+var injectedRevision = true ? "49fd3707" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
