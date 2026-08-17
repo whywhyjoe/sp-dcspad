@@ -122,6 +122,16 @@ await check('items: tab loads rows newest-first with the agreed column order', a
       + 'Attachments,Created,Created By,Modified,Modified By';
 });
 
+await check('items: bar controls use the design-system field styling', async () =>
+  page.evaluate(() => {
+    // Same computed background/border as the standard grid filter field —
+    // unstyled controls fall back to browser dark-widget colors.
+    const probe = (el) => `${getComputedStyle(el).backgroundColor}|${getComputedStyle(el).borderTopColor}`;
+    const reference = probe(document.querySelector('.wb-items-grid .wb-grid-filter'));
+    return ['.wb-items-view', '.wb-items-max', '.wb-items-query']
+      .every((sel) => probe(document.querySelector(sel)) === reference);
+  }));
+
 await check('items: choosing a view narrows the content columns to its fields', async () => {
   await page.selectOption('.wb-items-view', 'bb0e2c1d-3333-4444-8888-000000000001');
   await page.waitForFunction(() =>
