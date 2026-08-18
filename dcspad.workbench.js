@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "98" : "dev";
-var injectedRevision = true ? "400a6c2a" : "";
+var injectedBuild = true ? "101" : "dev";
+var injectedRevision = true ? "7529eb99" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1123,17 +1123,6 @@ function toJson(rows, columns) {
   });
   return JSON.stringify(out, null, 2);
 }
-function toMarkdown(rows, columns) {
-  const esc = (s) => s.replaceAll("|", "\\|").replaceAll("\r", "").replaceAll("\n", " ");
-  const lines = [
-    `| ${columns.map((c) => esc(String(c.label ?? c.key))).join(" | ")} |`,
-    `| ${columns.map(() => "---").join(" | ")} |`
-  ];
-  for (const row of rows) {
-    lines.push(`| ${columns.map((c) => esc(cellText(row, c))).join(" | ")} |`);
-  }
-  return lines.join("\n");
-}
 function downloadCsv(name, rows, columns) {
   downloadText(`${name}.csv`, toCsv(rows, columns), "text/csv;charset=utf-8");
 }
@@ -1294,13 +1283,20 @@ function createGrid({
   exportName = "",
   descriptor = null,
   toolbarExtras = null,
-  exportExtras = []
+  exportExtras = [],
+  selectable = false
 } = {}) {
   let rows = [];
   let visible = [];
   let sortKey = null;
   let sortDir = 1;
   let filterText = "";
+  const selectedKeys = /* @__PURE__ */ new Set();
+  const keyOf = (row) => String(row?.[rowKey] ?? "");
+  const exportRows = () => {
+    const chosen = visible.filter((row) => selectedKeys.has(keyOf(row)));
+    return chosen.length ? chosen : visible;
+  };
   const root = el2("div", "wb-grid");
   const toolbar = el2("div", "wb-grid-toolbar");
   const count = el2("span", "wb-grid-count", "\u2014");
@@ -1344,21 +1340,78 @@ function createGrid({
     ]);
   }
   if (exportName) {
-    menuButton("Export \u25BE", "Export the visible rows", [
+    menuButton("Export \u25BE", "Export the selected rows, or all visible rows", [
       ...exportExtras,
-      ["Download CSV", () => downloadCsv(exportName, visible, columns)],
-      ["Download JSON", () => downloadJson(exportName, visible, columns)],
-      ["Copy CSV", (btn) => copyText(toCsv(visible, columns), btn)],
-      ["Copy JSON", (btn) => copyText(toJson(visible, columns), btn)],
-      ["Copy Markdown", (btn) => copyText(toMarkdown(visible, columns), btn)]
+      ["Download CSV", () => downloadCsv(exportName, exportRows(), columns)],
+      ["Download JSON", () => downloadJson(exportName, exportRows(), columns)],
+      ["Copy CSV", (btn) => copyText(toCsv(exportRows(), columns), btn)],
+      ["Copy JSON", (btn) => copyText(toJson(exportRows(), columns), btn)]
     ]);
   }
   const scroller = el2("div", "wb-grid-scroll");
   const table = el2("table", "wb-table");
   const thead = el2("thead");
   const headRow = el2("tr");
-  for (const col of columns) {
+  let widthsFrozen = false;
+  function freezeWidths() {
+    if (widthsFrozen) return;
+    widthsFrozen = true;
+    for (const th of headRow.children) {
+      th.style.width = `${Math.round(th.getBoundingClientRect().width)}px`;
+    }
+    table.style.tableLayout = "fixed";
+    syncTableWidth();
+  }
+  function syncTableWidth() {
+    let total = 0;
+    for (const th of headRow.children) total += parseFloat(th.style.width) || 0;
+    if (total) table.style.width = `${total}px`;
+  }
+  function attachResizer(th) {
+    const handle = el2("span", "wb-col-resize");
+    handle.title = "Drag to resize";
+    handle.addEventListener("click", (e) => e.stopPropagation());
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      freezeWidths();
+      const startX = e.clientX;
+      const startW = parseFloat(th.style.width) || th.getBoundingClientRect().width;
+      handle.classList.add("dragging");
+      handle.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        th.style.width = `${Math.max(48, Math.round(startW + (ev.clientX - startX)))}px`;
+        syncTableWidth();
+      };
+      const up = () => {
+        handle.classList.remove("dragging");
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
+    th.append(handle);
+  }
+  let selectAll = null;
+  if (selectable) {
+    const th = el2("th", "wb-select-col");
+    selectAll = el2("input");
+    selectAll.type = "checkbox";
+    selectAll.className = "wb-select-all";
+    selectAll.setAttribute("aria-label", "Select all visible rows");
+    selectAll.title = "Select all visible rows";
+    selectAll.addEventListener("change", () => {
+      if (selectAll.checked) visible.forEach((row) => selectedKeys.add(keyOf(row)));
+      else visible.forEach((row) => selectedKeys.delete(keyOf(row)));
+      render();
+    });
+    th.append(selectAll);
+    headRow.append(th);
+  }
+  columns.forEach((col, colIndex) => {
     const th = el2("th", "", col.label ?? col.key);
+    th.dataset.colIndex = String(colIndex);
     if (col.num) th.classList.add("wb-num");
     if (col.width) th.style.width = col.width;
     th.tabIndex = 0;
@@ -1380,8 +1433,9 @@ function createGrid({
         sortBy();
       }
     });
+    attachResizer(th);
     headRow.append(th);
-  }
+  });
   thead.append(headRow);
   const tbody = el2("tbody");
   table.append(thead, tbody);
@@ -1413,9 +1467,16 @@ function createGrid({
   function render() {
     visible = rows.filter(matches);
     if (sortKey) visible = [...visible].sort(compare);
-    count.textContent = filterText || visible.length !== rows.length ? `${visible.length} / ${rows.length}` : String(rows.length);
+    const selectedVisible = selectable ? visible.filter((row) => selectedKeys.has(keyOf(row))).length : 0;
+    const base = filterText || visible.length !== rows.length ? `${visible.length} / ${rows.length}` : String(rows.length);
+    count.textContent = selectedVisible ? `${base} \xB7 ${selectedVisible} selected` : base;
+    if (selectAll) {
+      selectAll.checked = visible.length > 0 && selectedVisible === visible.length;
+      selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+    }
     for (const th of headRow.children) {
-      const col = columns[[...headRow.children].indexOf(th)];
+      if (th.dataset.colIndex === void 0) continue;
+      const col = columns[Number(th.dataset.colIndex)];
       const selected = Boolean(col && col.key === sortKey);
       th.querySelector(".wb-sort-arrow").textContent = selected ? sortDir === 1 ? " \u25B2" : " \u25BC" : "";
       th.classList.toggle("is-sorted", selected);
@@ -1425,7 +1486,7 @@ function createGrid({
     if (!visible.length) {
       const tr = el2("tr");
       const td = el2("td", "wb-empty", rows.length ? "No rows match the filter." : emptyText);
-      td.colSpan = columns.length;
+      td.colSpan = columns.length + (selectable ? 1 : 0);
       tr.append(td);
       tbody.append(tr);
       return;
@@ -1441,6 +1502,32 @@ function createGrid({
         });
       }
       tr.dataset.key = String(row[rowKey] ?? "");
+      if (selectable) {
+        const key2 = keyOf(row);
+        tr.classList.toggle("wb-row-selected", selectedKeys.has(key2));
+        const toggle = () => {
+          if (selectedKeys.has(key2)) selectedKeys.delete(key2);
+          else selectedKeys.add(key2);
+          render();
+        };
+        const td = el2("td", "wb-select-cell");
+        const box = el2("input");
+        box.type = "checkbox";
+        box.className = "wb-row-check";
+        box.checked = selectedKeys.has(key2);
+        box.setAttribute("aria-label", "Select row");
+        box.addEventListener("click", (e) => e.stopPropagation());
+        box.addEventListener("change", toggle);
+        td.append(box);
+        tr.append(td);
+        if (!onOpen) {
+          tr.classList.add("wb-row-selectable");
+          tr.addEventListener("click", (e) => {
+            if (e.target.closest("a, button, input, .sp-copy")) return;
+            toggle();
+          });
+        }
+      }
       for (const col of columns) {
         const td = el2("td", [col.mono ? "wb-mono" : "", col.num ? "wb-num" : ""].filter(Boolean).join(" "));
         const text = displayValue(row, col);
@@ -1487,6 +1574,7 @@ function createGrid({
     actionsEl: actions,
     setRows(next, { partial = false } = {}) {
       rows = Array.isArray(next) ? next : [];
+      selectedKeys.clear();
       status.hidden = true;
       notice.hidden = !partial;
       if (partial) {
@@ -1505,6 +1593,7 @@ function createGrid({
       status.hidden = false;
     },
     getVisibleRows: () => [...visible],
+    getExportRows: () => [...exportRows()],
     getColumns: () => columns
   };
 }
@@ -2611,7 +2700,8 @@ function createListsView({ client: client2, navigate }) {
       listTitle,
       webUrl: client2.webUrl(),
       viewTitle: current.viewTitle,
-      items: itemsGrid.getVisibleRows(),
+      items: itemsGrid.getExportRows(),
+      // selected rows when any, else visible
       fields: current.fields,
       viewFieldNames: current.viewFieldNames,
       filter: current.filter,
@@ -2744,6 +2834,7 @@ function createListsView({ client: client2, navigate }) {
         filterPlaceholder: "Filter items\u2026",
         exportName: `items-${fileStem(listTitle)}`,
         descriptor: query ? { ...query, webUrl: client2.webUrl() } : null,
+        selectable: true,
         toolbarExtras: controls,
         exportExtras: [
           ["Download .md", () => {
