@@ -403,13 +403,20 @@ export function createListsView({ client, navigate }) {
         status = el('div', 'wb-grid-status', 'Loading items…');
         gridBox.append(status);
       }
+      // Hoisted so the catch can still build the grid shell (and mount the
+      // controls) when only the ITEMS request fails — a first-load failure
+      // must never leave the user without the view/max/query line to fix it.
+      let fields = null;
+      let viewFieldNames = null;
+      let query = null;
       try {
-        const [{ items: fields }, { items: views }] = await Promise.all([
+        const [fieldsResult, { items: views }] = await Promise.all([
           cached(listId, 'fields', () =>
             client.getAll(guidPath(listId, '/fields'), { select: FIELD_SELECT })),
           cached(listId, 'views', () =>
             client.getAll(guidPath(listId, '/views'), { select: VIEW_SELECT })),
         ]);
+        fields = fieldsResult.items;
         if (!viewsFilled) {
           viewsFilled = true;
           const none = el('option', '', 'All columns');
@@ -421,7 +428,6 @@ export function createListsView({ client, navigate }) {
             viewSel.append(opt);
           }
         }
-        let viewFieldNames = null;
         let viewTitle = '';
         if (viewSel.value) {
           const vf = await cached(listId, `viewfields::${viewSel.value}`, () =>
@@ -432,19 +438,15 @@ export function createListsView({ client, navigate }) {
 
         const hasAttachments = fields.some((f) => f.TypeAsString === 'Attachments');
         const expand = ['FieldValuesAsText', ...(hasAttachments ? ['AttachmentFiles'] : [])];
-        // Explicit projection instead of $select=* — only the exportable
-        // fields travel. Always the full content set (not the view's): the
-        // row cache below is shared across view switches.
-        const select = [
-          'ID', 'Title', 'Created', 'Modified',
-          ...contentFields(fields).map((f) => f.InternalName),
-          ...(fields.some((f) => f.InternalName === 'FileLeafRef') ? ['FileLeafRef'] : []),
-          ...expand,
-        ];
+        // $select=* deliberately — do NOT "optimize" this into an explicit
+        // field projection. User/Lookup fields 400 when selected by bare
+        // internal name ("The query to field 'X' is not valid… $expand must
+        // contain X"); '*' returns every scalar plus lookup ids, and
+        // FieldValuesAsText carries the display text. Cost one live outage.
         const query = {
           path: guidPath(listId, '/items'),
           options: {
-            select,
+            select: ['*', ...expand],
             expand,
             ...(parsed.filter ? { filter: parsed.filter } : {}),
             orderby: parsed.orderby || 'ID desc',
@@ -468,56 +470,8 @@ export function createListsView({ client, navigate }) {
         }
         if (seq !== loadSeq) return;
 
-        const content = viewFieldNames
-          ? viewColumnFields(fields, viewFieldNames)
-          : contentFields(fields);
-        const filesOf = (row) => (Array.isArray(row.AttachmentFiles)
-          ? row.AttachmentFiles : row.AttachmentFiles?.results || []);
-        const anyAttachments = items.some((row) => filesOf(row).length);
-        const columns = [
-          { key: 'Title', label: 'Title', value: (row) => itemTitle(row) },
-          { key: 'ID', label: 'ID', num: true, value: (row) => row.ID ?? row.Id },
-          ...content.map((f) => ({
-            key: f.InternalName,
-            label: f.Title || f.InternalName,
-            value: (row) => fieldText(row, f),
-          })),
-          ...(anyAttachments ? [{
-            key: 'Attachments',
-            label: 'Attachments',
-            value: (row) => filesOf(row).map((f) => f?.FileName || '').filter(Boolean).join(', '),
-          }] : []),
-          { key: 'Created', label: 'Created', format: fmtDate },
-          { key: 'CreatedBy', label: 'Created By', value: (row) => personText(row, 'Author') },
-          { key: 'Modified', label: 'Modified', format: fmtDate },
-          { key: 'ModifiedBy', label: 'Modified By', value: (row) => personText(row, 'Editor') },
-        ];
-        const newGrid = createGrid({
-          columns,
-          rowKey: 'ID',
-          emptyText: 'No items in this list.',
-          filterPlaceholder: 'Filter items…',
-          exportName: `items-${fileStem(listTitle)}`,
-          descriptor: { ...query, webUrl: client.webUrl() },
-          toolbarExtras: controls,
-          exportExtras: [
-            ['Download .md', () => {
-              const md = exportDoc();
-              if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
-            }],
-            ['Copy .md', (btn) => {
-              const md = exportDoc();
-              if (md) copyText(md, btn);
-            }],
-          ],
-        });
-        // Swapping grids re-parents the controls; don't drop the user's focus.
-        const focused = controls.contains(document.activeElement) ? document.activeElement : null;
-        gridBox.textContent = '';
-        gridBox.append(newGrid.el);
-        itemsGrid = newGrid;
+        mountItemsGrid(buildColumns(fields, viewFieldNames, items), query);
         itemsGrid.setRows(items, { partial });
-        if (focused) focused.focus();
         current = {
           fields, viewFieldNames, viewTitle,
           filter: parsed.filter, orderby: parsed.orderby,
@@ -530,6 +484,12 @@ export function createListsView({ client, navigate }) {
         const message = /SPQueryThrottledException|list view threshold/i.test(raw)
           ? `SharePoint throttled this query — filter/order by an indexed column and keep the matched set under 5,000. (${raw})`
           : raw;
+        if (!itemsGrid && fields) {
+          // The items request failed but the metadata is here: mount the
+          // grid shell anyway so the controls line exists and the user can
+          // adjust the view/max/query and retry.
+          mountItemsGrid(buildColumns(fields, viewFieldNames, []), query);
+        }
         if (itemsGrid) {
           itemsGrid.setError({ message });
         } else if (status) {
@@ -537,6 +497,61 @@ export function createListsView({ client, navigate }) {
           status.classList.add('wb-error');
         }
       }
+    }
+
+    function buildColumns(fields, viewFieldNames, items) {
+      const content = viewFieldNames
+        ? viewColumnFields(fields, viewFieldNames)
+        : contentFields(fields);
+      const filesOf = (row) => (Array.isArray(row.AttachmentFiles)
+        ? row.AttachmentFiles : row.AttachmentFiles?.results || []);
+      const anyAttachments = items.some((row) => filesOf(row).length);
+      return [
+        { key: 'Title', label: 'Title', value: (row) => itemTitle(row) },
+        { key: 'ID', label: 'ID', num: true, value: (row) => row.ID ?? row.Id },
+        ...content.map((f) => ({
+          key: f.InternalName,
+          label: f.Title || f.InternalName,
+          value: (row) => fieldText(row, f),
+        })),
+        ...(anyAttachments ? [{
+          key: 'Attachments',
+          label: 'Attachments',
+          value: (row) => filesOf(row).map((f) => f?.FileName || '').filter(Boolean).join(', '),
+        }] : []),
+        { key: 'Created', label: 'Created', format: fmtDate },
+        { key: 'CreatedBy', label: 'Created By', value: (row) => personText(row, 'Author') },
+        { key: 'Modified', label: 'Modified', format: fmtDate },
+        { key: 'ModifiedBy', label: 'Modified By', value: (row) => personText(row, 'Editor') },
+      ];
+    }
+
+    function mountItemsGrid(columns, query) {
+      const newGrid = createGrid({
+        columns,
+        rowKey: 'ID',
+        emptyText: 'No items in this list.',
+        filterPlaceholder: 'Filter items…',
+        exportName: `items-${fileStem(listTitle)}`,
+        descriptor: query ? { ...query, webUrl: client.webUrl() } : null,
+        toolbarExtras: controls,
+        exportExtras: [
+          ['Download .md', () => {
+            const md = exportDoc();
+            if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+          }],
+          ['Copy .md', (btn) => {
+            const md = exportDoc();
+            if (md) copyText(md, btn);
+          }],
+        ],
+      });
+      // Swapping grids re-parents the controls; don't drop the user's focus.
+      const focused = controls.contains(document.activeElement) ? document.activeElement : null;
+      gridBox.textContent = '';
+      gridBox.append(newGrid.el);
+      itemsGrid = newGrid;
+      if (focused) focused.focus();
     }
 
     viewSel.addEventListener('change', reload);

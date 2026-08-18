@@ -1131,9 +1131,33 @@ await check('live: Items tab sends the typed query and projection in the request
   return Boolean(url)
     && url.includes('Title%20eq%20%27R%26D%27')
     && url.includes('$orderby=Modified%20desc')
-    && url.includes('$select=ID,Title,Created,Modified,FieldValuesAsText')
+    // $select=* deliberately — bare User/Lookup internal names 400 live
+    && url.includes('$select=*,FieldValuesAsText')
     && url.includes('$expand=FieldValuesAsText')
     && url.includes('$top=500');
+});
+
+await check('live: an items-request failure still mounts the controls line', async () => {
+  // Reproduces the live regression: a 400 from /items (e.g. an invalid
+  // field projection) must not leave the tab as a bare error with no
+  // view/max/query controls to recover with.
+  await live.route(/lists\(guid'11111111-0000-0000-0000-000000000002'\)\/(items|fields|views)/, (route) => {
+    const url = route.request().url();
+    if (url.includes('/items')) {
+      return route.fulfill({
+        status: 400,
+        json: { 'odata.error': { message: { value: "The query to field 'Submitter' is not valid." } } },
+      });
+    }
+    return route.fulfill({ json: { value: [] } });
+  });
+  await live.locator('.wb-table tbody tr', { hasText: 'Beta' }).locator('td').first().click();
+  await live.locator('.wb-tab', { hasText: 'Items' }).click();
+  await live.waitForSelector('.wb-items-grid .wb-grid-status.wb-error');
+  const error = await live.locator('.wb-items-grid .wb-grid-status').textContent();
+  const controlsMounted = await live.locator('.wb-items-grid .wb-grid-toolbar .wb-items-view').count();
+  await live.locator('.wb-back').click();
+  return controlsMounted === 1 && error.includes("field 'Submitter'");
 });
 
 await check('live: page detail expands Author and Editor lookup fields', async () => {
