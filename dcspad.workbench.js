@@ -166,6 +166,34 @@ function getSpContext({ refresh = false } = {}) {
   return cached;
 }
 
+// ../src/build-info.js
+var APP_VERSION = "1.0.0";
+var injectedBuild = true ? "96-dirty" : "dev";
+var injectedRevision = true ? "a58e562e-dirty" : "";
+var APP_BUILD_INFO = Object.freeze({
+  version: APP_VERSION,
+  build: injectedBuild,
+  revision: injectedRevision
+});
+function buildTooltipFor(appName, info = APP_BUILD_INFO) {
+  const revision = info.revision ? ` (${info.revision})` : "";
+  return `${appName} \u2014 version ${info.version} \u2014 Build #${info.build}${revision}`;
+}
+function logBuildInfo(appName, info = APP_BUILD_INFO) {
+  console.info(`[${appName}] version ${info.version} \u2014 Build #${info.build}${info.revision ? ` (${info.revision})` : ""}`);
+}
+function applyWorkbenchBuildMarker(root = document) {
+  logBuildInfo("SP Workbench");
+  const tooltip = buildTooltipFor("SP Workbench");
+  const logo = root.querySelector(".wb-logo");
+  if (logo) {
+    logo.title = tooltip;
+    logo.setAttribute("aria-label", tooltip);
+  }
+  document.documentElement.dataset.dcspadWbBuild = APP_BUILD_INFO.build;
+  window.__DCSPAD_WB_BUILD_INFO__ = APP_BUILD_INFO;
+}
+
 // ../src/sp-odata.js
 var ACCEPT_JSON = "application/json;odata=nometadata";
 var SpFileError = class extends Error {
@@ -6810,7 +6838,8 @@ function applyWorkbenchContext(ctx2, inspecting = "") {
   chipText.textContent = ctx2.live ? "SP" : "SP: Mock";
   chip.title = ctx2.live ? `Connected to ${ctx2.label}${ctx2.user ? ` as ${ctx2.user}` : ""} \xB7 context: ${ctx2.source}` : "Not connected to a SharePoint web \u2014 showing built-in mock data";
   const inspectingNote = inspecting ? ` \xB7 inspecting ${inspecting}` : "";
-  statusCtx2.textContent = ctx2.live ? `SP: ${ctx2.label}${ctx2.user ? ` \xB7 ${ctx2.user}` : ""}${inspectingNote}` : `SP: mock data (deploy to SharePoint for live inspection)${inspectingNote}`;
+  statusCtx2.textContent = ctx2.live ? `SP: ${ctx2.label}${inspectingNote} \xB7 Build #${APP_BUILD_INFO.build}` : `SP: mock data (deploy to SharePoint for live inspection)${inspectingNote} \xB7 Build #${APP_BUILD_INFO.build}`;
+  statusCtx2.title = buildTooltipFor("SP Workbench");
 }
 var ctx = getSpContext();
 applyWorkbenchContext(ctx);
@@ -6968,6 +6997,7 @@ async function refreshCurrentUser() {
   }
 }
 refreshCurrentUser();
+applyWorkbenchBuildMarker();
 (async () => {
   let saved = "";
   try {

@@ -5457,18 +5457,25 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "94" : "dev";
-var injectedRevision = true ? "f00b2db9" : "";
+var injectedBuild = true ? "96" : "dev";
+var injectedRevision = true ? "a58e562e" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
   revision: injectedRevision
 });
-function buildTooltip(info = APP_BUILD_INFO) {
+function buildTooltipFor(appName, info = APP_BUILD_INFO) {
   const revision = info.revision ? ` (${info.revision})` : "";
-  return `DCSPad \u2014 version ${info.version} \u2014 Build #${info.build}${revision}`;
+  return `${appName} \u2014 version ${info.version} \u2014 Build #${info.build}${revision}`;
+}
+function buildTooltip(info = APP_BUILD_INFO) {
+  return buildTooltipFor("DCSPad", info);
+}
+function logBuildInfo(appName, info = APP_BUILD_INFO) {
+  console.info(`[${appName}] version ${info.version} \u2014 Build #${info.build}${info.revision ? ` (${info.revision})` : ""}`);
 }
 function applyBuildMarker(root = document) {
+  logBuildInfo("DCSPad");
   const logo = root.querySelector(".logo");
   if (!logo) return;
   const tooltip = buildTooltip();
