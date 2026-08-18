@@ -34,7 +34,8 @@ function git(...args) {
 const requestedBuildNumber = String(process.env.DCSPAD_BUILD_NUMBER || '').trim();
 const commitCount = git('rev-list', '--count', 'HEAD');
 const shortRevision = git('rev-parse', '--short=8', 'HEAD');
-const trackedChanges = git('status', '--porcelain', '--untracked-files=no');
+// Build outputs never make a build 'dirty' — exclude the bundles.
+const trackedChanges = git('status', '--porcelain', '--untracked-files=no', '--', '.', ':!dcspad.app.js', ':!dcspad.workbench.js');
 const buildNumber = requestedBuildNumber
   || commitCount
   || new Date().toISOString().replace(/\D/g, '').slice(0, 14);
