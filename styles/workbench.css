@@ -453,8 +453,11 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-items-querytoggle:hover { color: var(--accent); }
 .wb-items-querytoggle.wb-applied { color: var(--accent); }
 .wb-items-querywrap { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.wb-items-query { width: min(320px, 40vw); font-family: var(--mono); }
-.wb-items-query::placeholder { color: var(--fg-faint); font-family: var(--sans); }
+/* The query IS code — mono for value and placeholder alike. The extra
+   .wb-items-controls qualifier outranks the field recipe's sans
+   (.wb-items-controls input), which silently won at equal-class specificity. */
+.wb-items-controls .wb-items-query { width: min(320px, 40vw); font-family: var(--mono); }
+.wb-items-query::placeholder { color: var(--fg-faint); }
 .wb-items-error { color: var(--error-fg); font-size: 12px; }
 
 /* Lists view: internal-plumbing expander under the grid. */

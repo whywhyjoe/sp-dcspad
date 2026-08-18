@@ -183,8 +183,12 @@ await check('items: bar controls use the design-system field styling', async () 
     // unstyled controls fall back to browser dark-widget colors.
     const probe = (el) => `${getComputedStyle(el).backgroundColor}|${getComputedStyle(el).borderTopColor}`;
     const reference = probe(document.querySelector('.wb-items-grid .wb-grid-filter'));
+    // …but the query box renders in mono: its content is OData, i.e. code.
+    // (Pinned because the field recipe's sans once out-specified it.)
+    const queryFont = getComputedStyle(document.querySelector('.wb-items-query')).fontFamily;
     return ['.wb-items-view', '.wb-items-max', '.wb-items-query']
-      .every((sel) => probe(document.querySelector(sel)) === reference);
+      .every((sel) => probe(document.querySelector(sel)) === reference)
+      && /mono/i.test(queryFont);
   }));
 
 await check('items: choosing a view narrows the content columns to its fields', async () => {
