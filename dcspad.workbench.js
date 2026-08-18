@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "103" : "dev";
-var injectedRevision = true ? "a21efac3" : "";
+var injectedBuild = true ? "104-dirty" : "dev";
+var injectedRevision = true ? "b4eb2d90-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -829,22 +829,138 @@ var REGIONAL_SETTINGS = {
   TimeZone: { Id: 10, Description: "(UTC-05:00) Eastern Time (US and Canada)" }
 };
 var CURRENT_USER = user(11, "Mock Developer", "dev@mock.local", true);
+var CLASSIC_LISTS = [
+  list("Documents", "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f01", 101, 1, 8, false, "/sites/classic/Documents"),
+  list("Pages", "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02", 850, 1, 3, false, "/sites/classic/Pages")
+];
+var CLASSIC_PAGE_ITEMS = [
+  {
+    Id: 1,
+    Title: "Benefits overview",
+    FileLeafRef: "Benefits.aspx",
+    FileRef: "/sites/classic/Pages/Benefits.aspx",
+    FileDirRef: "/sites/classic/Pages",
+    UniqueId: "ef000000-0000-4000-8000-000000000001",
+    Created: "2019-04-02T10:00:00Z",
+    Modified: "2026-06-11T14:20:00Z",
+    Author: { Title: "Pat Example" },
+    Editor: { Title: "Pat Example" },
+    PublishingPageContent: "<h2>Benefits</h2><p>Open enrollment runs through March.</p>",
+    FieldValuesAsText: { Editor: "Pat Example" }
+  },
+  {
+    // Body empty on purpose: everything readable is in the web parts.
+    Id: 2,
+    Title: "Rates",
+    FileLeafRef: "Rates.aspx",
+    FileRef: "/sites/classic/Pages/Rates.aspx",
+    FileDirRef: "/sites/classic/Pages",
+    UniqueId: "ef000000-0000-4000-8000-000000000002",
+    Created: "2018-09-14T08:30:00Z",
+    Modified: "2026-05-02T09:05:00Z",
+    Author: { Title: "Mock Developer" },
+    Editor: { Title: "Mock Developer" },
+    PublishingPageContent: "",
+    FieldValuesAsText: { Editor: "Mock Developer" }
+  },
+  {
+    Id: 3,
+    Title: "Empty",
+    FileLeafRef: "Empty.aspx",
+    FileRef: "/sites/classic/Pages/Empty.aspx",
+    FileDirRef: "/sites/classic/Pages",
+    UniqueId: "ef000000-0000-4000-8000-000000000003",
+    Created: "2020-01-05T11:00:00Z",
+    Modified: "2026-01-05T11:00:00Z",
+    Author: { Title: "Mock Developer" },
+    Editor: { Title: "Mock Developer" },
+    PublishingPageContent: null,
+    FieldValuesAsText: { Editor: "Mock Developer" }
+  }
+];
+var CLASSIC_WEBPARTS = {
+  "/sites/classic/pages/benefits.aspx": [
+    {
+      Id: "g1000000-0000-4000-8000-000000000001",
+      WebPart: {
+        Title: "Contact details",
+        ZoneIndex: 2,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: "<p>Call the benefits desk on x4120.</p>", ContentLink: "" }
+      }
+    },
+    {
+      Id: "g1000000-0000-4000-8000-000000000002",
+      WebPart: {
+        Title: "Eligibility",
+        ZoneIndex: 1,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: "<![CDATA[<p>All staff after 90 days.</p>]]>", ContentLink: "" }
+      }
+    }
+  ],
+  "/sites/classic/pages/rates.aspx": [
+    {
+      Id: "g1000000-0000-4000-8000-000000000003",
+      WebPart: {
+        Title: "Rate table",
+        ZoneIndex: 1,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: "", ContentLink: "/sites/classic/Style Library/rates.html" }
+      }
+    },
+    {
+      Id: "g1000000-0000-4000-8000-000000000004",
+      WebPart: {
+        Title: "Rate calculator",
+        ZoneIndex: 2,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: '<script>calcRates();<\/script><div id="calc">Rates</div>' }
+      }
+    },
+    {
+      // No Content and no ContentLink — an inventory row, not a reading part.
+      Id: "g1000000-0000-4000-8000-000000000005",
+      WebPart: { Title: "List view", ZoneIndex: 3, Hidden: true, IsClosed: false, Properties: { ListName: "Rates" } }
+    }
+  ]
+};
+var CLASSIC_ITEMS = {
+  "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02": CLASSIC_PAGE_ITEMS
+};
 var listIdOf = (url) => /lists\(guid'([0-9a-f-]+)'\)/i.exec(url)?.[1]?.toLowerCase();
 var groupIdOf = (url) => /sitegroups\((\d+)\)/i.exec(url)?.[1];
 function mockResolver(rawUrl) {
   const url = String(rawUrl);
   const path = url.slice(url.indexOf("/_api/") + 6).toLowerCase();
+  const webBase = url.slice(0, url.indexOf("/_api/")).replace(/[/]+$/, "");
+  const classic = /[/]sites[/]classic$/i.test(webBase);
+  const lists = classic ? CLASSIC_LISTS : LISTS;
+  const itemsByList = classic ? CLASSIC_ITEMS : ITEMS;
+  const wpFile = /getfilebyserverrelativepath[(]decodedurl='([^']*)'[)][/]getlimitedwebpartmanager/.exec(path)?.[1];
+  if (wpFile !== void 0 && path.includes("/webparts")) {
+    let decoded = wpFile;
+    try {
+      decoded = decodeURIComponent(wpFile);
+    } catch {
+    }
+    return { value: CLASSIC_WEBPARTS[decoded] || [] };
+  }
   if (/^web\/lists\(guid'/.test(path)) {
     const id = listIdOf(path);
-    const found = LISTS.find((l) => l.Id.toLowerCase() === id);
+    const found = lists.find((l) => l.Id.toLowerCase() === id);
     if (!found) return null;
     const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
     if (itemId) {
-      const single = (ITEMS[found.Id] || []).find((i) => i.Id === Number(itemId));
+      const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
       return single ?? null;
     }
     if (path.includes("/items")) {
-      const rows = [...ITEMS[found.Id] || []];
+      const rows = [...itemsByList[found.Id] || []];
       const order = /\$orderby=([a-z0-9_]+)(?:(?:%20| +)(asc|desc))?/.exec(path);
       if (order) {
         const key2 = Object.keys(rows[0] || {}).find((k) => k.toLowerCase() === order[1]) || order[1];
@@ -865,7 +981,7 @@ function mockResolver(rawUrl) {
   if (path.startsWith("web/lists")) {
     if (path.includes("hasuniqueroleassignments")) {
       return {
-        value: LISTS.map((l, i) => ({
+        value: lists.map((l, i) => ({
           Id: l.Id,
           Title: l.Title,
           Hidden: l.Hidden,
@@ -874,7 +990,7 @@ function mockResolver(rawUrl) {
         }))
       };
     }
-    return { value: LISTS };
+    return { value: lists };
   }
   if (/^web\/sitegroups\(\d+\)\/users/.test(path)) {
     const users = GROUP_USERS[groupIdOf(path)];
@@ -5403,8 +5519,8 @@ function contentParts(controls) {
   }
   return { parts, unreadable };
 }
-function contentBlocks(controls) {
-  const { parts, unreadable } = contentParts(controls);
+function contentBlocks(controls, override) {
+  const { parts, unreadable } = override ? { parts: override, unreadable: 0 } : contentParts(controls);
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
@@ -5419,6 +5535,8 @@ var METADATA_SKIP = /* @__PURE__ */ new Set([
   "CanvasContent1",
   "LayoutWebpartsContent",
   "FieldValuesAsText",
+  "PublishingPageContent",
+  "WikiField",
   "Author",
   "Editor"
   // flattened into Created/Modified lines
@@ -5426,6 +5544,7 @@ var METADATA_SKIP = /* @__PURE__ */ new Set([
 function buildContentExport({
   item: item2 = {},
   controls = [],
+  parts = null,
   siteTitle = "",
   webUrl = "",
   libraryTitle = "",
@@ -5475,7 +5594,7 @@ function buildContentExport({
     ...top,
     "---",
     "",
-    contentBlocks(controls).join("\n\n"),
+    contentBlocks(controls, parts).join("\n\n"),
     "",
     "---",
     "",
@@ -5483,26 +5602,131 @@ function buildContentExport({
     ""
   ].join("\n");
 }
-function buildRawExport({ item: item2 = {}, controls = [] }) {
-  return JSON.stringify({ item: item2, controls }, null, 2);
+function buildRawExport({ item: item2 = {}, controls = [], webParts = [] }) {
+  const payload = { item: item2, controls };
+  if (webParts.length) payload.webParts = webParts;
+  return JSON.stringify(payload, null, 2);
 }
 function exportFileStem(item2) {
   const name = String(item2.FileLeafRef || item2.Title || "page").replace(/\.aspx$/i, "");
   return name.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "page";
 }
 
+// ../src/workbench/classic-page.js
+var SITE_PAGES_BASE_TEMPLATE = 119;
+var PUBLISHING_PAGES_BASE_TEMPLATE = 850;
+var PUBLISHING_BODY_FIELD = "PublishingPageContent";
+var WIKI_BODY_FIELD = "WikiField";
+function libraryKindOf(list2) {
+  if (!list2) return null;
+  if (list2.BaseTemplate === SITE_PAGES_BASE_TEMPLATE) return "modern";
+  if (list2.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE) return "publishing";
+  return "generic";
+}
+var libraryKindLabel = (kind) => ({
+  modern: "modern Site Pages library",
+  publishing: "classic publishing Pages library",
+  generic: "pages library"
+})[kind] || "pages library";
+function htmlHasContent(html) {
+  const raw = String(html ?? "").trim();
+  if (!raw) return false;
+  if (/<img\b/i.test(raw)) return true;
+  const doc = new DOMParser().parseFromString(raw, "text/html");
+  return Boolean((doc.body?.textContent || "").trim());
+}
+function pageContentKindOf(item2) {
+  const it = item2 || {};
+  if (String(it.CanvasContent1 ?? "").trim()) return "canvas";
+  if (htmlHasContent(it[PUBLISHING_BODY_FIELD])) return "publishing";
+  if (htmlHasContent(it[WIKI_BODY_FIELD])) return "wiki";
+  return "empty";
+}
+var pageContentKindLabel = (kind) => ({
+  canvas: "modern canvas page",
+  publishing: "classic publishing page",
+  wiki: "classic wiki page",
+  empty: "page with no readable body"
+})[kind] || "page";
+function unwrapCdata(value) {
+  const raw = String(value ?? "");
+  const m = /^\s*<!\[CDATA\[([\s\S]*)\]\]>\s*$/.exec(raw);
+  return m ? m[1] : raw;
+}
+function normalizeWebPart(entry, index = 0) {
+  const wp = entry?.WebPart || {};
+  const props = wp.Properties || {};
+  const content = unwrapCdata(props.Content).trim();
+  const contentLink = String(props.ContentLink ?? "").trim();
+  return {
+    id: entry?.Id || wp.Id || `wp-${index}`,
+    title: String(wp.Title ?? "").trim(),
+    zoneIndex: Number.isFinite(wp.ZoneIndex) ? wp.ZoneIndex : index,
+    order: index,
+    hidden: Boolean(wp.Hidden),
+    closed: Boolean(wp.IsClosed),
+    hasHtml: Boolean(content) || Boolean(contentLink),
+    content,
+    contentLink,
+    properties: props
+  };
+}
+function classicWebParts(entries) {
+  return (entries || []).map((entry, i) => normalizeWebPart(entry, i)).sort((a, b) => a.zoneIndex - b.zoneIndex || a.order - b.order);
+}
+function classicContentParts({ item: item2 = {}, webParts = [], contentKind = null } = {}) {
+  const kind = contentKind || pageContentKindOf(item2);
+  const parts = [];
+  const bodyField = kind === "wiki" ? WIKI_BODY_FIELD : PUBLISHING_BODY_FIELD;
+  const body = String(item2[bodyField] ?? "").trim();
+  if (htmlHasContent(body)) {
+    parts.push({
+      kind: "text",
+      label: kind === "wiki" ? "Wiki content" : "Page content",
+      html: body,
+      lines: []
+    });
+  }
+  for (const wp of webParts) {
+    if (!wp.hasHtml) continue;
+    const label = wp.title || "Embedded content";
+    if (htmlHasContent(wp.content)) {
+      parts.push({ kind: "text", label, html: wp.content, lines: [] });
+    } else if (wp.contentLink) {
+      parts.push({
+        kind: "webpart",
+        label,
+        html: "",
+        lines: [`Content linked from ${wp.contentLink}`]
+      });
+    }
+  }
+  const counts = /* @__PURE__ */ new Map();
+  for (const part of parts) counts.set(part.label, (counts.get(part.label) || 0) + 1);
+  const seen = /* @__PURE__ */ new Map();
+  for (const part of parts) {
+    if (counts.get(part.label) > 1) {
+      const n = (seen.get(part.label) || 0) + 1;
+      seen.set(part.label, n);
+      part.label = `${part.label} ${n}`;
+    }
+  }
+  return { parts, unreadable: 0 };
+}
+
 // ../src/workbench/views/pages.js?v=2
-var PAGE_SELECT = [
+var PAGE_SELECT_BASE = [
   "Id",
   "Title",
   "FileLeafRef",
   "FileRef",
   "FileDirRef",
-  "PromotedState",
   "Modified",
   "UniqueId",
   "Editor/Title"
 ];
+var PAGE_SELECT_MODERN = [...PAGE_SELECT_BASE, "PromotedState"];
+var pageSelectFor = (kind) => kind === "modern" ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
 var DETAIL_SELECT = [
   "Id",
   "Title",
@@ -5534,11 +5758,11 @@ var FIELD_SELECT3 = [
   "Description",
   "FillInChoice"
 ];
-var SITE_PAGES_BASE_TEMPLATE = 119;
-var PUBLISHING_PAGES_BASE_TEMPLATE = 850;
+var SITE_PAGES_BASE_TEMPLATE2 = 119;
+var PUBLISHING_PAGES_BASE_TEMPLATE2 = 850;
 function pickPagesLibrary(items) {
   const lists = items || [];
-  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE) || lists.find((l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden) || null;
+  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2 && !l.Hidden) || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2 && !l.Hidden) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2) || lists.find((l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden) || null;
 }
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
@@ -5561,8 +5785,10 @@ function createPagesView({ client: client2, navigate }) {
   const spWrite = createSpWriteClient({ client: client2 });
   const gridPane = el11("div", "wb-pane");
   const head = el11("div", "wb-view-head");
-  head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Modern pages in this web\u2019s Site Pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
-  const libraryLink = el11("a", "btn btn-xs wb-head-link", "Open Site Pages library \u2197");
+  head.innerHTML = "<h2>Pages</h2>";
+  const hint = el11("p", "wb-view-hint", "Locating this web\u2019s pages library\u2026");
+  head.append(hint);
+  const libraryLink = el11("a", "btn btn-xs wb-head-link", "Open library \u2197");
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
   head.append(libraryLink);
@@ -5589,6 +5815,8 @@ function createPagesView({ client: client2, navigate }) {
         return found ? {
           listId: found.Id,
           title: found.Title,
+          kind: libraryKindOf(found),
+          baseTemplate: found.BaseTemplate,
           rootPath: found.RootFolder?.ServerRelativeUrl || "",
           viewUrl: found.DefaultViewUrl || found.RootFolder?.ServerRelativeUrl || ""
         } : null;
@@ -5618,19 +5846,22 @@ function createPagesView({ client: client2, navigate }) {
     try {
       const sitePages = await sitePagesList();
       if (!sitePages) {
-        masterStatus.textContent = "This web has no Site Pages library (BaseTemplate 119).";
+        hint.textContent = "";
+        masterStatus.textContent = "This web has no pages library \u2014 looked for modern Site Pages (BaseTemplate 119), classic publishing Pages (850), and any library titled \u201CPages\u201D.";
         masterStatus.hidden = false;
         return;
       }
+      hint.textContent = `${sitePages.title} \u2014 ${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate}), subfolders included. Click a row to inspect content, metadata, and structure.`;
       if (sitePages.viewUrl) {
         libraryLink.href = sitePages.viewUrl;
+        libraryLink.textContent = `Open ${sitePages.title} \u2197`;
         libraryLink.hidden = false;
       }
       if (!grid) {
         const query = {
           path: guidPath2(sitePages.listId, "/items"),
           options: {
-            select: PAGE_SELECT,
+            select: pageSelectFor(sitePages.kind),
             expand: "Editor",
             orderby: "FileLeafRef",
             top: 5e3
@@ -5646,7 +5877,7 @@ function createPagesView({ client: client2, navigate }) {
               value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
               format: (v) => v ? `/${v}` : ""
             },
-            { key: "PromotedState", label: "Promoted", format: promotedLabel },
+            ...sitePages.kind === "modern" ? [{ key: "PromotedState", label: "Promoted", format: promotedLabel }] : [],
             { key: "Modified", label: "Modified", format: fmtDate4 },
             { key: "Editor", label: "Editor", value: (row) => row.Editor?.Title || "" },
             {
@@ -5670,7 +5901,7 @@ function createPagesView({ client: client2, navigate }) {
             pageId: row.Id,
             pageName: row.FileLeafRef || row.Title
           }),
-          emptyText: "No pages in this library.",
+          emptyText: `No pages in ${sitePages.title}.`,
           filterPlaceholder: "Filter pages\u2026",
           exportName: "sp-pages",
           descriptor: { ...query, webUrl: client2.webUrl() }
@@ -5690,17 +5921,25 @@ function createPagesView({ client: client2, navigate }) {
       }
     }
   }
-  function pageItem(listId, pageId) {
+  function pageItem(listId, pageId, kind) {
     if (!detailCache.has(pageId)) {
-      detailCache.set(pageId, client2.get(guidPath2(listId, `/items(${pageId})`), {
-        select: DETAIL_SELECT,
-        expand: ["Author", "Editor"]
-      }).catch((err) => {
+      const options = kind === "modern" ? { select: DETAIL_SELECT, expand: ["Author", "Editor"] } : { expand: ["Author", "Editor"] };
+      detailCache.set(pageId, client2.get(guidPath2(listId, `/items(${pageId})`), options).catch((err) => {
         detailCache.delete(pageId);
         throw err;
       }));
     }
     return detailCache.get(pageId);
+  }
+  const webPartCache = /* @__PURE__ */ new Map();
+  function classicWebPartsOf(fileRef) {
+    const key2 = String(fileRef || "");
+    if (!key2) return Promise.resolve({ parts: [], error: null });
+    if (!webPartCache.has(key2)) {
+      const path = `web/getfilebyserverrelativepath(decodedurl='${odataPathLiteral(key2)}')/getlimitedwebpartmanager(scope=1)/webparts`;
+      webPartCache.set(key2, client2.getAll(path, { expand: "WebPart/Properties" }).then(({ items }) => ({ parts: classicWebParts(items), error: null })).catch((err) => ({ parts: [], error: err })));
+    }
+    return webPartCache.get(key2);
   }
   function listFields(listId) {
     if (!fieldsPromise) {
@@ -5775,9 +6014,46 @@ function createPagesView({ client: client2, navigate }) {
     partsGrid.setRows(rows);
     return wrap;
   }
-  function textPane(parsed) {
+  function classicWebPartsPane(webParts, error) {
+    const wrap = el11("div", "wb-tab-pane");
+    if (error) {
+      const notice = el11(
+        "div",
+        "wb-grid-notice",
+        "\u26A0 The page\u2019s web parts could not be read \u2014 " + (error.message || String(error))
+      );
+      wrap.append(notice);
+    }
+    const rows = webParts.map((wp) => ({
+      Title: wp.title,
+      Zone: wp.zoneIndex,
+      Content: wp.content ? "inline" : wp.contentLink ? "linked" : "",
+      ContentLink: wp.contentLink,
+      Hidden: wp.hidden ? "yes" : "",
+      Closed: wp.closed ? "yes" : "",
+      Id: wp.id
+    }));
+    const partsGrid = createGrid({
+      columns: [
+        { key: "Title", label: "Title" },
+        { key: "Zone", label: "Zone index" },
+        { key: "Content", label: "Content" },
+        { key: "ContentLink", label: "Content link", mono: true, copyable: true },
+        { key: "Hidden", label: "Hidden" },
+        { key: "Closed", label: "Closed" },
+        { key: "Id", label: "Web part id", mono: true, copyable: true }
+      ],
+      emptyText: "No web parts on this page.",
+      filterPlaceholder: "Filter web parts\u2026",
+      exportName: "sp-page-webparts"
+    });
+    wrap.append(partsGrid.el);
+    partsGrid.setRows(rows);
+    return wrap;
+  }
+  function textPane(parts, notice) {
     const wrap = el11("div", "wb-tab-pane wb-text-pane");
-    const { parts } = contentParts(parsed.controls);
+    if (notice) wrap.append(notice);
     if (!parts.length) {
       wrap.append(el11("div", "wb-grid-status", "No readable content on this page."));
       return wrap;
@@ -5848,9 +6124,11 @@ ${p.html}`).join("\n\n")
     });
     return wrap;
   }
-  function rawPane(item2, parsed) {
+  function rawPane(item2, parsed, webParts = []) {
     const wrap = el11("div", "wb-tab-pane");
-    const node = toNode({ item: item2, parsedCanvas: parsed.controls }, 0, { maxDepth: 10, maxItems: 400 });
+    const payload = { item: item2, parsedCanvas: parsed.controls };
+    if (webParts.length) payload.webParts = webParts;
+    const node = toNode(payload, 0, { maxDepth: 10, maxItems: 400 });
     const inspector = el11("div", "wb-raw");
     inspector.append(enhance(node) ?? renderValue(node));
     wrap.append(inspector);
@@ -5874,8 +6152,8 @@ ${p.html}`).join("\n\n")
     let item2;
     try {
       sitePages = await sitePagesList();
-      if (!sitePages) throw new Error("This web has no Site Pages library.");
-      item2 = await pageItem(sitePages.listId, route.pageId);
+      if (!sitePages) throw new Error("This web has no pages library.");
+      item2 = await pageItem(sitePages.listId, route.pageId, sitePages.kind);
     } catch (err) {
       if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
@@ -5899,6 +6177,23 @@ ${fullUrl}`;
       frag.addEventListener("click", () => copyText(fullUrl, frag));
       headRow.append(frag);
     }
+    const parsed = parseCanvasContent(item2.CanvasContent1);
+    const contentKind = pageContentKindOf(item2);
+    const isCanvas = contentKind === "canvas";
+    let classicParts = [];
+    let webParts = [];
+    let webPartError = null;
+    if (!isCanvas) {
+      const fetched = await classicWebPartsOf(item2.FileRef);
+      if (run !== detailRun) return;
+      webParts = fetched.parts;
+      webPartError = fetched.error;
+      classicParts = classicContentParts({ item: item2, webParts, contentKind }).parts;
+    }
+    const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
+    const kindChip = el11("span", "wb-detail-kind", pageContentKindLabel(contentKind));
+    kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(contentKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
+    headRow.append(kindChip);
     const actions = el11("span", "wb-detail-actions");
     const exportContent = el11("button", "btn btn-xs", "Export content");
     exportContent.type = "button";
@@ -5914,12 +6209,12 @@ ${fullUrl}`;
       actions.append(open);
     }
     headRow.append(actions);
-    const parsed = parseCanvasContent(item2.CanvasContent1);
     exportContent.addEventListener("click", async () => {
       const web = await webIdentity();
       downloadText(`${exportFileStem(item2)}-content.md`, buildContentExport({
         item: item2,
         controls: parsed.controls,
+        parts: readingParts,
         siteTitle: web.Title || "",
         webUrl: web.Url || client2.webUrl(),
         libraryTitle: sitePages.title,
@@ -5929,11 +6224,11 @@ ${fullUrl}`;
     exportRaw.addEventListener("click", () => {
       downloadText(
         `${exportFileStem(item2)}-raw.json`,
-        buildRawExport({ item: item2, controls: parsed.controls }),
+        buildRawExport({ item: item2, controls: parsed.controls, webParts }),
         "application/json"
       );
     });
-    if (parsed.errors.length) {
+    if (isCanvas && parsed.errors.length) {
       const notice = el11(
         "div",
         "wb-grid-notice",
@@ -5947,11 +6242,23 @@ ${fullUrl}`;
     const body = el11("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     const TABS = [
-      { id: "text", label: "Extract", build: () => textPane(parsed) },
+      {
+        id: "text",
+        label: "Extract",
+        build: () => textPane(readingParts, webPartError ? el11(
+          "div",
+          "wb-grid-notice",
+          `\u26A0 This page\u2019s web parts could not be read, so embedded content may be missing \u2014 ${webPartError.message || String(webPartError)}`
+        ) : null)
+      },
       { id: "metadata", label: "Metadata", build: () => metadataPane(sitePages.listId, route.pageId) },
-      { id: "structure", label: "Structure", build: () => structurePane(parsed) },
-      { id: "webparts", label: "Web parts", build: () => webPartsPane(parsed) },
-      { id: "raw", label: "Raw", build: () => rawPane(item2, parsed) }
+      ...isCanvas ? [{ id: "structure", label: "Structure", build: () => structurePane(parsed) }] : [],
+      {
+        id: "webparts",
+        label: "Web parts",
+        build: () => isCanvas ? webPartsPane(parsed) : classicWebPartsPane(webParts, webPartError)
+      },
+      { id: "raw", label: "Raw", build: () => rawPane(item2, parsed, webParts) }
     ];
     function activate(tab) {
       for (const btn of tabsBar.children) {

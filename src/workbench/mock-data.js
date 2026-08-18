@@ -457,6 +457,123 @@ const REGIONAL_SETTINGS = {
 
 const CURRENT_USER = user(11, 'Mock Developer', 'dev@mock.local', true);
 
+
+// ---- classic publishing web -----------------------------------------------
+// Served for a web base ending in /sites/classic, so the classic Pages path
+// can be exercised without disturbing the modern web's fixtures (and their
+// row counts). A publishing library has NO PromotedState and NO
+// CanvasContent1: the body lives in PublishingPageContent, and the rest of
+// the content lives in Content Editor / Script Editor web parts.
+const CLASSIC_LISTS = [
+  list('Documents', '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f01', 101, 1, 8, false, '/sites/classic/Documents'),
+  list('Pages', '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02', 850, 1, 3, false, '/sites/classic/Pages'),
+];
+
+const CLASSIC_PAGE_ITEMS = [
+  {
+    Id: 1,
+    Title: 'Benefits overview',
+    FileLeafRef: 'Benefits.aspx',
+    FileRef: '/sites/classic/Pages/Benefits.aspx',
+    FileDirRef: '/sites/classic/Pages',
+    UniqueId: 'ef000000-0000-4000-8000-000000000001',
+    Created: '2019-04-02T10:00:00Z',
+    Modified: '2026-06-11T14:20:00Z',
+    Author: { Title: 'Pat Example' },
+    Editor: { Title: 'Pat Example' },
+    PublishingPageContent: '<h2>Benefits</h2><p>Open enrollment runs through March.</p>',
+    FieldValuesAsText: { Editor: 'Pat Example' },
+  },
+  {
+    // Body empty on purpose: everything readable is in the web parts.
+    Id: 2,
+    Title: 'Rates',
+    FileLeafRef: 'Rates.aspx',
+    FileRef: '/sites/classic/Pages/Rates.aspx',
+    FileDirRef: '/sites/classic/Pages',
+    UniqueId: 'ef000000-0000-4000-8000-000000000002',
+    Created: '2018-09-14T08:30:00Z',
+    Modified: '2026-05-02T09:05:00Z',
+    Author: { Title: 'Mock Developer' },
+    Editor: { Title: 'Mock Developer' },
+    PublishingPageContent: '',
+    FieldValuesAsText: { Editor: 'Mock Developer' },
+  },
+  {
+    Id: 3,
+    Title: 'Empty',
+    FileLeafRef: 'Empty.aspx',
+    FileRef: '/sites/classic/Pages/Empty.aspx',
+    FileDirRef: '/sites/classic/Pages',
+    UniqueId: 'ef000000-0000-4000-8000-000000000003',
+    Created: '2020-01-05T11:00:00Z',
+    Modified: '2026-01-05T11:00:00Z',
+    Author: { Title: 'Mock Developer' },
+    Editor: { Title: 'Mock Developer' },
+    PublishingPageContent: null,
+    FieldValuesAsText: { Editor: 'Mock Developer' },
+  },
+];
+
+// getlimitedwebpartmanager(scope=1)/webparts?$expand=WebPart/Properties,
+// keyed by lower-cased FileRef. Zone indexes are deliberately out of array
+// order so the document-order sort is exercised.
+const CLASSIC_WEBPARTS = {
+  '/sites/classic/pages/benefits.aspx': [
+    {
+      Id: 'g1000000-0000-4000-8000-000000000001',
+      WebPart: {
+        Title: 'Contact details',
+        ZoneIndex: 2,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: '<p>Call the benefits desk on x4120.</p>', ContentLink: '' },
+      },
+    },
+    {
+      Id: 'g1000000-0000-4000-8000-000000000002',
+      WebPart: {
+        Title: 'Eligibility',
+        ZoneIndex: 1,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: '<![CDATA[<p>All staff after 90 days.</p>]]>', ContentLink: '' },
+      },
+    },
+  ],
+  '/sites/classic/pages/rates.aspx': [
+    {
+      Id: 'g1000000-0000-4000-8000-000000000003',
+      WebPart: {
+        Title: 'Rate table',
+        ZoneIndex: 1,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: '', ContentLink: '/sites/classic/Style Library/rates.html' },
+      },
+    },
+    {
+      Id: 'g1000000-0000-4000-8000-000000000004',
+      WebPart: {
+        Title: 'Rate calculator',
+        ZoneIndex: 2,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: '<script>calcRates();</script><div id="calc">Rates</div>' },
+      },
+    },
+    {
+      // No Content and no ContentLink — an inventory row, not a reading part.
+      Id: 'g1000000-0000-4000-8000-000000000005',
+      WebPart: { Title: 'List view', ZoneIndex: 3, Hidden: true, IsClosed: false, Properties: { ListName: 'Rates' } },
+    },
+  ],
+};
+
+const CLASSIC_ITEMS = {
+  '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02': CLASSIC_PAGE_ITEMS,
+};
+
 // ---- resolver -------------------------------------------------------------
 
 const listIdOf = (url) => /lists\(guid'([0-9a-f-]+)'\)/i.exec(url)?.[1]?.toLowerCase();
@@ -467,21 +584,36 @@ const groupIdOf = (url) => /sitegroups\((\d+)\)/i.exec(url)?.[1];
 export function mockResolver(rawUrl) {
   const url = String(rawUrl);
   const path = url.slice(url.indexOf('/_api/') + 6).toLowerCase();
+  // Which mock web is being asked for. Everything outside /sites/classic is
+  // the modern web, so existing fixtures and their row counts are untouched.
+  const webBase = url.slice(0, url.indexOf('/_api/')).replace(/[/]+$/, '');
+  const classic = /[/]sites[/]classic$/i.test(webBase);
+  const lists = classic ? CLASSIC_LISTS : LISTS;
+  const itemsByList = classic ? CLASSIC_ITEMS : ITEMS;
+
+  // Classic pages carry their content in web parts, not item fields.
+  const wpFile = /getfilebyserverrelativepath[(]decodedurl='([^']*)'[)][/]getlimitedwebpartmanager/
+    .exec(path)?.[1];
+  if (wpFile !== undefined && path.includes('/webparts')) {
+    let decoded = wpFile;
+    try { decoded = decodeURIComponent(wpFile); } catch { /* keep raw */ }
+    return { value: CLASSIC_WEBPARTS[decoded] || [] };
+  }
 
   if (/^web\/lists\(guid'/.test(path)) {
     const id = listIdOf(path);
-    const found = LISTS.find((l) => l.Id.toLowerCase() === id);
+    const found = lists.find((l) => l.Id.toLowerCase() === id);
     if (!found) return null;
     const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
     if (itemId) {
-      const single = (ITEMS[found.Id] || []).find((i) => i.Id === Number(itemId));
+      const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
       return single ?? null;
     }
     // The mock ignores $filter/$select on items — live-stub tests assert the
     // real query URLs instead. A single-field $orderby IS honored: the Items
     // tab caps row counts, and live SharePoint orders before the cap applies.
     if (path.includes('/items')) {
-      const rows = [...(ITEMS[found.Id] || [])];
+      const rows = [...(itemsByList[found.Id] || [])];
       const order = /\$orderby=([a-z0-9_]+)(?:(?:%20| +)(asc|desc))?/.exec(path);
       if (order) {
         // The URL was lowercased for routing — recover the item key case.
@@ -504,13 +636,13 @@ export function mockResolver(rawUrl) {
   if (path.startsWith('web/lists')) {
     if (path.includes('hasuniqueroleassignments')) {
       return {
-        value: LISTS.map((l, i) => ({
+        value: lists.map((l, i) => ({
           Id: l.Id, Title: l.Title, Hidden: l.Hidden, BaseTemplate: l.BaseTemplate,
           HasUniqueRoleAssignments: i === 2,
         })),
       };
     }
-    return { value: LISTS };
+    return { value: lists };
   }
 
   if (/^web\/sitegroups\(\d+\)\/users/.test(path)) {

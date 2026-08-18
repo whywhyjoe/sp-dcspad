@@ -1084,6 +1084,204 @@ await check('field-editor: FieldValue conventions match ValidateUpdateListItem',
 
 await page.close();
 
+// ---- classic publishing pages -------------------------------------------
+// Own page + own mock web (/sites/classic), so the classic path is exercised
+// without perturbing the modern web's fixtures or row counts above.
+
+const classicPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await classicPage.goto(WB_URL);
+await classicPage.waitForSelector('.wb-home-cards');
+await classicPage.fill('#wb-site-input', '/sites/classic');
+await classicPage.locator('#wb-site-open').click();
+await classicPage.waitForFunction(() =>
+  document.getElementById('wb-status-context').textContent.includes('/sites/classic'));
+
+await check('classic: pure model classifies libraries, pages and web parts', async () =>
+  classicPage.evaluate(async () => {
+    const m = await import('/src/workbench/classic-page.js');
+    const kinds = [
+      m.libraryKindOf({ BaseTemplate: 119 }),
+      m.libraryKindOf({ BaseTemplate: 850 }),
+      m.libraryKindOf({ BaseTemplate: 101 }),
+      m.libraryKindOf(null),
+    ];
+    // Page kind is per item, never from the library: one 119 library can hold
+    // canvas pages and wiki pages side by side.
+    const pageKinds = [
+      m.pageContentKindOf({ CanvasContent1: '[]' }),
+      m.pageContentKindOf({ PublishingPageContent: '<p>hi</p>' }),
+      m.pageContentKindOf({ WikiField: '<p>hi</p>' }),
+      m.pageContentKindOf({ PublishingPageContent: '<div>   </div>' }),
+      m.pageContentKindOf({}),
+    ];
+    // Markup carrying only an image still counts as content.
+    const imageOnly = m.pageContentKindOf({ WikiField: '<div><img src="a.png"></div>' });
+    // Zone order wins over array order, and CDATA wrappers are unwrapped.
+    const sorted = m.classicWebParts([
+      { Id: 'b', WebPart: { Title: 'B', ZoneIndex: 2, Properties: { Content: 'b' } } },
+      { Id: 'a', WebPart: { Title: 'A', ZoneIndex: 1, Properties: { Content: '<![CDATA[<p>a</p>]]>' } } },
+    ]);
+    return kinds.join(',') === 'modern,publishing,generic,'
+      && pageKinds.join(',') === 'canvas,publishing,wiki,empty,empty'
+      && imageOnly === 'wiki'
+      && sorted.map((w) => w.title).join(',') === 'A,B'
+      && sorted[0].content === '<p>a</p>' && sorted[0].hasHtml === true;
+  }));
+
+await check('classic: merged reading model puts the body first, then web parts', async () =>
+  classicPage.evaluate(async () => {
+    const { classicContentParts } = await import('/src/workbench/classic-page.js');
+    const { parts } = classicContentParts({
+      item: { PublishingPageContent: '<h2>Body</h2>' },
+      webParts: [
+        { title: 'Notes', hasHtml: true, content: '<p>one</p>', contentLink: '' },
+        { title: '', hasHtml: true, content: '', contentLink: '/Style Library/x.html' },
+        { title: 'Inventory only', hasHtml: false, content: '', contentLink: '' },
+      ],
+      contentKind: 'publishing',
+    });
+    // Linked content is reported as a reference, not silently dropped; a web
+    // part with neither payload is inventory and contributes nothing to read.
+    return parts.length === 3
+      && parts[0].label === 'Page content' && parts[0].html === '<h2>Body</h2>'
+      && parts[1].label === 'Notes'
+      && parts[2].label === 'Embedded content'
+      && parts[2].lines[0].includes('/Style Library/x.html');
+  }));
+
+await check('classic: repeated web-part titles are numbered', async () =>
+  classicPage.evaluate(async () => {
+    const { classicContentParts } = await import('/src/workbench/classic-page.js');
+    const { parts } = classicContentParts({
+      item: {},
+      webParts: [
+        { title: 'Notes', hasHtml: true, content: '<p>one</p>', contentLink: '' },
+        { title: 'Notes', hasHtml: true, content: '<p>two</p>', contentLink: '' },
+      ],
+      contentKind: 'publishing',
+    });
+    return parts.map((x) => x.label).join(',') === 'Notes 1,Notes 2';
+  }));
+
+await check('classic: grid drops the Promoted column and names the library', async () => {
+  await classicPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const headers = await classicPage.locator('.wb-view-pages .wb-table thead th').allTextContents();
+  const hint = await classicPage.locator('.wb-view-pages .wb-view-hint').textContent();
+  const link = await classicPage.locator('.wb-view-pages .wb-head-link').textContent();
+  const rows = await classicPage.locator('.wb-view-pages .wb-table tbody tr').count();
+  return rows === 3
+    && !headers.includes('Promoted')
+    && hint.includes('classic publishing Pages library')
+    && hint.includes('BaseTemplate 850')
+    && link.includes('Pages');
+});
+
+await check('classic: the generated items query omits PromotedState', async () => {
+  // The 400 that started this: PromotedState does not exist on a publishing
+  // library, so it must never reach the URL. Mock mode resolves before fetch,
+  // so the assertion runs against the query the grid actually composed.
+  await classicPage.evaluate(() => {
+    navigator.clipboard.writeText = (t) => { window.__COPIED = t; return Promise.resolve(); };
+  });
+  await classicPage.locator('.wb-view-pages .wb-menu-wrap .btn', { hasText: 'Copy as' }).click();
+  await classicPage.locator('.wb-view-pages .wb-menu-wrap button', { hasText: 'REST fetch' }).click();
+  const script = await classicPage.evaluate(() => window.__COPIED || '');
+  return script.includes('/items?')
+    && !script.includes('PromotedState')
+    && script.includes('FileLeafRef');
+});
+
+await check('classic: drilldown hides Structure and says why', async () => {
+  await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Benefits.aspx' })
+    .locator('td').first().click();
+  await classicPage.waitForSelector('.wb-text-rendered');
+  const tabs = await classicPage.locator('.wb-view-pages .wb-tab').allTextContents();
+  const chip = classicPage.locator('.wb-view-pages .wb-detail-kind');
+  const chipText = await chip.textContent();
+  const chipTitle = await chip.getAttribute('title');
+  return tabs.join(',') === 'Extract,Metadata,Web parts,Raw'
+    && chipText === 'classic publishing page'
+    && chipTitle.includes('Structure tab does not apply');
+});
+
+await check('classic: Extract merges the body with Content Editor web parts', async () => {
+  const text = await classicPage.locator('.wb-text-rendered').textContent();
+  const heads = await classicPage.locator('.wb-text-part').allTextContents();
+  // Zone order, not array order: Eligibility (zone 1) precedes Contact
+  // details (zone 2), and the CDATA wrapper is gone.
+  return heads.join(',') === 'Page content,Eligibility,Contact details'
+    && text.includes('Open enrollment runs through March.')
+    && text.includes('All staff after 90 days.')
+    && !text.includes('CDATA')
+    && text.includes('Call the benefits desk');
+});
+
+await check('classic: web parts tab lists zones and inline vs linked content', async () => {
+  await classicPage.locator('.wb-view-pages .wb-tab', { hasText: 'Web parts' }).click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-tab-body .wb-table tbody tr');
+  const headers = await classicPage.locator('.wb-view-pages .wb-tab-body .wb-table thead th')
+    .allTextContents();
+  const body = await classicPage.locator('.wb-view-pages .wb-tab-body .wb-table').textContent();
+  return headers.includes('Zone index') && headers.includes('Content link')
+    && body.includes('Eligibility') && body.includes('inline');
+});
+
+await check('classic: a page whose only content is web parts still extracts', async () => {
+  await classicPage.locator('.wb-back').click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Rates.aspx' })
+    .locator('td').first().click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-tab-body');
+  const heads = await classicPage.locator('.wb-text-part').allTextContents();
+  const text = await classicPage.locator('.wb-text-rendered').textContent();
+  // No body field, so no 'Page content' part; the linked web part reports its
+  // reference and the inline one contributes its markup.
+  return heads.join(',') === 'Rate table,Rate calculator'
+    && text.includes('Content linked from /sites/classic/Style Library/rates.html')
+    && text.includes('Rates');
+});
+
+await check('classic: a page with no body and no web-part content reads as empty', async () => {
+  await classicPage.locator('.wb-back').click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Empty.aspx' })
+    .locator('td').first().click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-tab-body');
+  const status = await classicPage.locator('.wb-view-pages .wb-tab-body .wb-grid-status')
+    .textContent();
+  const chip = await classicPage.locator('.wb-view-pages .wb-detail-kind').textContent();
+  return status.includes('No readable content') && chip === 'page with no readable body';
+});
+
+await check('classic: content export carries the merged web-part content', async () =>
+  classicPage.evaluate(async () => {
+    const { buildContentExport } = await import('/src/workbench/page-export.js');
+    const { classicContentParts } = await import('/src/workbench/classic-page.js');
+    const item = {
+      Title: 'Benefits overview',
+      FileRef: '/sites/classic/Pages/Benefits.aspx',
+      FileDirRef: '/sites/classic/Pages',
+      PublishingPageContent: '<h2>Benefits</h2>',
+    };
+    const { parts } = classicContentParts({
+      item,
+      webParts: [{ title: 'Eligibility', hasHtml: true, content: '<p>90 days.</p>', contentLink: '' }],
+      contentKind: 'publishing',
+    });
+    const md = buildContentExport({
+      item, controls: [], parts, siteTitle: 'Classic', libraryTitle: 'Pages',
+      libraryRootPath: '/sites/classic/Pages', webUrl: location.origin,
+    });
+    // The body appears as content exactly once — the metadata block excludes
+    // content blobs rather than repeating the whole page.
+    return md.includes('## Page content') && md.includes('## Eligibility')
+      && md.includes('<p>90 days.</p>')
+      && !md.includes('- PublishingPageContent:');
+  }));
+
+await classicPage.close();
+
 // ---- live path (injected context + stubbed /_api) -------------------------
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });

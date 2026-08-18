@@ -82,8 +82,10 @@ export function contentParts(controls) {
   return { parts, unreadable };
 }
 
-function contentBlocks(controls) {
-  const { parts, unreadable } = contentParts(controls);
+function contentBlocks(controls, override) {
+  const { parts, unreadable } = override
+    ? { parts: override, unreadable: 0 }
+    : contentParts(controls);
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
@@ -100,11 +102,12 @@ function contentBlocks(controls) {
 // blobs and odata noise are excluded.
 const METADATA_SKIP = new Set([
   'CanvasContent1', 'LayoutWebpartsContent', 'FieldValuesAsText',
+  'PublishingPageContent', 'WikiField',
   'Author', 'Editor',   // flattened into Created/Modified lines
 ]);
 
 export function buildContentExport({
-  item = {}, controls = [], siteTitle = '', webUrl = '',
+  item = {}, controls = [], parts = null, siteTitle = '', webUrl = '',
   libraryTitle = '', libraryRootPath = '',
 }) {
   const title = item.Title || item.FileLeafRef || 'Untitled page';
@@ -150,7 +153,7 @@ export function buildContentExport({
     ...top,
     '---',
     '',
-    contentBlocks(controls).join('\n\n'),
+    contentBlocks(controls, parts).join('\n\n'),
     '',
     '---',
     '',
@@ -159,8 +162,10 @@ export function buildContentExport({
   ].join('\n');
 }
 
-export function buildRawExport({ item = {}, controls = [] }) {
-  return JSON.stringify({ item, controls }, null, 2);
+export function buildRawExport({ item = {}, controls = [], webParts = [] }) {
+  const payload = { item, controls };
+  if (webParts.length) payload.webParts = webParts;
+  return JSON.stringify(payload, null, 2);
 }
 
 export function exportFileStem(item) {

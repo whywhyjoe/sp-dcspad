@@ -1,7 +1,16 @@
-// Pages view: the modern-page inspector. Master grid over the Site Pages
-// library (BaseTemplate 119), drilldown parses CanvasContent1 into a
-// section/column structure tree, a web-part inventory, extracted text
-// content, an editable metadata sheet, and the raw entity.
+// Pages view: the page inspector. Master grid over the web's pages library —
+// modern Site Pages (BaseTemplate 119), classic publishing Pages (850), or
+// any library titled "Pages" — with the resolved library named in the header
+// so it is always clear which one is on screen.
+//
+// The drilldown adapts to the page, not the library, because one 119 library
+// can hold both modern and wiki pages (see classic-page.js):
+//   canvas page     CanvasContent1 -> structure tree, web-part inventory,
+//                   extracted content
+//   classic page    PublishingPageContent/WikiField PLUS the Content Editor
+//                   and Script Editor web parts, merged into one extract;
+//                   no Structure tab, since sections/columns do not exist
+// Both kinds also get the editable metadata sheet and the raw entity.
 
 import { createGrid, bindNewTab } from '../grid.js?v=2';
 import { copyText } from '../export.js';
@@ -16,13 +25,30 @@ import {
 import { downloadText } from '../../io.js?v=2';
 import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
+import { odataPathLiteral } from '../../sp-odata.js';
 import { toNode } from '../../inspect/to-node.js';
+import {
+  libraryKindOf, libraryKindLabel, pageContentKindOf, pageContentKindLabel,
+  classicWebParts, classicContentParts,
+} from '../classic-page.js';
 
-const PAGE_SELECT = [
-  'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef', 'PromotedState',
+// Fields every pages library has, whatever its template. PromotedState is
+// modern-only — selecting it against a classic publishing library 400s with
+// "The field or property 'PromotedState' does not exist", which is why the
+// grid select is assembled per library kind rather than hardcoded.
+const PAGE_SELECT_BASE = [
+  'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef',
   'Modified', 'UniqueId', 'Editor/Title',
 ];
+const PAGE_SELECT_MODERN = [...PAGE_SELECT_BASE, 'PromotedState'];
 
+const pageSelectFor = (kind) => (kind === 'modern' ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE);
+
+// Modern-only: every field here exists on a 119 Site Pages item and nowhere
+// else. Classic libraries are fetched WITHOUT a $select instead (see
+// pageItem) — asking for a field a publishing/wiki schema lacks is a 400, and
+// the field set varies per site, so taking the whole item is both safer and
+// the only way to reach PublishingPageContent/WikiField without probing.
 const DETAIL_SELECT = [
   'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef', 'Description',
   'BannerImageUrl', 'PromotedState', 'Created', 'Modified',
@@ -75,10 +101,12 @@ export function createPagesView({ client, navigate }) {
   // ---- master pane ----
   const gridPane = el('div', 'wb-pane');
   const head = el('div', 'wb-view-head');
-  head.innerHTML = '<h2>Pages</h2>'
-    + '<p class="wb-view-hint">Modern pages in this web’s Site Pages library, '
-    + 'subfolders included. Click a row to inspect content, metadata, and structure.</p>';
-  const libraryLink = el('a', 'btn btn-xs wb-head-link', 'Open Site Pages library ↗');
+  head.innerHTML = '<h2>Pages</h2>';
+  // Filled in once the library is resolved — modern and classic libraries are
+  // both supported and the view must say which one it is looking at.
+  const hint = el('p', 'wb-view-hint', 'Locating this web’s pages library…');
+  head.append(hint);
+  const libraryLink = el('a', 'btn btn-xs wb-head-link', 'Open library ↗');
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
   head.append(libraryLink);
@@ -110,6 +138,8 @@ export function createPagesView({ client, navigate }) {
         return found ? {
           listId: found.Id,
           title: found.Title,
+          kind: libraryKindOf(found),
+          baseTemplate: found.BaseTemplate,
           rootPath: found.RootFolder?.ServerRelativeUrl || '',
           viewUrl: found.DefaultViewUrl || found.RootFolder?.ServerRelativeUrl || '',
         } : null;
@@ -145,19 +175,29 @@ export function createPagesView({ client, navigate }) {
     try {
       const sitePages = await sitePagesList();
       if (!sitePages) {
-        masterStatus.textContent = 'This web has no Site Pages library (BaseTemplate 119).';
+        hint.textContent = '';
+        masterStatus.textContent = 'This web has no pages library — looked for modern '
+          + 'Site Pages (BaseTemplate 119), classic publishing Pages (850), and any '
+          + 'library titled “Pages”.';
         masterStatus.hidden = false;
         return;
       }
+      hint.textContent = `${sitePages.title} — ${libraryKindLabel(sitePages.kind)} `
+        + `(BaseTemplate ${sitePages.baseTemplate}), subfolders included. `
+        + 'Click a row to inspect content, metadata, and structure.';
       if (sitePages.viewUrl) {
         libraryLink.href = sitePages.viewUrl;
+        libraryLink.textContent = `Open ${sitePages.title} ↗`;
         libraryLink.hidden = false;
       }
       if (!grid) {
         const query = {
           path: guidPath(sitePages.listId, '/items'),
           options: {
-            select: PAGE_SELECT, expand: 'Editor', orderby: 'FileLeafRef', top: 5000,
+            select: pageSelectFor(sitePages.kind),
+            expand: 'Editor',
+            orderby: 'FileLeafRef',
+            top: 5000,
           },
         };
         grid = createGrid({
@@ -170,7 +210,9 @@ export function createPagesView({ client, navigate }) {
               value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
               format: (v) => (v ? `/${v}` : ''),
             },
-            { key: 'PromotedState', label: 'Promoted', format: promotedLabel },
+            ...(sitePages.kind === 'modern'
+              ? [{ key: 'PromotedState', label: 'Promoted', format: promotedLabel }]
+              : []),
             { key: 'Modified', label: 'Modified', format: fmtDate },
             { key: 'Editor', label: 'Editor', value: (row) => row.Editor?.Title || '' },
             {
@@ -192,7 +234,7 @@ export function createPagesView({ client, navigate }) {
           onOpen: (row) => navigate({
             view: 'pages', pageId: row.Id, pageName: row.FileLeafRef || row.Title,
           }),
-          emptyText: 'No pages in this library.',
+          emptyText: `No pages in ${sitePages.title}.`,
           filterPlaceholder: 'Filter pages…',
           exportName: 'sp-pages',
           descriptor: { ...query, webUrl: client.webUrl() },
@@ -215,17 +257,39 @@ export function createPagesView({ client, navigate }) {
 
   // ---- drilldown ----
 
-  function pageItem(listId, pageId) {
+  function pageItem(listId, pageId, kind) {
     if (!detailCache.has(pageId)) {
-      detailCache.set(pageId, client.get(guidPath(listId, `/items(${pageId})`), {
-        select: DETAIL_SELECT,
-        expand: ['Author', 'Editor'],
-      }).catch((err) => {
-        detailCache.delete(pageId);
-        throw err;
-      }));
+      // No $select off the modern path: the classic body fields differ per
+      // site and naming one that is absent fails the whole request.
+      const options = kind === 'modern'
+        ? { select: DETAIL_SELECT, expand: ['Author', 'Editor'] }
+        : { expand: ['Author', 'Editor'] };
+      detailCache.set(pageId, client.get(guidPath(listId, `/items(${pageId})`), options)
+        .catch((err) => {
+          detailCache.delete(pageId);
+          throw err;
+        }));
     }
     return detailCache.get(pageId);
+  }
+
+  // Classic pages keep most of their real content in Content Editor / Script
+  // Editor web parts rather than in an item field, so the reading model has
+  // to go through the page's shared web-part manager. Best effort by design:
+  // the endpoint 403s without ManageWebParts on some webs and is meaningless
+  // on modern pages, and neither case should break the drilldown.
+  const webPartCache = new Map();   // fileRef -> Promise<{ parts, error }>
+  function classicWebPartsOf(fileRef) {
+    const key = String(fileRef || '');
+    if (!key) return Promise.resolve({ parts: [], error: null });
+    if (!webPartCache.has(key)) {
+      const path = `web/getfilebyserverrelativepath(decodedurl='${odataPathLiteral(key)}')`
+        + '/getlimitedwebpartmanager(scope=1)/webparts';
+      webPartCache.set(key, client.getAll(path, { expand: 'WebPart/Properties' })
+        .then(({ items }) => ({ parts: classicWebParts(items), error: null }))
+        .catch((err) => ({ parts: [], error: err })));
+    }
+    return webPartCache.get(key);
   }
 
   function listFields(listId) {
@@ -311,13 +375,48 @@ export function createPagesView({ client, navigate }) {
     return wrap;
   }
 
+  function classicWebPartsPane(webParts, error) {
+    const wrap = el('div', 'wb-tab-pane');
+    if (error) {
+      const notice = el('div', 'wb-grid-notice',
+        '⚠ The page’s web parts could not be read — ' + (error.message || String(error)));
+      wrap.append(notice);
+    }
+    const rows = webParts.map((wp) => ({
+      Title: wp.title,
+      Zone: wp.zoneIndex,
+      Content: wp.content ? 'inline' : wp.contentLink ? 'linked' : '',
+      ContentLink: wp.contentLink,
+      Hidden: wp.hidden ? 'yes' : '',
+      Closed: wp.closed ? 'yes' : '',
+      Id: wp.id,
+    }));
+    const partsGrid = createGrid({
+      columns: [
+        { key: 'Title', label: 'Title' },
+        { key: 'Zone', label: 'Zone index' },
+        { key: 'Content', label: 'Content' },
+        { key: 'ContentLink', label: 'Content link', mono: true, copyable: true },
+        { key: 'Hidden', label: 'Hidden' },
+        { key: 'Closed', label: 'Closed' },
+        { key: 'Id', label: 'Web part id', mono: true, copyable: true },
+      ],
+      emptyText: 'No web parts on this page.',
+      filterPlaceholder: 'Filter web parts…',
+      exportName: 'sp-page-webparts',
+    });
+    wrap.append(partsGrid.el);
+    partsGrid.setRows(rows);
+    return wrap;
+  }
+
   // Extract is the reading tab: one box with the whole page's content in
   // document order under a heading per part, and one box with the underlying
   // HTML. Empty parts are skipped, and nothing here names ids or control
   // types — that lives on Web parts, Structure and Raw.
-  function textPane(parsed) {
+  function textPane(parts, notice) {
     const wrap = el('div', 'wb-tab-pane wb-text-pane');
-    const { parts } = contentParts(parsed.controls);
+    if (notice) wrap.append(notice);
     if (!parts.length) {
       wrap.append(el('div', 'wb-grid-status', 'No readable content on this page.'));
       return wrap;
@@ -390,9 +489,11 @@ export function createPagesView({ client, navigate }) {
     return wrap;
   }
 
-  function rawPane(item, parsed) {
+  function rawPane(item, parsed, webParts = []) {
     const wrap = el('div', 'wb-tab-pane');
-    const node = toNode({ item, parsedCanvas: parsed.controls }, 0, { maxDepth: 10, maxItems: 400 });
+    const payload = { item, parsedCanvas: parsed.controls };
+    if (webParts.length) payload.webParts = webParts;
+    const node = toNode(payload, 0, { maxDepth: 10, maxItems: 400 });
     const inspector = el('div', 'wb-raw');
     inspector.append(enhance(node) ?? renderValue(node));
     wrap.append(inspector);
@@ -420,8 +521,8 @@ export function createPagesView({ client, navigate }) {
     let item;
     try {
       sitePages = await sitePagesList();
-      if (!sitePages) throw new Error('This web has no Site Pages library.');
-      item = await pageItem(sitePages.listId, route.pageId);
+      if (!sitePages) throw new Error('This web has no pages library.');
+      item = await pageItem(sitePages.listId, route.pageId, sitePages.kind);
     } catch (err) {
       if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
@@ -444,6 +545,31 @@ export function createPagesView({ client, navigate }) {
       headRow.append(frag);
     }
 
+    const parsed = parseCanvasContent(item.CanvasContent1);
+    const contentKind = pageContentKindOf(item);
+    const isCanvas = contentKind === 'canvas';
+
+    // Classic pages: most of the content is in web parts, not item fields.
+    let classicParts = [];
+    let webParts = [];
+    let webPartError = null;
+    if (!isCanvas) {
+      const fetched = await classicWebPartsOf(item.FileRef);
+      if (run !== detailRun) return;
+      webParts = fetched.parts;
+      webPartError = fetched.error;
+      classicParts = classicContentParts({ item, webParts, contentKind }).parts;
+    }
+    const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
+
+    const kindChip = el('span', 'wb-detail-kind', pageContentKindLabel(contentKind));
+    kindChip.title = isCanvas
+      ? 'Modern canvas page — Structure shows its sections and columns.'
+      : `${pageContentKindLabel(contentKind)} — no canvas sections or columns, so the `
+        + 'Structure tab does not apply. Content Editor and Script Editor web-part '
+        + 'content is merged into Extract.';
+    headRow.append(kindChip);
+
     const actions = el('span', 'wb-detail-actions');
     const exportContent = el('button', 'btn btn-xs', 'Export content');
     exportContent.type = 'button';
@@ -460,13 +586,12 @@ export function createPagesView({ client, navigate }) {
     }
     headRow.append(actions);
 
-    const parsed = parseCanvasContent(item.CanvasContent1);
-
     exportContent.addEventListener('click', async () => {
       const web = await webIdentity();
       downloadText(`${exportFileStem(item)}-content.md`, buildContentExport({
         item,
         controls: parsed.controls,
+        parts: readingParts,
         siteTitle: web.Title || '',
         webUrl: web.Url || client.webUrl(),
         libraryTitle: sitePages.title,
@@ -475,10 +600,10 @@ export function createPagesView({ client, navigate }) {
     });
     exportRaw.addEventListener('click', () => {
       downloadText(`${exportFileStem(item)}-raw.json`,
-        buildRawExport({ item, controls: parsed.controls }),
+        buildRawExport({ item, controls: parsed.controls, webParts }),
         'application/json');
     });
-    if (parsed.errors.length) {
+    if (isCanvas && parsed.errors.length) {
       const notice = el('div', 'wb-grid-notice',
         `⚠ ${parsed.errors.length} canvas entr${parsed.errors.length === 1 ? 'y' : 'ies'} `
         + 'could not be fully parsed — shown raw where possible.');
@@ -494,11 +619,27 @@ export function createPagesView({ client, navigate }) {
     // Order is Joe's spec: content first (Extract), then metadata, then the
     // structural/diagnostic tabs.
     const TABS = [
-      { id: 'text', label: 'Extract', build: () => textPane(parsed) },
+      {
+        id: 'text',
+        label: 'Extract',
+        build: () => textPane(readingParts, webPartError
+          ? el('div', 'wb-grid-notice',
+            '⚠ This page’s web parts could not be read, so embedded content may be '
+            + `missing — ${webPartError.message || String(webPartError)}`)
+          : null),
+      },
       { id: 'metadata', label: 'Metadata', build: () => metadataPane(sitePages.listId, route.pageId) },
-      { id: 'structure', label: 'Structure', build: () => structurePane(parsed) },
-      { id: 'webparts', label: 'Web parts', build: () => webPartsPane(parsed) },
-      { id: 'raw', label: 'Raw', build: () => rawPane(item, parsed) },
+      ...(isCanvas
+        ? [{ id: 'structure', label: 'Structure', build: () => structurePane(parsed) }]
+        : []),
+      {
+        id: 'webparts',
+        label: 'Web parts',
+        build: () => (isCanvas
+          ? webPartsPane(parsed)
+          : classicWebPartsPane(webParts, webPartError)),
+      },
+      { id: 'raw', label: 'Raw', build: () => rawPane(item, parsed, webParts) },
     ];
 
     function activate(tab) {

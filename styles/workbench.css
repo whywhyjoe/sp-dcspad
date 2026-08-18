@@ -222,6 +222,13 @@ html.dcspad-suspended #wb-mount { display: none; }
   font: 11.5px/1 var(--mono); color: var(--fg-faint);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Page-kind chip: says which page shape the drilldown detected, and carries
+   the reason the Structure tab is absent on classic pages. */
+.wb-detail-kind {
+  flex: none; font: 11px/1.5 var(--sans); color: var(--fg-faint);
+  border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px;
+  white-space: nowrap; cursor: help;
+}
 .wb-detail-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .wb-detail-actions a { text-decoration: none; }
 
