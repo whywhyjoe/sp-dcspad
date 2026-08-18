@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "defaultEnvironment": "dev",
+  "sourceEnvironment": "dev",
+  "environments": {
+    "dev": {
+      "livePath": "C:\\dev\\fcuportal-dev\\tools\\dcspad",
+      "siteUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve/FCUPortal",
+      "deployFolderUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve/FCUPortal/Dev/tools/dcspad",
+      "workbenchPageUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/tools/SPWorkbench.aspx"
+    },
+    "prod": {
+      "livePath": "",
+      "siteUrl": "https://bmo.sharepoint.com/sites/FCUPortal",
+      "deployFolderUrl": "https://bmo.sharepoint.com/sites/FCUPortal/Dev/tools/dcspad",
+      "workbenchPageUrl": "https://bmo.sharepoint.com/sites/FCUPortal/SitePages/tools/SPWorkbench.aspx"
+    }
+  }
+}

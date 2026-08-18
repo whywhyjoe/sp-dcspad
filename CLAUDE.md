@@ -53,6 +53,10 @@ index.html                app shell (single source of truth; standalone + fetche
 dcspad.webpart.html       2-line web-part entry: anchor + absolute <script src=boot.js>
 boot.js                   web-part bootstrap: fetches index.html no-store, injects shell,
                           imports the versioned bundle; adds .dcspad-hosted to <html>
+deploy/deploy.settings.json adjustable dev/prod local paths + SharePoint URLs;
+                          Sync-Live rewrites and validates the staged package
+                          (deploy.settings.local.json = gitignored per-machine
+                          livePath overlay, merged one level deep)
 dcspad.app.js             generated single-file ESM bundle of src/ (tools/build-app.mjs);
                           what the web part actually runs — rebuild on every deploy
 styles/app.css            all styling; layout via CSS grid + JS-set vars (--sidebar-w etc.)

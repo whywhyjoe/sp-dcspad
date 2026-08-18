@@ -6,3 +6,6 @@ bsp-design-system/
 bsp-fluent-icon-lib/
 # playwright MCP scratch output
 .playwright-mcp/
+
+# local-only: per-machine deploy destinations (livePath overrides)
+deploy/deploy.settings.local.json

@@ -6,24 +6,73 @@ DCSPad is pure client-side. Its supported deployment path is:
 repository → build → OneDrive-synced document-library folder → SharePoint
 ```
 
-The current NewNerve target is already configured as the default:
+The current NewNerve target is configured as the default `dev` environment:
 
 ```powershell
 .\deploy\Sync-Live.ps1
 ```
 
-This copies the DCSPad runtime to `C:\dev\fcuportal-dev\tools\dcspad`, the local
+This reads [`deploy.settings.json`](deploy.settings.json) and copies the DCSPad
+runtime to `C:\dev\fcuportal-dev\tools\dcspad`, the local
 mirror for `/sites/NewNerve/FCUPortal/Dev/tools/dcspad`. It does not move shared
 resources: BSP Design and Fluent Icons continue to resolve from `/Code`, and
 other shared tools may continue to live under `/Code/tools`.
 
-To deploy to another SharePoint site or tenant, first sync that site's document
-library with OneDrive and pass the local destination folder:
+To deploy to BMO production, first set `prod.livePath` in
+`deploy/deploy.settings.json` to that site's OneDrive-synced destination, then
+run:
 
 ```powershell
-.\deploy\Sync-Live.ps1 `
-  -LivePath 'C:\path\to\the-synced-Dev-library\tools\dcspad'
+.\deploy\Sync-Live.ps1 -Environment prod
 ```
+
+You can override the configured destination without changing the settings file:
+
+```powershell
+.\deploy\Sync-Live.ps1 -Environment prod `
+  -LivePath 'C:\alternate\synced-library\tools\dcspad' `
+  -AllowLivePathOverride
+```
+
+`-Environment` is required whenever `-LivePath` is supplied. If the override
+differs from the configured `livePath`, also pass `-AllowLivePathOverride`
+after verifying the destination. Every environment must have a configured
+`livePath` before any override is accepted, and the script always refuses to
+deploy into the repository itself.
+
+Each environment records four adjustable values:
+
+- `livePath`: local OneDrive-synced destination;
+- `siteUrl`: SharePoint web that owns `/Code` and supplies runtime context;
+- `deployFolderUrl`: public URL of the deployed DCSPad folder; and
+- `workbenchPageUrl`: public SP Workbench hosting page.
+
+`deploy.settings.json` is committed, but `livePath` is a per-machine OneDrive
+mirror. Put yours in `deploy/deploy.settings.local.json` — gitignored, same
+shape, and merged one level deep over the committed values — instead of
+committing a path that only works on your machine:
+
+```json
+{
+  "environments": {
+    "prod": { "livePath": "C:\\your\\synced-library\\tools\\dcspad" }
+  }
+}
+```
+
+The initial `prod` values assume BMO has a `/Dev/tools/dcspad` library folder,
+that the Workbench page lives at `/SitePages/tools/SPWorkbench.aspx`, and that
+`/sites/FCUPortal` owns the shared `/Code` dependencies. Confirm those three
+assumptions before the first production deployment and adjust the values if the
+production structure differs.
+
+The repository files remain the `sourceEnvironment` version (`dev`). During
+deployment, the script rewrites matching URLs only in a temporary package. It
+refuses to copy that package if a source-environment URL or site path remains,
+or if it contains a SharePoint host used only by another configured
+environment. This covers same-tenant environments as well as different-tenant
+deployments, including copied JS/HTML/JSON/CSS/Markdown/source-map/SVG/text
+files.
 
 The synced document-library mirror must already exist. If its `tools\dcspad`
 destination does not exist yet, `Sync-Live.ps1` creates it. The script then:
@@ -31,11 +80,14 @@ destination does not exist yet, `Sync-Live.ps1` creates it. The script then:
 1. validates the required Monaco runtime;
 2. regenerates design-system intelligence;
 3. rebuilds `dcspad.app.js` and `dcspad.workbench.js`;
-4. copies `index.html`, `boot.js`, `dcspad.webpart.html`,
+4. stages `index.html`, `boot.js`, `dcspad.webpart.html`, `dcspad.app.js`,
    `dcspad.config.json`, `workbench.html`, `boot-workbench.js`,
    `workbench.webpart.html`, `dcspad.workbench.js`, `src/`, `styles/`,
-   `examples/`, `vendor/`, and `lib-mirror/`; and
-5. leaves publication to the OneDrive sync client.
+   `examples/`, `vendor/`, and `lib-mirror/` in a temporary package;
+5. rewrites and validates the selected environment's URLs in that package
+   (`vendor/` is generated and is leak-checked but not rewritten);
+6. copies the validated package to the configured synced destination; and
+7. leaves publication to the OneDrive sync client.
 
 Re-running the command overwrites existing files. It does not generally remove
 files deleted from the repository, so remove obsolete files from the synced
@@ -43,16 +95,14 @@ folder manually when necessary.
 
 ## Configuring another site
 
-Before the first deployment, update the one site-specific URL in
-`dcspad.webpart.html` so its script points to the new site's hosted `boot.js`:
+Add another entry under `environments` in `deploy/deploy.settings.json`, then
+select it with `-Environment <name>`. There is no need to edit the checked-in
+web-part HTML or boot files for each target.
 
-```html
-<script src="https://tenant.sharepoint.com/sites/site/Dev/tools/dcspad/boot.js?v=1"></script>
-```
-
-Then point the Modern Script Editor web part's external Script URL at the
-deployed `dcspad.webpart.html`. Bump the `?v=` value whenever `boot.js` itself
-changes because SharePoint may cache library files for a day.
+For a site's one-time host-page setup, point the Modern Script Editor web part's
+external Script URL at the deployed `dcspad.webpart.html`. Bump the `?v=` value
+whenever `boot.js` itself changes because SharePoint may cache library files for
+a day.
 
 On NewNerve, the host pages stay outside the runtime library at
 `/sites/NewNerve/SitePages/tools/DCSpad.aspx` and
@@ -64,12 +114,10 @@ On NewNerve, the host pages stay outside the runtime library at
 The SP Workbench (site inspector) is a second entry point in the same deployed
 folder. One-time setup, mirroring the pad's own hosting:
 
-1. update the site-specific URL inside `workbench.webpart.html` so its script
-   points at the hosted `boot-workbench.js` (same folder as `boot.js`);
-2. create a second modern page (e.g. `SPWorkbench.aspx`), add a **Modern
+1. create a second modern page (e.g. `SPWorkbench.aspx`), add a **Modern
    Script Editor** web part, and point its external Script URL at the deployed
    `workbench.webpart.html`;
-3. bump that `?v=` value whenever `boot-workbench.js` itself changes — the
+2. bump that `?v=` value whenever `boot-workbench.js` itself changes — the
    same cache rule as `boot.js`; everything else the workbench loads
    (`workbench.html` no-store; `styles/app.css`, `styles/workbench.css`,
    `dcspad.workbench.js` Last-Modified-versioned) self-busts on deploy.

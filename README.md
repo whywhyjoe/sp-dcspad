@@ -147,22 +147,29 @@ first-deployment checks.
 .\deploy\Sync-Live.ps1
 ```
 
-The configured target is the `Dev` library's local mirror at
+The default `dev` environment in `deploy/deploy.settings.json` targets the
+`Dev` library's local mirror at
 `C:\dev\fcuportal-dev\tools\dcspad`, which publishes the application runtime to
 `/sites/NewNerve/FCUPortal/Dev/tools/dcspad`. The BSP design system, Fluent icons,
 and other organization-hosted dependencies remain under `/Code` (or
 `/Code/tools`) as configured in `dcspad.config.json`. The DCSPad and SP
 Workbench host pages remain under `/sites/NewNerve/SitePages/tools/`.
 
-For another synced site or tenant, supply its local target folder:
+For BMO production, configure `prod.livePath` — in the gitignored
+`deploy/deploy.settings.local.json` if the path is specific to your machine —
+verify its three public URLs, and select it:
 
 ```powershell
-.\deploy\Sync-Live.ps1 -LivePath 'C:\path\to\the-synced-Dev-library\tools\dcspad'
+.\deploy\Sync-Live.ps1 -Environment prod
 ```
 
-The script rebuilds the hosted bundle and design-system intelligence before
-copying the complete runtime. Confirm the top-right chip reads **SP: Live**
-after OneDrive finishes syncing.
+`-LivePath` can still override the selected environment's local destination;
+it requires an explicit `-Environment`, and a mismatch with a non-empty
+configured path also requires `-AllowLivePathOverride`.
+The script rebuilds the hosted bundle and design-system intelligence, prepares
+and validates the selected environment's URL-adjusted package, then copies the
+complete runtime. Confirm the top-right chip reads **SP: Live** after OneDrive
+finishes syncing.
 
 Hover the DCSPad logo to see the deployed application version and build
 identity. The release version is maintained in `src/build-info.js`; hosted
