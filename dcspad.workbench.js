@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "104-dirty" : "dev";
-var injectedRevision = true ? "b4eb2d90-dirty" : "";
+var injectedBuild = true ? "105-dirty" : "dev";
+var injectedRevision = true ? "ab4ec3cd-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -831,7 +831,7 @@ var REGIONAL_SETTINGS = {
 var CURRENT_USER = user(11, "Mock Developer", "dev@mock.local", true);
 var CLASSIC_LISTS = [
   list("Documents", "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f01", 101, 1, 8, false, "/sites/classic/Documents"),
-  list("Pages", "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02", 850, 1, 3, false, "/sites/classic/Pages")
+  list("Pages", "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02", 850, 1, 4, false, "/sites/classic/Pages")
 ];
 var CLASSIC_PAGE_ITEMS = [
   {
@@ -876,12 +876,29 @@ var CLASSIC_PAGE_ITEMS = [
     Editor: { Title: "Mock Developer" },
     PublishingPageContent: null,
     FieldValuesAsText: { Editor: "Mock Developer" }
+  },
+  {
+    // Body with an EMBEDDED web part: rich bodies place web parts inside the
+    // field as .ms-rte-wpbox markers, and reading order must interleave —
+    // intro → web part → conclusion, never body-then-web-parts.
+    Id: 4,
+    Title: "Newsletter",
+    FileLeafRef: "Newsletter.aspx",
+    FileRef: "/sites/classic/Pages/Newsletter.aspx",
+    FileDirRef: "/sites/classic/Pages",
+    UniqueId: "ef000000-0000-4000-8000-000000000004",
+    Created: "2021-03-09T09:00:00Z",
+    Modified: "2026-07-30T16:45:00Z",
+    Author: { Title: "Pat Example" },
+    Editor: { Title: "Pat Example" },
+    PublishingPageContent: '<p>Intro paragraph.</p><div class="ms-rtestate-read ms-rte-wpbox"><div id="div_c3000000-0000-4000-8000-000000000006"></div></div><p>Closing paragraph.</p>',
+    FieldValuesAsText: { Editor: "Pat Example" }
   }
 ];
 var CLASSIC_WEBPARTS = {
   "/sites/classic/pages/benefits.aspx": [
     {
-      Id: "g1000000-0000-4000-8000-000000000001",
+      Id: "c3000000-0000-4000-8000-000000000001",
       WebPart: {
         Title: "Contact details",
         ZoneIndex: 2,
@@ -891,7 +908,7 @@ var CLASSIC_WEBPARTS = {
       }
     },
     {
-      Id: "g1000000-0000-4000-8000-000000000002",
+      Id: "c3000000-0000-4000-8000-000000000002",
       WebPart: {
         Title: "Eligibility",
         ZoneIndex: 1,
@@ -903,7 +920,7 @@ var CLASSIC_WEBPARTS = {
   ],
   "/sites/classic/pages/rates.aspx": [
     {
-      Id: "g1000000-0000-4000-8000-000000000003",
+      Id: "c3000000-0000-4000-8000-000000000003",
       WebPart: {
         Title: "Rate table",
         ZoneIndex: 1,
@@ -913,7 +930,7 @@ var CLASSIC_WEBPARTS = {
       }
     },
     {
-      Id: "g1000000-0000-4000-8000-000000000004",
+      Id: "c3000000-0000-4000-8000-000000000004",
       WebPart: {
         Title: "Rate calculator",
         ZoneIndex: 2,
@@ -924,8 +941,22 @@ var CLASSIC_WEBPARTS = {
     },
     {
       // No Content and no ContentLink — an inventory row, not a reading part.
-      Id: "g1000000-0000-4000-8000-000000000005",
+      Id: "c3000000-0000-4000-8000-000000000005",
       WebPart: { Title: "List view", ZoneIndex: 3, Hidden: true, IsClosed: false, Properties: { ListName: "Rates" } }
+    }
+  ],
+  "/sites/classic/pages/newsletter.aspx": [
+    {
+      // Matched by the wpbox marker in the Newsletter body — must land
+      // BETWEEN the intro and closing paragraphs, not after the body.
+      Id: "c3000000-0000-4000-8000-000000000006",
+      WebPart: {
+        Title: "Signup form",
+        ZoneIndex: 1,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: "<p>Subscribe at the front desk.</p>", ContentLink: "" }
+      }
     }
   ]
 };
@@ -5524,7 +5555,7 @@ function contentBlocks(controls, override) {
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
-    blocks.push(part.kind === "text" ? part.html : part.lines.map((t) => `- ${t}`).join("\n"));
+    blocks.push(part.kind === "text" ? sanitizeHtml(part.html) : part.lines.map((t) => `- ${t}`).join("\n"));
   }
   if (unreadable) {
     blocks.push(`*[${unreadable} part${unreadable === 1 ? "" : "s"} could not be read \u2014 see the raw export.]*`);
@@ -5646,6 +5677,7 @@ var pageContentKindLabel = (kind) => ({
   canvas: "modern canvas page",
   publishing: "classic publishing page",
   wiki: "classic wiki page",
+  webparts: "classic web-part page",
   empty: "page with no readable body"
 })[kind] || "page";
 function unwrapCdata(value) {
@@ -5674,32 +5706,75 @@ function normalizeWebPart(entry, index = 0) {
 function classicWebParts(entries) {
   return (entries || []).map((entry, i) => normalizeWebPart(entry, i)).sort((a, b) => a.zoneIndex - b.zoneIndex || a.order - b.order);
 }
+function webPartPart(wp) {
+  const label = wp.title || "Embedded content";
+  if (htmlHasContent(wp.content)) {
+    return { kind: "text", label, html: wp.content, lines: [] };
+  }
+  if (wp.contentLink) {
+    return {
+      kind: "webpart",
+      label,
+      html: "",
+      lines: [`Content linked from ${wp.contentLink}`]
+    };
+  }
+  return null;
+}
+function guidOf(value) {
+  const text = String(value ?? "").replace(/_/g, "-");
+  const m = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(text);
+  return m ? m[0].toLowerCase() : "";
+}
+function bodyParts(bodyHtml, bodyLabel, webParts, used) {
+  const raw = String(bodyHtml ?? "").trim();
+  const parts = [];
+  const pushText = (html) => {
+    if (htmlHasContent(html)) parts.push({ kind: "text", label: bodyLabel, html: html.trim(), lines: [] });
+  };
+  if (!raw) return parts;
+  const doc = new DOMParser().parseFromString(raw, "text/html");
+  const boxes = [...doc.querySelectorAll(".ms-rte-wpbox")];
+  if (!boxes.length) {
+    pushText(raw);
+    return parts;
+  }
+  const byGuid = /* @__PURE__ */ new Map();
+  for (const wp of webParts) {
+    const guid = guidOf(wp.id);
+    if (guid && !byGuid.has(guid)) byGuid.set(guid, wp);
+  }
+  boxes.forEach((box, i) => {
+    const marker = doc.createElement("dcspad-wp");
+    marker.setAttribute("data-i", String(i));
+    box.replaceWith(marker);
+  });
+  const segments = doc.body.innerHTML.split(/<dcspad-wp data-i="(\d+)"><\/dcspad-wp>/);
+  for (let s = 0; s < segments.length; s += 1) {
+    if (s % 2 === 0) {
+      pushText(segments[s]);
+      continue;
+    }
+    const box = boxes[Number(segments[s])];
+    const wp = byGuid.get(guidOf(box.outerHTML));
+    if (wp) {
+      used.add(wp);
+      const part = webPartPart(wp);
+      if (part) parts.push(part);
+    }
+  }
+  return parts;
+}
 function classicContentParts({ item: item2 = {}, webParts = [], contentKind = null } = {}) {
   const kind = contentKind || pageContentKindOf(item2);
-  const parts = [];
   const bodyField = kind === "wiki" ? WIKI_BODY_FIELD : PUBLISHING_BODY_FIELD;
-  const body = String(item2[bodyField] ?? "").trim();
-  if (htmlHasContent(body)) {
-    parts.push({
-      kind: "text",
-      label: kind === "wiki" ? "Wiki content" : "Page content",
-      html: body,
-      lines: []
-    });
-  }
+  const bodyLabel = kind === "wiki" ? "Wiki content" : "Page content";
+  const used = /* @__PURE__ */ new Set();
+  const parts = bodyParts(item2[bodyField], bodyLabel, webParts, used);
   for (const wp of webParts) {
-    if (!wp.hasHtml) continue;
-    const label = wp.title || "Embedded content";
-    if (htmlHasContent(wp.content)) {
-      parts.push({ kind: "text", label, html: wp.content, lines: [] });
-    } else if (wp.contentLink) {
-      parts.push({
-        kind: "webpart",
-        label,
-        html: "",
-        lines: [`Content linked from ${wp.contentLink}`]
-      });
-    }
+    if (used.has(wp) || !wp.hasHtml) continue;
+    const part = webPartPart(wp);
+    if (part) parts.push(part);
   }
   const counts = /* @__PURE__ */ new Map();
   for (const part of parts) counts.set(part.label, (counts.get(part.label) || 0) + 1);
@@ -5726,7 +5801,17 @@ var PAGE_SELECT_BASE = [
   "Editor/Title"
 ];
 var PAGE_SELECT_MODERN = [...PAGE_SELECT_BASE, "PromotedState"];
-var pageSelectFor = (kind) => kind === "modern" ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
+function pageQueryPlan(fieldInternalNames, kind) {
+  const names = fieldInternalNames ? new Set(fieldInternalNames) : null;
+  const hasField = (f) => names ? names.has(f) : kind === "modern";
+  const showPromoted = hasField("PromotedState");
+  const modern = showPromoted && hasField("CanvasContent1");
+  return {
+    showPromoted,
+    gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
+    detailOptions: modern ? { select: DETAIL_SELECT, expand: ["Author", "Editor"] } : { expand: ["Author", "Editor"] }
+  };
+}
 var DETAIL_SELECT = [
   "Id",
   "Title",
@@ -5858,10 +5943,11 @@ function createPagesView({ client: client2, navigate }) {
         libraryLink.hidden = false;
       }
       if (!grid) {
+        const plan = await queryPlan(sitePages);
         const query = {
           path: guidPath2(sitePages.listId, "/items"),
           options: {
-            select: pageSelectFor(sitePages.kind),
+            select: plan.gridSelect,
             expand: "Editor",
             orderby: "FileLeafRef",
             top: 5e3
@@ -5877,7 +5963,7 @@ function createPagesView({ client: client2, navigate }) {
               value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
               format: (v) => v ? `/${v}` : ""
             },
-            ...sitePages.kind === "modern" ? [{ key: "PromotedState", label: "Promoted", format: promotedLabel }] : [],
+            ...plan.showPromoted ? [{ key: "PromotedState", label: "Promoted", format: promotedLabel }] : [],
             { key: "Modified", label: "Modified", format: fmtDate4 },
             { key: "Editor", label: "Editor", value: (row) => row.Editor?.Title || "" },
             {
@@ -5921,9 +6007,15 @@ function createPagesView({ client: client2, navigate }) {
       }
     }
   }
-  function pageItem(listId, pageId, kind) {
+  let planPromise = null;
+  function queryPlan(sitePages) {
+    if (!planPromise) {
+      planPromise = listFields(sitePages.listId).then((fields) => pageQueryPlan(fields.map((f) => f.InternalName), sitePages.kind)).catch(() => pageQueryPlan(null, sitePages.kind));
+    }
+    return planPromise;
+  }
+  function pageItem(listId, pageId, options) {
     if (!detailCache.has(pageId)) {
-      const options = kind === "modern" ? { select: DETAIL_SELECT, expand: ["Author", "Editor"] } : { expand: ["Author", "Editor"] };
       detailCache.set(pageId, client2.get(guidPath2(listId, `/items(${pageId})`), options).catch((err) => {
         detailCache.delete(pageId);
         throw err;
@@ -5937,7 +6029,10 @@ function createPagesView({ client: client2, navigate }) {
     if (!key2) return Promise.resolve({ parts: [], error: null });
     if (!webPartCache.has(key2)) {
       const path = `web/getfilebyserverrelativepath(decodedurl='${odataPathLiteral(key2)}')/getlimitedwebpartmanager(scope=1)/webparts`;
-      webPartCache.set(key2, client2.getAll(path, { expand: "WebPart/Properties" }).then(({ items }) => ({ parts: classicWebParts(items), error: null })).catch((err) => ({ parts: [], error: err })));
+      webPartCache.set(key2, client2.getAll(path, { expand: "WebPart/Properties" }).then(({ items }) => ({ parts: classicWebParts(items), error: null })).catch((err) => {
+        webPartCache.delete(key2);
+        return { parts: [], error: err };
+      }));
     }
     return webPartCache.get(key2);
   }
@@ -6153,7 +6248,8 @@ ${p.html}`).join("\n\n")
     try {
       sitePages = await sitePagesList();
       if (!sitePages) throw new Error("This web has no pages library.");
-      item2 = await pageItem(sitePages.listId, route.pageId, sitePages.kind);
+      const plan = await queryPlan(sitePages);
+      item2 = await pageItem(sitePages.listId, route.pageId, plan.detailOptions);
     } catch (err) {
       if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
@@ -6191,8 +6287,9 @@ ${fullUrl}`;
       classicParts = classicContentParts({ item: item2, webParts, contentKind }).parts;
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
-    const kindChip = el11("span", "wb-detail-kind", pageContentKindLabel(contentKind));
-    kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(contentKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
+    const displayKind = !isCanvas && contentKind === "empty" && readingParts.length ? "webparts" : contentKind;
+    const kindChip = el11("span", "wb-detail-kind", pageContentKindLabel(displayKind));
+    kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     const actions = el11("span", "wb-detail-actions");
     const exportContent = el11("button", "btn btn-xs", "Export content");

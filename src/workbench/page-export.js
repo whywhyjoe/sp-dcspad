@@ -16,7 +16,7 @@
 // the technical framing ("web part", ids, control types): those live on the
 // Web parts, Structure and Raw tabs.
 
-import { webPartName, textOfControl } from './canvas.js';
+import { webPartName, textOfControl, sanitizeHtml } from './canvas.js';
 
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -89,7 +89,12 @@ function contentBlocks(controls, override) {
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
-    blocks.push(part.kind === 'text' ? part.html : part.lines.map((t) => `- ${t}`).join('\n'));
+    // Sanitized: Script Editor payloads reach this path on classic pages,
+    // and a permissive markdown renderer executes inline HTML. The exact
+    // unsanitized payload stays available in the raw JSON export.
+    blocks.push(part.kind === 'text'
+      ? sanitizeHtml(part.html)
+      : part.lines.map((t) => `- ${t}`).join('\n'));
   }
   if (unreadable) {
     blocks.push(`*[${unreadable} part${unreadable === 1 ? '' : 's'} could not be read — `

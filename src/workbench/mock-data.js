@@ -466,7 +466,7 @@ const CURRENT_USER = user(11, 'Mock Developer', 'dev@mock.local', true);
 // the content lives in Content Editor / Script Editor web parts.
 const CLASSIC_LISTS = [
   list('Documents', '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f01', 101, 1, 8, false, '/sites/classic/Documents'),
-  list('Pages', '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02', 850, 1, 3, false, '/sites/classic/Pages'),
+  list('Pages', '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02', 850, 1, 4, false, '/sites/classic/Pages'),
 ];
 
 const CLASSIC_PAGE_ITEMS = [
@@ -513,6 +513,26 @@ const CLASSIC_PAGE_ITEMS = [
     PublishingPageContent: null,
     FieldValuesAsText: { Editor: 'Mock Developer' },
   },
+  {
+    // Body with an EMBEDDED web part: rich bodies place web parts inside the
+    // field as .ms-rte-wpbox markers, and reading order must interleave —
+    // intro → web part → conclusion, never body-then-web-parts.
+    Id: 4,
+    Title: 'Newsletter',
+    FileLeafRef: 'Newsletter.aspx',
+    FileRef: '/sites/classic/Pages/Newsletter.aspx',
+    FileDirRef: '/sites/classic/Pages',
+    UniqueId: 'ef000000-0000-4000-8000-000000000004',
+    Created: '2021-03-09T09:00:00Z',
+    Modified: '2026-07-30T16:45:00Z',
+    Author: { Title: 'Pat Example' },
+    Editor: { Title: 'Pat Example' },
+    PublishingPageContent: '<p>Intro paragraph.</p>'
+      + '<div class="ms-rtestate-read ms-rte-wpbox">'
+      + '<div id="div_c3000000-0000-4000-8000-000000000006"></div></div>'
+      + '<p>Closing paragraph.</p>',
+    FieldValuesAsText: { Editor: 'Pat Example' },
+  },
 ];
 
 // getlimitedwebpartmanager(scope=1)/webparts?$expand=WebPart/Properties,
@@ -521,7 +541,7 @@ const CLASSIC_PAGE_ITEMS = [
 const CLASSIC_WEBPARTS = {
   '/sites/classic/pages/benefits.aspx': [
     {
-      Id: 'g1000000-0000-4000-8000-000000000001',
+      Id: 'c3000000-0000-4000-8000-000000000001',
       WebPart: {
         Title: 'Contact details',
         ZoneIndex: 2,
@@ -531,7 +551,7 @@ const CLASSIC_WEBPARTS = {
       },
     },
     {
-      Id: 'g1000000-0000-4000-8000-000000000002',
+      Id: 'c3000000-0000-4000-8000-000000000002',
       WebPart: {
         Title: 'Eligibility',
         ZoneIndex: 1,
@@ -543,7 +563,7 @@ const CLASSIC_WEBPARTS = {
   ],
   '/sites/classic/pages/rates.aspx': [
     {
-      Id: 'g1000000-0000-4000-8000-000000000003',
+      Id: 'c3000000-0000-4000-8000-000000000003',
       WebPart: {
         Title: 'Rate table',
         ZoneIndex: 1,
@@ -553,7 +573,7 @@ const CLASSIC_WEBPARTS = {
       },
     },
     {
-      Id: 'g1000000-0000-4000-8000-000000000004',
+      Id: 'c3000000-0000-4000-8000-000000000004',
       WebPart: {
         Title: 'Rate calculator',
         ZoneIndex: 2,
@@ -564,8 +584,22 @@ const CLASSIC_WEBPARTS = {
     },
     {
       // No Content and no ContentLink — an inventory row, not a reading part.
-      Id: 'g1000000-0000-4000-8000-000000000005',
+      Id: 'c3000000-0000-4000-8000-000000000005',
       WebPart: { Title: 'List view', ZoneIndex: 3, Hidden: true, IsClosed: false, Properties: { ListName: 'Rates' } },
+    },
+  ],
+  '/sites/classic/pages/newsletter.aspx': [
+    {
+      // Matched by the wpbox marker in the Newsletter body — must land
+      // BETWEEN the intro and closing paragraphs, not after the body.
+      Id: 'c3000000-0000-4000-8000-000000000006',
+      WebPart: {
+        Title: 'Signup form',
+        ZoneIndex: 1,
+        Hidden: false,
+        IsClosed: false,
+        Properties: { Content: '<p>Subscribe at the front desk.</p>', ContentLink: '' },
+      },
     },
   ],
 };

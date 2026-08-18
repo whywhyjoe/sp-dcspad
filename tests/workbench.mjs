@@ -1163,6 +1163,80 @@ await check('classic: repeated web-part titles are numbered', async () =>
     return parts.map((x) => x.label).join(',') === 'Notes 1,Notes 2';
   }));
 
+await check('classic: query plan is decided by probed fields, not BaseTemplate', async () =>
+  classicPage.evaluate(async () => {
+    const { pageQueryPlan } = await import('/src/workbench/views/pages.js');
+    // A legacy 119 wiki library that never got the modern Site Pages feature
+    // has no PromotedState — template alone must not put it in the select.
+    const legacy119 = pageQueryPlan(['Title', 'WikiField', 'FileLeafRef'], 'modern');
+    const modern = pageQueryPlan(['Title', 'PromotedState', 'CanvasContent1'], 'modern');
+    // PromotedState without CanvasContent1: promoted column yes, but the
+    // modern detail projection would still 400 — stays select-less.
+    const partial = pageQueryPlan(['Title', 'PromotedState'], 'modern');
+    // Probe failed: fall back to the BaseTemplate heuristic.
+    const fallbackModern = pageQueryPlan(null, 'modern');
+    const fallbackClassic = pageQueryPlan(null, 'publishing');
+    return !legacy119.showPromoted && !legacy119.gridSelect.includes('PromotedState')
+      && !legacy119.detailOptions.select
+      && modern.showPromoted && Boolean(modern.detailOptions.select)
+      && partial.showPromoted && !partial.detailOptions.select
+      && fallbackModern.showPromoted && Boolean(fallbackModern.detailOptions.select)
+      && !fallbackClassic.showPromoted && !fallbackClassic.detailOptions.select;
+  }));
+
+await check('classic: wiki bodies interleave embedded web parts in document order', async () =>
+  classicPage.evaluate(async () => {
+    const { classicContentParts } = await import('/src/workbench/classic-page.js');
+    const box = (guid) => '<div class="ms-rtestate-read ms-rte-wpbox">'
+      + `<div id="div_${guid}"></div></div>`;
+    const { parts } = classicContentParts({
+      item: {
+        WikiField: '<p>intro</p>'
+          + box('aaaaaaaa-1111-4111-8111-111111111111')
+          + '<p>middle</p>'
+          + box('bbbbbbbb-2222-4222-8222-222222222222')
+          + '<p>outro</p>'
+          // Placeholder with no matching definition: renders nothing, loses nothing.
+          + box('dddddddd-4444-4444-8444-444444444444'),
+      },
+      webParts: [
+        // Array order deliberately scrambled — position comes from the body.
+        { id: 'bbbbbbbb-2222-4222-8222-222222222222', title: 'Second', hasHtml: true, content: '', contentLink: '/x.html' },
+        { id: 'aaaaaaaa-1111-4111-8111-111111111111', title: 'First', hasHtml: true, content: '<p>one</p>', contentLink: '' },
+        // Unmatched definition still appends after the body.
+        { id: 'cccccccc-3333-4333-8333-333333333333', title: 'Loose', hasHtml: true, content: '<p>tail</p>', contentLink: '' },
+      ],
+      contentKind: 'wiki',
+    });
+    return parts.map((x) => x.label).join(',')
+      === 'Wiki content 1,First,Wiki content 2,Second,Wiki content 3,Loose'
+      && parts[0].html === '<p>intro</p>'
+      && parts[2].html === '<p>middle</p>'
+      && parts[4].html === '<p>outro</p>';
+  }));
+
+await check('classic: content export strips executable markup from Script Editor parts', async () =>
+  classicPage.evaluate(async () => {
+    const { buildContentExport } = await import('/src/workbench/page-export.js');
+    const { classicContentParts } = await import('/src/workbench/classic-page.js');
+    const { parts } = classicContentParts({
+      item: {},
+      webParts: [{
+        title: 'Widget',
+        hasHtml: true,
+        content: '<script>steal()</script><div onclick="x()">Visible</div>'
+          + '<a href="javascript:evil()">link</a>',
+        contentLink: '',
+      }],
+      contentKind: 'publishing',
+    });
+    const md = buildContentExport({ item: { Title: 'P' }, controls: [], parts });
+    // The readable content survives; the executable markup does not. The
+    // exact payload stays available in the raw JSON export.
+    return md.includes('Visible')
+      && !md.includes('<script') && !md.includes('onclick') && !md.includes('javascript:');
+  }));
+
 await check('classic: grid drops the Promoted column and names the library', async () => {
   await classicPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
@@ -1170,7 +1244,7 @@ await check('classic: grid drops the Promoted column and names the library', asy
   const hint = await classicPage.locator('.wb-view-pages .wb-view-hint').textContent();
   const link = await classicPage.locator('.wb-view-pages .wb-head-link').textContent();
   const rows = await classicPage.locator('.wb-view-pages .wb-table tbody tr').count();
-  return rows === 3
+  return rows === 4
     && !headers.includes('Promoted')
     && hint.includes('classic publishing Pages library')
     && hint.includes('BaseTemplate 850')
@@ -1235,11 +1309,29 @@ await check('classic: a page whose only content is web parts still extracts', as
   await classicPage.waitForSelector('.wb-view-pages .wb-tab-body');
   const heads = await classicPage.locator('.wb-text-part').allTextContents();
   const text = await classicPage.locator('.wb-text-rendered').textContent();
+  const chip = await classicPage.locator('.wb-view-pages .wb-detail-kind').textContent();
   // No body field, so no 'Page content' part; the linked web part reports its
-  // reference and the inline one contributes its markup.
+  // reference and the inline one contributes its markup. The chip must
+  // describe what Extract shows — this page has readable content, so it is a
+  // web-part page, not "no readable body".
   return heads.join(',') === 'Rate table,Rate calculator'
     && text.includes('Content linked from /sites/classic/Style Library/rates.html')
-    && text.includes('Rates');
+    && text.includes('Rates')
+    && chip === 'classic web-part page';
+});
+
+await check('classic: embedded web parts read in body position, not appended', async () => {
+  await classicPage.locator('.wb-back').click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Newsletter.aspx' })
+    .locator('td').first().click();
+  await classicPage.waitForSelector('.wb-text-rendered');
+  const heads = await classicPage.locator('.wb-text-part').allTextContents();
+  const text = await classicPage.locator('.wb-text-rendered').textContent();
+  // The wpbox marker splits the body: intro → Signup form → closing.
+  return heads.join(',') === 'Page content 1,Signup form,Page content 2'
+    && text.indexOf('Intro paragraph.') < text.indexOf('Subscribe at the front desk.')
+    && text.indexOf('Subscribe at the front desk.') < text.indexOf('Closing paragraph.');
 });
 
 await check('classic: a page with no body and no web-part content reads as empty', async () => {
@@ -1450,13 +1542,29 @@ await check('live: an items-request failure still mounts the controls line', asy
 });
 
 await check('live: page detail expands Author and Editor lookup fields', async () => {
+  // The Pages view probes the library's fields before composing its queries
+  // (BaseTemplate 119 alone is not proof of the modern schema). Registered
+  // after the generic /_api route so it wins for the fields request, which
+  // would otherwise fall into the lists-paging branch above.
+  await live.route(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/fields/, (route) => {
+    liveUrls.push(route.request().url());
+    return route.fulfill({ json: { value: [
+      { InternalName: 'Title' }, { InternalName: 'PromotedState' },
+      { InternalName: 'CanvasContent1' }, { InternalName: 'FileLeafRef' },
+    ] } });
+  });
   await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
   await live.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' })
     .locator('td').first().click();
   await live.waitForSelector('.wb-view-pages .wb-text-rendered', { hasText: 'Live page body' });
   const expand = new URL(pageDetailUrl).searchParams.get('$expand') || '';
-  return expand.split(',').includes('Author') && expand.split(',').includes('Editor');
+  // The probe confirmed the modern fields, so the grid select carries
+  // PromotedState and the detail fetch uses the explicit modern projection.
+  const gridUrl = liveUrls.find((u) => u.includes("11111111-0000-0000-0000-000000000003')/items?")) || '';
+  return expand.split(',').includes('Author') && expand.split(',').includes('Editor')
+    && gridUrl.includes('PromotedState')
+    && pageDetailUrl.includes('CanvasContent1');
 });
 
 await check('live: switching sites re-targets every /_api request', async () => {
