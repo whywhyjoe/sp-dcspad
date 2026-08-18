@@ -6,7 +6,7 @@
 // "Copy as script" actions plug into the same toolbar actions slot (M4).
 
 import {
-  copyText, toCsv, toJson, toMarkdown, downloadCsv, downloadJson,
+  copyText, toCsv, toJson, downloadCsv, downloadJson,
 } from './export.js';
 import { toPnpjs2, toRestFetch, toPnpPowerShell } from './scriptgen.js';
 
@@ -65,6 +65,9 @@ function displayValue(row, col) {
 // toolbarExtras: a Node adopted into the toolbar after the filter box, so a
 // view's own controls share the grid's single toolbar row (Items tab).
 // exportExtras: [[label, run]] entries prepended to the Export menu.
+// selectable: adds a leading checkbox column; clicking a row (when the grid
+// has no onOpen) toggles it, and every export/copy operates on the selected
+// rows when any are selected, the visible rows otherwise.
 export function createGrid({
   columns,
   rowKey = 'Id',
@@ -75,12 +78,22 @@ export function createGrid({
   descriptor = null,
   toolbarExtras = null,
   exportExtras = [],
+  selectable = false,
 } = {}) {
   let rows = [];
   let visible = [];
   let sortKey = null;
   let sortDir = 1;
   let filterText = '';
+  const selectedKeys = new Set();
+  const keyOf = (row) => String(row?.[rowKey] ?? '');
+
+  // Selected rows (in current view order) when a selection exists, else the
+  // visible rows — every export/copy path funnels through this.
+  const exportRows = () => {
+    const chosen = visible.filter((row) => selectedKeys.has(keyOf(row)));
+    return chosen.length ? chosen : visible;
+  };
 
   const root = el('div', 'wb-grid');
   const toolbar = el('div', 'wb-grid-toolbar');
@@ -123,13 +136,14 @@ export function createGrid({
   }
 
   if (exportName) {
-    menuButton('Export ▾', 'Export the visible rows', [
+    // No markdown-table entry here: the list-content .md document (Items
+    // tab exportExtras) is the useful markdown shape; pipe tables aren't.
+    menuButton('Export ▾', 'Export the selected rows, or all visible rows', [
       ...exportExtras,
-      ['Download CSV', () => downloadCsv(exportName, visible, columns)],
-      ['Download JSON', () => downloadJson(exportName, visible, columns)],
-      ['Copy CSV', (btn) => copyText(toCsv(visible, columns), btn)],
-      ['Copy JSON', (btn) => copyText(toJson(visible, columns), btn)],
-      ['Copy Markdown', (btn) => copyText(toMarkdown(visible, columns), btn)],
+      ['Download CSV', () => downloadCsv(exportName, exportRows(), columns)],
+      ['Download JSON', () => downloadJson(exportName, exportRows(), columns)],
+      ['Copy CSV', (btn) => copyText(toCsv(exportRows(), columns), btn)],
+      ['Copy JSON', (btn) => copyText(toJson(exportRows(), columns), btn)],
     ]);
   }
 
@@ -137,8 +151,73 @@ export function createGrid({
   const table = el('table', 'wb-table');
   const thead = el('thead');
   const headRow = el('tr');
-  for (const col of columns) {
+
+  // ---- column resizing ----
+  // Dragging a header edge freezes every column at its current width and
+  // switches the table to fixed layout; further drags adjust one column and
+  // the table's total width, overflowing into the scroller.
+  let widthsFrozen = false;
+  function freezeWidths() {
+    if (widthsFrozen) return;
+    widthsFrozen = true;
+    for (const th of headRow.children) {
+      th.style.width = `${Math.round(th.getBoundingClientRect().width)}px`;
+    }
+    table.style.tableLayout = 'fixed';
+    syncTableWidth();
+  }
+  function syncTableWidth() {
+    let total = 0;
+    for (const th of headRow.children) total += parseFloat(th.style.width) || 0;
+    if (total) table.style.width = `${total}px`;
+  }
+  function attachResizer(th) {
+    const handle = el('span', 'wb-col-resize');
+    handle.title = 'Drag to resize';
+    handle.addEventListener('click', (e) => e.stopPropagation());
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      freezeWidths();
+      const startX = e.clientX;
+      const startW = parseFloat(th.style.width) || th.getBoundingClientRect().width;
+      handle.classList.add('dragging');
+      handle.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        th.style.width = `${Math.max(48, Math.round(startW + (ev.clientX - startX)))}px`;
+        syncTableWidth();
+      };
+      const up = () => {
+        handle.classList.remove('dragging');
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+    });
+    th.append(handle);
+  }
+
+  let selectAll = null;
+  if (selectable) {
+    const th = el('th', 'wb-select-col');
+    selectAll = el('input');
+    selectAll.type = 'checkbox';
+    selectAll.className = 'wb-select-all';
+    selectAll.setAttribute('aria-label', 'Select all visible rows');
+    selectAll.title = 'Select all visible rows';
+    selectAll.addEventListener('change', () => {
+      if (selectAll.checked) visible.forEach((row) => selectedKeys.add(keyOf(row)));
+      else visible.forEach((row) => selectedKeys.delete(keyOf(row)));
+      render();
+    });
+    th.append(selectAll);
+    headRow.append(th);
+  }
+
+  columns.forEach((col, colIndex) => {
     const th = el('th', '', col.label ?? col.key);
+    th.dataset.colIndex = String(colIndex);
     if (col.num) th.classList.add('wb-num');
     if (col.width) th.style.width = col.width;
     th.tabIndex = 0;
@@ -152,8 +231,9 @@ export function createGrid({
     };
     th.addEventListener('click', sortBy);
     th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortBy(); } });
+    attachResizer(th);
     headRow.append(th);
-  }
+  });
   thead.append(headRow);
   const tbody = el('tbody');
   table.append(thead, tbody);
@@ -192,12 +272,21 @@ export function createGrid({
     visible = rows.filter(matches);
     if (sortKey) visible = [...visible].sort(compare);
 
-    count.textContent = filterText || visible.length !== rows.length
+    const selectedVisible = selectable
+      ? visible.filter((row) => selectedKeys.has(keyOf(row))).length
+      : 0;
+    const base = filterText || visible.length !== rows.length
       ? `${visible.length} / ${rows.length}`
       : String(rows.length);
+    count.textContent = selectedVisible ? `${base} · ${selectedVisible} selected` : base;
+    if (selectAll) {
+      selectAll.checked = visible.length > 0 && selectedVisible === visible.length;
+      selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+    }
 
     for (const th of headRow.children) {
-      const col = columns[[...headRow.children].indexOf(th)];
+      if (th.dataset.colIndex === undefined) continue;
+      const col = columns[Number(th.dataset.colIndex)];
       const selected = Boolean(col && col.key === sortKey);
       th.querySelector('.wb-sort-arrow').textContent =
         selected ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
@@ -209,7 +298,7 @@ export function createGrid({
     if (!visible.length) {
       const tr = el('tr');
       const td = el('td', 'wb-empty', rows.length ? 'No rows match the filter.' : emptyText);
-      td.colSpan = columns.length;
+      td.colSpan = columns.length + (selectable ? 1 : 0);
       tr.append(td);
       tbody.append(tr);
       return;
@@ -225,6 +314,34 @@ export function createGrid({
         tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === tr) onOpen(row); });
       }
       tr.dataset.key = String(row[rowKey] ?? '');
+      if (selectable) {
+        const key = keyOf(row);
+        tr.classList.toggle('wb-row-selected', selectedKeys.has(key));
+        const toggle = () => {
+          if (selectedKeys.has(key)) selectedKeys.delete(key);
+          else selectedKeys.add(key);
+          render();
+        };
+        const td = el('td', 'wb-select-cell');
+        const box = el('input');
+        box.type = 'checkbox';
+        box.className = 'wb-row-check';
+        box.checked = selectedKeys.has(key);
+        box.setAttribute('aria-label', 'Select row');
+        box.addEventListener('click', (e) => e.stopPropagation());
+        box.addEventListener('change', toggle);
+        td.append(box);
+        tr.append(td);
+        if (!onOpen) {
+          // No drill-down on this grid — the whole row is a selection
+          // target, except its interactive bits (links, copy glyphs…).
+          tr.classList.add('wb-row-selectable');
+          tr.addEventListener('click', (e) => {
+            if (e.target.closest('a, button, input, .sp-copy')) return;
+            toggle();
+          });
+        }
+      }
       for (const col of columns) {
         const td = el('td', [col.mono ? 'wb-mono' : '', col.num ? 'wb-num' : ''].filter(Boolean).join(' '));
         const text = displayValue(row, col);
@@ -270,6 +387,7 @@ export function createGrid({
     actionsEl: actions,
     setRows(next, { partial = false } = {}) {
       rows = Array.isArray(next) ? next : [];
+      selectedKeys.clear();   // new data — a stale selection must not scope exports
       status.hidden = true;
       notice.hidden = !partial;
       if (partial) {
@@ -289,6 +407,7 @@ export function createGrid({
       status.hidden = false;
     },
     getVisibleRows: () => [...visible],
+    getExportRows: () => [...exportRows()],
     getColumns: () => columns,
   };
 }

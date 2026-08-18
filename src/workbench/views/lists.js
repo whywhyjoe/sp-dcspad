@@ -371,7 +371,7 @@ export function createListsView({ client, navigate }) {
         listTitle,
         webUrl: client.webUrl(),
         viewTitle: current.viewTitle,
-        items: itemsGrid.getVisibleRows(),
+        items: itemsGrid.getExportRows(),   // selected rows when any, else visible
         fields: current.fields,
         viewFieldNames: current.viewFieldNames,
         filter: current.filter,
@@ -534,6 +534,7 @@ export function createListsView({ client, navigate }) {
         filterPlaceholder: 'Filter items…',
         exportName: `items-${fileStem(listTitle)}`,
         descriptor: query ? { ...query, webUrl: client.webUrl() } : null,
+        selectable: true,
         toolbarExtras: controls,
         exportExtras: [
           ['Download .md', () => {

@@ -139,7 +139,7 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-view-hint { margin: 4px 0 0; color: var(--fg-dim); font-size: 12.5px; max-width: 72ch; }
 
 /* ---- grid ---- */
-.wb-grid { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+.wb-grid { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; gap: 8px; }
 .wb-grid-toolbar { display: flex; align-items: center; gap: 10px; }
 .wb-grid-count { font: 500 11.5px/1 var(--mono); color: var(--fg-dim); min-width: 40px; }
 .wb-grid-filter {
@@ -161,15 +161,40 @@ html.dcspad-suspended #wb-mount { display: none; }
 }
 
 .wb-grid-scroll {
-  flex: 1; min-height: 0; overflow: auto;
+  flex: 1; min-height: 0; min-width: 0; max-width: 100%; overflow: auto;
   border: 1px solid var(--border); border-radius: var(--radius-m);
   background: var(--bg-1);
 }
+/* Wide tables scroll INSIDE the scroller. Without min-width:0 on every
+   flex link in the chain, the table's min-content width blows the pane
+   out sideways and shoves the toolbar's right-aligned menus off-screen
+   (the page body never scrolls — they were simply unreachable). */
+.wb-pane, .wb-tab-body, .wb-tab-pane, .wb-items-grid, .wb-files-grid { min-width: 0; }
 .wb-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .wb-table th, .wb-table td {
   text-align: left; padding: 3px 12px; border-bottom: 1px solid var(--border);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 380px;
 }
+/* Column resize handle: invisible grab strip at each header's right edge;
+   a thin accent line appears on hover/drag. */
+.wb-table th { position: relative; }
+/* Fully inside its own th — protruding into the next (sticky, later-DOM)
+   header loses the stacking-order hit test and the handle goes dead. */
+.wb-col-resize {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 8px;
+  cursor: col-resize; user-select: none; touch-action: none; z-index: 2;
+}
+.wb-col-resize:hover, .wb-col-resize.dragging {
+  border-right: 2px solid var(--accent);
+}
+
+/* Row selection (selectable grids): checkbox column + accent-soft rows. */
+.wb-select-col { width: 30px; }
+.wb-select-cell { width: 30px; }
+.wb-select-all, .wb-row-check { accent-color: var(--accent); cursor: pointer; display: block; }
+.wb-row-selectable { cursor: pointer; }
+.wb-table tr.wb-row-selected td { background: var(--accent-soft); }
+
 .wb-table th {
   padding: 7px 12px; background: var(--bg-2); color: var(--fg-dim);
   font: 600 11px/1.4 var(--sans); letter-spacing: .04em;

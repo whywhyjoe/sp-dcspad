@@ -155,13 +155,13 @@ await check('drill: raw tab renders the SP.List smart view', async () => {
 
 // ---- Items tab: list-content markdown export ----
 
-const headerText = (cells) => cells.map((h) => h.replace(/[▲▼]/g, '').trim());
+const headerText = (cells) => cells.map((h) => h.replace(/[▲▼]/g, '').trim()).filter(Boolean);
 
 await check('items: tab loads rows newest-first with the agreed column order', async () => {
   await page.locator('.wb-tab', { hasText: 'Items' }).click();
   await page.waitForSelector('.wb-items-grid .wb-table tbody tr');
   const headers = headerText(await page.locator('.wb-items-grid .wb-table th').allTextContents());
-  const firstId = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
+  const firstId = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(3)')
     .first().textContent()).trim();
   const rows = await page.locator('.wb-items-grid .wb-table tbody tr').count();
   // One toolbar row: the controls ride the grid's own toolbar, the advanced
@@ -173,6 +173,7 @@ await check('items: tab loads rows newest-first with the agreed column order', a
   await page.locator('body').click();
   return rows === 6 && firstId === '6' && inToolbar === 1 && queryHidden
     && menu.slice(0, 2).join(',') === 'Download .md,Copy .md'
+    && !menu.includes('Copy Markdown')
     && headers.join(',') === 'Title,ID,Project Status,Due Date,Owner,Budget,Details,'
       + 'Attachments,Created,Created By,Modified,Modified By';
 });
@@ -191,10 +192,73 @@ await check('items: bar controls use the design-system field styling', async () 
       && /mono/i.test(queryFont);
   }));
 
+await check('items: row selection scopes exports to the chosen rows', async () => {
+  // Click two rows (Title cells — plain, no interactive bits).
+  await page.locator('.wb-items-grid .wb-table tbody tr:nth-child(1) td:nth-child(2)').click();
+  await page.locator('.wb-items-grid .wb-table tbody tr:nth-child(2) td:nth-child(2)').click();
+  const selected = await page.locator('.wb-items-grid .wb-row-selected').count();
+  const countText = await page.locator('.wb-items-grid .wb-grid-count').textContent();
+  // Stub the clipboard so Copy CSV is deterministic in the sandbox.
+  await page.evaluate(() => {
+    window.__COPIED = '';
+    navigator.clipboard.writeText = (t) => { window.__COPIED = t; return Promise.resolve(); };
+  });
+  await page.locator('.wb-items-grid .wb-menu-wrap .btn', { hasText: 'Export' }).click();
+  await page.locator('.wb-items-grid .wb-menu-item', { hasText: 'Copy CSV' }).click();
+  const csv = await page.evaluate(() => window.__COPIED);
+  // Select-all via the header checkbox, then clear.
+  await page.locator('.wb-items-grid .wb-select-all').click();
+  const allSelected = await page.locator('.wb-items-grid .wb-row-selected').count();
+  await page.locator('.wb-items-grid .wb-select-all').click();
+  const cleared = await page.locator('.wb-items-grid .wb-row-selected').count();
+  return selected === 2
+    && countText.includes('2 selected')
+    && csv.split('\r\n').length === 3            // header + the two chosen rows
+    && csv.includes('Archive rollout') && csv.includes('Search tuning')
+    && !csv.includes('Permission audit')
+    && allSelected === 6 && cleared === 0;
+});
+
+await check('items: dragging a header edge resizes the column', async () => {
+  const th = page.locator('.wb-items-grid .wb-table th[data-col-index="0"]');
+  const before = await th.evaluate((n) => n.getBoundingClientRect().width);
+  const handle = th.locator('.wb-col-resize');
+  const box = await handle.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  const width = await th.evaluate((n) => parseFloat(n.style.width));
+  const layout = await page.locator('.wb-items-grid .wb-table').evaluate((t) => t.style.tableLayout);
+  return layout === 'fixed' && width >= before + 70 && width <= before + 90;
+});
+
+await check('items: wide tables scroll inside the grid, never past the toolbar', async () => {
+  // Regression guard for the vanished Copy as/Export menus: the table's
+  // min-content width used to blow the pane out sideways, pushing the
+  // right-aligned actions beyond the (non-scrolling) page edge.
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.waitForTimeout(150);
+  const geom = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('.wb-items-grid .wb-grid-actions .btn')];
+    const scroller = document.querySelector('.wb-items-grid .wb-grid-scroll');
+    return {
+      lastBtnRight: Math.round(btns[btns.length - 1].getBoundingClientRect().right),
+      viewport: innerWidth,
+      scrollerWidth: Math.round(scroller.getBoundingClientRect().width),
+      overflows: scroller.scrollWidth > scroller.clientWidth + 1,
+    };
+  });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  return geom.lastBtnRight <= geom.viewport
+    && geom.scrollerWidth <= geom.viewport
+    && geom.overflows;   // the widened table scrolls inside the scroller
+});
+
 await check('items: choosing a view narrows the content columns to its fields', async () => {
   await page.selectOption('.wb-items-view', 'bb0e2c1d-3333-4444-8888-000000000001');
   await page.waitForFunction(() =>
-    document.querySelectorAll('.wb-items-grid .wb-table th').length === 9);
+    document.querySelectorAll('.wb-items-grid .wb-table th').length === 10);   // + selection col
   const headers = headerText(await page.locator('.wb-items-grid .wb-table th').allTextContents());
   return headers.join(',')
     === 'Title,ID,Project Status,Due Date,Attachments,Created,Created By,Modified,Modified By';
@@ -205,7 +269,7 @@ await check('items: the max-items input caps the fetched rows', async () => {
   await page.locator('.wb-items-max').dispatchEvent('change');
   await page.waitForFunction(() =>
     document.querySelectorAll('.wb-items-grid .wb-table tbody tr').length === 3);
-  const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
+  const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(3)')
     .allTextContents()).map((s) => s.trim());
   return ids.join(',') === '6,5,4';
 });
@@ -215,8 +279,8 @@ await check('items: a typed OData $orderby drives the query', async () => {
   await page.fill('.wb-items-query', '$orderby=Budget desc');
   await page.locator('.wb-items-query').dispatchEvent('change');
   await page.waitForFunction(() => document.querySelector(
-    '.wb-items-grid .wb-table tbody tr td:nth-child(1)')?.textContent === 'Records migration');
-  const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
+    '.wb-items-grid .wb-table tbody tr td:nth-child(2)')?.textContent === 'Records migration');
+  const ids = (await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(3)')
     .allTextContents()).map((s) => s.trim());
   const applied = await page.locator('.wb-items-querytoggle.wb-applied').count();
   return ids.join(',') === '2,6,1'    // Budget desc, still capped at 3
@@ -229,7 +293,7 @@ await check('items: unsupported query keys are rejected inline', async () => {
   await page.waitForFunction(() =>
     document.querySelector('.wb-items-error')?.textContent.length > 0);
   const error = await page.locator('.wb-items-error').textContent();
-  const first = await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(1)')
+  const first = await page.locator('.wb-items-grid .wb-table tbody tr td:nth-child(2)')
     .first().textContent();
   return error.includes('$filter and $orderby') && first === 'Records migration';
 });
@@ -419,12 +483,12 @@ await check('links: Enter on a url anchor does not drill into the row', async ()
 
 // ---- export (M2) ----
 
-await check('export: toolbar menu offers CSV/JSON/Markdown', async () => {
+await check('export: toolbar menu offers CSV/JSON (table markdown dropped)', async () => {
   await page.locator('.wb-pane:not([hidden]) .wb-menu-wrap .btn', { hasText: 'Export' }).first().click();
   const items = await page.locator('.wb-pane:not([hidden]) .wb-menu:not([hidden]) .wb-menu-item').allTextContents();
   await page.keyboard.press('Escape');
   await page.locator('body').click();
-  return items.join(',') === 'Download CSV,Download JSON,Copy CSV,Copy JSON,Copy Markdown';
+  return items.join(',') === 'Download CSV,Download JSON,Copy CSV,Copy JSON';
 });
 
 await check('export: toCsv follows RFC 4180 with a BOM', async () =>
