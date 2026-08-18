@@ -2608,11 +2608,15 @@ function createListsView({ client: client2, navigate }) {
         status = el4("div", "wb-grid-status", "Loading items\u2026");
         gridBox.append(status);
       }
+      let fields = null;
+      let viewFieldNames = null;
+      let query = null;
       try {
-        const [{ items: fields }, { items: views }] = await Promise.all([
+        const [fieldsResult, { items: views }] = await Promise.all([
           cached2(listId, "fields", () => client2.getAll(guidPath(listId, "/fields"), { select: FIELD_SELECT })),
           cached2(listId, "views", () => client2.getAll(guidPath(listId, "/views"), { select: VIEW_SELECT }))
         ]);
+        fields = fieldsResult.items;
         if (!viewsFilled) {
           viewsFilled = true;
           const none = el4("option", "", "All columns");
@@ -2624,7 +2628,6 @@ function createListsView({ client: client2, navigate }) {
             viewSel.append(opt);
           }
         }
-        let viewFieldNames = null;
         let viewTitle = "";
         if (viewSel.value) {
           const vf = await cached2(listId, `viewfields::${viewSel.value}`, () => client2.get(guidPath(listId, `/views(guid'${viewSel.value}')/viewfields`)));
@@ -2633,19 +2636,10 @@ function createListsView({ client: client2, navigate }) {
         }
         const hasAttachments = fields.some((f) => f.TypeAsString === "Attachments");
         const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
-        const select = [
-          "ID",
-          "Title",
-          "Created",
-          "Modified",
-          ...contentFields(fields).map((f) => f.InternalName),
-          ...fields.some((f) => f.InternalName === "FileLeafRef") ? ["FileLeafRef"] : [],
-          ...expand
-        ];
-        const query = {
+        const query2 = {
           path: guidPath(listId, "/items"),
           options: {
-            select,
+            select: ["*", ...expand],
             expand,
             ...parsed.filter ? { filter: parsed.filter } : {},
             orderby: parsed.orderby || "ID desc",
@@ -2658,7 +2652,7 @@ function createListsView({ client: client2, navigate }) {
         if (itemsCache.items && itemsCache.key === dataKey) {
           ({ items, partial } = itemsCache);
         } else {
-          ({ items, partial } = await client2.getAll(query.path, query.options, { cap: max }));
+          ({ items, partial } = await client2.getAll(query2.path, query2.options, { cap: max }));
           if (seq !== loadSeq) return;
           if (!parsed.orderby) {
             items.sort((a, b) => (Number(b.ID ?? b.Id) || 0) - (Number(a.ID ?? a.Id) || 0));
@@ -2666,52 +2660,8 @@ function createListsView({ client: client2, navigate }) {
           itemsCache = { key: dataKey, items, partial };
         }
         if (seq !== loadSeq) return;
-        const content = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
-        const filesOf = (row) => Array.isArray(row.AttachmentFiles) ? row.AttachmentFiles : row.AttachmentFiles?.results || [];
-        const anyAttachments = items.some((row) => filesOf(row).length);
-        const columns = [
-          { key: "Title", label: "Title", value: (row) => itemTitle(row) },
-          { key: "ID", label: "ID", num: true, value: (row) => row.ID ?? row.Id },
-          ...content.map((f) => ({
-            key: f.InternalName,
-            label: f.Title || f.InternalName,
-            value: (row) => fieldText(row, f)
-          })),
-          ...anyAttachments ? [{
-            key: "Attachments",
-            label: "Attachments",
-            value: (row) => filesOf(row).map((f) => f?.FileName || "").filter(Boolean).join(", ")
-          }] : [],
-          { key: "Created", label: "Created", format: fmtDate },
-          { key: "CreatedBy", label: "Created By", value: (row) => personText(row, "Author") },
-          { key: "Modified", label: "Modified", format: fmtDate },
-          { key: "ModifiedBy", label: "Modified By", value: (row) => personText(row, "Editor") }
-        ];
-        const newGrid = createGrid({
-          columns,
-          rowKey: "ID",
-          emptyText: "No items in this list.",
-          filterPlaceholder: "Filter items\u2026",
-          exportName: `items-${fileStem(listTitle)}`,
-          descriptor: { ...query, webUrl: client2.webUrl() },
-          toolbarExtras: controls,
-          exportExtras: [
-            ["Download .md", () => {
-              const md = exportDoc();
-              if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
-            }],
-            ["Copy .md", (btn) => {
-              const md = exportDoc();
-              if (md) copyText(md, btn);
-            }]
-          ]
-        });
-        const focused = controls.contains(document.activeElement) ? document.activeElement : null;
-        gridBox.textContent = "";
-        gridBox.append(newGrid.el);
-        itemsGrid = newGrid;
+        mountItemsGrid(buildColumns(fields, viewFieldNames, items), query2);
         itemsGrid.setRows(items, { partial });
-        if (focused) focused.focus();
         current = {
           fields,
           viewFieldNames,
@@ -2724,6 +2674,9 @@ function createListsView({ client: client2, navigate }) {
         if (seq !== loadSeq) return;
         const raw = err?.message || String(err);
         const message = /SPQueryThrottledException|list view threshold/i.test(raw) ? `SharePoint throttled this query \u2014 filter/order by an indexed column and keep the matched set under 5,000. (${raw})` : raw;
+        if (!itemsGrid && fields) {
+          mountItemsGrid(buildColumns(fields, viewFieldNames, []), query);
+        }
         if (itemsGrid) {
           itemsGrid.setError({ message });
         } else if (status) {
@@ -2731,6 +2684,55 @@ function createListsView({ client: client2, navigate }) {
           status.classList.add("wb-error");
         }
       }
+    }
+    function buildColumns(fields, viewFieldNames, items) {
+      const content = viewFieldNames ? viewColumnFields(fields, viewFieldNames) : contentFields(fields);
+      const filesOf = (row) => Array.isArray(row.AttachmentFiles) ? row.AttachmentFiles : row.AttachmentFiles?.results || [];
+      const anyAttachments = items.some((row) => filesOf(row).length);
+      return [
+        { key: "Title", label: "Title", value: (row) => itemTitle(row) },
+        { key: "ID", label: "ID", num: true, value: (row) => row.ID ?? row.Id },
+        ...content.map((f) => ({
+          key: f.InternalName,
+          label: f.Title || f.InternalName,
+          value: (row) => fieldText(row, f)
+        })),
+        ...anyAttachments ? [{
+          key: "Attachments",
+          label: "Attachments",
+          value: (row) => filesOf(row).map((f) => f?.FileName || "").filter(Boolean).join(", ")
+        }] : [],
+        { key: "Created", label: "Created", format: fmtDate },
+        { key: "CreatedBy", label: "Created By", value: (row) => personText(row, "Author") },
+        { key: "Modified", label: "Modified", format: fmtDate },
+        { key: "ModifiedBy", label: "Modified By", value: (row) => personText(row, "Editor") }
+      ];
+    }
+    function mountItemsGrid(columns, query) {
+      const newGrid = createGrid({
+        columns,
+        rowKey: "ID",
+        emptyText: "No items in this list.",
+        filterPlaceholder: "Filter items\u2026",
+        exportName: `items-${fileStem(listTitle)}`,
+        descriptor: query ? { ...query, webUrl: client2.webUrl() } : null,
+        toolbarExtras: controls,
+        exportExtras: [
+          ["Download .md", () => {
+            const md = exportDoc();
+            if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+          }],
+          ["Copy .md", (btn) => {
+            const md = exportDoc();
+            if (md) copyText(md, btn);
+          }]
+        ]
+      });
+      const focused = controls.contains(document.activeElement) ? document.activeElement : null;
+      gridBox.textContent = "";
+      gridBox.append(newGrid.el);
+      itemsGrid = newGrid;
+      if (focused) focused.focus();
     }
     viewSel.addEventListener("change", reload);
     maxIn.addEventListener("change", reload);
