@@ -112,6 +112,24 @@ await check('mock: route survives a reload via sessionStorage', async () => {
   return (await page.locator('.wb-rail-btn.active').count()) === 1;
 });
 
+await check('mock: boot logs the running build and stamps the logo tooltip', async () => {
+  const logs = [];
+  const listener = (msg) => logs.push(msg.text());
+  page.on('console', listener);
+  await page.reload();
+  await page.waitForSelector('.wb-table tbody tr');
+  page.off('console', listener);
+  const title = await page.locator('.wb-logo').getAttribute('title');
+  const info = await page.evaluate(() => window.__DCSPAD_WB_BUILD_INFO__);
+  // Standalone (unbundled) identifies as Build #dev; bundles carry the
+  // stamped number so a stale tenant cache is diagnosable from the console.
+  const statusCtx = await page.locator('#wb-status-context').textContent();
+  return logs.some((l) => l.includes('[SP Workbench] version') && l.includes('Build #dev'))
+    && title.includes('SP Workbench — version') && title.includes('Build #dev')
+    && statusCtx.includes('Build #dev')
+    && info?.build === 'dev';
+});
+
 // ---- drilldown (M2) ----
 
 await check('drill: opening a list shows the detail tabs', async () => {
@@ -1090,8 +1108,13 @@ await live.locator('.wb-table tbody tr', { hasText: 'Alpha' }).first().waitFor()
 await check('live: chip reads SP from the host contract', async () =>
   (await live.locator('#wb-chip-text').textContent()) === 'SP');
 
-await check('live: status bar names the web and user', async () =>
-  (await live.locator('#wb-status-context').textContent()).includes('Stub User'));
+await check('live: status bar names the web and build; the chip names the user', async () => {
+  const statusCtx = await live.locator('#wb-status-context').textContent();
+  const chipTitle = await live.locator('#wb-chip').getAttribute('title');
+  return statusCtx.includes('SP:') && statusCtx.includes('Build #dev')
+    && !statusCtx.includes('Stub User')       // identity lives on the right side only
+    && chipTitle.includes('Stub User');
+});
 
 await check('live: /_api requests send the nometadata Accept header', () =>
   seenHeaders.length > 0

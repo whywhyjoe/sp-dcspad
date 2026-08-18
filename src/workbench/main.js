@@ -5,6 +5,7 @@
 // tools/build-workbench.mjs) through boot-workbench.js.
 
 import { getSpContext } from '../bridge/sp-context.js';
+import { APP_BUILD_INFO, applyWorkbenchBuildMarker, buildTooltipFor } from '../build-info.js';
 import { createSpRestClient } from './sp-rest.js?v=2';
 import { mockResolver } from './mock-data.js';
 import { createShell } from './shell.js?v=2';
@@ -45,9 +46,13 @@ function applyWorkbenchContext(ctx, inspecting = '') {
     ? `Connected to ${ctx.label}${ctx.user ? ` as ${ctx.user}` : ''} · context: ${ctx.source}`
     : 'Not connected to a SharePoint web — showing built-in mock data';
   const inspectingNote = inspecting ? ` · inspecting ${inspecting}` : '';
+  // The right side of the status bar owns user identity (name · email ·
+  // role chip) — repeating the name here wasted the space. The build number
+  // lives here instead, so a stale cached bundle is visible at a glance.
   statusCtx.textContent = ctx.live
-    ? `SP: ${ctx.label}${ctx.user ? ` · ${ctx.user}` : ''}${inspectingNote}`
-    : `SP: mock data (deploy to SharePoint for live inspection)${inspectingNote}`;
+    ? `SP: ${ctx.label}${inspectingNote} · Build #${APP_BUILD_INFO.build}`
+    : `SP: mock data (deploy to SharePoint for live inspection)${inspectingNote} · Build #${APP_BUILD_INFO.build}`;
+  statusCtx.title = buildTooltipFor('SP Workbench');
 }
 
 const ctx = getSpContext();
@@ -231,6 +236,7 @@ async function refreshCurrentUser() {
 }
 
 refreshCurrentUser();
+applyWorkbenchBuildMarker();
 
 // Boot: reconnect this tab's last inspected site before the first view loads,
 // falling back to the host web (and a clean route) if it no longer resolves.

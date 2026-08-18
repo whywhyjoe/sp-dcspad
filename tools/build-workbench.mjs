@@ -9,13 +9,47 @@
 //   cd tools && node build-workbench.mjs
 // (deploy/Sync-Live.ps1 runs this for you.)
 
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+
+// Same build-identity stamping as build-app.mjs: the bundle logs and shows
+// its build number so a stale cached bundle on a tenant is diagnosable at
+// a glance. Unbundled standalone loads identify as Build #dev.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function git(...args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+const requestedBuildNumber = String(process.env.DCSPAD_BUILD_NUMBER || '').trim();
+const commitCount = git('rev-list', '--count', 'HEAD');
+const shortRevision = git('rev-parse', '--short=8', 'HEAD');
+const trackedChanges = git('status', '--porcelain', '--untracked-files=no');
+const buildNumber = requestedBuildNumber
+  || commitCount
+  || new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+const buildLabel = `${buildNumber}${trackedChanges ? '-dirty' : ''}`;
+const revisionLabel = `${shortRevision || 'unknown'}${trackedChanges ? '-dirty' : ''}`;
 
 await build({
   entryPoints: ['../src/workbench/main.js'],
   bundle: true,
   format: 'esm',
   outfile: '../dcspad.workbench.js',
+  define: {
+    __DCSPAD_BUILD_NUMBER__: JSON.stringify(buildLabel),
+    __DCSPAD_BUILD_REVISION__: JSON.stringify(revisionLabel),
+  },
   logLevel: 'info',
 });
-console.log('dcspad.workbench.js rebuilt');
+console.log(`dcspad.workbench.js rebuilt — Build #${buildLabel} (${revisionLabel})`);
