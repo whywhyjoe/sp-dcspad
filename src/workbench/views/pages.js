@@ -83,17 +83,53 @@ const FIELD_SELECT = [
 const SITE_PAGES_BASE_TEMPLATE = 119;
 const PUBLISHING_PAGES_BASE_TEMPLATE = 850;
 
-// Locate the web's pages library: modern Site Pages (119) first, then the
+// Locate the web's pages libraries: modern Site Pages (119) first, then the
 // classic publishing "Pages" library (850), then any visible library that
 // is simply titled Pages — older sites use all three shapes.
+//
+// A web can hold MORE THAN ONE of these at once, and routinely does: any
+// classic publishing site that has ever had a modern page added carries both
+// an 850 "Pages" library (where the real content is) and a 119 "Site Pages"
+// one (often near-empty). Resolving to a single winner and discarding the
+// rest made the other library unreachable from this view and gave no hint it
+// existed — the Pages tab just looked empty. So the ranking still decides
+// what opens by default, but every candidate is kept and offered in the
+// picker.
+// Visibility outranks template. The ladder used to read
+// 119-visible, 119-hidden, 850-visible, 850-hidden, which preferred a HIDDEN
+// Site Pages library over a VISIBLE publishing one — backwards, since a
+// hidden library is the more likely vestigial of the two. Within each
+// visibility tier the modern template still wins.
+// (A hidden library merely *titled* "Pages" is still not a candidate at all;
+// at that point it is almost certainly something internal.)
+const PAGES_LIBRARY_RANKS = [
+  (l) => !l.Hidden && l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE,
+  (l) => !l.Hidden && l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE,
+  (l) => !l.Hidden && String(l.Title).toLowerCase() === 'pages',
+  (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE,
+  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE,
+];
+
+// Every pages library in the web, best-first by the ranking above. Deduped by
+// Id, so a library matching two ranks (a visible 119 matches both the first
+// and second) appears once, at its best rank.
+export function pagesLibraryCandidates(items) {
+  const seen = new Set();
+  const found = [];
+  for (const matches of PAGES_LIBRARY_RANKS) {
+    for (const list of items || []) {
+      if (seen.has(list.Id) || !matches(list)) continue;
+      seen.add(list.Id);
+      found.push(list);
+    }
+  }
+  return found;
+}
+
+// The default: the best-ranked candidate. Unchanged semantics — this is still
+// exactly what the old ladder returned.
 export function pickPagesLibrary(items) {
-  const lists = items || [];
-  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden)
-    || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE)
-    || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden)
-    || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE)
-    || lists.find((l) => String(l.Title).toLowerCase() === 'pages' && !l.Hidden)
-    || null;
+  return pagesLibraryCandidates(items)[0] || null;
 }
 
 const promotedLabel = (v) => ({ 0: '', 1: 'News (pending)', 2: 'News' }[v] ?? String(v ?? ''));
@@ -139,28 +175,59 @@ export function createPagesView({ client, navigate }) {
   libraryLink.hidden = true;
   strip.append(libraryLink);
 
-  // Chip text is classification + BaseTemplate; libraryKindLabel() supplies
-  // the full sentence on the tooltip. It is an info chip, not a status chip:
-  // which library shape this is classifies the view, it does not report a
-  // condition, so no kind is coloured.
-  const KIND_TAG = { modern: 'modern', publishing: 'classic', generic: 'library' };
+  // The chip carries libraryKindLabel()'s full phrase — the same idiom the
+  // page-kind chip takes from pageContentKindLabel(), and one source of
+  // truth for these words. The BaseTemplate number lives on the tooltip and,
+  // when there is a choice to make, in the picker's options. It is an info
+  // chip, not a status chip: which library shape this is classifies the view,
+  // it does not report a condition, so no kind is coloured.
 
-  function renderLibraryStrip(sitePages) {
+  // One library: a click-to-copy name token. More than one: a picker in its
+  // place, so the libraries the ranking did not choose are reachable instead
+  // of invisible. The kind chip and Open link always describe the selection.
+  function renderLibraryStrip() {
+    if (!current) { strip.hidden = true; return; }
     strip.hidden = false;
     strip.textContent = '';
-    const name = el('span', 'wb-lib-name sp-copy', sitePages.title);
-    if (sitePages.rootPath) {
-      name.title = `Click to copy the library path\n${sitePages.rootPath}`;
-      name.addEventListener('click', () => copyText(sitePages.rootPath, name));
+
+    if (libraries.length > 1) {
+      const select = el('select', 'wb-lib-select wb-lib-picker');
+      select.setAttribute('aria-label', 'Pages library to inspect');
+      select.title = `This web has ${libraries.length} pages libraries — pick which one to inspect.`;
+      for (const lib of libraries) {
+        // Titles collide across shapes often enough (a doc library literally
+        // named "Pages" beside Site Pages), so the template disambiguates.
+        const opt = el('option', '', `${lib.title} · ${lib.baseTemplate}${lib.hidden ? ' · hidden' : ''}`);
+        opt.value = lib.listId;
+        if (lib.listId === current.listId) opt.selected = true;
+        select.append(opt);
+      }
+      select.addEventListener('change', () => {
+        switchLibrary(libraries.find((l) => l.listId === select.value));
+      });
+      strip.append(select);
+    } else {
+      const name = el('span', 'wb-lib-name sp-copy', current.title);
+      if (current.rootPath) {
+        name.title = `Click to copy the library path\n${current.rootPath}`;
+        name.addEventListener('click', () => copyText(current.rootPath, name));
+      }
+      strip.append(name);
     }
-    const kind = el('span', `wb-info-chip wb-lib-kind wb-lib-${sitePages.kind}`,
-      `${KIND_TAG[sitePages.kind] || 'library'} · ${sitePages.baseTemplate}`);
-    kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
-    strip.append(name, kind);
-    if (sitePages.viewUrl) {
-      libraryLink.href = sitePages.viewUrl;
-      libraryLink.title = `Open ${sitePages.title} in a new tab`;
+
+    const kind = el('span', `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
+      libraryKindLabel(current.kind));
+    kind.title = `BaseTemplate ${current.baseTemplate}`
+      + (current.hidden ? ' · hidden library' : '')
+      + (current.rootPath ? `\n${current.rootPath}` : '');
+    strip.append(kind);
+
+    if (current.viewUrl) {
+      libraryLink.href = current.viewUrl;
+      libraryLink.title = `Open ${current.title} in a new tab`;
       libraryLink.hidden = false;
+    } else {
+      libraryLink.hidden = true;
     }
     strip.append(libraryLink);
   }
@@ -172,37 +239,65 @@ export function createPagesView({ client, navigate }) {
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
 
-  let sitePagesPromise = null;   // -> { listId, title } | null
+  let librariesPromise = null;   // -> library[] (best-first, possibly empty)
+  let libraries = [];
+  let current = null;            // the library on screen
   let grid = null;
   let pagesLoaded = false;
   const detailCache = new Map();   // pageId -> Promise<item>
   let fieldsPromise = null;        // list fields shared by every page
   let detailRun = 0;
 
-  function sitePagesList() {
-    if (!sitePagesPromise) {
-      sitePagesPromise = client.getAll('web/lists', {
+  const toLibrary = (list) => ({
+    listId: list.Id,
+    title: list.Title,
+    kind: libraryKindOf(list),
+    baseTemplate: list.BaseTemplate,
+    hidden: Boolean(list.Hidden),
+    rootPath: list.RootFolder?.ServerRelativeUrl || '',
+    viewUrl: list.DefaultViewUrl || list.RootFolder?.ServerRelativeUrl || '',
+  });
+
+  function pagesLibraries() {
+    if (!librariesPromise) {
+      librariesPromise = client.getAll('web/lists', {
         select: ['Id', 'Title', 'BaseTemplate', 'Hidden', 'DefaultViewUrl', 'RootFolder/ServerRelativeUrl'],
         expand: 'RootFolder',
         top: 5000,
       }).then(({ items }) => {
         // Client-side filter: the mock resolver ignores $filter, and the
-        // library is cheap to find in the full list either way.
-        const found = pickPagesLibrary(items);
-        return found ? {
-          listId: found.Id,
-          title: found.Title,
-          kind: libraryKindOf(found),
-          baseTemplate: found.BaseTemplate,
-          rootPath: found.RootFolder?.ServerRelativeUrl || '',
-          viewUrl: found.DefaultViewUrl || found.RootFolder?.ServerRelativeUrl || '',
-        } : null;
+        // libraries are cheap to find in the full list either way.
+        libraries = pagesLibraryCandidates(items).map(toLibrary);
+        if (!current) current = libraries[0] || null;
+        return libraries;
       }).catch((err) => {
-        sitePagesPromise = null;
+        librariesPromise = null;
         throw err;
       });
     }
-    return sitePagesPromise;
+    return librariesPromise;
+  }
+
+  // Switching library is a full reset of everything keyed to the old one: the
+  // grid's columns differ by kind (Promoted is modern-only), and the detail
+  // and field caches are keyed by page id alone, which only holds while the
+  // list behind them does not change.
+  function switchLibrary(next) {
+    if (!next || next.listId === current?.listId) return;
+    current = next;
+    detailCache.clear();
+    webPartCache.clear();
+    fieldsPromise = null;
+    // The query plan is PROBED from the old library's fields. Carrying it over
+    // would compose a request naming fields the new library does not have —
+    // PromotedState against a publishing library is a 400 on live SPO, the
+    // exact failure the probe exists to prevent.
+    planPromise = null;
+    if (grid) { grid.el.remove(); grid = null; }
+    pagesLoaded = false;
+    // Detaching the grid takes the strip with it (the toolbar owns it once
+    // adopted); loadPages re-adopts the same node into the rebuilt toolbar.
+    loadPages();
   }
 
   // Web identity for exports (site display name + absolute URL base).
@@ -227,8 +322,8 @@ export function createPagesView({ client, navigate }) {
     if (pagesLoaded) return;
     masterStatus.hidden = true;
     try {
-      const sitePages = await sitePagesList();
-      if (!sitePages) {
+      await pagesLibraries();
+      if (!current) {
         strip.hidden = true;
         masterStatus.textContent = 'This web has no pages library — looked for modern '
           + 'Site Pages (BaseTemplate 119), classic publishing Pages (850), and any '
@@ -236,7 +331,8 @@ export function createPagesView({ client, navigate }) {
         masterStatus.hidden = false;
         return;
       }
-      renderLibraryStrip(sitePages);
+      const sitePages = current;
+      renderLibraryStrip();
       if (!grid) {
         const plan = await queryPlan(sitePages);
         const query = {
@@ -585,7 +681,8 @@ export function createPagesView({ client, navigate }) {
     let sitePages;
     let item;
     try {
-      sitePages = await sitePagesList();
+      await pagesLibraries();
+      sitePages = current;
       if (!sitePages) throw new Error('This web has no pages library.');
       const plan = await queryPlan(sitePages);
       item = await pageItem(sitePages.listId, route.pageId, plan.detailOptions);
