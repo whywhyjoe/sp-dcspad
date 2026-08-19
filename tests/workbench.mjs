@@ -1225,6 +1225,79 @@ await check('the library kind is an info chip, not a status chip', async () => {
     && detail.composed && detail.colour === seen.colour;
 });
 
+// ---- a web carrying BOTH pages libraries ----------------------------------
+// The upgraded-publishing-site shape: 850 "Pages" holds the content, 119
+// "Site Pages" is nearly empty, and the ranking opens the 119 one. Before the
+// picker the 850 library was unreachable from this view and nothing said it
+// existed.
+const bothPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await bothPage.goto(WB_URL);
+await bothPage.waitForSelector('.wb-home-cards');
+await bothPage.fill('#wb-site-input', '/sites/both');
+await bothPage.locator('#wb-site-open').click();
+await bothPage.waitForFunction(() =>
+  document.getElementById('wb-status-context').textContent.includes('/sites/both'));
+
+await check('both: every candidate library is kept, best-ranked first', async () =>
+  bothPage.evaluate(async () => {
+    const { pagesLibraryCandidates, pickPagesLibrary } = await import('/src/workbench/views/pages.js');
+    const lists = [
+      { Id: 'a', Title: 'Pages', BaseTemplate: 850, Hidden: false },
+      { Id: 'b', Title: 'Site Pages', BaseTemplate: 119, Hidden: false },
+      { Id: 'c', Title: 'Documents', BaseTemplate: 101, Hidden: false },
+    ];
+    const found = pagesLibraryCandidates(lists);
+    // A visible 119 matches two ranks; it must appear once, at its best.
+    return found.map((l) => l.Id).join(',') === 'b,a'
+      && pickPagesLibrary(lists).Id === 'b'
+      && pagesLibraryCandidates([]).length === 0;
+  }));
+
+await check('both: the picker replaces the name token and defaults to the ranked pick', async () => {
+  await bothPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const options = await bothPage.locator('.wb-view-pages .wb-lib-picker option').allTextContents();
+  const selected = await bothPage.locator('.wb-view-pages .wb-lib-picker').inputValue();
+  const chip = await bothPage.locator('.wb-view-pages .wb-lib-kind').textContent();
+  const rows = await bothPage.locator('.wb-view-pages .wb-table tbody tr').allTextContents();
+  const nameToken = await bothPage.locator('.wb-view-pages .wb-lib-name').count();
+  return options.join(' | ') === 'Site Pages · 119 | Pages · 850'
+    && selected === '9c2d4e6f-1111-4222-8333-44445555a001'
+    && chip === 'modern'          // picker carries the template; chip doesn't repeat it
+    && rows.length === 1 && rows[0].includes('TeamNews.aspx')
+    && nameToken === 0;   // the picker stands in for it
+});
+
+await check('both: switching library rebuilds the grid for the other shape', async () => {
+  await bothPage.locator('.wb-view-pages .wb-lib-picker')
+    .selectOption('9c2d4e6f-1111-4222-8333-44445555a002');
+  await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr:nth-child(2)');
+  const headers = await bothPage.locator('.wb-view-pages .wb-table thead th').allTextContents();
+  const rows = await bothPage.locator('.wb-view-pages .wb-table tbody tr').allTextContents();
+  const chip = await bothPage.locator('.wb-view-pages .wb-lib-kind').textContent();
+  const link = await bothPage.locator('.wb-view-pages .wb-head-link').getAttribute('href');
+  return rows.length === 2
+    && rows.join(' ').includes('Policies.aspx') && rows.join(' ').includes('Handbook.aspx')
+    && chip === 'classic'
+    && !headers.includes('Promoted')   // rebuilt for the classic shape
+    && link.includes('/sites/both/Pages');
+});
+
+await check('both: the drilldown follows the switched library', async () => {
+  await bothPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Policies.aspx' })
+    .locator('td').first().click();
+  await bothPage.waitForSelector('.wb-text-rendered');
+  const text = await bothPage.locator('.wb-text-rendered').textContent();
+  const kind = await bothPage.locator('.wb-view-pages .wb-detail-kind').textContent();
+  await bothPage.locator('.wb-view-pages .wb-back').click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-lib-picker');
+  // The selection survives coming back out of the drilldown.
+  const stillClassic = await bothPage.locator('.wb-view-pages .wb-lib-picker').inputValue();
+  return text.includes('Where the real content is.')
+    && kind === 'classic publishing page'
+    && stillClassic === '9c2d4e6f-1111-4222-8333-44445555a002';
+});
+
 await check('classic: the generated items query omits PromotedState', async () => {
   // The 400 that started this: PromotedState does not exist on a publishing
   // library, so it must never reach the URL. Mock mode resolves before fetch,

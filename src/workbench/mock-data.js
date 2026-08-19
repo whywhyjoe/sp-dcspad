@@ -574,6 +574,62 @@ const CLASSIC_ITEMS = {
   '7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02': CLASSIC_PAGE_ITEMS,
 };
 
+// ---- web with BOTH pages libraries ----------------------------------------
+// Served for a web base ending in /sites/both. This is the common upgraded
+// shape, not an exotic one: a classic publishing site that has ever had a
+// modern page added carries an 850 "Pages" library holding the real content
+// AND a 119 "Site Pages" one that is often nearly empty. The ranking opens
+// the 119 by default, so without a picker the view looks empty and the real
+// library is unreachable — which is what the picker exists to fix. Its own
+// web again, so the other fixtures' row counts are untouched.
+const BOTH_SITE_PAGES_ID = '9c2d4e6f-1111-4222-8333-44445555a001';
+const BOTH_PAGES_ID = '9c2d4e6f-1111-4222-8333-44445555a002';
+
+const BOTH_LISTS = [
+  list('Site Pages', BOTH_SITE_PAGES_ID, 119, 1, 1, false, '/sites/both/SitePages'),
+  list('Pages', BOTH_PAGES_ID, 850, 1, 2, false, '/sites/both/Pages'),
+];
+
+const BOTH_ITEMS = {
+  [BOTH_SITE_PAGES_ID]: [
+    {
+      Id: 1,
+      Title: 'Team news',
+      FileLeafRef: 'TeamNews.aspx',
+      FileRef: '/sites/both/SitePages/TeamNews.aspx',
+      FileDirRef: '/sites/both/SitePages',
+      PromotedState: 0,
+      Modified: '2026-07-18T10:00:00Z',
+      Editor: { Title: 'Mock Developer' },
+      CanvasContent1: JSON.stringify([
+        { controlType: 4, id: 'c1', innerHTML: '<p>The one modern page.</p>' },
+      ]),
+    },
+  ],
+  [BOTH_PAGES_ID]: [
+    {
+      Id: 1,
+      Title: 'Policies',
+      FileLeafRef: 'Policies.aspx',
+      FileRef: '/sites/both/Pages/Policies.aspx',
+      FileDirRef: '/sites/both/Pages',
+      Modified: '2026-07-04T10:00:00Z',
+      Editor: { Title: 'Pat Example' },
+      PublishingPageContent: '<h2>Policies</h2><p>Where the real content is.</p>',
+    },
+    {
+      Id: 2,
+      Title: 'Handbook',
+      FileLeafRef: 'Handbook.aspx',
+      FileRef: '/sites/both/Pages/Handbook.aspx',
+      FileDirRef: '/sites/both/Pages',
+      Modified: '2026-07-05T10:00:00Z',
+      Editor: { Title: 'Pat Example' },
+      PublishingPageContent: '<p>Staff handbook.</p>',
+    },
+  ],
+};
+
 // ---- resolver -------------------------------------------------------------
 
 const listIdOf = (url) => /lists\(guid'([0-9a-f-]+)'\)/i.exec(url)?.[1]?.toLowerCase();
@@ -588,8 +644,9 @@ export function mockResolver(rawUrl) {
   // the modern web, so existing fixtures and their row counts are untouched.
   const webBase = url.slice(0, url.indexOf('/_api/')).replace(/[/]+$/, '');
   const classic = /[/]sites[/]classic$/i.test(webBase);
-  const lists = classic ? CLASSIC_LISTS : LISTS;
-  const itemsByList = classic ? CLASSIC_ITEMS : ITEMS;
+  const both = /[/]sites[/]both$/i.test(webBase);
+  const lists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : LISTS;
+  const itemsByList = both ? BOTH_ITEMS : classic ? CLASSIC_ITEMS : ITEMS;
 
   // Classic pages carry their content in web parts, not item fields.
   const wpFile = /getfilebyserverrelativepath[(]decodedurl='([^']*)'[)][/]getlimitedwebpartmanager/

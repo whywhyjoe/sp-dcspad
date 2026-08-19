@@ -355,6 +355,8 @@ html.dcspad-suspended #wb-mount { display: none; }
 }
 .wb-grid-toolbar .wb-crumbs::-webkit-scrollbar { display: none; }
 .wb-grid-toolbar .wb-crumb { white-space: nowrap; }
+/* Shared by the Files library picker and the Pages library picker
+   (.wb-lib-picker) — one library-chooser control, two views. */
 .wb-lib-select {
   background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--radius-m);
   color: var(--fg); font: 12px/1 var(--sans); padding: 4px 7px; max-width: 220px;
