@@ -201,11 +201,25 @@ export function createBrowserView({ client, navigate }) {
       btn.addEventListener('click', () => navigate({ view: 'files', path: target }));
       crumbs.append(btn);
     }
-    // In the toolbar the trail can outrun its room. Keep the deepest segment
-    // — where you actually are — pinned in view and let the ancestors scroll
-    // off to the left, marking that edge so the clip reads as "there's more".
+    syncCrumbOverflow();
+  }
+
+  // Keep the deepest segment — where you actually are — pinned in view, let
+  // the ancestors scroll off to the left, and mark that edge so the clip reads
+  // as "there's more".
+  //
+  // This has to run on resize, not just on render: the toolbar row is elastic,
+  // so narrowing the window after navigating shrinks the trail without
+  // re-rendering it. Measured at 720px the crumbs box reached clientWidth 0
+  // with scrollLeft still 0 — the whole trail unreachable, and the scrollbar
+  // is hidden so there was no affordance to get it back.
+  function syncCrumbOverflow() {
     crumbs.scrollLeft = crumbs.scrollWidth;
     crumbs.classList.toggle('is-clipped', crumbs.scrollWidth > crumbs.clientWidth + 1);
+  }
+
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => syncCrumbOverflow()).observe(crumbs);
   }
 
   async function loadLibraries() {

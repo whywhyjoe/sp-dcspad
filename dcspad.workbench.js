@@ -6018,6 +6018,7 @@ ${current.rootPath}` : "");
   const detailCache = /* @__PURE__ */ new Map();
   let fieldsPromise = null;
   let detailRun = 0;
+  let loadRun = 0;
   const toLibrary = (list2) => ({
     listId: list2.Id,
     title: list2.Title,
@@ -6044,8 +6045,7 @@ ${current.rootPath}` : "");
     }
     return librariesPromise;
   }
-  function switchLibrary(next) {
-    if (!next || next.listId === current?.listId) return;
+  function adoptLibrary(next) {
     current = next;
     detailCache.clear();
     webPartCache.clear();
@@ -6056,7 +6056,11 @@ ${current.rootPath}` : "");
       grid = null;
     }
     pagesLoaded = false;
-    loadPages();
+  }
+  function switchLibrary(next) {
+    if (!next || next.listId === current?.listId) return;
+    adoptLibrary(next);
+    navigate({ view: "pages", libId: next.listId });
   }
   let webInfoPromise = null;
   function webIdentity() {
@@ -6073,6 +6077,7 @@ ${current.rootPath}` : "");
   }
   async function loadPages() {
     if (pagesLoaded) return;
+    const run = ++loadRun;
     masterStatus.hidden = true;
     try {
       await pagesLibraries();
@@ -6127,7 +6132,11 @@ ${current.rootPath}` : "");
           onOpen: (row) => navigate({
             view: "pages",
             pageId: row.Id,
-            pageName: row.FileLeafRef || row.Title
+            pageName: row.FileLeafRef || row.Title,
+            // Without this a reload resolves the saved id against the ranked
+            // default library — same id, different page, and the Metadata tab
+            // would then write to the wrong item.
+            libId: sitePages.listId
           }),
           emptyText: `No pages in ${sitePages.title}.`,
           filterPlaceholder: "Filter pages\u2026",
@@ -6138,10 +6147,12 @@ ${current.rootPath}` : "");
         gridPane.append(grid.el);
         grid.setLoading("Loading pages\u2026");
         const { items, partial } = await client2.getAll(query.path, query.options);
+        if (run !== loadRun) return;
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
     } catch (err) {
+      if (run !== loadRun) return;
       if (strip.querySelector(".wb-lib-wait")) strip.hidden = true;
       if (grid) grid.setError(err);
       else {
@@ -6159,13 +6170,14 @@ ${current.rootPath}` : "");
     return planPromise;
   }
   function pageItem(listId, pageId, options) {
-    if (!detailCache.has(pageId)) {
-      detailCache.set(pageId, client2.get(guidPath2(listId, `/items(${pageId})`), options).catch((err) => {
-        detailCache.delete(pageId);
+    const key2 = `${listId}:${pageId}`;
+    if (!detailCache.has(key2)) {
+      detailCache.set(key2, client2.get(guidPath2(listId, `/items(${pageId})`), options).catch((err) => {
+        detailCache.delete(key2);
         throw err;
       }));
     }
-    return detailCache.get(pageId);
+    return detailCache.get(key2);
   }
   const webPartCache = /* @__PURE__ */ new Map();
   function classicWebPartsOf(fileRef) {
@@ -6380,7 +6392,7 @@ ${p.html}`).join("\n\n")
     detailPane.textContent = "";
     const back = el11("button", "btn btn-xs wb-back", "\u2190 All pages");
     back.type = "button";
-    back.addEventListener("click", () => navigate({ view: "pages" }));
+    back.addEventListener("click", () => navigate({ view: "pages", libId: current?.listId }));
     const title = el11("h2", "", route.pageName || `Page ${route.pageId}`);
     const headRow = el11("div", "wb-detail-head");
     headRow.append(back, title);
@@ -6522,14 +6534,27 @@ ${fullUrl}`;
     detailPane.append(tabsBar, body);
     activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
   }
+  async function applyRouteLibrary(route) {
+    if (!route?.libId) return;
+    await pagesLibraries();
+    if (route.libId === current?.listId) return;
+    const wanted = libraries.find((l) => l.listId === route.libId);
+    if (wanted) adoptLibrary(wanted);
+  }
   function load2(route) {
     if (route?.pageId) {
-      showDetail(route);
+      detailRun += 1;
+      const run = detailRun;
+      applyRouteLibrary(route).catch(() => {
+      }).then(() => {
+        if (run === detailRun) showDetail(route);
+      });
     } else {
       detailRun += 1;
       detailPane.hidden = true;
       gridPane.hidden = false;
-      loadPages();
+      applyRouteLibrary(route).catch(() => {
+      }).then(() => loadPages());
     }
   }
   return { el: root, load: load2 };
@@ -6874,8 +6899,14 @@ function createBrowserView({ client: client2, navigate }) {
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
     }
+    syncCrumbOverflow();
+  }
+  function syncCrumbOverflow() {
     crumbs.scrollLeft = crumbs.scrollWidth;
     crumbs.classList.toggle("is-clipped", crumbs.scrollWidth > crumbs.clientWidth + 1);
+  }
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(() => syncCrumbOverflow()).observe(crumbs);
   }
   async function loadLibraries() {
     if (librariesLoaded) return;
