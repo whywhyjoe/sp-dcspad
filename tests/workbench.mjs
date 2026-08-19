@@ -1404,6 +1404,38 @@ await check('both: switching library re-probes the query plan', async () => {
     && modernQuery.includes('PromotedState');    // and re-probed back again
 });
 
+await check('both: a reload of a secondary-library page keeps its library', async () => {
+  // Was: the route stored only the page id, so a reload resolved it against
+  // the ranked default library — same id, different page, and the Metadata
+  // tab would have written to the wrong item.
+  await bothPage.locator('.wb-view-pages .wb-lib-picker')
+    .selectOption('9c2d4e6f-1111-4222-8333-44445555a002');
+  await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr:nth-child(2)');
+  await bothPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Policies.aspx' })
+    .locator('td').first().click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-detail-id');
+  const before = await bothPage.locator('.wb-view-pages .wb-detail-id').textContent();
+  await bothPage.reload();
+  await bothPage.waitForSelector('.wb-view-pages .wb-detail-id');
+  const after = await bothPage.locator('.wb-view-pages .wb-detail-id').textContent();
+  const kind = await bothPage.locator('.wb-view-pages .wb-detail-kind').textContent();
+  await bothPage.locator('.wb-view-pages .wb-back').click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-lib-picker');
+  return before.includes('/sites/both/Pages/Policies.aspx')
+    && after === before
+    && kind === 'classic publishing page';
+});
+
+// NOT COVERED: the stale-grid race (loadPages' generation guard).
+// It cannot be reproduced here. rawGet() answers from mockResolver(url)
+// synchronously — no request leaves the page — so Playwright's route
+// interception has nothing to delay and the old library's response can never
+// land after the new one. A test written against the mock passes with the
+// guard removed, which is worse than no test. Reproducing it needs either the
+// live-stub path (real fetch + interception, and a second pages library in
+// those fixtures) or an awaited mock resolver. The guard itself is at
+// `if (run !== loadRun) return;` in loadPages().
+
 await check('classic: the generated items query omits PromotedState', async () => {
   // The 400 that started this: PromotedState does not exist on a publishing
   // library, so it must never reach the URL. Mock mode resolves before fetch,

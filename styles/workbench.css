@@ -346,6 +346,10 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-grid-toolbar .wb-lib-select { flex: none; }
 .wb-grid-toolbar .wb-crumbs {
   flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+  /* Never let the elastic trail be squeezed to nothing: below this the
+     deepest crumb stops being reachable at all, and the hidden scrollbar
+     leaves no way to recover it. */
+  min-width: 5rem;
 }
 /* Only when the trail is actually clipped: fade its left edge, so the
    ancestors scrolling out of view read as "there is more" rather than as a

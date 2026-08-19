@@ -244,9 +244,13 @@ export function createPagesView({ client, navigate }) {
   let current = null;            // the library on screen
   let grid = null;
   let pagesLoaded = false;
-  const detailCache = new Map();   // pageId -> Promise<item>
+  // Keyed `${listId}:${pageId}`, never the bare page id: two libraries in one
+  // web both start at item 1, and a rejection handler firing after a switch
+  // would otherwise evict the OTHER library's entry.
+  const detailCache = new Map();   // "listId:pageId" -> Promise<item>
   let fieldsPromise = null;        // list fields shared by every page
   let detailRun = 0;
+  let loadRun = 0;                 // generation guard for loadPages
 
   const toLibrary = (list) => ({
     listId: list.Id,
@@ -278,12 +282,8 @@ export function createPagesView({ client, navigate }) {
     return librariesPromise;
   }
 
-  // Switching library is a full reset of everything keyed to the old one: the
-  // grid's columns differ by kind (Promoted is modern-only), and the detail
-  // and field caches are keyed by page id alone, which only holds while the
-  // list behind them does not change.
-  function switchLibrary(next) {
-    if (!next || next.listId === current?.listId) return;
+  // Everything above is scoped to ONE library and must go when it changes.
+  function adoptLibrary(next) {
     current = next;
     detailCache.clear();
     webPartCache.clear();
@@ -295,9 +295,18 @@ export function createPagesView({ client, navigate }) {
     planPromise = null;
     if (grid) { grid.el.remove(); grid = null; }
     pagesLoaded = false;
-    // Detaching the grid takes the strip with it (the toolbar owns it once
-    // adopted); loadPages re-adopts the same node into the rebuilt toolbar.
-    loadPages();
+  }
+
+  // The picker. Records the choice in the route as well, so a reload lands on
+  // the library the user was actually looking at rather than the ranked
+  // default (which would resolve a saved page id against the wrong list).
+  function switchLibrary(next) {
+    if (!next || next.listId === current?.listId) return;
+    adoptLibrary(next);
+    // navigate() lands back on the list view, which reloads it. Detaching the
+    // grid took the strip with it (the toolbar owns it once adopted);
+    // loadPages re-adopts the same node into the rebuilt toolbar.
+    navigate({ view: 'pages', libId: next.listId });
   }
 
   // Web identity for exports (site display name + absolute URL base).
@@ -320,6 +329,7 @@ export function createPagesView({ client, navigate }) {
 
   async function loadPages() {
     if (pagesLoaded) return;
+    const run = ++loadRun;
     masterStatus.hidden = true;
     try {
       await pagesLibraries();
@@ -376,7 +386,13 @@ export function createPagesView({ client, navigate }) {
             },
           ],
           onOpen: (row) => navigate({
-            view: 'pages', pageId: row.Id, pageName: row.FileLeafRef || row.Title,
+            view: 'pages',
+            pageId: row.Id,
+            pageName: row.FileLeafRef || row.Title,
+            // Without this a reload resolves the saved id against the ranked
+            // default library — same id, different page, and the Metadata tab
+            // would then write to the wrong item.
+            libId: sitePages.listId,
           }),
           emptyText: `No pages in ${sitePages.title}.`,
           filterPlaceholder: 'Filter pages…',
@@ -387,10 +403,16 @@ export function createPagesView({ client, navigate }) {
         gridPane.append(grid.el);
         grid.setLoading('Loading pages…');
         const { items, partial } = await client.getAll(query.path, query.options);
+        // A switch during the request replaced `grid`; without this the old
+        // library's rows land in the new library's table under the new chip.
+        if (run !== loadRun) return;
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
     } catch (err) {
+      // Same guard on the failure path: a stale rejection must not paint an
+      // error over the grid that replaced it.
+      if (run !== loadRun) return;
       // Resolution itself failed: don't leave the "locating…" token up
       // next to the error. A resolved strip stays — it is still true.
       if (strip.querySelector('.wb-lib-wait')) strip.hidden = true;
@@ -419,14 +441,18 @@ export function createPagesView({ client, navigate }) {
   // ---- drilldown ----
 
   function pageItem(listId, pageId, options) {
-    if (!detailCache.has(pageId)) {
-      detailCache.set(pageId, client.get(guidPath(listId, `/items(${pageId})`), options)
+    // Library-qualified: both libraries of a web start at item 1, and a
+    // rejection arriving after a switch used to evict the other library's
+    // entry by bare id.
+    const key = `${listId}:${pageId}`;
+    if (!detailCache.has(key)) {
+      detailCache.set(key, client.get(guidPath(listId, `/items(${pageId})`), options)
         .catch((err) => {
-          detailCache.delete(pageId);
+          detailCache.delete(key);
           throw err;
         }));
     }
-    return detailCache.get(pageId);
+    return detailCache.get(key);
   }
 
   // Classic pages keep most of their real content in Content Editor / Script
@@ -669,7 +695,7 @@ export function createPagesView({ client, navigate }) {
 
     const back = el('button', 'btn btn-xs wb-back', '← All pages');
     back.type = 'button';
-    back.addEventListener('click', () => navigate({ view: 'pages' }));
+    back.addEventListener('click', () => navigate({ view: 'pages', libId: current?.listId }));
     const title = el('h2', '', route.pageName || `Page ${route.pageId}`);
     const headRow = el('div', 'wb-detail-head');
     headRow.append(back, title);
@@ -832,14 +858,31 @@ export function createPagesView({ client, navigate }) {
     activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
   }
 
+  // Adopt the library named by the route before anything resolves against
+  // `current`. A saved route outlives the closure, so on a reload `current`
+  // would otherwise be the ranked default.
+  async function applyRouteLibrary(route) {
+    if (!route?.libId) return;
+    await pagesLibraries();
+    if (route.libId === current?.listId) return;
+    const wanted = libraries.find((l) => l.listId === route.libId);
+    if (wanted) adoptLibrary(wanted);
+  }
+
   function load(route) {
     if (route?.pageId) {
-      showDetail(route);
+      detailRun += 1;
+      const run = detailRun;
+      applyRouteLibrary(route)
+        .catch(() => { /* fall through on the default library */ })
+        .then(() => { if (run === detailRun) showDetail(route); });
     } else {
       detailRun += 1;
       detailPane.hidden = true;
       gridPane.hidden = false;
-      loadPages();
+      applyRouteLibrary(route)
+        .catch(() => { /* fall through on the default library */ })
+        .then(() => loadPages());
     }
   }
 
