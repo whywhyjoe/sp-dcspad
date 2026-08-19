@@ -141,12 +141,15 @@ html.dcspad-suspended #wb-mount { display: none; }
 /* Resolved-library status strip (Pages): status as tool tokens, not prose.
    The name is a click-to-copy path token (sp-copy affordance from app.css),
    the kind badge follows the design-system micro-badge spec (9px mono
-   uppercase, radius-s), and full sentences ride on the tooltips. */
-.wb-lib-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-.wb-lib-wait, .wb-lib-scope {
-  font: 500 11px/1 var(--mono); letter-spacing: .04em; color: var(--fg-faint);
+   uppercase, radius-s), and full sentences ride on the tooltips. Born in the
+   view head as a loading placeholder, it moves into the grid toolbar
+   (toolbarExtras) so status, filter, and actions share one row. */
+.wb-lib-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wb-view-head .wb-lib-strip { margin-top: 6px; }
+.wb-grid-toolbar .wb-lib-strip {
+  margin-left: 2px; padding-left: 12px; border-left: 1px solid var(--border);
 }
-.wb-lib-scope { cursor: help; }
+.wb-lib-wait { font: 500 11px/1 var(--mono); letter-spacing: .04em; color: var(--fg-faint); }
 .wb-lib-name { font: 500 12px/1.4 var(--mono); color: var(--fg); }
 .wb-lib-kind {
   padding: 2px 5px; border-radius: var(--radius-s); white-space: nowrap;
