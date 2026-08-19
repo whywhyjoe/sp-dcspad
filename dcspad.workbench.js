@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "67" : "dev";
-var injectedRevision = true ? "21b18f77" : "";
+var injectedBuild = true ? "69" : "dev";
+var injectedRevision = true ? "74376909" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -6654,6 +6654,8 @@ function createBrowserView({ client: client2, navigate }) {
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
     }
+    crumbs.scrollLeft = crumbs.scrollWidth;
+    crumbs.classList.toggle("is-clipped", crumbs.scrollWidth > crumbs.clientWidth + 1);
   }
   async function loadLibraries() {
     if (librariesLoaded) return;
@@ -6744,7 +6746,8 @@ function createBrowserView({ client: client2, navigate }) {
       },
       emptyText: "This folder is empty.",
       filterPlaceholder: "Filter files\u2026",
-      exportName: "sp-files"
+      exportName: "sp-files",
+      toolbarExtras: bar
     });
     const uploadBtn = el13("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";
