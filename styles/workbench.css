@@ -138,6 +138,30 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-view-head h2 { margin: 0; font: var(--t-view); color: var(--fg-strong); }
 .wb-view-hint { margin: 4px 0 0; color: var(--fg-dim); font-size: 12.5px; max-width: 72ch; }
 
+/* Resolved-library status strip (Pages): status as tool tokens, not prose.
+   The name is a click-to-copy path token (sp-copy affordance from app.css),
+   the kind badge follows the design-system micro-badge spec (9px mono
+   uppercase, radius-s), and full sentences ride on the tooltips. Born in the
+   view head as a loading placeholder, it moves into the grid toolbar
+   (toolbarExtras) so status, filter, and actions share one row. */
+.wb-lib-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wb-view-head .wb-lib-strip { margin-top: 6px; }
+.wb-grid-toolbar .wb-lib-strip {
+  margin-left: 2px; padding-left: 12px; border-left: 1px solid var(--border);
+}
+.wb-lib-wait { font: 500 11px/1 var(--mono); letter-spacing: .04em; color: var(--fg-faint); }
+.wb-lib-name { font: 500 12px/1.4 var(--mono); color: var(--fg); }
+.wb-lib-kind {
+  padding: 2px 5px; border-radius: var(--radius-s); white-space: nowrap;
+  font: 600 9px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--fg-dim); background: var(--bg-1); border: 1px solid var(--border-strong);
+  cursor: help;
+}
+.wb-lib-modern {
+  color: var(--accent-soft-fg); background: var(--accent-soft);
+  border-color: var(--accent-soft-line);
+}
+
 /* ---- grid ---- */
 .wb-grid { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; gap: 8px; }
 .wb-grid-toolbar { display: flex; align-items: center; gap: 10px; }
@@ -148,7 +172,12 @@ html.dcspad-suspended #wb-mount { display: none; }
   color: var(--fg); font: 12px/1 var(--sans);
 }
 .wb-grid-filter:focus { outline: none; border-color: var(--accent-soft-line); box-shadow: 0 0 0 3px var(--accent-ring); }
-.wb-grid-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* Actions never shrink or wrap their labels — when the toolbar runs out of
+   room the elastic member (a crumb trail, a status strip) gives way first. */
+.wb-grid-actions {
+  margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none;
+}
+.wb-grid-actions .btn { white-space: nowrap; }
 
 .wb-grid-notice {
   background: var(--warn-soft); border: 1px solid var(--warn-soft-line); border-radius: var(--radius-m);
@@ -296,6 +325,25 @@ html.dcspad-suspended #wb-mount { display: none; }
 
 /* ---- files browser ---- */
 .wb-crumbs-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Adopted into the grid toolbar: one row with the count, filter and actions.
+   The path is the only elastic part, so the bar shrinks and the crumb trail
+   scrolls rather than wrapping the row or pushing the actions off. */
+.wb-grid-toolbar .wb-crumbs-bar {
+  min-width: 0; flex: 0 1 auto; flex-wrap: nowrap;
+  padding-left: 12px; border-left: 1px solid var(--border);
+}
+.wb-grid-toolbar .wb-lib-select { flex: none; }
+.wb-grid-toolbar .wb-crumbs {
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+/* Only when the trail is actually clipped: fade its left edge, so the
+   ancestors scrolling out of view read as "there is more" rather than as a
+   label sliced off. The deepest segment stays flush at the right. */
+.wb-grid-toolbar .wb-crumbs.is-clipped {
+  mask-image: linear-gradient(to right, transparent, #000 14px);
+}
+.wb-grid-toolbar .wb-crumbs::-webkit-scrollbar { display: none; }
+.wb-grid-toolbar .wb-crumb { white-space: nowrap; }
 .wb-lib-select {
   background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--radius-m);
   color: var(--fg); font: 12px/1 var(--sans); padding: 4px 7px; max-width: 220px;
