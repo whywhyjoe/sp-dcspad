@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "104-dirty" : "dev";
-var injectedRevision = true ? "b4eb2d90-dirty" : "";
+var injectedBuild = true ? "69" : "dev";
+var injectedRevision = true ? "74376909" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5785,13 +5785,38 @@ function createPagesView({ client: client2, navigate }) {
   const spWrite = createSpWriteClient({ client: client2 });
   const gridPane = el11("div", "wb-pane");
   const head = el11("div", "wb-view-head");
-  head.innerHTML = "<h2>Pages</h2>";
-  const hint = el11("p", "wb-view-hint", "Locating this web\u2019s pages library\u2026");
-  head.append(hint);
-  const libraryLink = el11("a", "btn btn-xs wb-head-link", "Open library \u2197");
+  head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Every page in this web\u2019s pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
+  const strip = el11("div", "wb-lib-strip");
+  strip.append(el11("span", "wb-lib-wait", "locating library\u2026"));
+  head.append(strip);
+  const libraryLink = el11("a", "btn btn-xs wb-head-link", "Open \u2197");
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
-  head.append(libraryLink);
+  strip.append(libraryLink);
+  const KIND_TAG = { modern: "modern", publishing: "classic", generic: "library" };
+  function renderLibraryStrip(sitePages) {
+    strip.hidden = false;
+    strip.textContent = "";
+    const name = el11("span", "wb-lib-name sp-copy", sitePages.title);
+    if (sitePages.rootPath) {
+      name.title = `Click to copy the library path
+${sitePages.rootPath}`;
+      name.addEventListener("click", () => copyText(sitePages.rootPath, name));
+    }
+    const kind = el11(
+      "span",
+      `wb-lib-kind wb-lib-${sitePages.kind}`,
+      `${KIND_TAG[sitePages.kind] || "library"} \xB7 ${sitePages.baseTemplate}`
+    );
+    kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
+    strip.append(name, kind);
+    if (sitePages.viewUrl) {
+      libraryLink.href = sitePages.viewUrl;
+      libraryLink.title = `Open ${sitePages.title} in a new tab`;
+      libraryLink.hidden = false;
+    }
+    strip.append(libraryLink);
+  }
   const masterStatus = el11("div", "wb-grid-status");
   masterStatus.hidden = true;
   gridPane.append(head, masterStatus);
@@ -5846,17 +5871,12 @@ function createPagesView({ client: client2, navigate }) {
     try {
       const sitePages = await sitePagesList();
       if (!sitePages) {
-        hint.textContent = "";
+        strip.hidden = true;
         masterStatus.textContent = "This web has no pages library \u2014 looked for modern Site Pages (BaseTemplate 119), classic publishing Pages (850), and any library titled \u201CPages\u201D.";
         masterStatus.hidden = false;
         return;
       }
-      hint.textContent = `${sitePages.title} \u2014 ${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate}), subfolders included. Click a row to inspect content, metadata, and structure.`;
-      if (sitePages.viewUrl) {
-        libraryLink.href = sitePages.viewUrl;
-        libraryLink.textContent = `Open ${sitePages.title} \u2197`;
-        libraryLink.hidden = false;
-      }
+      renderLibraryStrip(sitePages);
       if (!grid) {
         const query = {
           path: guidPath2(sitePages.listId, "/items"),
@@ -5903,6 +5923,7 @@ function createPagesView({ client: client2, navigate }) {
           }),
           emptyText: `No pages in ${sitePages.title}.`,
           filterPlaceholder: "Filter pages\u2026",
+          toolbarExtras: strip,
           exportName: "sp-pages",
           descriptor: { ...query, webUrl: client2.webUrl() }
         });
@@ -5913,6 +5934,7 @@ function createPagesView({ client: client2, navigate }) {
         pagesLoaded = true;
       }
     } catch (err) {
+      if (strip.querySelector(".wb-lib-wait")) strip.hidden = true;
       if (grid) grid.setError(err);
       else {
         masterStatus.textContent = err?.message || String(err);
@@ -6632,6 +6654,8 @@ function createBrowserView({ client: client2, navigate }) {
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
     }
+    crumbs.scrollLeft = crumbs.scrollWidth;
+    crumbs.classList.toggle("is-clipped", crumbs.scrollWidth > crumbs.clientWidth + 1);
   }
   async function loadLibraries() {
     if (librariesLoaded) return;
@@ -6722,7 +6746,8 @@ function createBrowserView({ client: client2, navigate }) {
       },
       emptyText: "This folder is empty.",
       filterPlaceholder: "Filter files\u2026",
-      exportName: "sp-files"
+      exportName: "sp-files",
+      toolbarExtras: bar
     });
     const uploadBtn = el13("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";

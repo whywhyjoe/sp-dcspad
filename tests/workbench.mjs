@@ -926,8 +926,15 @@ await check('pages: master grid lists pages with folders and promoted badges', a
   const rows = await page.locator('.wb-view-pages .wb-table tbody tr').count();
   const text = await page.locator('.wb-view-pages .wb-table').textContent();
   const libHref = await page.locator('.wb-view-pages .wb-head-link').getAttribute('href');
+  // The status strip shares the toolbar row with the filter and actions;
+  // the head hint stays generic prose like every other view.
+  const badge = await page.locator('.wb-view-pages .wb-grid-toolbar .wb-lib-kind.wb-lib-modern').textContent();
+  const hint = await page.locator('.wb-view-pages .wb-view-hint').textContent();
   return rows === 5 && text.includes('News-Update.aspx') && text.includes('News')
     && text.includes('/news') && text.includes('/news/fr')
+    && badge === 'modern · 119'
+    && hint.includes('subfolders included')
+    && !hint.includes('119')
     && libHref.includes('/SitePages');
 });
 
@@ -1167,13 +1174,21 @@ await check('classic: grid drops the Promoted column and names the library', asy
   await classicPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
   const headers = await classicPage.locator('.wb-view-pages .wb-table thead th').allTextContents();
-  const hint = await classicPage.locator('.wb-view-pages .wb-view-hint').textContent();
-  const link = await classicPage.locator('.wb-view-pages .wb-head-link').textContent();
+  // The library is named as status tokens in the toolbar row, not prose:
+  // name token, kind badge (classification + BaseTemplate), full sentence
+  // on the badge tooltip.
+  const name = await classicPage.locator('.wb-view-pages .wb-grid-toolbar .wb-lib-name').textContent();
+  const badge = classicPage.locator('.wb-view-pages .wb-grid-toolbar .wb-lib-kind');
+  const badgeText = await badge.textContent();
+  const badgeTitle = await badge.getAttribute('title');
+  const link = await classicPage.locator('.wb-view-pages .wb-head-link').getAttribute('title');
   const rows = await classicPage.locator('.wb-view-pages .wb-table tbody tr').count();
   return rows === 3
     && !headers.includes('Promoted')
-    && hint.includes('classic publishing Pages library')
-    && hint.includes('BaseTemplate 850')
+    && name === 'Pages'
+    && badgeText === 'classic · 850'
+    && badgeTitle.includes('classic publishing Pages library')
+    && badgeTitle.includes('BaseTemplate 850')
     && link.includes('Pages');
 });
 

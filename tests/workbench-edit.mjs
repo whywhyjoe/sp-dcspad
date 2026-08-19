@@ -68,6 +68,28 @@ await check('mock: library picker jumps to a library root', async () => {
   return options.includes('Documents') && options.includes('Site Assets');
 });
 
+await check('mock: picker, crumbs, filter and actions share one toolbar row', async () => {
+  // The location bar is adopted into the grid toolbar, so all four sit on a
+  // single line — asserted by geometry, since that is the point of it.
+  const boxes = await page.evaluate(() => {
+    const view = document.querySelector('.wb-view-files');
+    const pick = (sel) => {
+      const node = view.querySelector(sel);
+      return node ? node.getBoundingClientRect().top : null;
+    };
+    return {
+      inToolbar: Boolean(view.querySelector('.wb-grid-toolbar .wb-crumbs-bar')),
+      select: pick('.wb-lib-select'),
+      crumb: pick('.wb-crumb'),
+      filter: pick('.wb-grid-filter'),
+      upload: pick('.wb-grid-actions .wb-primary'),
+    };
+  });
+  const tops = [boxes.select, boxes.crumb, boxes.filter, boxes.upload];
+  return boxes.inToolbar && tops.every((t) => t !== null)
+    && Math.max(...tops) - Math.min(...tops) < 8;
+});
+
 await check('mock: every file row offers download and copy-direct-URL actions', async () => {
   const downloads = await page.locator('.wb-view-files .wb-file-actions a').count();
   const copies = await page.locator('.wb-view-files .wb-cell-copylink').count();
