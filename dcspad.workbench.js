@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "85" : "dev";
-var injectedRevision = true ? "7157a1eb" : "";
+var injectedBuild = true ? "87" : "dev";
+var injectedRevision = true ? "12c9cc03" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1185,7 +1185,7 @@ function createShell({ mount, deps, views }) {
     if (instances.has(id)) return instances.get(id);
     const def = views.find((v) => v.id === id);
     if (!def) return null;
-    const inst = def.create({ ...deps, navigate });
+    const inst = def.create({ ...deps, navigate, updateRoute });
     instances.set(id, inst);
     return inst;
   }
@@ -1205,6 +1205,14 @@ function createShell({ mount, deps, views }) {
     host.append(inst.el);
     inst.load?.(def);
   }
+  function updateRoute(patch) {
+    if (!currentRoute || !patch) return;
+    currentRoute = { ...currentRoute, ...patch };
+    try {
+      sessionStorage.setItem(ROUTE_KEY, JSON.stringify(currentRoute));
+    } catch {
+    }
+  }
   function restore() {
     let saved = null;
     try {
@@ -1218,7 +1226,7 @@ function createShell({ mount, deps, views }) {
     instances.clear();
     navigate({ view: currentRoute?.view || views[0].id });
   }
-  return { navigate, restore, reset, getRoute: () => currentRoute };
+  return { navigate, updateRoute, restore, reset, getRoute: () => currentRoute };
 }
 
 // ../src/io.js?v=2
@@ -5944,7 +5952,7 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
   }
 }).join("/");
 var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
-function createPagesView({ client: client2, navigate }) {
+function createPagesView({ client: client2, navigate, updateRoute }) {
   const root = el11("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
   const gridPane = el11("div", "wb-pane");
@@ -6535,26 +6543,56 @@ ${fullUrl}`;
     activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
   }
   async function applyRouteLibrary(route) {
-    if (!route?.libId) return;
+    if (!route?.libId) return true;
     await pagesLibraries();
-    if (route.libId === current?.listId) return;
+    if (route.libId === current?.listId) return true;
     const wanted = libraries.find((l) => l.listId === route.libId);
-    if (wanted) adoptLibrary(wanted);
+    if (!wanted) return false;
+    adoptLibrary(wanted);
+    return true;
+  }
+  function rememberLibrary() {
+    if (current && libraries.length > 1) updateRoute?.({ libId: current.listId });
+  }
+  function showMissingLibrary() {
+    detailPane.hidden = true;
+    gridPane.hidden = false;
+    strip.hidden = true;
+    if (grid) {
+      grid.el.remove();
+      grid = null;
+    }
+    pagesLoaded = false;
+    masterStatus.textContent = "The pages library this page was opened from is no longer available on this web \u2014 it may have been deleted or renamed, or your access may have changed. Pick a library to continue.";
+    masterStatus.classList.add("wb-error");
+    masterStatus.hidden = false;
   }
   function load2(route) {
     if (route?.pageId) {
       detailRun += 1;
       const run = detailRun;
-      applyRouteLibrary(route).catch(() => {
-      }).then(() => {
-        if (run === detailRun) showDetail(route);
+      applyRouteLibrary(route).catch(() => false).then((ok) => {
+        if (run !== detailRun) return;
+        if (!ok) {
+          showMissingLibrary();
+          return;
+        }
+        rememberLibrary();
+        showDetail(route);
       });
     } else {
       detailRun += 1;
       detailPane.hidden = true;
       gridPane.hidden = false;
-      applyRouteLibrary(route).catch(() => {
-      }).then(() => loadPages());
+      applyRouteLibrary(route).catch(() => false).then((ok) => {
+        masterStatus.classList.remove("wb-error");
+        if (!ok) {
+          showMissingLibrary();
+          return;
+        }
+        rememberLibrary();
+        loadPages();
+      });
     }
   }
   return { el: root, load: load2 };
@@ -6905,9 +6943,8 @@ function createBrowserView({ client: client2, navigate }) {
     crumbs.scrollLeft = crumbs.scrollWidth;
     crumbs.classList.toggle("is-clipped", crumbs.scrollWidth > crumbs.clientWidth + 1);
   }
-  if (typeof ResizeObserver === "function") {
-    new ResizeObserver(() => syncCrumbOverflow()).observe(crumbs);
-  }
+  const crumbObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => syncCrumbOverflow()) : null;
+  crumbObserver?.observe(crumbs);
   async function loadLibraries() {
     if (librariesLoaded) return;
     try {
@@ -7328,7 +7365,10 @@ function createBrowserView({ client: client2, navigate }) {
       grid.setError(err);
     }
   }
-  return { el: root, load: load2 };
+  function destroy() {
+    crumbObserver?.disconnect();
+  }
+  return { el: root, load: load2, destroy };
 }
 
 // ../src/state.js
