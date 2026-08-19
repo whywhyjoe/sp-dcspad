@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "74" : "dev";
-var injectedRevision = true ? "4db78e4b" : "";
+var injectedBuild = true ? "76" : "dev";
+var injectedRevision = true ? "96605d0f" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5807,11 +5807,11 @@ var FIELD_SELECT3 = [
 var SITE_PAGES_BASE_TEMPLATE2 = 119;
 var PUBLISHING_PAGES_BASE_TEMPLATE2 = 850;
 var PAGES_LIBRARY_RANKS = [
-  (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2 && !l.Hidden,
+  (l) => !l.Hidden && l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2,
+  (l) => !l.Hidden && l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2,
+  (l) => !l.Hidden && String(l.Title).toLowerCase() === "pages",
   (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2,
-  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2 && !l.Hidden,
-  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2,
-  (l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden
+  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2
 ];
 function pagesLibraryCandidates(items) {
   const seen = /* @__PURE__ */ new Set();
@@ -5854,7 +5854,6 @@ function createPagesView({ client: client2, navigate }) {
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
   strip.append(libraryLink);
-  const KIND_TAG = { modern: "modern", publishing: "classic", generic: "library" };
   function renderLibraryStrip() {
     if (!current) {
       strip.hidden = true;
@@ -5885,13 +5884,12 @@ ${current.rootPath}`;
       }
       strip.append(name);
     }
-    const tag = KIND_TAG[current.kind] || "library";
     const kind = el11(
       "span",
       `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
-      libraries.length > 1 ? tag : `${tag} \xB7 ${current.baseTemplate}`
+      libraryKindLabel(current.kind)
     );
-    kind.title = `${libraryKindLabel(current.kind)} (BaseTemplate ${current.baseTemplate})` + (current.rootPath ? `
+    kind.title = `BaseTemplate ${current.baseTemplate}` + (current.hidden ? " \xB7 hidden library" : "") + (current.rootPath ? `
 ${current.rootPath}` : "");
     strip.append(kind);
     if (current.viewUrl) {
