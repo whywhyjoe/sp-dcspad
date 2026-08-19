@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "72" : "dev";
-var injectedRevision = true ? "3f69a6c7" : "";
+var injectedBuild = true ? "74" : "dev";
+var injectedRevision = true ? "4db78e4b" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -932,6 +932,51 @@ var CLASSIC_WEBPARTS = {
 var CLASSIC_ITEMS = {
   "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f02": CLASSIC_PAGE_ITEMS
 };
+var BOTH_SITE_PAGES_ID = "9c2d4e6f-1111-4222-8333-44445555a001";
+var BOTH_PAGES_ID = "9c2d4e6f-1111-4222-8333-44445555a002";
+var BOTH_LISTS = [
+  list("Site Pages", BOTH_SITE_PAGES_ID, 119, 1, 1, false, "/sites/both/SitePages"),
+  list("Pages", BOTH_PAGES_ID, 850, 1, 2, false, "/sites/both/Pages")
+];
+var BOTH_ITEMS = {
+  [BOTH_SITE_PAGES_ID]: [
+    {
+      Id: 1,
+      Title: "Team news",
+      FileLeafRef: "TeamNews.aspx",
+      FileRef: "/sites/both/SitePages/TeamNews.aspx",
+      FileDirRef: "/sites/both/SitePages",
+      PromotedState: 0,
+      Modified: "2026-07-18T10:00:00Z",
+      Editor: { Title: "Mock Developer" },
+      CanvasContent1: JSON.stringify([
+        { controlType: 4, id: "c1", innerHTML: "<p>The one modern page.</p>" }
+      ])
+    }
+  ],
+  [BOTH_PAGES_ID]: [
+    {
+      Id: 1,
+      Title: "Policies",
+      FileLeafRef: "Policies.aspx",
+      FileRef: "/sites/both/Pages/Policies.aspx",
+      FileDirRef: "/sites/both/Pages",
+      Modified: "2026-07-04T10:00:00Z",
+      Editor: { Title: "Pat Example" },
+      PublishingPageContent: "<h2>Policies</h2><p>Where the real content is.</p>"
+    },
+    {
+      Id: 2,
+      Title: "Handbook",
+      FileLeafRef: "Handbook.aspx",
+      FileRef: "/sites/both/Pages/Handbook.aspx",
+      FileDirRef: "/sites/both/Pages",
+      Modified: "2026-07-05T10:00:00Z",
+      Editor: { Title: "Pat Example" },
+      PublishingPageContent: "<p>Staff handbook.</p>"
+    }
+  ]
+};
 var listIdOf = (url) => /lists\(guid'([0-9a-f-]+)'\)/i.exec(url)?.[1]?.toLowerCase();
 var groupIdOf = (url) => /sitegroups\((\d+)\)/i.exec(url)?.[1];
 function mockResolver(rawUrl) {
@@ -939,8 +984,9 @@ function mockResolver(rawUrl) {
   const path = url.slice(url.indexOf("/_api/") + 6).toLowerCase();
   const webBase = url.slice(0, url.indexOf("/_api/")).replace(/[/]+$/, "");
   const classic = /[/]sites[/]classic$/i.test(webBase);
-  const lists = classic ? CLASSIC_LISTS : LISTS;
-  const itemsByList = classic ? CLASSIC_ITEMS : ITEMS;
+  const both = /[/]sites[/]both$/i.test(webBase);
+  const lists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : LISTS;
+  const itemsByList = both ? BOTH_ITEMS : classic ? CLASSIC_ITEMS : ITEMS;
   const wpFile = /getfilebyserverrelativepath[(]decodedurl='([^']*)'[)][/]getlimitedwebpartmanager/.exec(path)?.[1];
   if (wpFile !== void 0 && path.includes("/webparts")) {
     let decoded = wpFile;
@@ -5760,9 +5806,24 @@ var FIELD_SELECT3 = [
 ];
 var SITE_PAGES_BASE_TEMPLATE2 = 119;
 var PUBLISHING_PAGES_BASE_TEMPLATE2 = 850;
-function pickPagesLibrary(items) {
-  const lists = items || [];
-  return lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2 && !l.Hidden) || lists.find((l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2 && !l.Hidden) || lists.find((l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2) || lists.find((l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden) || null;
+var PAGES_LIBRARY_RANKS = [
+  (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2 && !l.Hidden,
+  (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE2,
+  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2 && !l.Hidden,
+  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE2,
+  (l) => String(l.Title).toLowerCase() === "pages" && !l.Hidden
+];
+function pagesLibraryCandidates(items) {
+  const seen = /* @__PURE__ */ new Set();
+  const found = [];
+  for (const matches of PAGES_LIBRARY_RANKS) {
+    for (const list2 of items || []) {
+      if (seen.has(list2.Id) || !matches(list2)) continue;
+      seen.add(list2.Id);
+      found.push(list2);
+    }
+  }
+  return found;
 }
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
@@ -5794,26 +5855,51 @@ function createPagesView({ client: client2, navigate }) {
   libraryLink.hidden = true;
   strip.append(libraryLink);
   const KIND_TAG = { modern: "modern", publishing: "classic", generic: "library" };
-  function renderLibraryStrip(sitePages) {
+  function renderLibraryStrip() {
+    if (!current) {
+      strip.hidden = true;
+      return;
+    }
     strip.hidden = false;
     strip.textContent = "";
-    const name = el11("span", "wb-lib-name sp-copy", sitePages.title);
-    if (sitePages.rootPath) {
-      name.title = `Click to copy the library path
-${sitePages.rootPath}`;
-      name.addEventListener("click", () => copyText(sitePages.rootPath, name));
+    if (libraries.length > 1) {
+      const select = el11("select", "wb-lib-select wb-lib-picker");
+      select.setAttribute("aria-label", "Pages library to inspect");
+      select.title = `This web has ${libraries.length} pages libraries \u2014 pick which one to inspect.`;
+      for (const lib of libraries) {
+        const opt = el11("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
+        opt.value = lib.listId;
+        if (lib.listId === current.listId) opt.selected = true;
+        select.append(opt);
+      }
+      select.addEventListener("change", () => {
+        switchLibrary(libraries.find((l) => l.listId === select.value));
+      });
+      strip.append(select);
+    } else {
+      const name = el11("span", "wb-lib-name sp-copy", current.title);
+      if (current.rootPath) {
+        name.title = `Click to copy the library path
+${current.rootPath}`;
+        name.addEventListener("click", () => copyText(current.rootPath, name));
+      }
+      strip.append(name);
     }
+    const tag = KIND_TAG[current.kind] || "library";
     const kind = el11(
       "span",
-      `wb-info-chip wb-lib-kind wb-lib-${sitePages.kind}`,
-      `${KIND_TAG[sitePages.kind] || "library"} \xB7 ${sitePages.baseTemplate}`
+      `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
+      libraries.length > 1 ? tag : `${tag} \xB7 ${current.baseTemplate}`
     );
-    kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
-    strip.append(name, kind);
-    if (sitePages.viewUrl) {
-      libraryLink.href = sitePages.viewUrl;
-      libraryLink.title = `Open ${sitePages.title} in a new tab`;
+    kind.title = `${libraryKindLabel(current.kind)} (BaseTemplate ${current.baseTemplate})` + (current.rootPath ? `
+${current.rootPath}` : "");
+    strip.append(kind);
+    if (current.viewUrl) {
+      libraryLink.href = current.viewUrl;
+      libraryLink.title = `Open ${current.title} in a new tab`;
       libraryLink.hidden = false;
+    } else {
+      libraryLink.hidden = true;
     }
     strip.append(libraryLink);
   }
@@ -5823,34 +5909,52 @@ ${sitePages.rootPath}`;
   const detailPane = el11("div", "wb-pane");
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
-  let sitePagesPromise = null;
+  let librariesPromise = null;
+  let libraries = [];
+  let current = null;
   let grid = null;
   let pagesLoaded = false;
   const detailCache = /* @__PURE__ */ new Map();
   let fieldsPromise = null;
   let detailRun = 0;
-  function sitePagesList() {
-    if (!sitePagesPromise) {
-      sitePagesPromise = client2.getAll("web/lists", {
+  const toLibrary = (list2) => ({
+    listId: list2.Id,
+    title: list2.Title,
+    kind: libraryKindOf(list2),
+    baseTemplate: list2.BaseTemplate,
+    hidden: Boolean(list2.Hidden),
+    rootPath: list2.RootFolder?.ServerRelativeUrl || "",
+    viewUrl: list2.DefaultViewUrl || list2.RootFolder?.ServerRelativeUrl || ""
+  });
+  function pagesLibraries() {
+    if (!librariesPromise) {
+      librariesPromise = client2.getAll("web/lists", {
         select: ["Id", "Title", "BaseTemplate", "Hidden", "DefaultViewUrl", "RootFolder/ServerRelativeUrl"],
         expand: "RootFolder",
         top: 5e3
       }).then(({ items }) => {
-        const found = pickPagesLibrary(items);
-        return found ? {
-          listId: found.Id,
-          title: found.Title,
-          kind: libraryKindOf(found),
-          baseTemplate: found.BaseTemplate,
-          rootPath: found.RootFolder?.ServerRelativeUrl || "",
-          viewUrl: found.DefaultViewUrl || found.RootFolder?.ServerRelativeUrl || ""
-        } : null;
+        libraries = pagesLibraryCandidates(items).map(toLibrary);
+        if (!current) current = libraries[0] || null;
+        return libraries;
       }).catch((err) => {
-        sitePagesPromise = null;
+        librariesPromise = null;
         throw err;
       });
     }
-    return sitePagesPromise;
+    return librariesPromise;
+  }
+  function switchLibrary(next) {
+    if (!next || next.listId === current?.listId) return;
+    current = next;
+    detailCache.clear();
+    webPartCache.clear();
+    fieldsPromise = null;
+    if (grid) {
+      grid.el.remove();
+      grid = null;
+    }
+    pagesLoaded = false;
+    loadPages();
   }
   let webInfoPromise = null;
   function webIdentity() {
@@ -5869,14 +5973,15 @@ ${sitePages.rootPath}`;
     if (pagesLoaded) return;
     masterStatus.hidden = true;
     try {
-      const sitePages = await sitePagesList();
-      if (!sitePages) {
+      await pagesLibraries();
+      if (!current) {
         strip.hidden = true;
         masterStatus.textContent = "This web has no pages library \u2014 looked for modern Site Pages (BaseTemplate 119), classic publishing Pages (850), and any library titled \u201CPages\u201D.";
         masterStatus.hidden = false;
         return;
       }
-      renderLibraryStrip(sitePages);
+      const sitePages = current;
+      renderLibraryStrip();
       if (!grid) {
         const query = {
           path: guidPath2(sitePages.listId, "/items"),
@@ -6173,7 +6278,8 @@ ${p.html}`).join("\n\n")
     let sitePages;
     let item2;
     try {
-      sitePages = await sitePagesList();
+      await pagesLibraries();
+      sitePages = current;
       if (!sitePages) throw new Error("This web has no pages library.");
       item2 = await pageItem(sitePages.listId, route.pageId, sitePages.kind);
     } catch (err) {
