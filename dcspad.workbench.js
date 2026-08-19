@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "77-dirty" : "dev";
-var injectedRevision = true ? "6f42ce68-dirty" : "";
+var injectedBuild = true ? "82" : "dev";
+var injectedRevision = true ? "091f3fff" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
