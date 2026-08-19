@@ -210,6 +210,12 @@ inspector, REPL and network capture all work inside the web part; a live
 
 ## Open items
 
+- **SP Workbench links do not reliably open in a new tab/window**:
+  [GitHub issue #10](https://github.com/whywhyjoe/sp-dcspad/issues/10).
+  In the SharePoint-hosted Workbench, links intended for a separate tab or
+  window only rarely open there despite `target="_blank"` and the explicit
+  `bindNewTab()` handler. Reproduce and validate the fix in a live SharePoint
+  host; the standalone/mock popup test is not sufficient tenant evidence.
 - **CSS bleed, both directions**: `app.css` still styles `html`/`body`
   (darkens the host page behind the pad — currently invisible and arguably
   nice; the gap around the seated app shows it). SP styles also bleed into the
