@@ -33,22 +33,41 @@ import {
 } from '../classic-page.js';
 
 // Fields every pages library has, whatever its template. PromotedState is
-// modern-only — selecting it against a classic publishing library 400s with
-// "The field or property 'PromotedState' does not exist", which is why the
-// grid select is assembled per library kind rather than hardcoded.
+// modern-only — selecting it against a library that lacks it 400s with
+// "The field or property 'PromotedState' does not exist".
 const PAGE_SELECT_BASE = [
   'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef',
   'Modified', 'UniqueId', 'Editor/Title',
 ];
 const PAGE_SELECT_MODERN = [...PAGE_SELECT_BASE, 'PromotedState'];
 
-const pageSelectFor = (kind) => (kind === 'modern' ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE);
+// BaseTemplate is NOT a schema guarantee: 119 is the Wiki Page Library
+// template, and a classic team site that never got the modern Site Pages
+// feature has a 119 library WITHOUT PromotedState/CanvasContent1. So the
+// query shapes are decided by probing the library's actual fields (one
+// request, shared with the metadata pane), and the library kind is only the
+// fallback when that probe fails.
+export function pageQueryPlan(fieldInternalNames, kind) {
+  const names = fieldInternalNames ? new Set(fieldInternalNames) : null;
+  const hasField = (f) => (names ? names.has(f) : kind === 'modern');
+  const showPromoted = hasField('PromotedState');
+  // PromotedState + CanvasContent1 together mark the modern Site Pages
+  // feature, which also provisions the rest of DETAIL_SELECT.
+  const modern = showPromoted && hasField('CanvasContent1');
+  return {
+    showPromoted,
+    gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
+    detailOptions: modern
+      ? { select: DETAIL_SELECT, expand: ['Author', 'Editor'] }
+      : { expand: ['Author', 'Editor'] },
+  };
+}
 
-// Modern-only: every field here exists on a 119 Site Pages item and nowhere
-// else. Classic libraries are fetched WITHOUT a $select instead (see
-// pageItem) — asking for a field a publishing/wiki schema lacks is a 400, and
-// the field set varies per site, so taking the whole item is both safer and
-// the only way to reach PublishingPageContent/WikiField without probing.
+// Modern-only: every field here exists on a modern Site Pages item and
+// nowhere else. Other libraries are fetched WITHOUT a $select instead —
+// asking for a field a publishing/wiki schema lacks is a 400, and the field
+// set varies per site, so taking the whole item is both safer and the only
+// way to reach PublishingPageContent/WikiField without probing.
 const DETAIL_SELECT = [
   'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef', 'Description',
   'BannerImageUrl', 'PromotedState', 'Created', 'Modified',
@@ -269,6 +288,11 @@ export function createPagesView({ client, navigate }) {
     detailCache.clear();
     webPartCache.clear();
     fieldsPromise = null;
+    // The query plan is PROBED from the old library's fields. Carrying it over
+    // would compose a request naming fields the new library does not have —
+    // PromotedState against a publishing library is a 400 on live SPO, the
+    // exact failure the probe exists to prevent.
+    planPromise = null;
     if (grid) { grid.el.remove(); grid = null; }
     pagesLoaded = false;
     // Detaching the grid takes the strip with it (the toolbar owns it once
@@ -310,10 +334,11 @@ export function createPagesView({ client, navigate }) {
       const sitePages = current;
       renderLibraryStrip();
       if (!grid) {
+        const plan = await queryPlan(sitePages);
         const query = {
           path: guidPath(sitePages.listId, '/items'),
           options: {
-            select: pageSelectFor(sitePages.kind),
+            select: plan.gridSelect,
             expand: 'Editor',
             orderby: 'FileLeafRef',
             top: 5000,
@@ -329,7 +354,7 @@ export function createPagesView({ client, navigate }) {
               value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
               format: (v) => (v ? `/${v}` : ''),
             },
-            ...(sitePages.kind === 'modern'
+            ...(plan.showPromoted
               ? [{ key: 'PromotedState', label: 'Promoted', format: promotedLabel }]
               : []),
             { key: 'Modified', label: 'Modified', format: fmtDate },
@@ -378,15 +403,23 @@ export function createPagesView({ client, navigate }) {
     }
   }
 
+  // The probed query plan for the resolved library (see pageQueryPlan). A
+  // failed fields probe falls back to the BaseTemplate heuristic rather than
+  // blocking the view.
+  let planPromise = null;
+  function queryPlan(sitePages) {
+    if (!planPromise) {
+      planPromise = listFields(sitePages.listId)
+        .then((fields) => pageQueryPlan(fields.map((f) => f.InternalName), sitePages.kind))
+        .catch(() => pageQueryPlan(null, sitePages.kind));
+    }
+    return planPromise;
+  }
+
   // ---- drilldown ----
 
-  function pageItem(listId, pageId, kind) {
+  function pageItem(listId, pageId, options) {
     if (!detailCache.has(pageId)) {
-      // No $select off the modern path: the classic body fields differ per
-      // site and naming one that is absent fails the whole request.
-      const options = kind === 'modern'
-        ? { select: DETAIL_SELECT, expand: ['Author', 'Editor'] }
-        : { expand: ['Author', 'Editor'] };
       detailCache.set(pageId, client.get(guidPath(listId, `/items(${pageId})`), options)
         .catch((err) => {
           detailCache.delete(pageId);
@@ -410,7 +443,12 @@ export function createPagesView({ client, navigate }) {
         + '/getlimitedwebpartmanager(scope=1)/webparts';
       webPartCache.set(key, client.getAll(path, { expand: 'WebPart/Properties' })
         .then(({ items }) => ({ parts: classicWebParts(items), error: null }))
-        .catch((err) => ({ parts: [], error: err })));
+        .catch((err) => {
+          // Evict so a transient failure (429, network) retries on the next
+          // visit; the current caller still gets the error to surface.
+          webPartCache.delete(key);
+          return { parts: [], error: err };
+        }));
     }
     return webPartCache.get(key);
   }
@@ -646,7 +684,8 @@ export function createPagesView({ client, navigate }) {
       await pagesLibraries();
       sitePages = current;
       if (!sitePages) throw new Error('This web has no pages library.');
-      item = await pageItem(sitePages.listId, route.pageId, sitePages.kind);
+      const plan = await queryPlan(sitePages);
+      item = await pageItem(sitePages.listId, route.pageId, plan.detailOptions);
     } catch (err) {
       if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
@@ -686,10 +725,15 @@ export function createPagesView({ client, navigate }) {
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
 
-    const kindChip = el('span', 'wb-info-chip wb-detail-kind', pageContentKindLabel(contentKind));
+    // The chip must describe what Extract actually shows: a page whose body
+    // field is empty but whose web parts carry readable content is a
+    // web-part page, not "no readable body".
+    const displayKind = (!isCanvas && contentKind === 'empty' && readingParts.length)
+      ? 'webparts' : contentKind;
+    const kindChip = el('span', 'wb-info-chip wb-detail-kind', pageContentKindLabel(displayKind));
     kindChip.title = isCanvas
       ? 'Modern canvas page — Structure shows its sections and columns.'
-      : `${pageContentKindLabel(contentKind)} — no canvas sections or columns, so the `
+      : `${pageContentKindLabel(displayKind)} — no canvas sections or columns, so the `
         + 'Structure tab does not apply. Content Editor and Script Editor web-part '
         + 'content is merged into Extract.';
     headRow.append(kindChip);

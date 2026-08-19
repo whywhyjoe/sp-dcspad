@@ -63,6 +63,7 @@ export const pageContentKindLabel = (kind) => ({
   canvas: 'modern canvas page',
   publishing: 'classic publishing page',
   wiki: 'classic wiki page',
+  webparts: 'classic web-part page',
   empty: 'page with no readable body',
 }[kind] || 'page');
 
@@ -105,40 +106,93 @@ export function classicWebParts(entries) {
     .sort((a, b) => (a.zoneIndex - b.zoneIndex) || (a.order - b.order));
 }
 
+// The readable part a single web part contributes, or null when it carries
+// nothing a reader wants. Linked content lives in another file; the
+// reference is the readable fact there — the pad does not follow it.
+function webPartPart(wp) {
+  const label = wp.title || 'Embedded content';
+  if (htmlHasContent(wp.content)) {
+    return { kind: 'text', label, html: wp.content, lines: [] };
+  }
+  if (wp.contentLink) {
+    return {
+      kind: 'webpart', label, html: '', lines: [`Content linked from ${wp.contentLink}`],
+    };
+  }
+  return null;
+}
+
+// First guid found in a string, dashes or underscores (wpbox markers use
+// `div_<guid>`; some export shapes use underscores throughout).
+function guidOf(value) {
+  const text = String(value ?? '').replace(/_/g, '-');
+  const m = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(text);
+  return m ? m[0].toLowerCase() : '';
+}
+
+// Body HTML split at its embedded web-part placeholders. Wiki (and rich
+// publishing) bodies place web parts INSIDE the field as `.ms-rte-wpbox`
+// markers whose ids carry the definition's storage guid — "intro → web part
+// → conclusion" must read in that order, not body-then-web-parts. Each
+// placeholder is swapped for a marker element, the serialized HTML is split
+// on the markers, and matched definitions (added to `used`) are emitted in
+// their true positions. Bodies without placeholders come back as one part.
+function bodyParts(bodyHtml, bodyLabel, webParts, used) {
+  const raw = String(bodyHtml ?? '').trim();
+  const parts = [];
+  const pushText = (html) => {
+    if (htmlHasContent(html)) parts.push({ kind: 'text', label: bodyLabel, html: html.trim(), lines: [] });
+  };
+  if (!raw) return parts;
+
+  const doc = new DOMParser().parseFromString(raw, 'text/html');
+  const boxes = [...doc.querySelectorAll('.ms-rte-wpbox')];
+  if (!boxes.length) { pushText(raw); return parts; }
+
+  const byGuid = new Map();
+  for (const wp of webParts) {
+    const guid = guidOf(wp.id);
+    if (guid && !byGuid.has(guid)) byGuid.set(guid, wp);
+  }
+  boxes.forEach((box, i) => {
+    const marker = doc.createElement('dcspad-wp');
+    marker.setAttribute('data-i', String(i));
+    box.replaceWith(marker);
+  });
+  const segments = doc.body.innerHTML.split(/<dcspad-wp data-i="(\d+)"><\/dcspad-wp>/);
+  for (let s = 0; s < segments.length; s += 1) {
+    if (s % 2 === 0) { pushText(segments[s]); continue; }
+    // The detached box still carries its children; its markup holds the guid.
+    const box = boxes[Number(segments[s])];
+    const wp = byGuid.get(guidOf(box.outerHTML));
+    if (wp) {
+      used.add(wp);
+      const part = webPartPart(wp);
+      if (part) parts.push(part);
+    }
+    // An unmatched placeholder renders nothing itself; if its definition
+    // exists it is appended by the caller so nothing is lost.
+  }
+  return parts;
+}
+
 // Ordered reading model of a classic page, in the shape contentParts()
 // returns for canvas pages: [{ kind, label, html, lines }], empty parts
-// dropped, repeated labels numbered. The body field comes first, then each
-// HTML-bearing web part in document order.
+// dropped, repeated labels numbered. The body field's fragments and its
+// embedded web parts come first in document order, then every remaining
+// HTML-bearing web part in zone order.
 export function classicContentParts({ item = {}, webParts = [], contentKind = null } = {}) {
   const kind = contentKind || pageContentKindOf(item);
-  const parts = [];
-
   const bodyField = kind === 'wiki' ? WIKI_BODY_FIELD : PUBLISHING_BODY_FIELD;
-  const body = String(item[bodyField] ?? '').trim();
-  if (htmlHasContent(body)) {
-    parts.push({
-      kind: 'text',
-      label: kind === 'wiki' ? 'Wiki content' : 'Page content',
-      html: body,
-      lines: [],
-    });
-  }
+  const bodyLabel = kind === 'wiki' ? 'Wiki content' : 'Page content';
+
+  const used = new Set();
+  const parts = bodyParts(item[bodyField], bodyLabel, webParts, used);
 
   for (const wp of webParts) {
-    if (!wp.hasHtml) continue;
-    const label = wp.title || 'Embedded content';
-    if (htmlHasContent(wp.content)) {
-      parts.push({ kind: 'text', label, html: wp.content, lines: [] });
-    } else if (wp.contentLink) {
-      // Linked content lives in another file; the reference is the readable
-      // fact here — the pad does not follow it.
-      parts.push({
-        kind: 'webpart',
-        label,
-        html: '',
-        lines: [`Content linked from ${wp.contentLink}`],
-      });
-    }
+    if (used.has(wp) || !wp.hasHtml) continue;
+    const part = webPartPart(wp);
+    if (part) parts.push(part);
   }
 
   const counts = new Map();
