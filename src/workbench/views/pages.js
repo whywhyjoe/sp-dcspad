@@ -76,12 +76,19 @@ const PUBLISHING_PAGES_BASE_TEMPLATE = 850;
 // existed — the Pages tab just looked empty. So the ranking still decides
 // what opens by default, but every candidate is kept and offered in the
 // picker.
+// Visibility outranks template. The ladder used to read
+// 119-visible, 119-hidden, 850-visible, 850-hidden, which preferred a HIDDEN
+// Site Pages library over a VISIBLE publishing one — backwards, since a
+// hidden library is the more likely vestigial of the two. Within each
+// visibility tier the modern template still wins.
+// (A hidden library merely *titled* "Pages" is still not a candidate at all;
+// at that point it is almost certainly something internal.)
 const PAGES_LIBRARY_RANKS = [
-  (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE && !l.Hidden,
+  (l) => !l.Hidden && l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE,
+  (l) => !l.Hidden && l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE,
+  (l) => !l.Hidden && String(l.Title).toLowerCase() === 'pages',
   (l) => l.BaseTemplate === SITE_PAGES_BASE_TEMPLATE,
-  (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE && !l.Hidden,
   (l) => l.BaseTemplate === PUBLISHING_PAGES_BASE_TEMPLATE,
-  (l) => String(l.Title).toLowerCase() === 'pages' && !l.Hidden,
 ];
 
 // Every pages library in the web, best-first by the ranking above. Deduped by
@@ -149,11 +156,12 @@ export function createPagesView({ client, navigate }) {
   libraryLink.hidden = true;
   strip.append(libraryLink);
 
-  // Chip text is classification + BaseTemplate; libraryKindLabel() supplies
-  // the full sentence on the tooltip. It is an info chip, not a status chip:
-  // which library shape this is classifies the view, it does not report a
-  // condition, so no kind is coloured.
-  const KIND_TAG = { modern: 'modern', publishing: 'classic', generic: 'library' };
+  // The chip carries libraryKindLabel()'s full phrase — the same idiom the
+  // page-kind chip takes from pageContentKindLabel(), and one source of
+  // truth for these words. The BaseTemplate number lives on the tooltip and,
+  // when there is a choice to make, in the picker's options. It is an info
+  // chip, not a status chip: which library shape this is classifies the view,
+  // it does not report a condition, so no kind is coloured.
 
   // One library: a click-to-copy name token. More than one: a picker in its
   // place, so the libraries the ranking did not choose are reachable instead
@@ -188,12 +196,10 @@ export function createPagesView({ client, navigate }) {
       strip.append(name);
     }
 
-    // The picker already prints the template per option, so the chip drops it
-    // when one is showing rather than saying "119" twice side by side.
-    const tag = KIND_TAG[current.kind] || 'library';
     const kind = el('span', `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
-      libraries.length > 1 ? tag : `${tag} · ${current.baseTemplate}`);
-    kind.title = `${libraryKindLabel(current.kind)} (BaseTemplate ${current.baseTemplate})`
+      libraryKindLabel(current.kind));
+    kind.title = `BaseTemplate ${current.baseTemplate}`
+      + (current.hidden ? ' · hidden library' : '')
       + (current.rootPath ? `\n${current.rootPath}` : '');
     strip.append(kind);
 

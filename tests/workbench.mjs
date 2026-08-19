@@ -932,7 +932,7 @@ await check('pages: master grid lists pages with folders and promoted badges', a
   const hint = await page.locator('.wb-view-pages .wb-view-hint').textContent();
   return rows === 5 && text.includes('News-Update.aspx') && text.includes('News')
     && text.includes('/news') && text.includes('/news/fr')
-    && badge === 'modern · 119'
+    && badge === 'modern Site Pages library'
     && hint.includes('subfolders included')
     && !hint.includes('119')
     && libHref.includes('/SitePages');
@@ -1186,8 +1186,7 @@ await check('classic: grid drops the Promoted column and names the library', asy
   return rows === 3
     && !headers.includes('Promoted')
     && name === 'Pages'
-    && badgeText === 'classic · 850'
-    && badgeTitle.includes('classic publishing Pages library')
+    && badgeText === 'classic publishing Pages library'
     && badgeTitle.includes('BaseTemplate 850')
     && link.includes('Pages');
 });
@@ -1248,8 +1247,16 @@ await check('both: every candidate library is kept, best-ranked first', async ()
     ];
     const found = pagesLibraryCandidates(lists);
     // A visible 119 matches two ranks; it must appear once, at its best.
-    return found.map((l) => l.Id).join(',') === 'b,a'
+    const ordered = found.map((l) => l.Id).join(',') === 'b,a';
+    // Visibility outranks template: a hidden Site Pages library must not beat
+    // a visible publishing one, though it stays available in the picker.
+    const vsHidden = pagesLibraryCandidates([
+      { Id: 'h', Title: 'Site Pages', BaseTemplate: 119, Hidden: true },
+      { Id: 'v', Title: 'Pages', BaseTemplate: 850, Hidden: false },
+    ]).map((l) => l.Id).join(',');
+    return ordered
       && pickPagesLibrary(lists).Id === 'b'
+      && vsHidden === 'v,h'
       && pagesLibraryCandidates([]).length === 0;
   }));
 
@@ -1263,7 +1270,7 @@ await check('both: the picker replaces the name token and defaults to the ranked
   const nameToken = await bothPage.locator('.wb-view-pages .wb-lib-name').count();
   return options.join(' | ') === 'Site Pages · 119 | Pages · 850'
     && selected === '9c2d4e6f-1111-4222-8333-44445555a001'
-    && chip === 'modern'          // picker carries the template; chip doesn't repeat it
+    && chip === 'modern Site Pages library'
     && rows.length === 1 && rows[0].includes('TeamNews.aspx')
     && nameToken === 0;   // the picker stands in for it
 });
@@ -1278,7 +1285,7 @@ await check('both: switching library rebuilds the grid for the other shape', asy
   const link = await bothPage.locator('.wb-view-pages .wb-head-link').getAttribute('href');
   return rows.length === 2
     && rows.join(' ').includes('Policies.aspx') && rows.join(' ').includes('Handbook.aspx')
-    && chip === 'classic'
+    && chip === 'classic publishing Pages library'
     && !headers.includes('Promoted')   // rebuilt for the classic shape
     && link.includes('/sites/both/Pages');
 });
