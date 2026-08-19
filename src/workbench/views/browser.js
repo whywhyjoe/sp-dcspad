@@ -117,6 +117,9 @@ export function createBrowserView({ client, navigate }) {
     + 'file type, with download, binary upload, folder creation, and full '
     + 'metadata editing.</p>';
 
+  // Library picker + breadcrumbs. Rendered here until the grid exists, then
+  // adopted into the grid toolbar (toolbarExtras) so location, filter, and
+  // actions share one row instead of stacking three.
   const bar = el('div', 'wb-crumbs-bar');
   const librarySelect = el('select', 'wb-lib-select');
   librarySelect.setAttribute('aria-label', 'Jump to a document library');
@@ -198,6 +201,11 @@ export function createBrowserView({ client, navigate }) {
       btn.addEventListener('click', () => navigate({ view: 'files', path: target }));
       crumbs.append(btn);
     }
+    // In the toolbar the trail can outrun its room. Keep the deepest segment
+    // — where you actually are — pinned in view and let the ancestors scroll
+    // off to the left, marking that edge so the clip reads as "there's more".
+    crumbs.scrollLeft = crumbs.scrollWidth;
+    crumbs.classList.toggle('is-clipped', crumbs.scrollWidth > crumbs.clientWidth + 1);
   }
 
   async function loadLibraries() {
@@ -292,6 +300,7 @@ export function createBrowserView({ client, navigate }) {
       emptyText: 'This folder is empty.',
       filterPlaceholder: 'Filter files…',
       exportName: 'sp-files',
+      toolbarExtras: bar,
     });
 
     // Toolbar: upload button + hidden input, refresh.

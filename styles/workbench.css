@@ -172,7 +172,12 @@ html.dcspad-suspended #wb-mount { display: none; }
   color: var(--fg); font: 12px/1 var(--sans);
 }
 .wb-grid-filter:focus { outline: none; border-color: var(--accent-soft-line); box-shadow: 0 0 0 3px var(--accent-ring); }
-.wb-grid-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* Actions never shrink or wrap their labels — when the toolbar runs out of
+   room the elastic member (a crumb trail, a status strip) gives way first. */
+.wb-grid-actions {
+  margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none;
+}
+.wb-grid-actions .btn { white-space: nowrap; }
 
 .wb-grid-notice {
   background: var(--warn-soft); border: 1px solid var(--warn-soft-line); border-radius: var(--radius-m);
@@ -320,6 +325,25 @@ html.dcspad-suspended #wb-mount { display: none; }
 
 /* ---- files browser ---- */
 .wb-crumbs-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Adopted into the grid toolbar: one row with the count, filter and actions.
+   The path is the only elastic part, so the bar shrinks and the crumb trail
+   scrolls rather than wrapping the row or pushing the actions off. */
+.wb-grid-toolbar .wb-crumbs-bar {
+  min-width: 0; flex: 0 1 auto; flex-wrap: nowrap;
+  padding-left: 12px; border-left: 1px solid var(--border);
+}
+.wb-grid-toolbar .wb-lib-select { flex: none; }
+.wb-grid-toolbar .wb-crumbs {
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+/* Only when the trail is actually clipped: fade its left edge, so the
+   ancestors scrolling out of view read as "there is more" rather than as a
+   label sliced off. The deepest segment stays flush at the right. */
+.wb-grid-toolbar .wb-crumbs.is-clipped {
+  mask-image: linear-gradient(to right, transparent, #000 14px);
+}
+.wb-grid-toolbar .wb-crumbs::-webkit-scrollbar { display: none; }
+.wb-grid-toolbar .wb-crumb { white-space: nowrap; }
 .wb-lib-select {
   background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--radius-m);
   color: var(--fg); font: 12px/1 var(--sans); padding: 4px 7px; max-width: 220px;
