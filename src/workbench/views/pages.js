@@ -139,8 +139,10 @@ export function createPagesView({ client, navigate }) {
   libraryLink.hidden = true;
   strip.append(libraryLink);
 
-  // Badge text is classification + BaseTemplate; libraryKindLabel() supplies
-  // the full sentence on the tooltip.
+  // Chip text is classification + BaseTemplate; libraryKindLabel() supplies
+  // the full sentence on the tooltip. It is an info chip, not a status chip:
+  // which library shape this is classifies the view, it does not report a
+  // condition, so no kind is coloured.
   const KIND_TAG = { modern: 'modern', publishing: 'classic', generic: 'library' };
 
   function renderLibraryStrip(sitePages) {
@@ -151,7 +153,7 @@ export function createPagesView({ client, navigate }) {
       name.title = `Click to copy the library path\n${sitePages.rootPath}`;
       name.addEventListener('click', () => copyText(sitePages.rootPath, name));
     }
-    const kind = el('span', `wb-lib-kind wb-lib-${sitePages.kind}`,
+    const kind = el('span', `wb-info-chip wb-lib-kind wb-lib-${sitePages.kind}`,
       `${KIND_TAG[sitePages.kind] || 'library'} · ${sitePages.baseTemplate}`);
     kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
     strip.append(name, kind);
@@ -631,7 +633,7 @@ export function createPagesView({ client, navigate }) {
     // web-part page, not "no readable body".
     const displayKind = (!isCanvas && contentKind === 'empty' && readingParts.length)
       ? 'webparts' : contentKind;
-    const kindChip = el('span', 'wb-detail-kind', pageContentKindLabel(displayKind));
+    const kindChip = el('span', 'wb-info-chip wb-detail-kind', pageContentKindLabel(displayKind));
     kindChip.title = isCanvas
       ? 'Modern canvas page — Structure shows its sections and columns.'
       : `${pageContentKindLabel(displayKind)} — no canvas sections or columns, so the `

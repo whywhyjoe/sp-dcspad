@@ -5890,7 +5890,7 @@ ${sitePages.rootPath}`;
     }
     const kind = el11(
       "span",
-      `wb-lib-kind wb-lib-${sitePages.kind}`,
+      `wb-info-chip wb-lib-kind wb-lib-${sitePages.kind}`,
       `${KIND_TAG[sitePages.kind] || "library"} \xB7 ${sitePages.baseTemplate}`
     );
     kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
@@ -6310,8 +6310,8 @@ ${fullUrl}`;
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
     const displayKind = !isCanvas && contentKind === "empty" && readingParts.length ? "webparts" : contentKind;
-    const kindChip = el11("span", "wb-detail-kind", pageContentKindLabel(displayKind));
-    kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
+    const kindChip = el11("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
+    kindChip.title = isCanvas ? "Modern canvas page — Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} — no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     const actions = el11("span", "wb-detail-actions");
     const exportContent = el11("button", "btn btn-xs", "Export content");
