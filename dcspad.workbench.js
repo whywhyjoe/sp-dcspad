@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "65" : "dev";
-var injectedRevision = true ? "4ff1df90" : "";
+var injectedBuild = true ? "67" : "dev";
+var injectedRevision = true ? "21b18f77" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5785,7 +5785,7 @@ function createPagesView({ client: client2, navigate }) {
   const spWrite = createSpWriteClient({ client: client2 });
   const gridPane = el11("div", "wb-pane");
   const head = el11("div", "wb-view-head");
-  head.innerHTML = "<h2>Pages</h2>";
+  head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Every page in this web\u2019s pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
   const strip = el11("div", "wb-lib-strip");
   strip.append(el11("span", "wb-lib-wait", "locating library\u2026"));
   head.append(strip);
@@ -5809,9 +5809,7 @@ ${sitePages.rootPath}`;
       `${KIND_TAG[sitePages.kind] || "library"} \xB7 ${sitePages.baseTemplate}`
     );
     kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
-    const scope = el11("span", "wb-lib-scope", "incl. subfolders");
-    scope.title = "Rows cover the whole library, subfolders included \u2014 the Folder column shows each page\u2019s location.";
-    strip.append(name, kind, scope);
+    strip.append(name, kind);
     if (sitePages.viewUrl) {
       libraryLink.href = sitePages.viewUrl;
       libraryLink.title = `Open ${sitePages.title} in a new tab`;
@@ -5925,6 +5923,7 @@ ${sitePages.rootPath}`;
           }),
           emptyText: `No pages in ${sitePages.title}.`,
           filterPlaceholder: "Filter pages\u2026",
+          toolbarExtras: strip,
           exportName: "sp-pages",
           descriptor: { ...query, webUrl: client2.webUrl() }
         });
