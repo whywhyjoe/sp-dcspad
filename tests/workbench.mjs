@@ -1426,15 +1426,139 @@ await check('both: a reload of a secondary-library page keeps its library', asyn
     && kind === 'classic publishing page';
 });
 
-// NOT COVERED: the stale-grid race (loadPages' generation guard).
-// It cannot be reproduced here. rawGet() answers from mockResolver(url)
-// synchronously — no request leaves the page — so Playwright's route
-// interception has nothing to delay and the old library's response can never
-// land after the new one. A test written against the mock passes with the
-// guard removed, which is worse than no test. Reproducing it needs either the
-// live-stub path (real fetch + interception, and a second pages library in
-// those fixtures) or an awaited mock resolver. The guard itself is at
-// `if (run !== loadRun) return;` in loadPages().
+await check('unit: a late response for the old library cannot overwrite the new grid', async () =>
+  bothPage.evaluate(async () => {
+    // The race that page.route() cannot reach: the mock answers synchronously,
+    // so no request leaves the page. Mounting the view against a client whose
+    // promises we resolve by hand puts the ordering under test instead —
+    // library A's response lands AFTER we have switched to B.
+    const { createPagesView } = await import('/src/workbench/views/pages.js');
+    const defer = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+    const slowA = defer();
+    const LISTS = { items: [
+      { Id: 'A', Title: 'Alpha', BaseTemplate: 119, Hidden: false, RootFolder: { ServerRelativeUrl: '/x/SitePages' } },
+      { Id: 'B', Title: 'Beta', BaseTemplate: 850, Hidden: false, RootFolder: { ServerRelativeUrl: '/x/Pages' } },
+    ] };
+    const rows = (name) => ({ items: [{ Id: 1, Title: name, FileLeafRef: name, FileRef: `/x/${name}`, FileDirRef: '/x' }], partial: false });
+    const client = {
+      webUrl: () => 'https://tenant/x',
+      get: async () => ({}),
+      getAll: async (path) => {
+        if (path === 'web/lists') return LISTS;
+        if (path.includes('/fields')) return { items: [] };
+        if (path.includes("'A'")) return slowA.promise;      // held open
+        if (path.includes("'B'")) return rows('Beta.aspx');   // lands first
+        return { items: [] };
+      },
+    };
+
+    const host = document.createElement('div');
+    document.body.append(host);
+    let view;
+    const navigate = (route) => { view.load(route); };
+    view = createPagesView({ client, navigate, updateRoute: () => {} });
+    host.append(view.el);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    view.load({ view: 'pages' });
+    for (let i = 0; i < 20 && !host.querySelector('.wb-lib-picker'); i += 1) await settle();
+    const picker = host.querySelector('.wb-lib-picker');
+    if (!picker) { host.remove(); return false; }
+
+    picker.value = 'B';
+    picker.dispatchEvent(new Event('change'));
+    for (let i = 0; i < 20 && !host.querySelector('.wb-table tbody tr'); i += 1) await settle();
+
+    slowA.resolve(rows('Alpha.aspx'));            // the stale one arrives now
+    for (let i = 0; i < 20; i += 1) await settle();
+
+    const text = [...host.querySelectorAll('.wb-table tbody tr')].map((tr) => tr.textContent).join(' ');
+    const chip = host.querySelector('.wb-lib-kind')?.textContent || '';
+    host.remove();
+    return text.includes('Beta.aspx') && !text.includes('Alpha.aspx')
+      && chip === 'classic publishing Pages library';
+  }));
+
+await check('both: a routed library that no longer exists fails closed', async () => {
+  // Was: applyRouteLibrary() fell through silently when the routed library
+  // was gone, so the saved page id resolved against the DEFAULT library —
+  // the same wrong-page/wrong-write risk, reached by a different door.
+  // A library can disappear between sessions: deleted, renamed, access lost.
+  await bothPage.locator('.wb-view-pages .wb-lib-picker')
+    .selectOption('9c2d4e6f-1111-4222-8333-44445555a002');
+  await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr:nth-child(2)');
+  await bothPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Policies.aspx' })
+    .locator('td').first().click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-detail-id');
+  // Point the saved route at a library id this web does not offer.
+  await bothPage.evaluate(() => {
+    const key = Object.keys(sessionStorage).find((k) => k.includes('route'));
+    const route = JSON.parse(sessionStorage.getItem(key));
+    route.libId = '00000000-dead-4000-8000-000000000000';
+    sessionStorage.setItem(key, JSON.stringify(route));
+  });
+  await bothPage.reload();
+  await bothPage.waitForSelector('.wb-view-pages .wb-grid-status');
+  const notice = await bothPage.locator('.wb-view-pages .wb-grid-status').textContent();
+  const detail = await bothPage.locator('.wb-view-pages .wb-detail-id').count();
+  return detail === 0                       // no page opened from the wrong library
+    && notice.includes('no longer available');
+});
+
+await check('both: re-entering Pages from the rail keeps the library across a reload', async () => {
+  // The rail navigates with { view } alone, dropping libId from the stored
+  // route even though the cached view still shows the right library — so a
+  // later reload silently reverted to the ranked default.
+  // Independent of the previous check, which deliberately leaves a bogus
+  // libId in the stored route.
+  await bothPage.goto(WB_URL);
+  await bothPage.evaluate(() => sessionStorage.clear());
+  await bothPage.goto(WB_URL);
+  await bothPage.waitForSelector('.wb-home-cards');
+  await bothPage.fill('#wb-site-input', '/sites/both');
+  await bothPage.locator('#wb-site-open').click();
+  await bothPage.waitForFunction(() =>
+    document.getElementById('wb-status-context').textContent.includes('/sites/both'));
+  await bothPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-lib-picker');
+  await bothPage.locator('.wb-view-pages .wb-lib-picker')
+    .selectOption('9c2d4e6f-1111-4222-8333-44445555a002');
+  await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr:nth-child(2)');
+  await bothPage.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
+  await bothPage.waitForSelector('.wb-view-lists');
+  await bothPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await bothPage.waitForSelector('.wb-view-pages .wb-lib-picker');
+  await bothPage.reload();
+  await bothPage.waitForSelector('.wb-view-pages .wb-lib-picker');
+  const selected = await bothPage.locator('.wb-view-pages .wb-lib-picker').inputValue();
+  return selected === '9c2d4e6f-1111-4222-8333-44445555a002';
+});
+
+await check('unit: the Files view disconnects its resize observer on destroy', async () =>
+  bothPage.evaluate(async () => {
+    // The shell drops every view instance when the inspected web changes;
+    // without disposal each switch stranded an observer on a detached node.
+    const real = window.ResizeObserver;
+    let observed = 0;
+    let disconnected = 0;
+    window.ResizeObserver = class {
+      constructor(cb) { this.cb = cb; }
+      observe() { observed += 1; }
+      disconnect() { disconnected += 1; }
+    };
+    try {
+      const { createBrowserView } = await import('/src/workbench/views/browser.js');
+      const view = createBrowserView({
+        client: { webUrl: () => 'https://tenant/x', get: async () => ({}), getAll: async () => ({ items: [] }) },
+        navigate: () => {},
+      });
+      const hadDestroy = typeof view.destroy === 'function';
+      view.destroy?.();
+      return hadDestroy && observed === 1 && disconnected === 1;
+    } finally {
+      window.ResizeObserver = real;
+    }
+  }));
 
 await check('classic: the generated items query omits PromotedState', async () => {
   // The 400 that started this: PromotedState does not exist on a publishing

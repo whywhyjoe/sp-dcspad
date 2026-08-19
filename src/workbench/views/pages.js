@@ -149,7 +149,7 @@ const encodedServerPath = (path) => String(path || '').split('/').map((segment) 
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 
-export function createPagesView({ client, navigate }) {
+export function createPagesView({ client, navigate, updateRoute }) {
   const root = el('section', 'wb-view wb-view-pages');
   const spWrite = createSpWriteClient({ client });
 
@@ -861,12 +861,41 @@ export function createPagesView({ client, navigate }) {
   // Adopt the library named by the route before anything resolves against
   // `current`. A saved route outlives the closure, so on a reload `current`
   // would otherwise be the ranked default.
+  //
+  // Returns false when the route names a library this web no longer offers —
+  // deleted, renamed, or access lost since the route was saved. That must FAIL
+  // CLOSED: falling through would resolve the saved page id against the
+  // default library, which is the wrong-page/wrong-write bug this routing
+  // exists to prevent, just reached by a different door.
   async function applyRouteLibrary(route) {
-    if (!route?.libId) return;
+    if (!route?.libId) return true;
     await pagesLibraries();
-    if (route.libId === current?.listId) return;
+    if (route.libId === current?.listId) return true;
     const wanted = libraries.find((l) => l.listId === route.libId);
-    if (wanted) adoptLibrary(wanted);
+    if (!wanted) return false;
+    adoptLibrary(wanted);
+    return true;
+  }
+
+  // Persist the library actually on screen back into the stored route. The
+  // rail navigates with `{ view }` alone, so re-entering Pages that way drops
+  // libId even though the view still holds the selection — a later reload
+  // would then land on the default library.
+  function rememberLibrary() {
+    if (current && libraries.length > 1) updateRoute?.({ libId: current.listId });
+  }
+
+  function showMissingLibrary() {
+    detailPane.hidden = true;
+    gridPane.hidden = false;
+    strip.hidden = true;
+    if (grid) { grid.el.remove(); grid = null; }
+    pagesLoaded = false;
+    masterStatus.textContent = 'The pages library this page was opened from is no '
+      + 'longer available on this web — it may have been deleted or renamed, or your '
+      + 'access may have changed. Pick a library to continue.';
+    masterStatus.classList.add('wb-error');
+    masterStatus.hidden = false;
   }
 
   function load(route) {
@@ -874,15 +903,25 @@ export function createPagesView({ client, navigate }) {
       detailRun += 1;
       const run = detailRun;
       applyRouteLibrary(route)
-        .catch(() => { /* fall through on the default library */ })
-        .then(() => { if (run === detailRun) showDetail(route); });
+        .catch(() => false)
+        .then((ok) => {
+          if (run !== detailRun) return;
+          if (!ok) { showMissingLibrary(); return; }
+          rememberLibrary();
+          showDetail(route);
+        });
     } else {
       detailRun += 1;
       detailPane.hidden = true;
       gridPane.hidden = false;
       applyRouteLibrary(route)
-        .catch(() => { /* fall through on the default library */ })
-        .then(() => loadPages());
+        .catch(() => false)
+        .then((ok) => {
+          masterStatus.classList.remove('wb-error');
+          if (!ok) { showMissingLibrary(); return; }
+          rememberLibrary();
+          loadPages();
+        });
     }
   }
 

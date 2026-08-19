@@ -218,9 +218,13 @@ export function createBrowserView({ client, navigate }) {
     crumbs.classList.toggle('is-clipped', crumbs.scrollWidth > crumbs.clientWidth + 1);
   }
 
-  if (typeof ResizeObserver === 'function') {
-    new ResizeObserver(() => syncCrumbOverflow()).observe(crumbs);
-  }
+  // Retained so it can be disconnected: the shell drops and recreates every
+  // view instance when the inspected web changes, which would otherwise strand
+  // one observer per site switch on a detached crumbs node.
+  const crumbObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => syncCrumbOverflow())
+    : null;
+  crumbObserver?.observe(crumbs);
 
   async function loadLibraries() {
     if (librariesLoaded) return;
@@ -670,5 +674,10 @@ export function createBrowserView({ client, navigate }) {
     }
   }
 
-  return { el: root, load };
+  // shell.reset() calls this on every inspected-web change.
+  function destroy() {
+    crumbObserver?.disconnect();
+  }
+
+  return { el: root, load, destroy };
 }

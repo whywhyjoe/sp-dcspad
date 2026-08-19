@@ -54,7 +54,7 @@ export function createShell({ mount, deps, views }) {
     if (instances.has(id)) return instances.get(id);
     const def = views.find((v) => v.id === id);
     if (!def) return null;
-    const inst = def.create({ ...deps, navigate });
+    const inst = def.create({ ...deps, navigate, updateRoute });
     instances.set(id, inst);
     return inst;
   }
@@ -75,6 +75,18 @@ export function createShell({ mount, deps, views }) {
     inst.load?.(def);
   }
 
+  // Merge params into the stored route WITHOUT re-rendering. The rail
+  // navigates with `{ view }` alone, so a view's own context (which library
+  // is on screen, say) is dropped from the saved route on re-entry even though
+  // the cached view instance still holds it — and the next reload then lands
+  // somewhere the user never chose. Views call this to keep the two in step.
+  // Deliberately not navigate(): that would re-enter load() and recurse.
+  function updateRoute(patch) {
+    if (!currentRoute || !patch) return;
+    currentRoute = { ...currentRoute, ...patch };
+    try { sessionStorage.setItem(ROUTE_KEY, JSON.stringify(currentRoute)); } catch { /* private mode */ }
+  }
+
   function restore() {
     let saved = null;
     try { saved = JSON.parse(sessionStorage.getItem(ROUTE_KEY) || 'null'); } catch { /* ignore */ }
@@ -90,5 +102,5 @@ export function createShell({ mount, deps, views }) {
     navigate({ view: currentRoute?.view || views[0].id });
   }
 
-  return { navigate, restore, reset, getRoute: () => currentRoute };
+  return { navigate, updateRoute, restore, reset, getRoute: () => currentRoute };
 }
