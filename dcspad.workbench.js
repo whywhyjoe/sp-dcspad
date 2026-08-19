@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "69" : "dev";
-var injectedRevision = true ? "74376909" : "";
+var injectedBuild = true ? "72" : "dev";
+var injectedRevision = true ? "3f69a6c7" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5805,7 +5805,7 @@ ${sitePages.rootPath}`;
     }
     const kind = el11(
       "span",
-      `wb-lib-kind wb-lib-${sitePages.kind}`,
+      `wb-info-chip wb-lib-kind wb-lib-${sitePages.kind}`,
       `${KIND_TAG[sitePages.kind] || "library"} \xB7 ${sitePages.baseTemplate}`
     );
     kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
@@ -6213,7 +6213,7 @@ ${fullUrl}`;
       classicParts = classicContentParts({ item: item2, webParts, contentKind }).parts;
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
-    const kindChip = el11("span", "wb-detail-kind", pageContentKindLabel(contentKind));
+    const kindChip = el11("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(contentKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(contentKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     const actions = el11("span", "wb-detail-actions");

@@ -138,12 +138,12 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-view-head h2 { margin: 0; font: var(--t-view); color: var(--fg-strong); }
 .wb-view-hint { margin: 4px 0 0; color: var(--fg-dim); font-size: 12.5px; max-width: 72ch; }
 
-/* Resolved-library status strip (Pages): status as tool tokens, not prose.
-   The name is a click-to-copy path token (sp-copy affordance from app.css),
-   the kind badge follows the design-system micro-badge spec (9px mono
-   uppercase, radius-s), and full sentences ride on the tooltips. Born in the
-   view head as a loading placeholder, it moves into the grid toolbar
-   (toolbarExtras) so status, filter, and actions share one row. */
+/* Resolved-library strip (Pages): the facts as tool tokens, not prose. The
+   name is a click-to-copy path token (sp-copy affordance from app.css), the
+   kind rides the quiet .wb-info-chip, and full sentences live on the
+   tooltips. Born in the view head as a loading placeholder, it moves into
+   the grid toolbar (toolbarExtras) so it shares a row with filter and
+   actions. */
 .wb-lib-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wb-view-head .wb-lib-strip { margin-top: 6px; }
 .wb-grid-toolbar .wb-lib-strip {
@@ -151,16 +151,9 @@ html.dcspad-suspended #wb-mount { display: none; }
 }
 .wb-lib-wait { font: 500 11px/1 var(--mono); letter-spacing: .04em; color: var(--fg-faint); }
 .wb-lib-name { font: 500 12px/1.4 var(--mono); color: var(--fg); }
-.wb-lib-kind {
-  padding: 2px 5px; border-radius: var(--radius-s); white-space: nowrap;
-  font: 600 9px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase;
-  color: var(--fg-dim); background: var(--bg-1); border: 1px solid var(--border-strong);
-  cursor: help;
-}
-.wb-lib-modern {
-  color: var(--accent-soft-fg); background: var(--accent-soft);
-  border-color: var(--accent-soft-line);
-}
+/* Library kind is a classification, not a state — it rides .wb-info-chip
+   (below) and carries no colour of its own. The wb-lib-<kind> class stays as
+   a semantic hook; deliberately nothing paints it. */
 
 /* ---- grid ---- */
 .wb-grid { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; gap: 8px; }
@@ -253,11 +246,29 @@ html.dcspad-suspended #wb-mount { display: none; }
 }
 /* Page-kind chip: says which page shape the drilldown detected, and carries
    the reason the Structure tab is absent on classic pages. */
-.wb-detail-kind {
+/* ---- info chip ----
+   A quiet, non-interactive label for what a thing IS — page kind, library
+   kind — as opposed to how it is DOING. Sans, faint, hairline, no fill and
+   no colour variants, so it recedes next to real controls.
+
+   This is NOT .sp-chip / .wb-role-chip. Those are STATUS: 999px, uppercase,
+   signal-coloured, state-bearing, sometimes clickable. Reaching for a status
+   chip to say "modern vs classic" overstates a fact the reader only needs in
+   passing — which is exactly the mistake this component exists to prevent.
+
+   Rules: sentence case; the full sentence lives on title=, never in the chip;
+   never colour a variant (if a value needs a signal colour, it is status and
+   belongs in the other register).
+
+   Not yet in the DCS Workbench design system — see design/INFO-CHIP.md for
+   the promotion proposal. Keep the two instances composing this one class so
+   they cannot drift while that is pending. */
+.wb-info-chip {
   flex: none; font: 11px/1.5 var(--sans); color: var(--fg-faint);
   border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px;
-  white-space: nowrap; cursor: help;
+  white-space: nowrap;
 }
+.wb-info-chip[title] { cursor: help; }
 .wb-detail-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .wb-detail-actions a { text-decoration: none; }
 
