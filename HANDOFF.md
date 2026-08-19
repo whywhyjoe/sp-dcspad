@@ -215,6 +215,18 @@ inspector, REPL and network capture all work inside the web part; a live
   nice; the gap around the seated app shows it). SP styles also bleed into the
   pad; nothing visibly broken, but scope properly if oddities appear.
 
+- **Cross-app tab targeting, DCSPad ⇄ SP Workbench** (2026-08-19,
+  findings only — nothing implemented). The pad's SPWorkbench button
+  (`src/main.js:135-147`) already opens a *named* target,
+  `window.open(url, 'dcspad-sp')`. It nonetheless lands in the same tab once
+  that tab has been named `dcspad-sp` and then navigated back to the pad —
+  `window.name` survives navigation, so the pad ends up targeting itself.
+  The reciprocal workbench→pad button is buildable but needs a pad URL, and
+  the workbench deliberately loads **no config today** (`boot-workbench.js:87`
+  versions three files and nothing else). Full diagnosis, the browsing-context
+  -group limitation on "return to the existing tab", and a suggested
+  implementation shape: `plans/cross-app-tab-targeting.md`.
+
 ## Completed feature work (2026-07-27)
 
 - The Claude Design visual pass is implemented. `design/DESIGN-BRIEF.md` and
