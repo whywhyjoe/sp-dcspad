@@ -1192,6 +1192,39 @@ await check('classic: grid drops the Promoted column and names the library', asy
     && link.includes('Pages');
 });
 
+await check('the library kind is an info chip, not a status chip', async () => {
+  // Register guard: classification recedes (sans, faint, hairline, no fill,
+  // no per-kind colour); status is the loud register and must stay separate.
+  // Both live instances compose the same class so they cannot drift.
+  const seen = await classicPage.evaluate(() => {
+    const chip = document.querySelector('.wb-view-pages .wb-lib-kind');
+    const cs = getComputedStyle(chip);
+    const bg = cs.backgroundColor;
+    return {
+      composed: chip.classList.contains('wb-info-chip'),
+      sans: !cs.fontFamily.toLowerCase().includes('mono'),
+      unfilled: bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent',
+      notShouty: cs.textTransform !== 'uppercase',
+      colour: cs.color,
+    };
+  });
+  // Same paint as the page-kind chip on the drilldown — one register, one look.
+  await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Benefits.aspx' })
+    .locator('td').first().click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-detail-kind');
+  const detail = await classicPage.evaluate(() => {
+    const chip = document.querySelector('.wb-view-pages .wb-detail-kind');
+    return {
+      composed: chip.classList.contains('wb-info-chip'),
+      colour: getComputedStyle(chip).color,
+    };
+  });
+  await classicPage.locator('.wb-view-pages .wb-back').click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  return seen.composed && seen.sans && seen.unfilled && seen.notShouty
+    && detail.composed && detail.colour === seen.colour;
+});
+
 await check('classic: the generated items query omits PromotedState', async () => {
   // The 400 that started this: PromotedState does not exist on a publishing
   // library, so it must never reach the URL. Mock mode resolves before fetch,
