@@ -102,14 +102,43 @@ export function createPagesView({ client, navigate }) {
   const gridPane = el('div', 'wb-pane');
   const head = el('div', 'wb-view-head');
   head.innerHTML = '<h2>Pages</h2>';
-  // Filled in once the library is resolved — modern and classic libraries are
-  // both supported and the view must say which one it is looking at.
-  const hint = el('p', 'wb-view-hint', 'Locating this web’s pages library…');
-  head.append(hint);
-  const libraryLink = el('a', 'btn btn-xs wb-head-link', 'Open library ↗');
+  // Resolved-library status strip. Modern and classic libraries are both
+  // supported and the view must say which one is on screen — as tool tokens
+  // (name · kind badge · scope), never prose; sentences ride on the tooltips.
+  const strip = el('div', 'wb-lib-strip');
+  strip.append(el('span', 'wb-lib-wait', 'locating library…'));
+  head.append(strip);
+  const libraryLink = el('a', 'btn btn-xs wb-head-link', 'Open ↗');
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
-  head.append(libraryLink);
+  strip.append(libraryLink);
+
+  // Badge text is classification + BaseTemplate; libraryKindLabel() supplies
+  // the full sentence on the tooltip.
+  const KIND_TAG = { modern: 'modern', publishing: 'classic', generic: 'library' };
+
+  function renderLibraryStrip(sitePages) {
+    strip.hidden = false;
+    strip.textContent = '';
+    const name = el('span', 'wb-lib-name sp-copy', sitePages.title);
+    if (sitePages.rootPath) {
+      name.title = `Click to copy the library path\n${sitePages.rootPath}`;
+      name.addEventListener('click', () => copyText(sitePages.rootPath, name));
+    }
+    const kind = el('span', `wb-lib-kind wb-lib-${sitePages.kind}`,
+      `${KIND_TAG[sitePages.kind] || 'library'} · ${sitePages.baseTemplate}`);
+    kind.title = `${libraryKindLabel(sitePages.kind)} (BaseTemplate ${sitePages.baseTemplate})`;
+    const scope = el('span', 'wb-lib-scope', 'incl. subfolders');
+    scope.title = 'Rows cover the whole library, subfolders included — '
+      + 'the Folder column shows each page’s location.';
+    strip.append(name, kind, scope);
+    if (sitePages.viewUrl) {
+      libraryLink.href = sitePages.viewUrl;
+      libraryLink.title = `Open ${sitePages.title} in a new tab`;
+      libraryLink.hidden = false;
+    }
+    strip.append(libraryLink);
+  }
   const masterStatus = el('div', 'wb-grid-status');
   masterStatus.hidden = true;
   gridPane.append(head, masterStatus);
@@ -175,21 +204,14 @@ export function createPagesView({ client, navigate }) {
     try {
       const sitePages = await sitePagesList();
       if (!sitePages) {
-        hint.textContent = '';
+        strip.hidden = true;
         masterStatus.textContent = 'This web has no pages library — looked for modern '
           + 'Site Pages (BaseTemplate 119), classic publishing Pages (850), and any '
           + 'library titled “Pages”.';
         masterStatus.hidden = false;
         return;
       }
-      hint.textContent = `${sitePages.title} — ${libraryKindLabel(sitePages.kind)} `
-        + `(BaseTemplate ${sitePages.baseTemplate}), subfolders included. `
-        + 'Click a row to inspect content, metadata, and structure.';
-      if (sitePages.viewUrl) {
-        libraryLink.href = sitePages.viewUrl;
-        libraryLink.textContent = `Open ${sitePages.title} ↗`;
-        libraryLink.hidden = false;
-      }
+      renderLibraryStrip(sitePages);
       if (!grid) {
         const query = {
           path: guidPath(sitePages.listId, '/items'),
@@ -246,6 +268,9 @@ export function createPagesView({ client, navigate }) {
         pagesLoaded = true;
       }
     } catch (err) {
+      // Resolution itself failed: don't leave the "locating…" token up
+      // next to the error. A resolved strip stays — it is still true.
+      if (strip.querySelector('.wb-lib-wait')) strip.hidden = true;
       if (grid) grid.setError(err);
       else {
         masterStatus.textContent = err?.message || String(err);
