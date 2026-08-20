@@ -1178,17 +1178,42 @@ await check('classic: query plan is decided by probed fields, not BaseTemplate',
     const legacy119 = pageQueryPlan(['Title', 'WikiField', 'FileLeafRef'], 'modern');
     const modern = pageQueryPlan(['Title', 'PromotedState', 'CanvasContent1'], 'modern');
     // PromotedState without CanvasContent1: promoted column yes, but the
-    // modern detail projection would still 400 — stays select-less.
+    // modern detail projection would still 400 — stays on the '*' shape.
     const partial = pageQueryPlan(['Title', 'PromotedState'], 'modern');
     // Probe failed: fall back to the BaseTemplate heuristic.
     const fallbackModern = pageQueryPlan(null, 'modern');
     const fallbackClassic = pageQueryPlan(null, 'publishing');
+    // Non-modern libraries take the whole item; the modern projection names
+    // its fields. Either way the select must exist — see the expand pin below.
+    const wildcard = (plan) => plan.detailOptions.select?.[0] === '*';
     return !legacy119.showPromoted && !legacy119.gridSelect.includes('PromotedState')
-      && !legacy119.detailOptions.select
-      && modern.showPromoted && Boolean(modern.detailOptions.select)
-      && partial.showPromoted && !partial.detailOptions.select
-      && fallbackModern.showPromoted && Boolean(fallbackModern.detailOptions.select)
-      && !fallbackClassic.showPromoted && !fallbackClassic.detailOptions.select;
+      && wildcard(legacy119)
+      && modern.showPromoted && modern.detailOptions.select.includes('CanvasContent1')
+      && partial.showPromoted && wildcard(partial)
+      && fallbackModern.showPromoted && fallbackModern.detailOptions.select.includes('CanvasContent1')
+      && !fallbackClassic.showPromoted && wildcard(fallbackClassic);
+  }));
+
+// Regression: the classic drilldown expanded Author/Editor with no $select
+// at all, which SPO rejects with "The query to field 'Author' is not valid.
+// The $select query string must specify the target fields and the $expand
+// query string must contains Author." Every detail shape must name the
+// expanded targets in its own select.
+await check('classic: every detail query names its expanded Author/Editor targets', async () =>
+  classicPage.evaluate(async () => {
+    const { pageQueryPlan } = await import('/src/workbench/views/pages.js');
+    const plans = [
+      pageQueryPlan(['Title', 'WikiField'], 'publishing'),
+      pageQueryPlan(['Title', 'PromotedState', 'CanvasContent1'], 'modern'),
+      pageQueryPlan(null, 'publishing'),
+      pageQueryPlan(null, 'modern'),
+    ];
+    return plans.every(({ detailOptions: o }) => {
+      const select = o.select || [];
+      const expand = o.expand || [];
+      return expand.includes('Author') && expand.includes('Editor')
+        && select.includes('Author/Title') && select.includes('Editor/Title');
+    });
   }));
 
 await check('classic: wiki bodies interleave embedded web parts in document order', async () =>
@@ -1717,11 +1742,25 @@ await live.route('**/_api/**', async (route) => {
   if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items(7)")) {
     pageDetailUrl = url;
     const expand = new URL(url).searchParams.get('$expand') || '';
+    const select = new URL(url).searchParams.get('$select') || '';
     if (!expand.split(',').includes('Author') || !expand.split(',').includes('Editor')) {
       return route.fulfill({
         status: 400,
         json: { 'odata.error': { message: { value: 'Author must be included in $expand.' } } },
       });
+    }
+    // SPO's other half of the same rule, and the one the classic drilldown
+    // used to trip: expanding a User field without naming its target in
+    // $select is a 400, whatever $expand says.
+    for (const lookup of ['Author', 'Editor']) {
+      if (!select.split(',').includes(`${lookup}/Title`)) {
+        return route.fulfill({
+          status: 400,
+          json: { 'odata.error': { message: { value: `The query to field '${lookup}' is not valid.`
+            + ` The $select query string must specify the target fields and the $expand query`
+            + ` string must contains ${lookup}.` } } },
+        });
+      }
     }
     return route.fulfill({ json: {
       Id: 7,

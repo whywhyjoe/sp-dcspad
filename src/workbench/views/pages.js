@@ -58,21 +58,35 @@ export function pageQueryPlan(fieldInternalNames, kind) {
     showPromoted,
     gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
     detailOptions: modern
-      ? { select: DETAIL_SELECT, expand: ['Author', 'Editor'] }
-      : { expand: ['Author', 'Editor'] },
+      ? { select: DETAIL_SELECT, expand: DETAIL_EXPAND }
+      : { select: CLASSIC_DETAIL_SELECT, expand: DETAIL_EXPAND },
   };
 }
 
+// $expand of a User field is only legal alongside a $select that NAMES the
+// expanded target field. Expanding Author/Editor with no $select at all 400s
+// on a classic library with "The query to field 'Author' is not valid. The
+// $select query string must specify the target fields and the $expand query
+// string must contains Author." (Modern Site Pages happened to escape it
+// only because DETAIL_SELECT already spells Author/Title out.) Both shapes
+// therefore ship their own select; the grid query above pairs
+// Editor/Title with $expand=Editor for the same reason.
+const DETAIL_EXPAND = ['Author', 'Editor'];
+
 // Modern-only: every field here exists on a modern Site Pages item and
-// nowhere else. Other libraries are fetched WITHOUT a $select instead —
-// asking for a field a publishing/wiki schema lacks is a 400, and the field
-// set varies per site, so taking the whole item is both safer and the only
-// way to reach PublishingPageContent/WikiField without probing.
+// nowhere else.
 const DETAIL_SELECT = [
   'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef', 'Description',
   'BannerImageUrl', 'PromotedState', 'Created', 'Modified',
   'Author/Title', 'Editor/Title', 'CanvasContent1', 'LayoutWebpartsContent',
 ];
+
+// Every other library: the field set varies per site, and asking for a field
+// a publishing/wiki schema lacks is a 400, so the whole item is taken with
+// '*' — the only way to reach PublishingPageContent/WikiField without
+// probing — plus the two expand projections. Same '*'-with-expand shape the
+// Items tab pays for in lists.js.
+const CLASSIC_DETAIL_SELECT = ['*', 'Author/Title', 'Editor/Title'];
 
 const FIELD_SELECT = [
   'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
@@ -445,8 +459,18 @@ export function createPagesView({ client, navigate, updateRoute }) {
     // rejection arriving after a switch used to evict the other library's
     // entry by bare id.
     const key = `${listId}:${pageId}`;
+    const path = guidPath(listId, `/items(${pageId})`);
     if (!detailCache.has(key)) {
-      detailCache.set(key, client.get(guidPath(listId, `/items(${pageId})`), options)
+      detailCache.set(key, client.get(path, options)
+        // Last-resort degrade for a schema that rejects the projection
+        // anyway: take the bare item so the drilldown still opens. Only the
+        // Author/Editor display names are lost (the Metadata tab fetches
+        // its own copy with FieldValuesAsText), and only on a 400 — a 403 or
+        // 404 means the item itself is out of reach, so retrying is noise.
+        .catch((err) => {
+          if (err?.status !== 400) throw err;
+          return client.get(path);
+        })
         .catch((err) => {
           detailCache.delete(key);
           throw err;
