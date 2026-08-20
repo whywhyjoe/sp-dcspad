@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "92" : "dev";
-var injectedRevision = true ? "4de7de02" : "";
+var injectedBuild = true ? "135" : "dev";
+var injectedRevision = true ? "17dab5f3" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5881,9 +5881,10 @@ function pageQueryPlan(fieldInternalNames, kind) {
   return {
     showPromoted,
     gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
-    detailOptions: modern ? { select: DETAIL_SELECT, expand: ["Author", "Editor"] } : { expand: ["Author", "Editor"] }
+    detailOptions: modern ? { select: DETAIL_SELECT, expand: DETAIL_EXPAND } : { select: CLASSIC_DETAIL_SELECT, expand: DETAIL_EXPAND }
   };
 }
+var DETAIL_EXPAND = ["Author", "Editor"];
 var DETAIL_SELECT = [
   "Id",
   "Title",
@@ -5900,6 +5901,7 @@ var DETAIL_SELECT = [
   "CanvasContent1",
   "LayoutWebpartsContent"
 ];
+var CLASSIC_DETAIL_SELECT = ["*", "Author/Title", "Editor/Title"];
 var FIELD_SELECT3 = [
   "Id",
   "Title",
@@ -6179,8 +6181,12 @@ ${current.rootPath}` : "");
   }
   function pageItem(listId, pageId, options) {
     const key2 = `${listId}:${pageId}`;
+    const path = guidPath2(listId, `/items(${pageId})`);
     if (!detailCache.has(key2)) {
-      detailCache.set(key2, client2.get(guidPath2(listId, `/items(${pageId})`), options).catch((err) => {
+      detailCache.set(key2, client2.get(path, options).catch((err) => {
+        if (err?.status !== 400) throw err;
+        return client2.get(path);
+      }).catch((err) => {
         detailCache.delete(key2);
         throw err;
       }));
