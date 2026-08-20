@@ -1184,22 +1184,24 @@ await check('classic: query plan is decided by probed fields, not BaseTemplate',
     const fallbackModern = pageQueryPlan(null, 'modern');
     const fallbackClassic = pageQueryPlan(null, 'publishing');
     // Non-modern libraries take the whole item; the modern projection names
-    // its fields. Either way the select must exist — see the expand pin below.
-    const wildcard = (plan) => plan.detailOptions.select?.[0] === '*';
+    // its fields. Either way the wanted shape must carry a select — see the
+    // expand pin below.
+    const wanted = (plan) => plan.detailShapes[0].options;
+    const wildcard = (plan) => wanted(plan).select?.[0] === '*';
     return !legacy119.showPromoted && !legacy119.gridSelect.includes('PromotedState')
       && wildcard(legacy119)
-      && modern.showPromoted && modern.detailOptions.select.includes('CanvasContent1')
+      && modern.showPromoted && wanted(modern).select.includes('CanvasContent1')
       && partial.showPromoted && wildcard(partial)
-      && fallbackModern.showPromoted && fallbackModern.detailOptions.select.includes('CanvasContent1')
+      && fallbackModern.showPromoted && wanted(fallbackModern).select.includes('CanvasContent1')
       && !fallbackClassic.showPromoted && wildcard(fallbackClassic);
   }));
 
 // Regression: the classic drilldown expanded Author/Editor with no $select
 // at all, which SPO rejects with "The query to field 'Author' is not valid.
 // The $select query string must specify the target fields and the $expand
-// query string must contains Author." Every detail shape must name the
-// expanded targets in its own select.
-await check('classic: every detail query names its expanded Author/Editor targets', async () =>
+// query string must contains Author." Every query that expands a people
+// field must name the expanded targets in its own select.
+await check('classic: every expanding query names its expanded targets', async () =>
   classicPage.evaluate(async () => {
     const { pageQueryPlan } = await import('/src/workbench/views/pages.js');
     const plans = [
@@ -1208,12 +1210,60 @@ await check('classic: every detail query names its expanded Author/Editor target
       pageQueryPlan(null, 'publishing'),
       pageQueryPlan(null, 'modern'),
     ];
-    return plans.every(({ detailOptions: o }) => {
-      const select = o.select || [];
-      const expand = o.expand || [];
-      return expand.includes('Author') && expand.includes('Editor')
-        && select.includes('Author/Title') && select.includes('Editor/Title');
+    // Grid and detail ladders alike, every rung: an expand implies the
+    // projection, and a rung without the expand must not carry one either.
+    const shapes = plans.flatMap((p) => [...p.gridShapes, ...p.detailShapes]);
+    return shapes.every(({ options }) => {
+      const select = (options.select || []).join(',');
+      const expand = [options.expand || []].flat().join(',');
+      return ['Author', 'Editor'].every((lookup) => (
+        expand.split(',').includes(lookup) === select.split(',').includes(`${lookup}/Title`)
+      ));
     });
+  }));
+
+// "If author isn't there, just proceed without it": a shape SharePoint
+// rejects on schema grounds steps down a rung instead of dead-ending the
+// view, and only a 400 does — a 403/404 is about the resource, not the query.
+await check('classic: a rejected query shape steps down instead of failing', async () =>
+  classicPage.evaluate(async () => {
+    const { queryLadder } = await import('/src/workbench/views/pages.js');
+    const oData400 = () => Object.assign(new Error("The query to field 'Author' is not valid."), { status: 400 });
+    const tried = [];
+    const shapes = [
+      { options: { select: ['Author/Title'], expand: ['Author'] } },
+      { options: { select: ['*'] }, lost: 'the author and editor names' },
+      { options: {} },
+    ];
+
+    // Rung 0 rejected, rung 1 answers: the caller gets data plus what it cost.
+    const stepped = await queryLadder(shapes, (options) => {
+      tried.push(options);
+      if (options.expand) throw oData400();
+      return Promise.resolve({ Id: 7 });
+    });
+
+    // A permission failure is not a shape problem: it must surface at once,
+    // without burning the rest of the ladder on requests that cannot help.
+    const attempts = [];
+    let denied;
+    try {
+      await queryLadder(shapes, (options) => {
+        attempts.push(options);
+        return Promise.reject(Object.assign(new Error('Access denied.'), { status: 403 }));
+      });
+    } catch (err) { denied = err; }
+
+    // Every rung rejected: the last error is what the view reports.
+    let exhausted;
+    try {
+      await queryLadder(shapes, () => Promise.reject(oData400()));
+    } catch (err) { exhausted = err; }
+
+    return stepped.value.Id === 7 && stepped.lost === 'the author and editor names'
+      && tried.length === 2
+      && denied?.status === 403 && attempts.length === 1
+      && exhausted?.status === 400;
   }));
 
 await check('classic: wiki bodies interleave embedded web parts in document order', async () =>
@@ -1913,6 +1963,56 @@ await check('live: page detail expands Author and Editor lookup fields', async (
   return expand.split(',').includes('Author') && expand.split(',').includes('Editor')
     && gridUrl.includes('PromotedState')
     && pageDetailUrl.includes('CanvasContent1');
+});
+
+await check('live: a library that rejects the people projection still opens the page', async () => {
+  // The graceful path end to end: a schema that 400s the wanted shape must
+  // not cost the operator the page. The drilldown steps down a rung, renders
+  // the content, and says what it could not read — quietly, in the info
+  // register, not as an error over readable content.
+  const shapes = [];
+  await live.route(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/, (route) => {
+    const url = route.request().url();
+    const select = new URL(url).searchParams.get('$select') || '';
+    shapes.push(select);
+    if (select.includes('Author/Title')) {
+      return route.fulfill({
+        status: 400,
+        json: { 'odata.error': { message: { value: "The field or property 'Author' does not exist." } } },
+      });
+    }
+    // Rung 1 ('*'): the whole item, people fields left as raw ids.
+    return route.fulfill({ json: {
+      Id: 7,
+      Title: 'Live page',
+      FileLeafRef: 'Live.aspx',
+      FileRef: '/SitePages/Live.aspx',
+      FileDirRef: '/SitePages',
+      AuthorId: 11,
+      EditorId: 12,
+      CanvasContent1: JSON.stringify([{
+        controlType: 4,
+        position: { zoneIndex: 1, sectionIndex: 1, controlIndex: 1, sectionFactor: 12 },
+        innerHTML: '<p>Live page body</p>',
+      }]),
+    } });
+  });
+  // A fresh load: the drilldown caches the item per library and page.
+  await live.reload();
+  await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
+  await live.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' })
+    .locator('td').first().click();
+  // The page reads, despite the rejection.
+  await live.waitForSelector('.wb-view-pages .wb-text-rendered', { hasText: 'Live page body' });
+  const chip = live.locator('.wb-view-pages .wb-detail-head .wb-reduced-chip');
+  const said = await chip.getAttribute('title');
+  const quiet = await chip.evaluate((n) => n.classList.contains('wb-info-chip'));
+  const noError = await live.locator('.wb-view-pages .wb-error').count();
+  await live.locator('.wb-view-pages .wb-back').click();
+  await live.unroute(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/);
+  return shapes.length === 2 && shapes[1].startsWith('*')
+    && quiet && said.includes('author and editor names') && noError === 0;
 });
 
 await check('live: switching sites re-targets every /_api request', async () => {

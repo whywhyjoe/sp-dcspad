@@ -261,8 +261,12 @@ html.dcspad-suspended #wb-mount { display: none; }
    belongs in the other register).
 
    Not yet in the DCS Workbench design system — see design/INFO-CHIP.md for
-   the promotion proposal. Keep the two instances composing this one class so
-   they cannot drift while that is pending. */
+   the promotion proposal. Keep every instance composing this one class so
+   they cannot drift while that is pending: .wb-lib-kind (Pages toolbar),
+   .wb-detail-kind (page drilldown) and .wb-reduced-chip (what a query SPO
+   rejected on schema grounds could not read). The last one is the register's
+   own test case — a degraded read is not an error to act on, so it takes no
+   colour; its semantic hook, like .wb-lib-<kind>, is deliberately unpainted. */
 .wb-info-chip {
   flex: none; font: 11px/1.5 var(--sans); color: var(--fg-faint);
   border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px;
