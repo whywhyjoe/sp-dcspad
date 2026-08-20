@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "135" : "dev";
-var injectedRevision = true ? "17dab5f3" : "";
+var injectedBuild = true ? "138" : "dev";
+var injectedRevision = true ? "a5096ad3" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5878,11 +5878,47 @@ function pageQueryPlan(fieldInternalNames, kind) {
   const hasField = (f) => names ? names.has(f) : kind === "modern";
   const showPromoted = hasField("PromotedState");
   const modern = showPromoted && hasField("CanvasContent1");
+  const gridSelect = showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
   return {
     showPromoted,
-    gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
-    detailOptions: modern ? { select: DETAIL_SELECT, expand: DETAIL_EXPAND } : { select: CLASSIC_DETAIL_SELECT, expand: DETAIL_EXPAND }
+    gridSelect,
+    // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
+    // want; every rung below it gives something up to stay answerable.
+    gridShapes: [
+      { options: { select: gridSelect, expand: "Editor" } },
+      // No lookup projection, so no expand to satisfy: the Editor column
+      // goes blank and everything else still lists.
+      {
+        options: { select: gridSelect.filter((f) => !f.includes("/")) },
+        lost: "the Editor column"
+      },
+      // Nothing named at all. SPO returns the item's own fields, which is
+      // every column this grid reads except the expanded Editor.
+      { options: {}, lost: "the Editor column" }
+    ],
+    detailShapes: [
+      {
+        options: modern ? { select: DETAIL_SELECT, expand: DETAIL_EXPAND } : { select: CLASSIC_DETAIL_SELECT, expand: DETAIL_EXPAND }
+      },
+      // '*' still carries every content field the drilldown reads
+      // (CanvasContent1, PublishingPageContent, WikiField); only the two
+      // expanded people fields are out of reach, leaving their raw ids.
+      { options: { select: ["*"] }, lost: "the author and editor names" },
+      { options: {}, lost: "the author and editor names" }
+    ]
   };
+}
+async function queryLadder(shapes, attempt) {
+  let lastError;
+  for (const shape of shapes) {
+    try {
+      return { value: await attempt(shape.options), lost: shape.lost || "" };
+    } catch (err) {
+      if (err?.status !== 400) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 var DETAIL_EXPAND = ["Author", "Editor"];
 var DETAIL_SELECT = [
@@ -5954,6 +5990,11 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
   }
 }).join("/");
 var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+function reducedChip(lost, where) {
+  const chip = el11("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
+  chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read. Everything else on this page is complete.`;
+  return chip;
+}
 function createPagesView({ client: client2, navigate, updateRoute }) {
   const root = el11("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
@@ -6101,14 +6142,12 @@ ${current.rootPath}` : "");
       renderLibraryStrip();
       if (!grid) {
         const plan = await queryPlan(sitePages);
-        const query = {
-          path: guidPath2(sitePages.listId, "/items"),
-          options: {
-            select: plan.gridSelect,
-            expand: "Editor",
-            orderby: "FileLeafRef",
-            top: 5e3
-          }
+        const paging = { orderby: "FileLeafRef", top: 5e3 };
+        const query = { path: guidPath2(sitePages.listId, "/items") };
+        const descriptor = {
+          ...query,
+          options: { ...plan.gridShapes[0].options, ...paging },
+          webUrl: client2.webUrl()
         };
         grid = createGrid({
           columns: [
@@ -6152,12 +6191,21 @@ ${current.rootPath}` : "");
           filterPlaceholder: "Filter pages\u2026",
           toolbarExtras: strip,
           exportName: "sp-pages",
-          descriptor: { ...query, webUrl: client2.webUrl() }
+          // The same object the ladder rewrites below, on purpose: the
+          // "Copy as…" menu reads it at click time, so a script copied out of
+          // a degraded grid reproduces the query that actually worked rather
+          // than the one SharePoint rejected.
+          descriptor
         });
         gridPane.append(grid.el);
         grid.setLoading("Loading pages\u2026");
-        const { items, partial } = await client2.getAll(query.path, query.options);
+        const { value, lost } = await queryLadder(plan.gridShapes, (options) => {
+          descriptor.options = { ...options, ...paging };
+          return client2.getAll(query.path, descriptor.options);
+        });
+        const { items, partial } = value;
         if (run !== loadRun) return;
+        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title), libraryLink);
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -6179,17 +6227,17 @@ ${current.rootPath}` : "");
     }
     return planPromise;
   }
-  function pageItem(listId, pageId, options) {
+  function pageItem(listId, pageId, shapes) {
     const key2 = `${listId}:${pageId}`;
     const path = guidPath2(listId, `/items(${pageId})`);
     if (!detailCache.has(key2)) {
-      detailCache.set(key2, client2.get(path, options).catch((err) => {
-        if (err?.status !== 400) throw err;
-        return client2.get(path);
-      }).catch((err) => {
-        detailCache.delete(key2);
-        throw err;
-      }));
+      detailCache.set(
+        key2,
+        queryLadder(shapes, (options) => client2.get(path, options)).then(({ value, lost }) => ({ item: value, lost })).catch((err) => {
+          detailCache.delete(key2);
+          throw err;
+        })
+      );
     }
     return detailCache.get(key2);
   }
@@ -6415,12 +6463,17 @@ ${p.html}`).join("\n\n")
     detailPane.append(status);
     let sitePages;
     let item2;
+    let lostFields = "";
     try {
       await pagesLibraries();
       sitePages = current;
       if (!sitePages) throw new Error("This web has no pages library.");
       const plan = await queryPlan(sitePages);
-      item2 = await pageItem(sitePages.listId, route.pageId, plan.detailOptions);
+      ({ item: item2, lost: lostFields } = await pageItem(
+        sitePages.listId,
+        route.pageId,
+        plan.detailShapes
+      ));
     } catch (err) {
       if (run !== detailRun) return;
       status.textContent = err?.message || String(err);
@@ -6462,6 +6515,7 @@ ${fullUrl}`;
     const kindChip = el11("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
+    if (lostFields) headRow.append(reducedChip(lostFields, "this page"));
     const actions = el11("span", "wb-detail-actions");
     const exportContent = el11("button", "btn btn-xs", "Export content");
     exportContent.type = "button";
