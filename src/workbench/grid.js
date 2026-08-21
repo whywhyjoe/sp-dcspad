@@ -9,6 +9,7 @@ import {
   copyText, toCsv, toJson, downloadCsv, downloadJson,
 } from './export.js';
 import { toPnpjs2, toRestFetch, toPnpPowerShell } from './scriptgen.js';
+import { showFailure } from './denied.js';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -68,6 +69,8 @@ function displayValue(row, col) {
 // selectable: adds a leading checkbox column; clicking a row (when the grid
 // has no onOpen) toggles it, and every export/copy operates on the selected
 // rows when any are selected, the visible rows otherwise.
+// subject: what this grid lists ('subwebs', 'the groups on this web') — used
+// to say what a denied read could not show. See setError and denied.js.
 export function createGrid({
   columns,
   rowKey = 'Id',
@@ -79,6 +82,7 @@ export function createGrid({
   toolbarExtras = null,
   exportExtras = [],
   selectable = false,
+  subject = '',
 } = {}) {
   let rows = [];
   let visible = [];
@@ -401,10 +405,12 @@ export function createGrid({
       status.className = 'wb-grid-status';
       status.hidden = false;
     },
+    // A denial is reported, not alarmed about: neutral register, plain
+    // sentence, SharePoint's own words on the tooltip. Everything else stays
+    // loud. See denied.js for why.
     setError(err) {
-      status.textContent = err?.message || String(err);
-      status.className = 'wb-grid-status wb-error';
-      status.hidden = false;
+      status.className = 'wb-grid-status';
+      showFailure(status, err, subject);
     },
     getVisibleRows: () => [...visible],
     getExportRows: () => [...exportRows()],

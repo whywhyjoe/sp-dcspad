@@ -1178,17 +1178,141 @@ await check('classic: query plan is decided by probed fields, not BaseTemplate',
     const legacy119 = pageQueryPlan(['Title', 'WikiField', 'FileLeafRef'], 'modern');
     const modern = pageQueryPlan(['Title', 'PromotedState', 'CanvasContent1'], 'modern');
     // PromotedState without CanvasContent1: promoted column yes, but the
-    // modern detail projection would still 400 — stays select-less.
+    // modern detail projection would still 400 — stays on the '*' shape.
     const partial = pageQueryPlan(['Title', 'PromotedState'], 'modern');
     // Probe failed: fall back to the BaseTemplate heuristic.
     const fallbackModern = pageQueryPlan(null, 'modern');
     const fallbackClassic = pageQueryPlan(null, 'publishing');
+    // Non-modern libraries take the whole item; the modern projection names
+    // its fields. Either way the wanted shape must carry a select — see the
+    // expand pin below.
+    const wanted = (plan) => plan.detailShapes[0].options;
+    const wildcard = (plan) => wanted(plan).select?.[0] === '*';
     return !legacy119.showPromoted && !legacy119.gridSelect.includes('PromotedState')
-      && !legacy119.detailOptions.select
-      && modern.showPromoted && Boolean(modern.detailOptions.select)
-      && partial.showPromoted && !partial.detailOptions.select
-      && fallbackModern.showPromoted && Boolean(fallbackModern.detailOptions.select)
-      && !fallbackClassic.showPromoted && !fallbackClassic.detailOptions.select;
+      && wildcard(legacy119)
+      && modern.showPromoted && wanted(modern).select.includes('CanvasContent1')
+      && partial.showPromoted && wildcard(partial)
+      && fallbackModern.showPromoted && wanted(fallbackModern).select.includes('CanvasContent1')
+      && !fallbackClassic.showPromoted && wildcard(fallbackClassic);
+  }));
+
+// Regression: the classic drilldown expanded Author/Editor with no $select
+// at all, which SPO rejects with "The query to field 'Author' is not valid.
+// The $select query string must specify the target fields and the $expand
+// query string must contains Author." Every query that expands a people
+// field must name the expanded targets in its own select.
+await check('classic: every expanding query names its expanded targets', async () =>
+  classicPage.evaluate(async () => {
+    const { pageQueryPlan } = await import('/src/workbench/views/pages.js');
+    const plans = [
+      pageQueryPlan(['Title', 'WikiField'], 'publishing'),
+      pageQueryPlan(['Title', 'PromotedState', 'CanvasContent1'], 'modern'),
+      pageQueryPlan(null, 'publishing'),
+      pageQueryPlan(null, 'modern'),
+    ];
+    // Grid and detail ladders alike, every rung: an expand implies the
+    // projection, and a rung without the expand must not carry one either.
+    const shapes = plans.flatMap((p) => [...p.gridShapes, ...p.detailShapes]);
+    return shapes.every(({ options }) => {
+      const select = (options.select || []).join(',');
+      const expand = [options.expand || []].flat().join(',');
+      return ['Author', 'Editor'].every((lookup) => (
+        expand.split(',').includes(lookup) === select.split(',').includes(`${lookup}/Title`)
+      ));
+    });
+  }));
+
+// "If author isn't there, just proceed without it": a shape SharePoint
+// rejects on schema grounds steps down a rung instead of dead-ending the
+// view, and only a 400 does — a 403/404 is about the resource, not the query.
+await check('classic: a rejected query shape steps down instead of failing', async () =>
+  classicPage.evaluate(async () => {
+    const { queryLadder } = await import('/src/workbench/views/pages.js');
+    const oData400 = () => Object.assign(new Error("The query to field 'Author' is not valid."), { status: 400 });
+    const tried = [];
+    const shapes = [
+      { options: { select: ['Author/Title'], expand: ['Author'] } },
+      { options: { select: ['*'] }, lost: 'the author and editor names' },
+      { options: {} },
+    ];
+
+    // Rung 0 rejected, rung 1 answers: the caller gets data plus what it cost.
+    const stepped = await queryLadder(shapes, (options) => {
+      tried.push(options);
+      if (options.expand) throw oData400();
+      return Promise.resolve({ Id: 7 });
+    });
+
+    // A permission failure is not a shape problem: it must surface at once,
+    // without burning the rest of the ladder on requests that cannot help.
+    const attempts = [];
+    let denied;
+    try {
+      await queryLadder(shapes, (options) => {
+        attempts.push(options);
+        return Promise.reject(Object.assign(new Error('Access denied.'), { status: 403 }));
+      });
+    } catch (err) { denied = err; }
+
+    // Every rung rejected: the last error is what the view reports.
+    let exhausted;
+    try {
+      await queryLadder(shapes, () => Promise.reject(oData400()));
+    } catch (err) { exhausted = err; }
+
+    return stepped.value.Id === 7 && stepped.lost === 'the author and editor names'
+      && tried.length === 2
+      && denied?.status === 403 && attempts.length === 1
+      && exhausted?.status === 400;
+  }));
+
+// The other half of failing gracefully: some reads are not ours to make.
+// A denial is reported in the neutral register with a plain sentence; a
+// genuine failure stays loud. Both keep SharePoint's own words reachable.
+await check('unit: a denied read is a fact, a broken one is an error', async () =>
+  classicPage.evaluate(async () => {
+    const { isDeniedRead, showFailure } = await import('/src/workbench/denied.js');
+    const classified = [
+      isDeniedRead({ status: 403 }),
+      isDeniedRead({ status: 401 }),
+      isDeniedRead({ code: 'permission' }),        // never went through requireOk
+      !isDeniedRead({ status: 400 }),              // a query shape — the ladder's job
+      !isDeniedRead({ status: 500 }),
+      !isDeniedRead(new Error('network')),
+    ].every(Boolean);
+
+    const denied = showFailure(
+      Object.assign(document.createElement('div'), { className: 'wb-grid-status' }),
+      { status: 403, message: 'Access denied. You do not have permission…' },
+      'subwebs',
+    );
+    const broken = showFailure(
+      Object.assign(document.createElement('div'), { className: 'wb-grid-status' }),
+      { status: 400, message: "The field or property 'X' does not exist." },
+      'subwebs',
+    );
+    // Reused node: the register must swap, not accumulate.
+    showFailure(denied, { status: 400, message: 'Bad query.' }, 'subwebs');
+
+    return classified
+      && !denied.classList.contains('wb-denied') && denied.classList.contains('wb-error')
+      && denied.textContent === 'Bad query.' && !denied.hasAttribute('title')
+      && broken.classList.contains('wb-error') && broken.textContent.includes("'X'")
+      // The layout class each node was born with survives either register.
+      && broken.classList.contains('wb-grid-status');
+  }));
+
+await check('unit: a denial names what it could not show and keeps the server’s words', async () =>
+  classicPage.evaluate(async () => {
+    const { showFailure } = await import('/src/workbench/denied.js');
+    const node = showFailure(document.createElement('div'),
+      { status: 403, message: 'Access denied. You do not have permission…' }, 'subwebs');
+    const anonymous = showFailure(document.createElement('div'), { status: 403 }, '');
+    return node.classList.contains('wb-denied')
+      && node.textContent.includes('permission') && node.textContent.includes('subwebs')
+      && node.title.startsWith('Access denied')      // SharePoint's own sentence, one hover away
+      && !node.textContent.includes('Access denied') // …but not the headline
+      && anonymous.classList.contains('wb-denied') && !anonymous.hasAttribute('title');
   }));
 
 await check('classic: wiki bodies interleave embedded web parts in document order', async () =>
@@ -1717,11 +1841,25 @@ await live.route('**/_api/**', async (route) => {
   if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items(7)")) {
     pageDetailUrl = url;
     const expand = new URL(url).searchParams.get('$expand') || '';
+    const select = new URL(url).searchParams.get('$select') || '';
     if (!expand.split(',').includes('Author') || !expand.split(',').includes('Editor')) {
       return route.fulfill({
         status: 400,
         json: { 'odata.error': { message: { value: 'Author must be included in $expand.' } } },
       });
+    }
+    // SPO's other half of the same rule, and the one the classic drilldown
+    // used to trip: expanding a User field without naming its target in
+    // $select is a 400, whatever $expand says.
+    for (const lookup of ['Author', 'Editor']) {
+      if (!select.split(',').includes(`${lookup}/Title`)) {
+        return route.fulfill({
+          status: 400,
+          json: { 'odata.error': { message: { value: `The query to field '${lookup}' is not valid.`
+            + ` The $select query string must specify the target fields and the $expand query`
+            + ` string must contains ${lookup}.` } } },
+        });
+      }
     }
     return route.fulfill({ json: {
       Id: 7,
@@ -1874,6 +2012,84 @@ await check('live: page detail expands Author and Editor lookup fields', async (
   return expand.split(',').includes('Author') && expand.split(',').includes('Editor')
     && gridUrl.includes('PromotedState')
     && pageDetailUrl.includes('CanvasContent1');
+});
+
+await check('live: a library that rejects the people projection still opens the page', async () => {
+  // The graceful path end to end: a schema that 400s the wanted shape must
+  // not cost the operator the page. The drilldown steps down a rung, renders
+  // the content, and says what it could not read — quietly, in the info
+  // register, not as an error over readable content.
+  const shapes = [];
+  await live.route(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/, (route) => {
+    const url = route.request().url();
+    const select = new URL(url).searchParams.get('$select') || '';
+    shapes.push(select);
+    if (select.includes('Author/Title')) {
+      return route.fulfill({
+        status: 400,
+        json: { 'odata.error': { message: { value: "The field or property 'Author' does not exist." } } },
+      });
+    }
+    // Rung 1 ('*'): the whole item, people fields left as raw ids.
+    return route.fulfill({ json: {
+      Id: 7,
+      Title: 'Live page',
+      FileLeafRef: 'Live.aspx',
+      FileRef: '/SitePages/Live.aspx',
+      FileDirRef: '/SitePages',
+      AuthorId: 11,
+      EditorId: 12,
+      CanvasContent1: JSON.stringify([{
+        controlType: 4,
+        position: { zoneIndex: 1, sectionIndex: 1, controlIndex: 1, sectionFactor: 12 },
+        innerHTML: '<p>Live page body</p>',
+      }]),
+    } });
+  });
+  // A fresh load: the drilldown caches the item per library and page.
+  await live.reload();
+  await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
+  await live.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' })
+    .locator('td').first().click();
+  // The page reads, despite the rejection.
+  await live.waitForSelector('.wb-view-pages .wb-text-rendered', { hasText: 'Live page body' });
+  const chip = live.locator('.wb-view-pages .wb-detail-head .wb-reduced-chip');
+  const said = await chip.getAttribute('title');
+  const quiet = await chip.evaluate((n) => n.classList.contains('wb-info-chip'));
+  const noError = await live.locator('.wb-view-pages .wb-error').count();
+  await live.locator('.wb-view-pages .wb-back').click();
+  await live.unroute(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/);
+  return shapes.length === 2 && shapes[1].startsWith('*')
+    && quiet && said.includes('author and editor names') && noError === 0;
+});
+
+await check('live: a subweb enumeration SharePoint refuses is stated, not alarmed about', async () => {
+  // The classic-site default: web/webs is denied to anyone without rights on
+  // the child webs. Nothing is broken and nothing can be retried — so the
+  // Site landing says so plainly instead of painting an error.
+  const websPattern = /localhost:\d+\/_api\/web\/webs/;
+  const denyWebs = (route) => route.fulfill({
+    status: 403,
+    json: { 'odata.error': { message: { value:
+      'Access denied. You do not have permission to perform this action or access this resource.' } } },
+  });
+  await live.route(websPattern, denyWebs);
+  await live.reload();
+  // The route is remembered across a reload, so come back to Site explicitly.
+  await live.locator('.wb-rail-btn', { hasText: 'Site' }).first().click();
+  await live.waitForSelector('.wb-home-subwebs .wb-grid-status:not([hidden])');
+  const note = live.locator('.wb-home-subwebs .wb-grid-status');
+  const [text, cls, title] = await Promise.all([
+    note.textContent(), note.getAttribute('class'), note.getAttribute('title'),
+  ]);
+  await live.unroute(websPattern, denyWebs);
+  // Hand the next check the view it expects to be switching away from.
+  await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
+  return cls.includes('wb-denied') && !cls.includes('wb-error')
+    && text.includes('permission') && text.includes('subwebs')
+    && (title || '').includes('Access denied');
 });
 
 await check('live: switching sites re-targets every /_api request', async () => {

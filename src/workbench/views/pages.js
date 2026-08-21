@@ -27,6 +27,7 @@ import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { odataPathLiteral } from '../../sp-odata.js';
 import { toNode } from '../../inspect/to-node.js';
+import { showFailure } from '../denied.js';
 import {
   libraryKindOf, libraryKindLabel, pageContentKindOf, pageContentKindLabel,
   classicWebParts, classicContentParts,
@@ -54,25 +55,87 @@ export function pageQueryPlan(fieldInternalNames, kind) {
   // PromotedState + CanvasContent1 together mark the modern Site Pages
   // feature, which also provisions the rest of DETAIL_SELECT.
   const modern = showPromoted && hasField('CanvasContent1');
+  const gridSelect = showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
   return {
     showPromoted,
-    gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
-    detailOptions: modern
-      ? { select: DETAIL_SELECT, expand: ['Author', 'Editor'] }
-      : { expand: ['Author', 'Editor'] },
+    gridSelect,
+    // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
+    // want; every rung below it gives something up to stay answerable.
+    gridShapes: [
+      { options: { select: gridSelect, expand: 'Editor' } },
+      // No lookup projection, so no expand to satisfy: the Editor column
+      // goes blank and everything else still lists.
+      {
+        options: { select: gridSelect.filter((f) => !f.includes('/')) },
+        lost: 'the Editor column',
+      },
+      // Nothing named at all. SPO returns the item's own fields, which is
+      // every column this grid reads except the expanded Editor.
+      { options: {}, lost: 'the Editor column' },
+    ],
+    detailShapes: [
+      {
+        options: modern
+          ? { select: DETAIL_SELECT, expand: DETAIL_EXPAND }
+          : { select: CLASSIC_DETAIL_SELECT, expand: DETAIL_EXPAND },
+      },
+      // '*' still carries every content field the drilldown reads
+      // (CanvasContent1, PublishingPageContent, WikiField); only the two
+      // expanded people fields are out of reach, leaving their raw ids.
+      { options: { select: ['*'] }, lost: 'the author and editor names' },
+      { options: {}, lost: 'the author and editor names' },
+    ],
   };
 }
 
+// SharePoint answers a query it cannot SHAPE with 400 — a field this library
+// does not have ("The field or property 'X' does not exist"), or an expand
+// whose target the select fails to name ("The query to field 'Author' is not
+// valid…"). None of that says the page is unreachable, so a rejected shape
+// steps down to a simpler one instead of dead-ending the view: better a grid
+// with a blank column, or a page without its author, than a red bar over
+// content the operator can plainly see exists.
+//
+// 400 only. A 403 (no rights), 404 (gone) or 429 (throttled) is about the
+// resource, not the query, and no rung of the ladder would fix it — those
+// stay loud, and stay fast.
+export async function queryLadder(shapes, attempt) {
+  let lastError;
+  for (const shape of shapes) {
+    try {
+      return { value: await attempt(shape.options), lost: shape.lost || '' };
+    } catch (err) {
+      if (err?.status !== 400) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+// $expand of a User field is only legal alongside a $select that NAMES the
+// expanded target field. Expanding Author/Editor with no $select at all 400s
+// on a classic library with "The query to field 'Author' is not valid. The
+// $select query string must specify the target fields and the $expand query
+// string must contains Author." (Modern Site Pages happened to escape it
+// only because DETAIL_SELECT already spells Author/Title out.) Both shapes
+// therefore ship their own select; the grid query above pairs
+// Editor/Title with $expand=Editor for the same reason.
+const DETAIL_EXPAND = ['Author', 'Editor'];
+
 // Modern-only: every field here exists on a modern Site Pages item and
-// nowhere else. Other libraries are fetched WITHOUT a $select instead —
-// asking for a field a publishing/wiki schema lacks is a 400, and the field
-// set varies per site, so taking the whole item is both safer and the only
-// way to reach PublishingPageContent/WikiField without probing.
+// nowhere else.
 const DETAIL_SELECT = [
   'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef', 'Description',
   'BannerImageUrl', 'PromotedState', 'Created', 'Modified',
   'Author/Title', 'Editor/Title', 'CanvasContent1', 'LayoutWebpartsContent',
 ];
+
+// Every other library: the field set varies per site, and asking for a field
+// a publishing/wiki schema lacks is a 400, so the whole item is taken with
+// '*' — the only way to reach PublishingPageContent/WikiField without
+// probing — plus the two expand projections. Same '*'-with-expand shape the
+// Items tab pays for in lists.js.
+const CLASSIC_DETAIL_SELECT = ['*', 'Author/Title', 'Editor/Title'];
 
 const FIELD_SELECT = [
   'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
@@ -148,6 +211,18 @@ const encodedServerPath = (path) => String(path || '').split('/').map((segment) 
 }).join('/');
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
+
+// What a degraded query cost, said quietly. This is the info register, not
+// the status one (design/INFO-CHIP.md): nothing here is a state to act on —
+// it classifies what the view is able to show — so it composes .wb-info-chip
+// like the library-kind and page-kind chips, carries a phrase in sentence
+// case, and puts the sentence on the tooltip.
+function reducedChip(lost, where) {
+  const chip = el('span', 'wb-info-chip wb-reduced-chip', 'some fields unavailable');
+  chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ''}, `
+    + `so ${lost} could not be read. Everything else on this page is complete.`;
+  return chip;
+}
 
 export function createPagesView({ client, navigate, updateRoute }) {
   const root = el('section', 'wb-view wb-view-pages');
@@ -345,14 +420,14 @@ export function createPagesView({ client, navigate, updateRoute }) {
       renderLibraryStrip();
       if (!grid) {
         const plan = await queryPlan(sitePages);
-        const query = {
-          path: guidPath(sitePages.listId, '/items'),
-          options: {
-            select: plan.gridSelect,
-            expand: 'Editor',
-            orderby: 'FileLeafRef',
-            top: 5000,
-          },
+        // Ordering and the cap are not part of what SPO can reject on schema
+        // grounds, so they ride on every rung.
+        const paging = { orderby: 'FileLeafRef', top: 5000 };
+        const query = { path: guidPath(sitePages.listId, '/items') };
+        const descriptor = {
+          ...query,
+          options: { ...plan.gridShapes[0].options, ...paging },
+          webUrl: client.webUrl(),
         };
         grid = createGrid({
           columns: [
@@ -395,17 +470,27 @@ export function createPagesView({ client, navigate, updateRoute }) {
             libId: sitePages.listId,
           }),
           emptyText: `No pages in ${sitePages.title}.`,
+          subject: `the pages in ${sitePages.title}`,
           filterPlaceholder: 'Filter pages…',
           toolbarExtras: strip,
           exportName: 'sp-pages',
-          descriptor: { ...query, webUrl: client.webUrl() },
+          // The same object the ladder rewrites below, on purpose: the
+          // "Copy as…" menu reads it at click time, so a script copied out of
+          // a degraded grid reproduces the query that actually worked rather
+          // than the one SharePoint rejected.
+          descriptor,
         });
         gridPane.append(grid.el);
         grid.setLoading('Loading pages…');
-        const { items, partial } = await client.getAll(query.path, query.options);
+        const { value, lost } = await queryLadder(plan.gridShapes, (options) => {
+          descriptor.options = { ...options, ...paging };
+          return client.getAll(query.path, descriptor.options);
+        });
+        const { items, partial } = value;
         // A switch during the request replaced `grid`; without this the old
         // library's rows land in the new library's table under the new chip.
         if (run !== loadRun) return;
+        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title), libraryLink);
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -417,11 +502,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       // next to the error. A resolved strip stays — it is still true.
       if (strip.querySelector('.wb-lib-wait')) strip.hidden = true;
       if (grid) grid.setError(err);
-      else {
-        masterStatus.textContent = err?.message || String(err);
-        masterStatus.classList.add('wb-error');
-        masterStatus.hidden = false;
-      }
+      else showFailure(masterStatus, err, 'this web’s pages');
     }
   }
 
@@ -440,17 +521,26 @@ export function createPagesView({ client, navigate, updateRoute }) {
 
   // ---- drilldown ----
 
-  function pageItem(listId, pageId, options) {
+  // Resolves to { item, lost } — `lost` naming what a stepped-down query gave
+  // up, '' when the wanted shape worked. The Metadata tab fetches its own
+  // copy with FieldValuesAsText, so a lost people field still has a readable
+  // value there; only this pane's header and the content export go without.
+  function pageItem(listId, pageId, shapes) {
     // Library-qualified: both libraries of a web start at item 1, and a
     // rejection arriving after a switch used to evict the other library's
     // entry by bare id.
     const key = `${listId}:${pageId}`;
+    const path = guidPath(listId, `/items(${pageId})`);
     if (!detailCache.has(key)) {
-      detailCache.set(key, client.get(guidPath(listId, `/items(${pageId})`), options)
-        .catch((err) => {
-          detailCache.delete(key);
-          throw err;
-        }));
+      detailCache.set(
+        key,
+        queryLadder(shapes, (options) => client.get(path, options))
+          .then(({ value, lost }) => ({ item: value, lost }))
+          .catch((err) => {
+            detailCache.delete(key);
+            throw err;
+          }),
+      );
     }
     return detailCache.get(key);
   }
@@ -670,8 +760,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       });
       wrap.append(form.el);
     })().catch((err) => {
-      status.textContent = err?.message || String(err);
-      status.classList.add('wb-error');
+      showFailure(status, err, 'this page’s metadata');
     });
     return wrap;
   }
@@ -706,16 +795,18 @@ export function createPagesView({ client, navigate, updateRoute }) {
 
     let sitePages;
     let item;
+    let lostFields = '';
     try {
       await pagesLibraries();
       sitePages = current;
       if (!sitePages) throw new Error('This web has no pages library.');
       const plan = await queryPlan(sitePages);
-      item = await pageItem(sitePages.listId, route.pageId, plan.detailOptions);
+      ({ item, lost: lostFields } = await pageItem(
+        sitePages.listId, route.pageId, plan.detailShapes,
+      ));
     } catch (err) {
       if (run !== detailRun) return;
-      status.textContent = err?.message || String(err);
-      status.classList.add('wb-error');
+      showFailure(status, err, 'this page');
       return;
     }
     if (run !== detailRun) return;
@@ -763,6 +854,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
         + 'Structure tab does not apply. Content Editor and Script Editor web-part '
         + 'content is merged into Extract.';
     headRow.append(kindChip);
+    // Sits beside the kind chip, same quiet register: the page is fully
+    // readable, one or two fields just aren't in it.
+    if (lostFields) headRow.append(reducedChip(lostFields, 'this page'));
 
     const actions = el('span', 'wb-detail-actions');
     const exportContent = el('button', 'btn btn-xs', 'Export content');

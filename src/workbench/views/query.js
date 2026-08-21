@@ -6,6 +6,7 @@
 // The last query per web is remembered in sessionStorage (same per-tab
 // convention as the route and site keys — invariant 6 covers localStorage).
 
+import { showFailure } from '../denied.js';
 import { createGrid } from '../grid.js?v=2';
 
 const QUERY_KEY = 'dcspad.workbench.query';
@@ -392,7 +393,7 @@ export function createQueryView({ client }) {
       onBuilderChange();
     } catch (err) {
       fieldsList.textContent = '';
-      fieldsList.append(el('div', 'wb-qb-loading wb-error', err?.message || String(err)));
+      fieldsList.append(showFailure(el('div', 'wb-qb-loading'), err, 'this list’s fields'));
     }
   }
 
@@ -454,6 +455,7 @@ export function createQueryView({ client }) {
         : [{ key: '__json', label: 'Result', value: (row) => JSON.stringify(row), mono: true }],
       rowKey: 'Id',
       emptyText: 'The query returned no rows.',
+      subject: 'what this query asked for',
       filterPlaceholder: 'Filter results…',
       exportName: 'sp-query',
       // Raw-mode strings that don't round-trip get no Copy-as menu — a
@@ -490,7 +492,7 @@ export function createQueryView({ client }) {
     } catch (err) {
       lists = [];
       results.textContent = '';
-      results.append(el('div', 'wb-grid-status wb-error', err?.message || String(err)));
+      results.append(showFailure(el('div', 'wb-grid-status'), err, 'the lists in this web'));
     }
     const saved = readSaved(webUrl);
     renderListPicker(saved?.listId || '');

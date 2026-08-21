@@ -63,6 +63,7 @@ export function createSecurityView({ client }) {
       ],
       onOpen: openMembers,
       emptyText: 'No site groups.',
+      subject: 'this web’s groups',
       filterPlaceholder: 'Filter groups…',
       exportName: 'sp-groups',
       descriptor: { ...groupsQuery, webUrl: client.webUrl() },
@@ -98,6 +99,7 @@ export function createSecurityView({ client }) {
           { key: 'PrincipalType', label: 'Type', format: principalTypeName },
         ],
         emptyText: 'No members.',
+        subject: 'the members of this web',
         filterPlaceholder: 'Filter members…',
         exportName: `members-${group.Id}`,
         descriptor: { ...membersQuery, webUrl: client.webUrl() },
@@ -179,6 +181,7 @@ export function createSecurityView({ client }) {
         },
       ],
       emptyText: 'No group members.',
+      subject: 'this group’s members',
       filterPlaceholder: 'Filter members…',
       exportName: 'sp-group-members',
     });
@@ -291,6 +294,7 @@ export function createSecurityView({ client }) {
       ],
       onOpen: openDecode,
       emptyText: 'No role definitions.',
+      subject: 'this web’s permission levels',
       filterPlaceholder: 'Filter roles…',
       exportName: 'sp-roledefinitions',
       descriptor: {
@@ -338,6 +342,7 @@ export function createSecurityView({ client }) {
         { key: 'Roles', label: 'Roles', value: roleNames },
       ],
       emptyText: 'No role assignments.',
+      subject: 'this web’s permission assignments',
       filterPlaceholder: 'Filter assignments…',
       exportName: 'sp-roleassignments',
       descriptor: {

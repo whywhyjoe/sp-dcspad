@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "92" : "dev";
-var injectedRevision = true ? "4de7de02" : "";
+var injectedBuild = true ? "140" : "dev";
+var injectedRevision = true ? "6fee5d3c" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1229,6 +1229,24 @@ function createShell({ mount, deps, views }) {
   return { navigate, updateRoute, restore, reset, getRoute: () => currentRoute };
 }
 
+// ../src/workbench/denied.js
+function isDeniedRead(err) {
+  return err?.code === "permission" || err?.status === 401 || err?.status === 403;
+}
+function deniedNote(subject = "") {
+  return subject ? `Your account doesn\u2019t have permission to see ${subject} here.` : "Your account doesn\u2019t have permission to see this.";
+}
+function showFailure(node, err, subject = "") {
+  const denied = isDeniedRead(err);
+  node.textContent = denied ? deniedNote(subject) : err?.message || String(err);
+  node.classList.remove("wb-error", "wb-denied");
+  node.classList.add(denied ? "wb-denied" : "wb-error");
+  if (denied && err?.message) node.title = err.message;
+  else node.removeAttribute("title");
+  node.hidden = false;
+  return node;
+}
+
 // ../src/io.js?v=2
 var MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 function downloadText(filename, text, type = "application/json") {
@@ -1503,7 +1521,8 @@ function createGrid({
   descriptor = null,
   toolbarExtras = null,
   exportExtras = [],
-  selectable = false
+  selectable = false,
+  subject = ""
 } = {}) {
   let rows = [];
   let visible = [];
@@ -1806,10 +1825,12 @@ function createGrid({
       status.className = "wb-grid-status";
       status.hidden = false;
     },
+    // A denial is reported, not alarmed about: neutral register, plain
+    // sentence, SharePoint's own words on the tooltip. Everything else stays
+    // loud. See denied.js for why.
     setError(err) {
-      status.textContent = err?.message || String(err);
-      status.className = "wb-grid-status wb-error";
-      status.hidden = false;
+      status.className = "wb-grid-status";
+      showFailure(status, err, subject);
     },
     getVisibleRows: () => [...visible],
     getExportRows: () => [...exportRows()],
@@ -2795,6 +2816,7 @@ function createListsView({ client: client2, navigate }) {
     ],
     onOpen: (row) => navigate({ view: "lists", listId: row.Id, listTitle: row.Title }),
     emptyText: "No lists in this web.",
+    subject: "the lists in this web",
     filterPlaceholder: "Filter lists\u2026",
     exportName: "sp-lists",
     descriptor: {
@@ -3050,6 +3072,7 @@ function createListsView({ client: client2, navigate }) {
         columns,
         rowKey: "ID",
         emptyText: "No items in this list.",
+        subject: "this list\u2019s items",
         filterPlaceholder: "Filter items\u2026",
         exportName: `items-${fileStem(listTitle)}`,
         descriptor: query ? { ...query, webUrl: client2.webUrl() } : null,
@@ -3219,8 +3242,7 @@ function createListsView({ client: client2, navigate }) {
           inspector.append(enhance(node) ?? renderValue(node));
           wrap.append(inspector);
         }).catch((err) => {
-          status.textContent = err?.message || String(err);
-          status.classList.add("wb-error");
+          showFailure(status, err, "this list\u2019s raw entity");
         });
         return wrap;
       }
@@ -3858,6 +3880,7 @@ function createSecurityView({ client: client2 }) {
       ],
       onOpen: openMembers,
       emptyText: "No site groups.",
+      subject: "this web\u2019s groups",
       filterPlaceholder: "Filter groups\u2026",
       exportName: "sp-groups",
       descriptor: { ...groupsQuery, webUrl: client2.webUrl() }
@@ -3887,6 +3910,7 @@ function createSecurityView({ client: client2 }) {
           { key: "PrincipalType", label: "Type", format: principalTypeName }
         ],
         emptyText: "No members.",
+        subject: "the members of this web",
         filterPlaceholder: "Filter members\u2026",
         exportName: `members-${group.Id}`,
         descriptor: { ...membersQuery, webUrl: client2.webUrl() }
@@ -3963,6 +3987,7 @@ function createSecurityView({ client: client2 }) {
         }
       ],
       emptyText: "No group members.",
+      subject: "this group\u2019s members",
       filterPlaceholder: "Filter members\u2026",
       exportName: "sp-group-members"
     });
@@ -4061,6 +4086,7 @@ function createSecurityView({ client: client2 }) {
       ],
       onOpen: openDecode,
       emptyText: "No role definitions.",
+      subject: "this web\u2019s permission levels",
       filterPlaceholder: "Filter roles\u2026",
       exportName: "sp-roledefinitions",
       descriptor: {
@@ -4100,6 +4126,7 @@ function createSecurityView({ client: client2 }) {
         { key: "Roles", label: "Roles", value: roleNames }
       ],
       emptyText: "No role assignments.",
+      subject: "this web\u2019s permission assignments",
       filterPlaceholder: "Filter assignments\u2026",
       exportName: "sp-roleassignments",
       descriptor: {
@@ -4258,6 +4285,7 @@ function createSiteView({ client: client2 }) {
         { key: "Value", label: "Value", copyable: true }
       ],
       emptyText: "Nothing returned.",
+      subject: "these properties",
       filterPlaceholder: "Filter properties\u2026",
       exportName: query.exportName,
       descriptor: { path: query.path, options: query.options, webUrl: client2.webUrl() }
@@ -4278,6 +4306,7 @@ function createSiteView({ client: client2 }) {
           { key: "Value", label: "Value", copyable: true }
         ],
         emptyText: "Nothing returned.",
+        subject: "these properties",
         filterPlaceholder: "Filter\u2026",
         exportName: extra.exportName
       });
@@ -4298,6 +4327,7 @@ function createSiteView({ client: client2 }) {
         { key: "DefinitionId", label: "Definition id", mono: true, copyable: true }
       ],
       emptyText: "No activated features.",
+      subject: "the features on this web",
       filterPlaceholder: "Filter features\u2026",
       exportName: "sp-features",
       descriptor: {
@@ -4337,6 +4367,7 @@ function createSiteView({ client: client2 }) {
         { key: "Id", label: "Id", mono: true, copyable: true }
       ],
       emptyText: "No subwebs.",
+      subject: "subwebs",
       filterPlaceholder: "Filter subwebs\u2026",
       exportName: "sp-subwebs",
       descriptor: { ...query, webUrl: client2.webUrl() }
@@ -4356,6 +4387,7 @@ function createSiteView({ client: client2 }) {
         { key: "Value", label: "Value", copyable: true }
       ],
       emptyText: "Empty property bag.",
+      subject: "this web\u2019s property bag",
       filterPlaceholder: "Filter keys\u2026",
       exportName: "sp-propertybag",
       descriptor: { path: "web/allproperties", options: {}, webUrl: client2.webUrl() }
@@ -4446,6 +4478,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
   const subwebsBox = el7("div", "wb-home-subwebs");
   root.append(head, cards, subwebsBox);
   let loadedForWeb = "";
+  const failureRow = (err, subject) => showFailure(el7("div", "wb-grid-status"), err, subject);
   function factRow(label, value, { copyFull = "" } = {}) {
     const row = el7("div", "wb-home-fact");
     row.append(el7("span", "wb-home-fact-label", label));
@@ -4488,7 +4521,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
         factRow("Last modified", fmtDate2(web.LastItemModifiedDate))
       );
     } catch (err) {
-      webCard.append(el7("div", "wb-grid-status wb-error", err?.message || String(err)));
+      webCard.append(failureRow(err, "this web\u2019s details"));
     }
     try {
       const user2 = await client2.get("web/currentuser", {
@@ -4508,7 +4541,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
       ));
       userCard.append(roleRow);
     } catch (err) {
-      userCard.append(el7("div", "wb-grid-status wb-error", err?.message || String(err)));
+      userCard.append(failureRow(err, "your own account"));
     }
     const grid = createGrid({
       columns: [
@@ -4534,6 +4567,9 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
         }
       ],
       emptyText: "No subwebs under this web.",
+      // Classic webs routinely refuse web/webs to anyone without rights on
+      // the child webs — the one denial this landing page hits by default.
+      subject: "subwebs",
       filterPlaceholder: "Filter subwebs\u2026",
       exportName: "sp-subwebs",
       descriptor: {
@@ -4936,7 +4972,7 @@ function createQueryView({ client: client2 }) {
       onBuilderChange();
     } catch (err) {
       fieldsList.textContent = "";
-      fieldsList.append(el9("div", "wb-qb-loading wb-error", err?.message || String(err)));
+      fieldsList.append(showFailure(el9("div", "wb-qb-loading"), err, "this list\u2019s fields"));
     }
   }
   function renderListPicker(savedListId = "") {
@@ -4988,6 +5024,7 @@ function createQueryView({ client: client2 }) {
       columns: Array.isArray(select) && select.length ? columnsForSelect(select) : [{ key: "__json", label: "Result", value: (row) => JSON.stringify(row), mono: true }],
       rowKey: "Id",
       emptyText: "The query returned no rows.",
+      subject: "what this query asked for",
       filterPlaceholder: "Filter results\u2026",
       exportName: "sp-query",
       // Raw-mode strings that don't round-trip get no Copy-as menu — a
@@ -5019,7 +5056,7 @@ function createQueryView({ client: client2 }) {
     } catch (err) {
       lists = [];
       results.textContent = "";
-      results.append(el9("div", "wb-grid-status wb-error", err?.message || String(err)));
+      results.append(showFailure(el9("div", "wb-grid-status"), err, "the lists in this web"));
     }
     const saved = readSaved(webUrl);
     renderListPicker(saved?.listId || "");
@@ -5878,12 +5915,49 @@ function pageQueryPlan(fieldInternalNames, kind) {
   const hasField = (f) => names ? names.has(f) : kind === "modern";
   const showPromoted = hasField("PromotedState");
   const modern = showPromoted && hasField("CanvasContent1");
+  const gridSelect = showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
   return {
     showPromoted,
-    gridSelect: showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE,
-    detailOptions: modern ? { select: DETAIL_SELECT, expand: ["Author", "Editor"] } : { expand: ["Author", "Editor"] }
+    gridSelect,
+    // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
+    // want; every rung below it gives something up to stay answerable.
+    gridShapes: [
+      { options: { select: gridSelect, expand: "Editor" } },
+      // No lookup projection, so no expand to satisfy: the Editor column
+      // goes blank and everything else still lists.
+      {
+        options: { select: gridSelect.filter((f) => !f.includes("/")) },
+        lost: "the Editor column"
+      },
+      // Nothing named at all. SPO returns the item's own fields, which is
+      // every column this grid reads except the expanded Editor.
+      { options: {}, lost: "the Editor column" }
+    ],
+    detailShapes: [
+      {
+        options: modern ? { select: DETAIL_SELECT, expand: DETAIL_EXPAND } : { select: CLASSIC_DETAIL_SELECT, expand: DETAIL_EXPAND }
+      },
+      // '*' still carries every content field the drilldown reads
+      // (CanvasContent1, PublishingPageContent, WikiField); only the two
+      // expanded people fields are out of reach, leaving their raw ids.
+      { options: { select: ["*"] }, lost: "the author and editor names" },
+      { options: {}, lost: "the author and editor names" }
+    ]
   };
 }
+async function queryLadder(shapes, attempt) {
+  let lastError;
+  for (const shape of shapes) {
+    try {
+      return { value: await attempt(shape.options), lost: shape.lost || "" };
+    } catch (err) {
+      if (err?.status !== 400) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+var DETAIL_EXPAND = ["Author", "Editor"];
 var DETAIL_SELECT = [
   "Id",
   "Title",
@@ -5900,6 +5974,7 @@ var DETAIL_SELECT = [
   "CanvasContent1",
   "LayoutWebpartsContent"
 ];
+var CLASSIC_DETAIL_SELECT = ["*", "Author/Title", "Editor/Title"];
 var FIELD_SELECT3 = [
   "Id",
   "Title",
@@ -5952,6 +6027,11 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
   }
 }).join("/");
 var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+function reducedChip(lost, where) {
+  const chip = el11("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
+  chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read. Everything else on this page is complete.`;
+  return chip;
+}
 function createPagesView({ client: client2, navigate, updateRoute }) {
   const root = el11("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
@@ -6099,14 +6179,12 @@ ${current.rootPath}` : "");
       renderLibraryStrip();
       if (!grid) {
         const plan = await queryPlan(sitePages);
-        const query = {
-          path: guidPath2(sitePages.listId, "/items"),
-          options: {
-            select: plan.gridSelect,
-            expand: "Editor",
-            orderby: "FileLeafRef",
-            top: 5e3
-          }
+        const paging = { orderby: "FileLeafRef", top: 5e3 };
+        const query = { path: guidPath2(sitePages.listId, "/items") };
+        const descriptor = {
+          ...query,
+          options: { ...plan.gridShapes[0].options, ...paging },
+          webUrl: client2.webUrl()
         };
         grid = createGrid({
           columns: [
@@ -6147,15 +6225,25 @@ ${current.rootPath}` : "");
             libId: sitePages.listId
           }),
           emptyText: `No pages in ${sitePages.title}.`,
+          subject: `the pages in ${sitePages.title}`,
           filterPlaceholder: "Filter pages\u2026",
           toolbarExtras: strip,
           exportName: "sp-pages",
-          descriptor: { ...query, webUrl: client2.webUrl() }
+          // The same object the ladder rewrites below, on purpose: the
+          // "Copy as…" menu reads it at click time, so a script copied out of
+          // a degraded grid reproduces the query that actually worked rather
+          // than the one SharePoint rejected.
+          descriptor
         });
         gridPane.append(grid.el);
         grid.setLoading("Loading pages\u2026");
-        const { items, partial } = await client2.getAll(query.path, query.options);
+        const { value, lost } = await queryLadder(plan.gridShapes, (options) => {
+          descriptor.options = { ...options, ...paging };
+          return client2.getAll(query.path, descriptor.options);
+        });
+        const { items, partial } = value;
         if (run !== loadRun) return;
+        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title), libraryLink);
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -6163,11 +6251,7 @@ ${current.rootPath}` : "");
       if (run !== loadRun) return;
       if (strip.querySelector(".wb-lib-wait")) strip.hidden = true;
       if (grid) grid.setError(err);
-      else {
-        masterStatus.textContent = err?.message || String(err);
-        masterStatus.classList.add("wb-error");
-        masterStatus.hidden = false;
-      }
+      else showFailure(masterStatus, err, "this web\u2019s pages");
     }
   }
   let planPromise = null;
@@ -6177,13 +6261,17 @@ ${current.rootPath}` : "");
     }
     return planPromise;
   }
-  function pageItem(listId, pageId, options) {
+  function pageItem(listId, pageId, shapes) {
     const key2 = `${listId}:${pageId}`;
+    const path = guidPath2(listId, `/items(${pageId})`);
     if (!detailCache.has(key2)) {
-      detailCache.set(key2, client2.get(guidPath2(listId, `/items(${pageId})`), options).catch((err) => {
-        detailCache.delete(key2);
-        throw err;
-      }));
+      detailCache.set(
+        key2,
+        queryLadder(shapes, (options) => client2.get(path, options)).then(({ value, lost }) => ({ item: value, lost })).catch((err) => {
+          detailCache.delete(key2);
+          throw err;
+        })
+      );
     }
     return detailCache.get(key2);
   }
@@ -6378,8 +6466,7 @@ ${p.html}`).join("\n\n")
       });
       wrap.append(form.el);
     })().catch((err) => {
-      status.textContent = err?.message || String(err);
-      status.classList.add("wb-error");
+      showFailure(status, err, "this page\u2019s metadata");
     });
     return wrap;
   }
@@ -6409,16 +6496,20 @@ ${p.html}`).join("\n\n")
     detailPane.append(status);
     let sitePages;
     let item2;
+    let lostFields = "";
     try {
       await pagesLibraries();
       sitePages = current;
       if (!sitePages) throw new Error("This web has no pages library.");
       const plan = await queryPlan(sitePages);
-      item2 = await pageItem(sitePages.listId, route.pageId, plan.detailOptions);
+      ({ item: item2, lost: lostFields } = await pageItem(
+        sitePages.listId,
+        route.pageId,
+        plan.detailShapes
+      ));
     } catch (err) {
       if (run !== detailRun) return;
-      status.textContent = err?.message || String(err);
-      status.classList.add("wb-error");
+      showFailure(status, err, "this page");
       return;
     }
     if (run !== detailRun) return;
@@ -6456,6 +6547,7 @@ ${fullUrl}`;
     const kindChip = el11("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
+    if (lostFields) headRow.append(reducedChip(lostFields, "this page"));
     const actions = el11("span", "wb-detail-actions");
     const exportContent = el11("button", "btn btn-xs", "Export content");
     exportContent.type = "button";
@@ -7033,6 +7125,7 @@ function createBrowserView({ client: client2, navigate }) {
         else openMetadata(row);
       },
       emptyText: "This folder is empty.",
+      subject: "this folder",
       filterPlaceholder: "Filter files\u2026",
       exportName: "sp-files",
       toolbarExtras: bar
@@ -7348,8 +7441,7 @@ function createBrowserView({ client: client2, navigate }) {
       });
       body.append(form.el);
     } catch (err) {
-      status.textContent = err?.message || String(err);
-      status.classList.add("wb-error");
+      showFailure(status, err, "this file\u2019s metadata");
     }
   }
   async function load2(route) {
