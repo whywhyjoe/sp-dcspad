@@ -4,6 +4,7 @@
 
 import { createGrid, encodeSpPath } from '../grid.js?v=2';
 import { copyText } from '../export.js';
+import { showFailure } from '../denied.js';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -34,6 +35,11 @@ export function createSiteHomeView({ client, navigate, inspectSite }) {
   root.append(head, cards, subwebsBox);
 
   let loadedForWeb = '';
+
+  // Card-sized version of grid.setError: the same two registers, so a card
+  // and a grid never disagree about what a denial means.
+  const failureRow = (err, subject) =>
+    showFailure(el('div', 'wb-grid-status'), err, subject);
 
   function factRow(label, value, { copyFull = '' } = {}) {
     const row = el('div', 'wb-home-fact');
@@ -74,7 +80,7 @@ export function createSiteHomeView({ client, navigate, inspectSite }) {
         factRow('Last modified', fmtDate(web.LastItemModifiedDate)),
       );
     } catch (err) {
-      webCard.append(el('div', 'wb-grid-status wb-error', err?.message || String(err)));
+      webCard.append(failureRow(err, 'this web’s details'));
     }
 
     try {
@@ -93,7 +99,7 @@ export function createSiteHomeView({ client, navigate, inspectSite }) {
         user.IsSiteAdmin ? 'Site admin' : 'Site user'));
       userCard.append(roleRow);
     } catch (err) {
-      userCard.append(el('div', 'wb-grid-status wb-error', err?.message || String(err)));
+      userCard.append(failureRow(err, 'your own account'));
     }
 
     // Subwebs with one-click inspection.
@@ -121,6 +127,9 @@ export function createSiteHomeView({ client, navigate, inspectSite }) {
         },
       ],
       emptyText: 'No subwebs under this web.',
+      // Classic webs routinely refuse web/webs to anyone without rights on
+      // the child webs — the one denial this landing page hits by default.
+      subject: 'subwebs',
       filterPlaceholder: 'Filter subwebs…',
       exportName: 'sp-subwebs',
       descriptor: {

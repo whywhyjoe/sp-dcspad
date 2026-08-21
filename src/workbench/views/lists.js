@@ -2,6 +2,7 @@
 // thing the SP UI won't show), with drill-down into fields, views, content
 // types, and the raw entity rendered through the SP-aware inspector.
 
+import { showFailure } from '../denied.js';
 import { createGrid, encodeSpPath, bindNewTab } from '../grid.js?v=2';
 import { copyText, downloadMarkdown } from '../export.js';
 import {
@@ -210,6 +211,7 @@ export function createListsView({ client, navigate }) {
     ],
     onOpen: (row) => navigate({ view: 'lists', listId: row.Id, listTitle: row.Title }),
     emptyText: 'No lists in this web.',
+    subject: 'the lists in this web',
     filterPlaceholder: 'Filter lists…',
     exportName: 'sp-lists',
     descriptor: {
@@ -531,6 +533,7 @@ export function createListsView({ client, navigate }) {
         columns,
         rowKey: 'ID',
         emptyText: 'No items in this list.',
+        subject: 'this list’s items',
         filterPlaceholder: 'Filter items…',
         exportName: `items-${fileStem(listTitle)}`,
         descriptor: query ? { ...query, webUrl: client.webUrl() } : null,
@@ -710,8 +713,7 @@ export function createListsView({ client, navigate }) {
             wrap.append(inspector);
           })
           .catch((err) => {
-            status.textContent = err?.message || String(err);
-            status.classList.add('wb-error');
+            showFailure(status, err, 'this list’s raw entity');
           });
         return wrap;
       }

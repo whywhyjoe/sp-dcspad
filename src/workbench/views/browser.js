@@ -5,6 +5,7 @@
 // uploads any file type as binary, and reads/edits the full metadata column
 // set through the shared field-editor + sp-write plumbing.
 
+import { showFailure } from '../denied.js';
 import { createGrid } from '../grid.js?v=2';
 import { copyText } from '../export.js';
 import { odataPathLiteral } from '../../sp-odata.js';
@@ -316,6 +317,7 @@ export function createBrowserView({ client, navigate }) {
         else openMetadata(row);
       },
       emptyText: 'This folder is empty.',
+      subject: 'this folder',
       filterPlaceholder: 'Filter files…',
       exportName: 'sp-files',
       toolbarExtras: bar,
@@ -654,8 +656,7 @@ export function createBrowserView({ client, navigate }) {
       });
       body.append(form.el);
     } catch (err) {
-      status.textContent = err?.message || String(err);
-      status.classList.add('wb-error');
+      showFailure(status, err, 'this file’s metadata');
     }
   }
 

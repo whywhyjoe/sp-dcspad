@@ -1266,6 +1266,55 @@ await check('classic: a rejected query shape steps down instead of failing', asy
       && exhausted?.status === 400;
   }));
 
+// The other half of failing gracefully: some reads are not ours to make.
+// A denial is reported in the neutral register with a plain sentence; a
+// genuine failure stays loud. Both keep SharePoint's own words reachable.
+await check('unit: a denied read is a fact, a broken one is an error', async () =>
+  classicPage.evaluate(async () => {
+    const { isDeniedRead, showFailure } = await import('/src/workbench/denied.js');
+    const classified = [
+      isDeniedRead({ status: 403 }),
+      isDeniedRead({ status: 401 }),
+      isDeniedRead({ code: 'permission' }),        // never went through requireOk
+      !isDeniedRead({ status: 400 }),              // a query shape — the ladder's job
+      !isDeniedRead({ status: 500 }),
+      !isDeniedRead(new Error('network')),
+    ].every(Boolean);
+
+    const denied = showFailure(
+      Object.assign(document.createElement('div'), { className: 'wb-grid-status' }),
+      { status: 403, message: 'Access denied. You do not have permission…' },
+      'subwebs',
+    );
+    const broken = showFailure(
+      Object.assign(document.createElement('div'), { className: 'wb-grid-status' }),
+      { status: 400, message: "The field or property 'X' does not exist." },
+      'subwebs',
+    );
+    // Reused node: the register must swap, not accumulate.
+    showFailure(denied, { status: 400, message: 'Bad query.' }, 'subwebs');
+
+    return classified
+      && !denied.classList.contains('wb-denied') && denied.classList.contains('wb-error')
+      && denied.textContent === 'Bad query.' && !denied.hasAttribute('title')
+      && broken.classList.contains('wb-error') && broken.textContent.includes("'X'")
+      // The layout class each node was born with survives either register.
+      && broken.classList.contains('wb-grid-status');
+  }));
+
+await check('unit: a denial names what it could not show and keeps the server’s words', async () =>
+  classicPage.evaluate(async () => {
+    const { showFailure } = await import('/src/workbench/denied.js');
+    const node = showFailure(document.createElement('div'),
+      { status: 403, message: 'Access denied. You do not have permission…' }, 'subwebs');
+    const anonymous = showFailure(document.createElement('div'), { status: 403 }, '');
+    return node.classList.contains('wb-denied')
+      && node.textContent.includes('permission') && node.textContent.includes('subwebs')
+      && node.title.startsWith('Access denied')      // SharePoint's own sentence, one hover away
+      && !node.textContent.includes('Access denied') // …but not the headline
+      && anonymous.classList.contains('wb-denied') && !anonymous.hasAttribute('title');
+  }));
+
 await check('classic: wiki bodies interleave embedded web parts in document order', async () =>
   classicPage.evaluate(async () => {
     const { classicContentParts } = await import('/src/workbench/classic-page.js');
@@ -2013,6 +2062,34 @@ await check('live: a library that rejects the people projection still opens the 
   await live.unroute(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/);
   return shapes.length === 2 && shapes[1].startsWith('*')
     && quiet && said.includes('author and editor names') && noError === 0;
+});
+
+await check('live: a subweb enumeration SharePoint refuses is stated, not alarmed about', async () => {
+  // The classic-site default: web/webs is denied to anyone without rights on
+  // the child webs. Nothing is broken and nothing can be retried — so the
+  // Site landing says so plainly instead of painting an error.
+  const websPattern = /localhost:\d+\/_api\/web\/webs/;
+  const denyWebs = (route) => route.fulfill({
+    status: 403,
+    json: { 'odata.error': { message: { value:
+      'Access denied. You do not have permission to perform this action or access this resource.' } } },
+  });
+  await live.route(websPattern, denyWebs);
+  await live.reload();
+  // The route is remembered across a reload, so come back to Site explicitly.
+  await live.locator('.wb-rail-btn', { hasText: 'Site' }).first().click();
+  await live.waitForSelector('.wb-home-subwebs .wb-grid-status:not([hidden])');
+  const note = live.locator('.wb-home-subwebs .wb-grid-status');
+  const [text, cls, title] = await Promise.all([
+    note.textContent(), note.getAttribute('class'), note.getAttribute('title'),
+  ]);
+  await live.unroute(websPattern, denyWebs);
+  // Hand the next check the view it expects to be switching away from.
+  await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
+  return cls.includes('wb-denied') && !cls.includes('wb-error')
+    && text.includes('permission') && text.includes('subwebs')
+    && (title || '').includes('Access denied');
 });
 
 await check('live: switching sites re-targets every /_api request', async () => {

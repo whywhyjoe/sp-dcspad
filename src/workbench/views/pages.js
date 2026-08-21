@@ -27,6 +27,7 @@ import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { odataPathLiteral } from '../../sp-odata.js';
 import { toNode } from '../../inspect/to-node.js';
+import { showFailure } from '../denied.js';
 import {
   libraryKindOf, libraryKindLabel, pageContentKindOf, pageContentKindLabel,
   classicWebParts, classicContentParts,
@@ -469,6 +470,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
             libId: sitePages.listId,
           }),
           emptyText: `No pages in ${sitePages.title}.`,
+          subject: `the pages in ${sitePages.title}`,
           filterPlaceholder: 'Filter pages…',
           toolbarExtras: strip,
           exportName: 'sp-pages',
@@ -500,11 +502,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       // next to the error. A resolved strip stays — it is still true.
       if (strip.querySelector('.wb-lib-wait')) strip.hidden = true;
       if (grid) grid.setError(err);
-      else {
-        masterStatus.textContent = err?.message || String(err);
-        masterStatus.classList.add('wb-error');
-        masterStatus.hidden = false;
-      }
+      else showFailure(masterStatus, err, 'this web’s pages');
     }
   }
 
@@ -762,8 +760,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       });
       wrap.append(form.el);
     })().catch((err) => {
-      status.textContent = err?.message || String(err);
-      status.classList.add('wb-error');
+      showFailure(status, err, 'this page’s metadata');
     });
     return wrap;
   }
@@ -809,8 +806,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       ));
     } catch (err) {
       if (run !== detailRun) return;
-      status.textContent = err?.message || String(err);
-      status.classList.add('wb-error');
+      showFailure(status, err, 'this page');
       return;
     }
     if (run !== detailRun) return;
