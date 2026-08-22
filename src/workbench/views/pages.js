@@ -33,9 +33,21 @@ import {
   classicWebParts, classicContentParts,
 } from '../classic-page.js';
 
-// Fields every pages library has, whatever its template. PromotedState is
-// modern-only — selecting it against a library that lacks it 400s with
-// "The field or property 'PromotedState' does not exist".
+// PromotedState is modern-only — selecting it against a library that lacks it
+// 400s with "The field or property 'PromotedState' does not exist".
+//
+// Title is NOT universal either, which cost a live degrade to learn. The
+// PointPublishing hub/community webs and a Project Web App site all carry a
+// BaseTemplate 119 "Site Pages" library with no Title field at all, so
+// `$select=Id,Title` 400s on them exactly like PromotedState does. Every rung
+// that named Title was refused, the ladder fell to the bare bottom rung, and
+// the view reported the loss as "the Editor column" — true, but only because
+// the bottom rung drops the expand; Editor itself was never the problem. So
+// Title is probed like PromotedState rather than assumed.
+//
+// Id stays unconditional: it is an intrinsic OData property, not a list
+// field, and does NOT appear in /fields — probing for it would drop the one
+// column the drilldown routes on.
 const PAGE_SELECT_BASE = [
   'Id', 'Title', 'FileLeafRef', 'FileRef', 'FileDirRef',
   'Modified', 'UniqueId', 'Editor/Title',
@@ -52,12 +64,17 @@ export function pageQueryPlan(fieldInternalNames, kind) {
   const names = fieldInternalNames ? new Set(fieldInternalNames) : null;
   const hasField = (f) => (names ? names.has(f) : kind === 'modern');
   const showPromoted = hasField('PromotedState');
+  // Unprobed (the fields request itself failed) keeps Title: it is present on
+  // most libraries, and the ladder still covers the ones it is not.
+  const showTitle = names ? names.has('Title') : true;
   // PromotedState + CanvasContent1 together mark the modern Site Pages
   // feature, which also provisions the rest of DETAIL_SELECT.
   const modern = showPromoted && hasField('CanvasContent1');
-  const gridSelect = showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
+  const gridSelect = (showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE)
+    .filter((f) => f !== 'Title' || showTitle);
   return {
     showPromoted,
+    showTitle,
     gridSelect,
     // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
     // want; every rung below it gives something up to stay answerable.
@@ -99,17 +116,41 @@ export function pageQueryPlan(fieldInternalNames, kind) {
 // 400 only. A 403 (no rights), 404 (gone) or 429 (throttled) is about the
 // resource, not the query, and no rung of the ladder would fix it — those
 // stay loud, and stay fast.
-export async function queryLadder(shapes, attempt) {
-  let lastError;
-  for (const shape of shapes) {
+//
+// Two things the ladder owes the caller, because a degrade that explains
+// nothing is indistinguishable from a first-party bug:
+//
+//   `reason`  SharePoint's sentence from the rung that was REJECTED, not the
+//             one that answered. When the step-down was caused by a typo in
+//             our own select, "The field or property 'Titel' does not exist"
+//             is the whole diagnosis — and it is the sentence the chip shows.
+//   `index`   which rung answered, so a caller looping over many items can
+//             start there instead of re-earning the same 400 per item. A
+//             shape rejection is a property of the LIST's schema; paying for
+//             it once per page turned one bad shape into one failed request
+//             per click.
+//
+// If every rung fails, the FIRST error is thrown, not the last: rung 0 names
+// the field or projection SharePoint actually objected to, while the bare
+// fallback at the bottom of the ladder can only ever say "Bad Request".
+export async function queryLadder(shapes, attempt, startAt = 0) {
+  let firstError;
+  const from = Math.min(Math.max(startAt, 0), shapes.length - 1);
+  for (let index = from; index < shapes.length; index += 1) {
+    const shape = shapes[index];
     try {
-      return { value: await attempt(shape.options), lost: shape.lost || '' };
+      return {
+        value: await attempt(shape.options),
+        lost: shape.lost || '',
+        index,
+        reason: firstError?.message || '',
+      };
     } catch (err) {
       if (err?.status !== 400) throw err;
-      lastError = err;
+      firstError ||= err;
     }
   }
-  throw lastError;
+  throw firstError;
 }
 
 // $expand of a User field is only legal alongside a $select that NAMES the
@@ -217,10 +258,19 @@ const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 // it classifies what the view is able to show — so it composes .wb-info-chip
 // like the library-kind and page-kind chips, carries a phrase in sentence
 // case, and puts the sentence on the tooltip.
-function reducedChip(lost, where) {
+//
+// `because` is the server's sentence from the shape it turned down. It is the
+// difference between a chip that hides a bug and one that reports it: the
+// rejection is usually SharePoint declining a field the schema lacks, but it
+// reads identically to our own malformed select, and only the server's words
+// tell the two apart. The chip used to end "Everything else on this page is
+// complete" — a promise it cannot keep, since the bottom rung asks for no
+// $select at all and SPO may then withhold expensive fields of its own accord.
+function reducedChip(lost, where, because = '') {
   const chip = el('span', 'wb-info-chip wb-reduced-chip', 'some fields unavailable');
   chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ''}, `
-    + `so ${lost} could not be read. Everything else on this page is complete.`;
+    + `so ${lost} could not be read.`
+    + (because ? `\n\nSharePoint said: ${because}` : '');
   return chip;
 }
 
@@ -323,6 +373,11 @@ export function createPagesView({ client, navigate, updateRoute }) {
   // web both start at item 1, and a rejection handler firing after a switch
   // would otherwise evict the OTHER library's entry.
   const detailCache = new Map();   // "listId:pageId" -> Promise<item>
+  // The rung the detail ladder settled on for THIS library. A rejected shape
+  // is a fact about the list's schema, not about item 7, so the first page
+  // that steps down spares every page after it the same failing request.
+  // Reset with the rest of the per-library state in adoptLibrary().
+  let detailRung = 0;
   let fieldsPromise = null;        // list fields shared by every page
   let detailRun = 0;
   let loadRun = 0;                 // generation guard for loadPages
@@ -368,6 +423,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
     // PromotedState against a publishing library is a 400 on live SPO, the
     // exact failure the probe exists to prevent.
     planPromise = null;
+    detailRung = 0;
     if (grid) { grid.el.remove(); grid = null; }
     pagesLoaded = false;
   }
@@ -432,7 +488,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
         grid = createGrid({
           columns: [
             { key: 'FileLeafRef', label: 'Name', mono: true },
-            { key: 'Title', label: 'Title' },
+            // Dropped with the field itself: a library without Title would
+            // otherwise carry a column that can only ever be blank.
+            ...(plan.showTitle ? [{ key: 'Title', label: 'Title' }] : []),
             {
               key: 'Folder',
               label: 'Folder',
@@ -482,7 +540,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
         });
         gridPane.append(grid.el);
         grid.setLoading('Loading pages…');
-        const { value, lost } = await queryLadder(plan.gridShapes, (options) => {
+        const { value, lost, reason } = await queryLadder(plan.gridShapes, (options) => {
           descriptor.options = { ...options, ...paging };
           return client.getAll(query.path, descriptor.options);
         });
@@ -490,7 +548,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
         // A switch during the request replaced `grid`; without this the old
         // library's rows land in the new library's table under the new chip.
         if (run !== loadRun) return;
-        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title), libraryLink);
+        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title, reason), libraryLink);
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -521,8 +579,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
 
   // ---- drilldown ----
 
-  // Resolves to { item, lost } — `lost` naming what a stepped-down query gave
-  // up, '' when the wanted shape worked. The Metadata tab fetches its own
+  // Resolves to { item, lost, reason } — `lost` naming what a stepped-down
+  // query gave up ('' when the wanted shape worked) and `reason` carrying
+  // SharePoint's own words for why, straight onto the chip. The Metadata tab fetches its own
   // copy with FieldValuesAsText, so a lost people field still has a readable
   // value there; only this pane's header and the content export go without.
   function pageItem(listId, pageId, shapes) {
@@ -534,8 +593,11 @@ export function createPagesView({ client, navigate, updateRoute }) {
     if (!detailCache.has(key)) {
       detailCache.set(
         key,
-        queryLadder(shapes, (options) => client.get(path, options))
-          .then(({ value, lost }) => ({ item: value, lost }))
+        queryLadder(shapes, (options) => client.get(path, options), detailRung)
+          .then(({ value, lost, index, reason }) => {
+            detailRung = index;
+            return { item: value, lost, reason };
+          })
           .catch((err) => {
             detailCache.delete(key);
             throw err;
@@ -796,12 +858,13 @@ export function createPagesView({ client, navigate, updateRoute }) {
     let sitePages;
     let item;
     let lostFields = '';
+  let lostReason = '';
     try {
       await pagesLibraries();
       sitePages = current;
       if (!sitePages) throw new Error('This web has no pages library.');
       const plan = await queryPlan(sitePages);
-      ({ item, lost: lostFields } = await pageItem(
+      ({ item, lost: lostFields, reason: lostReason } = await pageItem(
         sitePages.listId, route.pageId, plan.detailShapes,
       ));
     } catch (err) {
@@ -856,7 +919,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
     headRow.append(kindChip);
     // Sits beside the kind chip, same quiet register: the page is fully
     // readable, one or two fields just aren't in it.
-    if (lostFields) headRow.append(reducedChip(lostFields, 'this page'));
+    if (lostFields) headRow.append(reducedChip(lostFields, 'this page', lostReason));
 
     const actions = el('span', 'wb-detail-actions');
     const exportContent = el('button', 'btn btn-xs', 'Export content');

@@ -3963,7 +3963,10 @@ async function requireOk(response, fallback, code) {
   const detail = await responseMessage(response);
   let message = detail || `${fallback} (HTTP ${response.status})`;
   let normalizedCode = code;
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
+    message = detail || "SharePoint could not authenticate this request. Reload the page to sign in again.";
+    normalizedCode = "auth";
+  } else if (response.status === 403) {
     message = detail || "SharePoint denied this request. Check library permissions and try again.";
     normalizedCode = "permission";
   } else if (response.status === 404) {
@@ -5457,8 +5460,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "140" : "dev";
-var injectedRevision = true ? "6fee5d3c" : "";
+var injectedBuild = true ? "142-dirty" : "dev";
+var injectedRevision = true ? "442aa296-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,

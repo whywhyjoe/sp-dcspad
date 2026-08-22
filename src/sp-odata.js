@@ -51,7 +51,15 @@ export async function requireOk(response, fallback, code) {
   const detail = await responseMessage(response);
   let message = detail || `${fallback} (HTTP ${response.status})`;
   let normalizedCode = code;
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
+    // NOT 'permission'. A 401 is "we don't know who you are any more" — an
+    // expired sign-in, which the operator fixes by reloading. Collapsing it
+    // into the same code as 403 sent them to check group memberships for a
+    // problem a refresh solves. See src/workbench/denied.js.
+    message = detail
+      || 'SharePoint could not authenticate this request. Reload the page to sign in again.';
+    normalizedCode = 'auth';
+  } else if (response.status === 403) {
     message = detail
       || 'SharePoint denied this request. Check library permissions and try again.';
     normalizedCode = 'permission';

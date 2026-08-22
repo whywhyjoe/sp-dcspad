@@ -1180,6 +1180,18 @@ await check('classic: query plan is decided by probed fields, not BaseTemplate',
     // PromotedState without CanvasContent1: promoted column yes, but the
     // modern detail projection would still 400 — stays on the '*' shape.
     const partial = pageQueryPlan(['Title', 'PromotedState'], 'modern');
+    // Live SPO: a 119 "Site Pages" library with NO Title field is real (the
+    // PointPublishing hub/community webs, a PWA site). Naming Title there is
+    // a 400 on every rung that carries it, so the probe drops it — and the
+    // grid drops the column that could only ever be blank. Id is intrinsic,
+    // never in /fields, and must survive a probe that cannot see it.
+    const titleless = pageQueryPlan(['FileLeafRef', 'FileRef', 'Modified'], 'publishing');
+    const titlelessOk = !titleless.showTitle
+      && !titleless.gridShapes[0].options.select.includes('Title')
+      && titleless.gridShapes[0].options.select.includes('Id')
+      && titleless.gridShapes.every((r) => !(r.options.select || []).includes('Title'));
+    // An unprobed plan keeps Title: the ladder covers the rare library without it.
+    const unprobedKeepsTitle = pageQueryPlan(null, 'publishing').showTitle;
     // Probe failed: fall back to the BaseTemplate heuristic.
     const fallbackModern = pageQueryPlan(null, 'modern');
     const fallbackClassic = pageQueryPlan(null, 'publishing');
@@ -1189,6 +1201,7 @@ await check('classic: query plan is decided by probed fields, not BaseTemplate',
     const wanted = (plan) => plan.detailShapes[0].options;
     const wildcard = (plan) => wanted(plan).select?.[0] === '*';
     return !legacy119.showPromoted && !legacy119.gridSelect.includes('PromotedState')
+      && titlelessOk && unprobedKeepsTitle
       && wildcard(legacy119)
       && modern.showPromoted && wanted(modern).select.includes('CanvasContent1')
       && partial.showPromoted && wildcard(partial)
@@ -1254,16 +1267,33 @@ await check('classic: a rejected query shape steps down instead of failing', asy
       });
     } catch (err) { denied = err; }
 
-    // Every rung rejected: the last error is what the view reports.
+    // Every rung rejected: the FIRST error is what the view reports. Rung 0
+    // names the field SharePoint objected to; the bare rung at the bottom can
+    // only say "Bad Request", and reporting that buried the diagnosis.
     let exhausted;
     try {
-      await queryLadder(shapes, () => Promise.reject(oData400()));
+      await queryLadder(shapes, (options) => Promise.reject(
+        options.expand
+          ? Object.assign(new Error("The field or property 'Titel' does not exist."), { status: 400 })
+          : Object.assign(new Error('Bad Request.'), { status: 400 }),
+      ));
     } catch (err) { exhausted = err; }
+
+    // A caller that already knows rung 0 is refused starts below it, instead
+    // of re-earning the same 400 once per item.
+    const resumed = [];
+    const skipped = await queryLadder(shapes, (options) => {
+      resumed.push(options);
+      return Promise.resolve({ Id: 8 });
+    }, 1);
 
     return stepped.value.Id === 7 && stepped.lost === 'the author and editor names'
       && tried.length === 2
+      // The rung that answered, and why the one above it did not.
+      && stepped.index === 1 && stepped.reason.includes("field 'Author'")
       && denied?.status === 403 && attempts.length === 1
-      && exhausted?.status === 400;
+      && exhausted?.status === 400 && exhausted.message.includes("'Titel'")
+      && resumed.length === 1 && !resumed[0].expand && skipped.value.Id === 8;
   }));
 
 // The other half of failing gracefully: some reads are not ours to make.
@@ -1271,15 +1301,26 @@ await check('classic: a rejected query shape steps down instead of failing', asy
 // genuine failure stays loud. Both keep SharePoint's own words reachable.
 await check('unit: a denied read is a fact, a broken one is an error', async () =>
   classicPage.evaluate(async () => {
-    const { isDeniedRead, showFailure } = await import('/src/workbench/denied.js');
+    const { isDeniedRead, isExpiredSession, showFailure } = await import('/src/workbench/denied.js');
     const classified = [
       isDeniedRead({ status: 403 }),
-      isDeniedRead({ status: 401 }),
       isDeniedRead({ code: 'permission' }),        // never went through requireOk
       !isDeniedRead({ status: 400 }),              // a query shape — the ladder's job
       !isDeniedRead({ status: 500 }),
       !isDeniedRead(new Error('network')),
+      // 401 is a DIFFERENT fact with a different fix: the sign-in lapsed, and
+      // a reload repairs it. Reading it out as "you don't have permission"
+      // sent the operator to audit groups over an expired cookie.
+      !isDeniedRead({ status: 401 }),
+      isExpiredSession({ status: 401 }),
+      isExpiredSession({ code: 'auth' }),
+      !isExpiredSession({ status: 403 }),
     ].every(Boolean);
+
+    // Loud register, but the headline names the fix rather than repeating
+    // SharePoint's misleading "Access denied".
+    const lapsed = showFailure(document.createElement('div'),
+      { status: 401, message: 'Access denied. You do not have permission…' }, 'the lists in this web');
 
     const denied = showFailure(
       Object.assign(document.createElement('div'), { className: 'wb-grid-status' }),
@@ -1295,6 +1336,9 @@ await check('unit: a denied read is a fact, a broken one is an error', async () 
     showFailure(denied, { status: 400, message: 'Bad query.' }, 'subwebs');
 
     return classified
+      && lapsed.classList.contains('wb-error') && !lapsed.classList.contains('wb-denied')
+      && lapsed.textContent.includes('reload') && !lapsed.textContent.includes('permission')
+      && lapsed.title.startsWith('Access denied')   // still one hover away
       && !denied.classList.contains('wb-denied') && denied.classList.contains('wb-error')
       && denied.textContent === 'Bad query.' && !denied.hasAttribute('title')
       && broken.classList.contains('wb-error') && broken.textContent.includes("'X'")
@@ -2068,7 +2112,10 @@ await check('live: a subweb enumeration SharePoint refuses is stated, not alarme
   // The classic-site default: web/webs is denied to anyone without rights on
   // the child webs. Nothing is broken and nothing can be retried — so the
   // Site landing says so plainly instead of painting an error.
-  const websPattern = /localhost:\d+\/_api\/web\/webs/;
+  // Path only — never the host. DCSPAD_URL may point at 127.0.0.1 rather
+  // than localhost, and a route that fails to intercept does not fail here:
+  // it hangs, then leaves its unroute() unrun for the next test to inherit.
+  const websPattern = /\/_api\/web\/webs/;
   const denyWebs = (route) => route.fulfill({
     status: 403,
     json: { 'odata.error': { message: { value:

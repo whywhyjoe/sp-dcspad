@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "140" : "dev";
-var injectedRevision = true ? "6fee5d3c" : "";
+var injectedBuild = true ? "142-dirty" : "dev";
+var injectedRevision = true ? "442aa296-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -232,7 +232,10 @@ async function requireOk(response, fallback, code) {
   const detail = await responseMessage(response);
   let message = detail || `${fallback} (HTTP ${response.status})`;
   let normalizedCode = code;
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
+    message = detail || "SharePoint could not authenticate this request. Reload the page to sign in again.";
+    normalizedCode = "auth";
+  } else if (response.status === 403) {
     message = detail || "SharePoint denied this request. Check library permissions and try again.";
     normalizedCode = "permission";
   } else if (response.status === 404) {
@@ -1231,17 +1234,22 @@ function createShell({ mount, deps, views }) {
 
 // ../src/workbench/denied.js
 function isDeniedRead(err) {
-  return err?.code === "permission" || err?.status === 401 || err?.status === 403;
+  return err?.code === "permission" || err?.status === 403;
 }
+function isExpiredSession(err) {
+  return err?.code === "auth" || err?.status === 401;
+}
+var EXPIRED_SESSION_NOTE = "Your SharePoint sign-in has expired \u2014 reload the page to sign in again.";
 function deniedNote(subject = "") {
   return subject ? `Your account doesn\u2019t have permission to see ${subject} here.` : "Your account doesn\u2019t have permission to see this.";
 }
 function showFailure(node, err, subject = "") {
   const denied = isDeniedRead(err);
-  node.textContent = denied ? deniedNote(subject) : err?.message || String(err);
+  const expired = !denied && isExpiredSession(err);
+  node.textContent = denied ? deniedNote(subject) : expired ? EXPIRED_SESSION_NOTE : err?.message || String(err);
   node.classList.remove("wb-error", "wb-denied");
   node.classList.add(denied ? "wb-denied" : "wb-error");
-  if (denied && err?.message) node.title = err.message;
+  if ((denied || expired) && err?.message) node.title = err.message;
   else node.removeAttribute("title");
   node.hidden = false;
   return node;
@@ -5914,10 +5922,12 @@ function pageQueryPlan(fieldInternalNames, kind) {
   const names = fieldInternalNames ? new Set(fieldInternalNames) : null;
   const hasField = (f) => names ? names.has(f) : kind === "modern";
   const showPromoted = hasField("PromotedState");
+  const showTitle = names ? names.has("Title") : true;
   const modern = showPromoted && hasField("CanvasContent1");
-  const gridSelect = showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE;
+  const gridSelect = (showPromoted ? PAGE_SELECT_MODERN : PAGE_SELECT_BASE).filter((f) => f !== "Title" || showTitle);
   return {
     showPromoted,
+    showTitle,
     gridSelect,
     // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
     // want; every rung below it gives something up to stay answerable.
@@ -5945,17 +5955,24 @@ function pageQueryPlan(fieldInternalNames, kind) {
     ]
   };
 }
-async function queryLadder(shapes, attempt) {
-  let lastError;
-  for (const shape of shapes) {
+async function queryLadder(shapes, attempt, startAt = 0) {
+  let firstError;
+  const from = Math.min(Math.max(startAt, 0), shapes.length - 1);
+  for (let index = from; index < shapes.length; index += 1) {
+    const shape = shapes[index];
     try {
-      return { value: await attempt(shape.options), lost: shape.lost || "" };
+      return {
+        value: await attempt(shape.options),
+        lost: shape.lost || "",
+        index,
+        reason: firstError?.message || ""
+      };
     } catch (err) {
       if (err?.status !== 400) throw err;
-      lastError = err;
+      firstError ||= err;
     }
   }
-  throw lastError;
+  throw firstError;
 }
 var DETAIL_EXPAND = ["Author", "Editor"];
 var DETAIL_SELECT = [
@@ -6027,9 +6044,11 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
   }
 }).join("/");
 var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
-function reducedChip(lost, where) {
+function reducedChip(lost, where, because = "") {
   const chip = el11("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
-  chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read. Everything else on this page is complete.`;
+  chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read.` + (because ? `
+
+SharePoint said: ${because}` : "");
   return chip;
 }
 function createPagesView({ client: client2, navigate, updateRoute }) {
@@ -6104,6 +6123,7 @@ ${current.rootPath}` : "");
   let grid = null;
   let pagesLoaded = false;
   const detailCache = /* @__PURE__ */ new Map();
+  let detailRung = 0;
   let fieldsPromise = null;
   let detailRun = 0;
   let loadRun = 0;
@@ -6139,6 +6159,7 @@ ${current.rootPath}` : "");
     webPartCache.clear();
     fieldsPromise = null;
     planPromise = null;
+    detailRung = 0;
     if (grid) {
       grid.el.remove();
       grid = null;
@@ -6189,7 +6210,9 @@ ${current.rootPath}` : "");
         grid = createGrid({
           columns: [
             { key: "FileLeafRef", label: "Name", mono: true },
-            { key: "Title", label: "Title" },
+            // Dropped with the field itself: a library without Title would
+            // otherwise carry a column that can only ever be blank.
+            ...plan.showTitle ? [{ key: "Title", label: "Title" }] : [],
             {
               key: "Folder",
               label: "Folder",
@@ -6237,13 +6260,13 @@ ${current.rootPath}` : "");
         });
         gridPane.append(grid.el);
         grid.setLoading("Loading pages\u2026");
-        const { value, lost } = await queryLadder(plan.gridShapes, (options) => {
+        const { value, lost, reason } = await queryLadder(plan.gridShapes, (options) => {
           descriptor.options = { ...options, ...paging };
           return client2.getAll(query.path, descriptor.options);
         });
         const { items, partial } = value;
         if (run !== loadRun) return;
-        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title), libraryLink);
+        if (lost) strip.insertBefore(reducedChip(lost, sitePages.title, reason), libraryLink);
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -6267,7 +6290,10 @@ ${current.rootPath}` : "");
     if (!detailCache.has(key2)) {
       detailCache.set(
         key2,
-        queryLadder(shapes, (options) => client2.get(path, options)).then(({ value, lost }) => ({ item: value, lost })).catch((err) => {
+        queryLadder(shapes, (options) => client2.get(path, options), detailRung).then(({ value, lost, index, reason }) => {
+          detailRung = index;
+          return { item: value, lost, reason };
+        }).catch((err) => {
           detailCache.delete(key2);
           throw err;
         })
@@ -6497,12 +6523,13 @@ ${p.html}`).join("\n\n")
     let sitePages;
     let item2;
     let lostFields = "";
+    let lostReason = "";
     try {
       await pagesLibraries();
       sitePages = current;
       if (!sitePages) throw new Error("This web has no pages library.");
       const plan = await queryPlan(sitePages);
-      ({ item: item2, lost: lostFields } = await pageItem(
+      ({ item: item2, lost: lostFields, reason: lostReason } = await pageItem(
         sitePages.listId,
         route.pageId,
         plan.detailShapes
@@ -6547,7 +6574,7 @@ ${fullUrl}`;
     const kindChip = el11("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
-    if (lostFields) headRow.append(reducedChip(lostFields, "this page"));
+    if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
     const actions = el11("span", "wb-detail-actions");
     const exportContent = el11("button", "btn btn-xs", "Export content");
     exportContent.type = "button";
