@@ -1154,6 +1154,37 @@ await check('zip: names are UTF-8-flagged and can never escape the extract folde
       && safeEntryName('a\\b/./c.md') === 'a/b/c.md';
   }));
 
+// Every value classic ZIP cannot encode exactly must throw, not narrow into a
+// field too small to hold it. The NUL case is the one with teeth: Info-ZIP and
+// Python both truncate a name at the NUL, so two entries this writer considers
+// distinct used to unpack as one file with the second payload overwriting the
+// first. None of these are reachable through bundleEntryName — the guard is on
+// zip.js because zip.js is a general writer.
+await check('zip: values classic ZIP cannot encode are refused, not narrowed', async () =>
+  page.evaluate(async () => {
+    const { buildZip } = await import('/src/workbench/zip.js');
+    // instanceof RangeError, not a bare catch: a bare catch would also pass if
+    // buildZip blew up for some unrelated reason, which is the opposite of
+    // what this check is for.
+    const refuses = (entries) => {
+      try { buildZip(entries); return false; } catch (err) { return err instanceof RangeError; }
+    };
+    const NUL = String.fromCharCode(0);
+    const DEL = String.fromCharCode(127);
+    return refuses(Array.from({ length: 65536 }, (_, i) => ({ name: `f${i}.md`, text: 'x' })))
+      && refuses([{ name: `${'a'.repeat(65536)}.md`, text: 'x' }])
+      && refuses([{ name: '..', text: 'x' }])            // sanitizes away to nothing
+      && refuses([{ name: '/', text: 'x' }])
+      && refuses([{ name: `report.md${NUL}first`, text: 'x' }])
+      && refuses([{ name: `a${DEL}b.md`, text: 'x' }])
+      && refuses([{ name: `a${String.fromCharCode(10)}b.md`, text: 'x' }])
+      // …and the legitimate cases still build, including the edges either side
+      // of the guards.
+      && buildZip([]).length === 22
+      && buildZip([{ name: 'empty.md', text: '' }]).length > 22
+      && buildZip([{ name: 'news/fr/hebdo-content.md', text: '# x' }]).length > 22;
+  }));
+
 await check('page-export: bundle entry names mirror the library folder', async () =>
   page.evaluate(async () => {
     const { bundleEntryName } = await import('/src/workbench/page-export.js');

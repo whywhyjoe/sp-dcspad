@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "89" : "dev";
-var injectedRevision = true ? "d6ca6cf6" : "";
+var injectedBuild = true ? "94" : "dev";
+var injectedRevision = true ? "e0789719" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5820,6 +5820,10 @@ var EOCD_SIG = 101010256;
 var VERSION = 20;
 var FLAG_UTF8 = 2048;
 var METHOD_STORE = 0;
+var MAX_ENTRIES = 65535;
+var MAX_NAME_BYTES = 65535;
+var MAX_UINT32 = 4294967295;
+var CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 var crcTable = null;
 function table() {
   if (crcTable) return crcTable;
@@ -5850,13 +5854,34 @@ function safeEntryName(name) {
 function buildZip(entries, { date = /* @__PURE__ */ new Date() } = {}) {
   const enc = new TextEncoder();
   const stamp = dosStamp(date);
-  const files = (entries || []).map((entry) => {
-    const name = enc.encode(safeEntryName(entry.name));
+  const list2 = entries || [];
+  if (!Array.isArray(list2)) throw new TypeError("Zip entries must be an array.");
+  if (list2.length > MAX_ENTRIES) {
+    throw new RangeError(`A zip cannot hold more than ${MAX_ENTRIES} entries (got ${list2.length}).`);
+  }
+  const files = list2.map((entry) => {
+    const safe = safeEntryName(entry.name);
+    if (!safe) {
+      throw new RangeError(`Zip entry name ${JSON.stringify(String(entry.name ?? ""))} is empty once it is made relative \u2014 an entry with no name cannot be extracted.`);
+    }
+    if (CONTROL_CHARS.test(safe)) {
+      throw new RangeError(`Zip entry name ${JSON.stringify(safe)} carries a control character \u2014 extractors truncate the name there, so it would unpack under a different name than it was written under.`);
+    }
+    const name = enc.encode(safe);
+    if (name.length > MAX_NAME_BYTES) {
+      throw new RangeError(`Zip entry name is ${name.length} bytes; the limit is ${MAX_NAME_BYTES}.`);
+    }
     const body = enc.encode(String(entry.text ?? ""));
+    if (body.length > MAX_UINT32) {
+      throw new RangeError(`Zip entry ${JSON.stringify(safe)} is ${body.length} bytes; anything over 4 GB needs Zip64, which this writer does not implement.`);
+    }
     return { name, body, crc: crc32(body) };
   });
   const localSize = files.reduce((n, f) => n + 30 + f.name.length + f.body.length, 0);
   const centralSize = files.reduce((n, f) => n + 46 + f.name.length, 0);
+  if (localSize > MAX_UINT32 || centralSize > MAX_UINT32 || localSize + centralSize > MAX_UINT32) {
+    throw new RangeError(`This archive would be ${localSize + centralSize} bytes; anything over 4 GB needs Zip64, which this writer does not implement.`);
+  }
   const out = new Uint8Array(localSize + centralSize + 22);
   const view = new DataView(out.buffer);
   let at = 0;
@@ -6419,35 +6444,34 @@ ${current.rootPath}` : "");
       await Promise.all(
         Array.from({ length: Math.min(BULK_CONCURRENCY, rows.length) }, worker)
       );
-    } catch (err) {
-      exporting = false;
-      showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
-      return;
-    }
-    exporting = false;
-    if (current !== sitePages) {
+      if (current !== sitePages) {
+        masterStatus.hidden = true;
+        return;
+      }
+      const ok = results.filter((r) => r && r.text !== void 0);
+      const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
+      const names = dedupeEntryNames(
+        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath))
+      );
+      const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
+      if (failures.length) {
+        entries.push({
+          name: "_export-report.md",
+          text: buildExportReport({ total: rows.length, exported: ok.length, failures })
+        });
+      }
+      if (!entries.length) {
+        masterStatus.textContent = "No pages could be read, so there was nothing to export.";
+        masterStatus.hidden = false;
+        return;
+      }
+      downloadBytes("sp-pages-content.zip", buildZip(entries), "application/zip");
       masterStatus.hidden = true;
-      return;
+    } catch (err) {
+      showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
+    } finally {
+      exporting = false;
     }
-    const ok = results.filter((r) => r && r.text !== void 0);
-    const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
-    const names = dedupeEntryNames(
-      ok.map((r) => bundleEntryName(r.item, sitePages.rootPath))
-    );
-    const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
-    if (failures.length) {
-      entries.push({
-        name: "_export-report.md",
-        text: buildExportReport({ total: rows.length, exported: ok.length, failures })
-      });
-    }
-    if (!entries.length) {
-      masterStatus.textContent = "No pages could be read, so there was nothing to export.";
-      masterStatus.hidden = false;
-      return;
-    }
-    downloadBytes("sp-pages-content.zip", buildZip(entries), "application/zip");
-    masterStatus.hidden = true;
   }
   async function loadPages() {
     if (pagesLoaded) return;

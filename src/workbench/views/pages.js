@@ -554,38 +554,41 @@ export function createPagesView({ client, navigate, updateRoute }) {
       await Promise.all(
         Array.from({ length: Math.min(BULK_CONCURRENCY, rows.length) }, worker),
       );
+
+      // A library switch mid-export would otherwise download the previous
+      // library's pages under the new library's name.
+      if (current !== sitePages) { masterStatus.hidden = true; return; }
+
+      const ok = results.filter((r) => r && r.text !== undefined);
+      const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
+      const names = dedupeEntryNames(
+        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath)),
+      );
+      const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
+      if (failures.length) {
+        entries.push({
+          name: '_export-report.md',
+          text: buildExportReport({ total: rows.length, exported: ok.length, failures }),
+        });
+      }
+
+      if (!entries.length) {
+        masterStatus.textContent = 'No pages could be read, so there was nothing to export.';
+        masterStatus.hidden = false;
+        return;
+      }
+      // Inside the try on purpose: zip.js refuses anything classic ZIP cannot
+      // encode, and allocating one contiguous archive can fail. Either way the
+      // user must not be left reading "Exporting 40 of 40 pages…" forever.
+      downloadBytes('sp-pages-content.zip', buildZip(entries), 'application/zip');
+      masterStatus.hidden = true;
     } catch (err) {
-      // The shared prerequisite (the field probe) failed — nothing to bundle.
-      exporting = false;
       showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
-      return;
+    } finally {
+      // The latch clears on every path, including a throw between the last
+      // fetch and the download — otherwise the export button dies for good.
+      exporting = false;
     }
-    exporting = false;
-
-    // A library switch mid-export would otherwise download the previous
-    // library's pages under the new library's name.
-    if (current !== sitePages) { masterStatus.hidden = true; return; }
-
-    const ok = results.filter((r) => r && r.text !== undefined);
-    const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
-    const names = dedupeEntryNames(
-      ok.map((r) => bundleEntryName(r.item, sitePages.rootPath)),
-    );
-    const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
-    if (failures.length) {
-      entries.push({
-        name: '_export-report.md',
-        text: buildExportReport({ total: rows.length, exported: ok.length, failures }),
-      });
-    }
-
-    if (!entries.length) {
-      masterStatus.textContent = 'No pages could be read, so there was nothing to export.';
-      masterStatus.hidden = false;
-      return;
-    }
-    downloadBytes('sp-pages-content.zip', buildZip(entries), 'application/zip');
-    masterStatus.hidden = true;
   }
 
   async function loadPages() {
