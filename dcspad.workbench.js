@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "143" : "dev";
-var injectedRevision = true ? "79eccb1c" : "";
+var injectedBuild = true ? "89" : "dev";
+var injectedRevision = true ? "d6ca6cf6" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1257,8 +1257,7 @@ function showFailure(node, err, subject = "") {
 
 // ../src/io.js?v=2
 var MAX_IMPORT_BYTES = 5 * 1024 * 1024;
-function downloadText(filename, text, type = "application/json") {
-  const blob = new Blob([text], { type });
+function saveBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -1267,6 +1266,12 @@ function downloadText(filename, text, type = "application/json") {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1e3);
+}
+function downloadText(filename, text, type = "application/json") {
+  saveBlob(filename, new Blob([text], { type }));
+}
+function downloadBytes(filename, bytes, type = "application/octet-stream") {
+  saveBlob(filename, new Blob([bytes], { type }));
 }
 var BUILT_IN_SHAREPOINT_FILE_TYPES = Object.freeze([
   Object.freeze({
@@ -1595,7 +1600,7 @@ function createGrid({
     ]);
   }
   const scroller = el2("div", "wb-grid-scroll");
-  const table = el2("table", "wb-table");
+  const table2 = el2("table", "wb-table");
   const thead = el2("thead");
   const headRow = el2("tr");
   let widthsFrozen = false;
@@ -1605,13 +1610,13 @@ function createGrid({
     for (const th of headRow.children) {
       th.style.width = `${Math.round(th.getBoundingClientRect().width)}px`;
     }
-    table.style.tableLayout = "fixed";
+    table2.style.tableLayout = "fixed";
     syncTableWidth();
   }
   function syncTableWidth() {
     let total = 0;
     for (const th of headRow.children) total += parseFloat(th.style.width) || 0;
-    if (total) table.style.width = `${total}px`;
+    if (total) table2.style.width = `${total}px`;
   }
   function attachResizer(th) {
     const handle = el2("span", "wb-col-resize");
@@ -1684,8 +1689,8 @@ function createGrid({
   });
   thead.append(headRow);
   const tbody = el2("tbody");
-  table.append(thead, tbody);
-  scroller.append(table);
+  table2.append(thead, tbody);
+  scroller.append(table2);
   const notice = el2("div", "wb-grid-notice");
   notice.hidden = true;
   const status = el2("div", "wb-grid-status");
@@ -1764,6 +1769,12 @@ function createGrid({
         box.setAttribute("aria-label", "Select row");
         box.addEventListener("click", (e) => e.stopPropagation());
         box.addEventListener("change", toggle);
+        if (onOpen) {
+          td.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (e.target !== box) toggle();
+          });
+        }
         td.append(box);
         tr.append(td);
         if (!onOpen) {
@@ -2387,13 +2398,13 @@ function renderTable(dataNode, columns) {
     cols = [...seen].slice(0, 20);
   }
   const wrap = el3("div", "console-table-wrap");
-  const table = el3("table", "console-table");
+  const table2 = el3("table", "console-table");
   const thead = el3("thead");
   const hr = el3("tr");
   hr.append(el3("th", "", "(index)"));
   cols.forEach((c) => hr.append(el3("th", "", c)));
   thead.append(hr);
-  table.append(thead);
+  table2.append(thead);
   const tbody = el3("tbody");
   for (const [key2, v] of rows) {
     const tr = el3("tr");
@@ -2409,8 +2420,8 @@ function renderTable(dataNode, columns) {
     }
     tbody.append(tr);
   }
-  table.append(tbody);
-  wrap.append(table);
+  table2.append(tbody);
+  wrap.append(table2);
   return wrap;
 }
 
@@ -5755,9 +5766,159 @@ function buildRawExport({ item: item2 = {}, controls = [], webParts = [] }) {
   if (webParts.length) payload.webParts = webParts;
   return JSON.stringify(payload, null, 2);
 }
+var slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
 function exportFileStem(item2) {
   const name = String(item2.FileLeafRef || item2.Title || "page").replace(/\.aspx$/i, "");
-  return name.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "page";
+  return slug(name) || "page";
+}
+function bundleEntryName(item2, libraryRootPath) {
+  const dir = String(item2?.FileDirRef || "");
+  const root = String(libraryRootPath || "").replace(/\/+$/, "");
+  let folder = "";
+  if (root && dir.toLowerCase().startsWith(root.toLowerCase())) {
+    folder = dir.slice(root.length).replace(/^\/+/, "");
+  }
+  const segments = folder.split("/").map(slug).filter(Boolean);
+  segments.push(`${exportFileStem(item2 || {})}-content.md`);
+  return segments.join("/");
+}
+function dedupeEntryNames(names) {
+  const seen = /* @__PURE__ */ new Set();
+  return (names || []).map((raw) => {
+    const name = String(raw);
+    if (!seen.has(name)) {
+      seen.add(name);
+      return name;
+    }
+    const dot = name.lastIndexOf(".");
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    let n = 2;
+    while (seen.has(`${stem}-${n}${ext}`)) n += 1;
+    const unique = `${stem}-${n}${ext}`;
+    seen.add(unique);
+    return unique;
+  });
+}
+function buildExportReport({ total = 0, exported = 0, failures = [] }) {
+  const lines = ["# Export report", "", `${exported} of ${total} pages exported.`, ""];
+  if (failures.length) {
+    lines.push("Not exported:", "");
+    for (const failure of failures) {
+      const reason = String(failure.reason || "").replace(/\s+/g, " ").trim();
+      lines.push(`- ${failure.name}${reason ? ` \u2014 ${reason}` : ""}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+// ../src/workbench/zip.js
+var LOCAL_SIG = 67324752;
+var CENTRAL_SIG = 33639248;
+var EOCD_SIG = 101010256;
+var VERSION = 20;
+var FLAG_UTF8 = 2048;
+var METHOD_STORE = 0;
+var crcTable = null;
+function table() {
+  if (crcTable) return crcTable;
+  crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  return crcTable;
+}
+function crc32(bytes) {
+  const t = table();
+  let c = 4294967295;
+  for (let i = 0; i < bytes.length; i += 1) c = t[(c ^ bytes[i]) & 255] ^ c >>> 8;
+  return (c ^ 4294967295) >>> 0;
+}
+function dosStamp(date) {
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    time: date.getHours() << 11 | date.getMinutes() << 5 | date.getSeconds() >> 1,
+    date: year - 1980 << 9 | date.getMonth() + 1 << 5 | date.getDate()
+  };
+}
+function safeEntryName(name) {
+  return String(name || "").replace(/\\/g, "/").split("/").filter((seg) => seg && seg !== "." && seg !== "..").join("/");
+}
+function buildZip(entries, { date = /* @__PURE__ */ new Date() } = {}) {
+  const enc = new TextEncoder();
+  const stamp = dosStamp(date);
+  const files = (entries || []).map((entry) => {
+    const name = enc.encode(safeEntryName(entry.name));
+    const body = enc.encode(String(entry.text ?? ""));
+    return { name, body, crc: crc32(body) };
+  });
+  const localSize = files.reduce((n, f) => n + 30 + f.name.length + f.body.length, 0);
+  const centralSize = files.reduce((n, f) => n + 46 + f.name.length, 0);
+  const out = new Uint8Array(localSize + centralSize + 22);
+  const view = new DataView(out.buffer);
+  let at = 0;
+  const u16 = (v) => {
+    view.setUint16(at, v, true);
+    at += 2;
+  };
+  const u32 = (v) => {
+    view.setUint32(at, v >>> 0, true);
+    at += 4;
+  };
+  const raw = (bytes) => {
+    out.set(bytes, at);
+    at += bytes.length;
+  };
+  for (const file of files) {
+    file.offset = at;
+    u32(LOCAL_SIG);
+    u16(VERSION);
+    u16(FLAG_UTF8);
+    u16(METHOD_STORE);
+    u16(stamp.time);
+    u16(stamp.date);
+    u32(file.crc);
+    u32(file.body.length);
+    u32(file.body.length);
+    u16(file.name.length);
+    u16(0);
+    raw(file.name);
+    raw(file.body);
+  }
+  const centralAt = at;
+  for (const file of files) {
+    u32(CENTRAL_SIG);
+    u16(VERSION);
+    u16(VERSION);
+    u16(FLAG_UTF8);
+    u16(METHOD_STORE);
+    u16(stamp.time);
+    u16(stamp.date);
+    u32(file.crc);
+    u32(file.body.length);
+    u32(file.body.length);
+    u16(file.name.length);
+    u16(0);
+    u16(0);
+    u16(0);
+    u16(0);
+    u32(0);
+    u32(file.offset);
+    raw(file.name);
+  }
+  const centralEnd = at;
+  u32(EOCD_SIG);
+  u16(0);
+  u16(0);
+  u16(files.length);
+  u16(files.length);
+  u32(centralEnd - centralAt);
+  u32(centralAt);
+  u16(0);
+  return out;
 }
 
 // ../src/workbench/classic-page.js
@@ -5918,6 +6079,8 @@ var PAGE_SELECT_BASE = [
   "Editor/Title"
 ];
 var PAGE_SELECT_MODERN = [...PAGE_SELECT_BASE, "PromotedState"];
+var MAX_BULK_PAGES = 200;
+var BULK_CONCURRENCY = 4;
 function pageQueryPlan(fieldInternalNames, kind) {
   const names = fieldInternalNames ? new Set(fieldInternalNames) : null;
   const hasField = (f) => names ? names.has(f) : kind === "modern";
@@ -6184,6 +6347,108 @@ ${current.rootPath}` : "");
     if (!root2 || !dir.toLowerCase().startsWith(root2.toLowerCase())) return "";
     return dir.slice(root2.length).replace(/^\/+/, "");
   }
+  async function contentMarkdownFor(item2, sitePages, parts = null) {
+    const parsed = parseCanvasContent(item2.CanvasContent1);
+    let readingParts = parts;
+    if (!readingParts) {
+      const contentKind = pageContentKindOf(item2);
+      if (contentKind === "canvas") {
+        readingParts = contentParts(parsed.controls).parts;
+      } else {
+        const fetched = await classicWebPartsOf(item2.FileRef);
+        readingParts = classicContentParts({
+          item: item2,
+          webParts: fetched.parts,
+          contentKind
+        }).parts;
+      }
+    }
+    const web = await webIdentity();
+    return buildContentExport({
+      item: item2,
+      controls: parsed.controls,
+      parts: readingParts,
+      siteTitle: web.Title || "",
+      webUrl: web.Url || client2.webUrl(),
+      libraryTitle: sitePages.title,
+      libraryRootPath: sitePages.rootPath
+    });
+  }
+  let exporting = false;
+  async function exportContentZip() {
+    if (exporting || !grid || !current) return;
+    const sitePages = current;
+    const rows = grid.getExportRows();
+    if (!rows.length) return;
+    if (rows.length > MAX_BULK_PAGES) {
+      masterStatus.textContent = `${rows.length} pages selected \u2014 this export is capped at ${MAX_BULK_PAGES}. Narrow the selection or filter the grid first.`;
+      masterStatus.classList.add("wb-error");
+      masterStatus.hidden = false;
+      return;
+    }
+    exporting = true;
+    masterStatus.classList.remove("wb-error");
+    masterStatus.hidden = false;
+    let done = 0;
+    const progress = () => {
+      masterStatus.textContent = `Exporting ${done} of ${rows.length} page${rows.length === 1 ? "" : "s"}\u2026`;
+    };
+    progress();
+    const results = new Array(rows.length);
+    try {
+      const plan = await queryPlan(sitePages);
+      let next = 0;
+      const worker = async () => {
+        for (let i = next++; i < rows.length; i = next++) {
+          const row = rows[i];
+          try {
+            const { item: item2 } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
+            results[i] = { item: item2, text: await contentMarkdownFor(item2, sitePages) };
+          } catch (err) {
+            results[i] = {
+              failure: {
+                name: row.FileLeafRef || row.Title || `Page ${row.Id}`,
+                reason: err?.message || String(err)
+              }
+            };
+          }
+          done += 1;
+          progress();
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(BULK_CONCURRENCY, rows.length) }, worker)
+      );
+    } catch (err) {
+      exporting = false;
+      showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
+      return;
+    }
+    exporting = false;
+    if (current !== sitePages) {
+      masterStatus.hidden = true;
+      return;
+    }
+    const ok = results.filter((r) => r && r.text !== void 0);
+    const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
+    const names = dedupeEntryNames(
+      ok.map((r) => bundleEntryName(r.item, sitePages.rootPath))
+    );
+    const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
+    if (failures.length) {
+      entries.push({
+        name: "_export-report.md",
+        text: buildExportReport({ total: rows.length, exported: ok.length, failures })
+      });
+    }
+    if (!entries.length) {
+      masterStatus.textContent = "No pages could be read, so there was nothing to export.";
+      masterStatus.hidden = false;
+      return;
+    }
+    downloadBytes("sp-pages-content.zip", buildZip(entries), "application/zip");
+    masterStatus.hidden = true;
+  }
   async function loadPages() {
     if (pagesLoaded) return;
     const run = ++loadRun;
@@ -6252,6 +6517,13 @@ ${current.rootPath}` : "");
           filterPlaceholder: "Filter pages\u2026",
           toolbarExtras: strip,
           exportName: "sp-pages",
+          // Ticking rows scopes every export, the zip included. The checkbox
+          // cell owns its own clicks (see grid.js), so selecting a page and
+          // opening one stay distinct gestures on the same row.
+          selectable: true,
+          exportExtras: [
+            ["Download content .zip", () => exportContentZip()]
+          ],
           // The same object the ladder rewrites below, on purpose: the
           // "Copy as…" menu reads it at click time, so a script copied out of
           // a degraded grid reproduces the query that actually worked rather
@@ -6591,16 +6863,11 @@ ${fullUrl}`;
     }
     headRow.append(actions);
     exportContent.addEventListener("click", async () => {
-      const web = await webIdentity();
-      downloadText(`${exportFileStem(item2)}-content.md`, buildContentExport({
-        item: item2,
-        controls: parsed.controls,
-        parts: readingParts,
-        siteTitle: web.Title || "",
-        webUrl: web.Url || client2.webUrl(),
-        libraryTitle: sitePages.title,
-        libraryRootPath: sitePages.rootPath
-      }), "text/markdown;charset=utf-8");
+      downloadText(
+        `${exportFileStem(item2)}-content.md`,
+        await contentMarkdownFor(item2, sitePages, readingParts),
+        "text/markdown;charset=utf-8"
+      );
     });
     exportRaw.addEventListener("click", () => {
       downloadText(

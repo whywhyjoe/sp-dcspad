@@ -7,8 +7,7 @@
 // thread in JSON.parse).
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 
-export function downloadText(filename, text, type = 'application/json') {
-  const blob = new Blob([text], { type });
+function saveBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -19,6 +18,15 @@ export function downloadText(filename, text, type = 'application/json') {
   // Revoke on a delay: some engines (Safari) abort a download whose
   // blob URL is revoked before the download manager has claimed it.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadText(filename, text, type = 'application/json') {
+  saveBlob(filename, new Blob([text], { type }));
+}
+
+// The binary sibling, for anything already assembled as bytes (a zip).
+export function downloadBytes(filename, bytes, type = 'application/octet-stream') {
+  saveBlob(filename, new Blob([bytes], { type }));
 }
 
 // Wire a hidden <input type="file"> to a JSON handler. Oversize files

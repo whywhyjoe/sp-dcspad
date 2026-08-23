@@ -334,6 +334,15 @@ export function createGrid({
         box.setAttribute('aria-label', 'Select row');
         box.addEventListener('click', (e) => e.stopPropagation());
         box.addEventListener('change', toggle);
+        // On a grid that also drills down, the whole checkbox cell is a
+        // selection target — a click a few pixels off the box must not open
+        // the row instead of ticking it.
+        if (onOpen) {
+          td.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (e.target !== box) toggle();
+          });
+        }
         td.append(box);
         tr.append(td);
         if (!onOpen) {

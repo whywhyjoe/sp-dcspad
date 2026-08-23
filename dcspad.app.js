@@ -3407,8 +3407,7 @@ function refreshLibraryUI() {
 
 // ../src/io.js
 var MAX_IMPORT_BYTES = 5 * 1024 * 1024;
-function downloadText(filename, text, type = "application/json") {
-  const blob = new Blob([text], { type });
+function saveBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -3417,6 +3416,9 @@ function downloadText(filename, text, type = "application/json") {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1e3);
+}
+function downloadText(filename, text, type = "application/json") {
+  saveBlob(filename, new Blob([text], { type }));
 }
 function wireJsonImport(inputId, onDoc) {
   const input = document.getElementById(inputId);
@@ -3634,8 +3636,7 @@ ${snip.code.slice(0, 400)}`;
 
 // ../src/io.js?v=2
 var MAX_IMPORT_BYTES2 = 5 * 1024 * 1024;
-function downloadText2(filename, text, type = "application/json") {
-  const blob = new Blob([text], { type });
+function saveBlob2(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -3644,6 +3645,9 @@ function downloadText2(filename, text, type = "application/json") {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1e3);
+}
+function downloadText2(filename, text, type = "application/json") {
+  saveBlob2(filename, new Blob([text], { type }));
 }
 function wireJsonImport2(inputId, onDoc) {
   const input = document.getElementById(inputId);
@@ -5460,8 +5464,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "143" : "dev";
-var injectedRevision = true ? "79eccb1c" : "";
+var injectedBuild = true ? "89" : "dev";
+var injectedRevision = true ? "d6ca6cf6" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,

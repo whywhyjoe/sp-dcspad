@@ -21,8 +21,10 @@ import { createSpWriteClient } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
 import {
   buildContentExport, buildRawExport, exportFileStem, contentParts,
+  bundleEntryName, dedupeEntryNames, buildExportReport,
 } from '../page-export.js';
-import { downloadText } from '../../io.js?v=2';
+import { buildZip } from '../zip.js';
+import { downloadText, downloadBytes } from '../../io.js?v=2';
 import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { odataPathLiteral } from '../../sp-odata.js';
@@ -53,6 +55,13 @@ const PAGE_SELECT_BASE = [
   'Modified', 'UniqueId', 'Editor/Title',
 ];
 const PAGE_SELECT_MODERN = [...PAGE_SELECT_BASE, 'PromotedState'];
+
+// Bulk export: every page costs one item read, plus a web-part read when it is
+// classic. The cap keeps an absent-minded select-all on a big library from
+// firing a thousand requests; the small pool keeps the ones it does fire polite
+// (sp-rest.js retries a 429, but not provoking one is better).
+const MAX_BULK_PAGES = 200;
+const BULK_CONCURRENCY = 4;
 
 // BaseTemplate is NOT a schema guarantee: 119 is the Wiki Page Library
 // template, and a classic team site that never got the modern Site Pages
@@ -458,6 +467,127 @@ export function createPagesView({ client, navigate, updateRoute }) {
     return dir.slice(root.length).replace(/^\/+/, '');
   }
 
+  // ---- content markdown ----
+
+  // The one place a content .md is built. The detail pane's "Export content"
+  // button and the grid's bulk zip both come through here, so a page inside a
+  // bundle is byte-identical to the same page exported on its own.
+  // `parts` is the reading model when the caller already has it (the detail
+  // pane does); otherwise it is derived the same way the drilldown derives it.
+  async function contentMarkdownFor(item, sitePages, parts = null) {
+    const parsed = parseCanvasContent(item.CanvasContent1);
+    let readingParts = parts;
+    if (!readingParts) {
+      const contentKind = pageContentKindOf(item);
+      if (contentKind === 'canvas') {
+        readingParts = contentParts(parsed.controls).parts;
+      } else {
+        // Best effort, exactly as in the drilldown: a web-part manager that
+        // 403s costs the page its web-part content, not its export.
+        const fetched = await classicWebPartsOf(item.FileRef);
+        readingParts = classicContentParts({
+          item, webParts: fetched.parts, contentKind,
+        }).parts;
+      }
+    }
+    const web = await webIdentity();
+    return buildContentExport({
+      item,
+      controls: parsed.controls,
+      parts: readingParts,
+      siteTitle: web.Title || '',
+      webUrl: web.Url || client.webUrl(),
+      libraryTitle: sitePages.title,
+      libraryRootPath: sitePages.rootPath,
+    });
+  }
+
+  // ---- bulk export: the selected pages as one zip of content markdown ----
+
+  let exporting = false;
+  async function exportContentZip() {
+    if (exporting || !grid || !current) return;
+    const sitePages = current;
+    const rows = grid.getExportRows();
+    if (!rows.length) return;
+    if (rows.length > MAX_BULK_PAGES) {
+      masterStatus.textContent = `${rows.length} pages selected — this export is capped `
+        + `at ${MAX_BULK_PAGES}. Narrow the selection or filter the grid first.`;
+      masterStatus.classList.add('wb-error');
+      masterStatus.hidden = false;
+      return;
+    }
+
+    exporting = true;
+    masterStatus.classList.remove('wb-error');
+    masterStatus.hidden = false;
+    let done = 0;
+    const progress = () => {
+      masterStatus.textContent = `Exporting ${done} of ${rows.length} page${rows.length === 1 ? '' : 's'}…`;
+    };
+    progress();
+
+    const results = new Array(rows.length);
+    try {
+      const plan = await queryPlan(sitePages);
+      let next = 0;
+      const worker = async () => {
+        for (let i = next++; i < rows.length; i = next++) {
+          const row = rows[i];
+          try {
+            const { item } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
+            results[i] = { item, text: await contentMarkdownFor(item, sitePages) };
+          } catch (err) {
+            // One unreadable page does not end the export — it is named in the
+            // report instead, with the server's own sentence.
+            results[i] = {
+              failure: {
+                name: row.FileLeafRef || row.Title || `Page ${row.Id}`,
+                reason: err?.message || String(err),
+              },
+            };
+          }
+          done += 1;
+          progress();
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(BULK_CONCURRENCY, rows.length) }, worker),
+      );
+    } catch (err) {
+      // The shared prerequisite (the field probe) failed — nothing to bundle.
+      exporting = false;
+      showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
+      return;
+    }
+    exporting = false;
+
+    // A library switch mid-export would otherwise download the previous
+    // library's pages under the new library's name.
+    if (current !== sitePages) { masterStatus.hidden = true; return; }
+
+    const ok = results.filter((r) => r && r.text !== undefined);
+    const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
+    const names = dedupeEntryNames(
+      ok.map((r) => bundleEntryName(r.item, sitePages.rootPath)),
+    );
+    const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
+    if (failures.length) {
+      entries.push({
+        name: '_export-report.md',
+        text: buildExportReport({ total: rows.length, exported: ok.length, failures }),
+      });
+    }
+
+    if (!entries.length) {
+      masterStatus.textContent = 'No pages could be read, so there was nothing to export.';
+      masterStatus.hidden = false;
+      return;
+    }
+    downloadBytes('sp-pages-content.zip', buildZip(entries), 'application/zip');
+    masterStatus.hidden = true;
+  }
+
   async function loadPages() {
     if (pagesLoaded) return;
     const run = ++loadRun;
@@ -532,6 +662,13 @@ export function createPagesView({ client, navigate, updateRoute }) {
           filterPlaceholder: 'Filter pages…',
           toolbarExtras: strip,
           exportName: 'sp-pages',
+          // Ticking rows scopes every export, the zip included. The checkbox
+          // cell owns its own clicks (see grid.js), so selecting a page and
+          // opening one stay distinct gestures on the same row.
+          selectable: true,
+          exportExtras: [
+            ['Download content .zip', () => exportContentZip()],
+          ],
           // The same object the ladder rewrites below, on purpose: the
           // "Copy as…" menu reads it at click time, so a script copied out of
           // a degraded grid reproduces the query that actually worked rather
@@ -938,16 +1075,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
     headRow.append(actions);
 
     exportContent.addEventListener('click', async () => {
-      const web = await webIdentity();
-      downloadText(`${exportFileStem(item)}-content.md`, buildContentExport({
-        item,
-        controls: parsed.controls,
-        parts: readingParts,
-        siteTitle: web.Title || '',
-        webUrl: web.Url || client.webUrl(),
-        libraryTitle: sitePages.title,
-        libraryRootPath: sitePages.rootPath,
-      }), 'text/markdown;charset=utf-8');
+      downloadText(`${exportFileStem(item)}-content.md`,
+        await contentMarkdownFor(item, sitePages, readingParts),
+        'text/markdown;charset=utf-8');
     });
     exportRaw.addEventListener('click', () => {
       downloadText(`${exportFileStem(item)}-raw.json`,

@@ -1,6 +1,7 @@
 // SP Workbench suite: shell + mock-mode grid behavior, then the live path
 // simulated with an injected host context and stubbed /_api routes.
 
+import { readFileSync } from 'node:fs';
 import { launchBrowser, check, exitWithResult, APP_URL } from './lib.mjs';
 
 const WB_URL = process.env.DCSPAD_WORKBENCH_URL
@@ -938,9 +939,64 @@ await check('pages: master grid lists pages with folders and promoted badges', a
     && libHref.includes('/SitePages');
 });
 
+// The bulk path end to end: tick two rows in two different folders, take the
+// zip the Export menu writes, and read the archive back off disk. The folder
+// mirroring and the per-page format are asserted here on real bytes, not on
+// the builder's return value.
+await check('pages: selected pages download as one zip of content markdown', async () => {
+  const row = (name) => page.locator('.wb-view-pages .wb-table tbody tr', { hasText: name });
+  await row('Home.aspx').locator('.wb-row-check').check();
+  await row('Hebdo.aspx').locator('.wb-row-check').check();
+  const selected = await page.locator('.wb-view-pages .wb-grid-count').textContent();
+
+  await page.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip' }).click(),
+  ]);
+  const bytes = readFileSync(await download.path());
+
+  // Parse the central directory the same way an unzipper would.
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocd = bytes.length - 22;
+  const count = view.getUint16(eocd + 10, true);
+  let at = view.getUint32(eocd + 16, true);
+  const files = {};
+  for (let i = 0; i < count; i += 1) {
+    const nameLen = view.getUint16(at + 28, true);
+    const size = view.getUint32(at + 24, true);
+    const offset = view.getUint32(at + 42, true);
+    const name = bytes.subarray(at + 46, at + 46 + nameLen).toString('utf8');
+    const body = offset + 30 + view.getUint16(offset + 26, true)
+      + view.getUint16(offset + 28, true);
+    files[name] = bytes.subarray(body, body + size).toString('utf8');
+    at += 46 + nameLen;
+  }
+
+  // Leave the grid as the next checks expect to find it.
+  await row('Home.aspx').locator('.wb-row-check').uncheck();
+  await row('Hebdo.aspx').locator('.wb-row-check').uncheck();
+
+  const names = Object.keys(files).sort();
+  return download.suggestedFilename() === 'sp-pages-content.zip'
+    && bytes.subarray(0, 2).toString('latin1') === 'PK'
+    && selected.includes('2 selected')
+    // Only the ticked rows, each under its library-relative folder.
+    && JSON.stringify(names) === JSON.stringify(['home-content.md', 'news/fr/hebdo-content.md'])
+    // Same document the single-page Export content button writes.
+    && files['home-content.md'].startsWith('# Home')
+    && files['home-content.md'].includes('Location: Mock Web | Site Pages')
+    && files['home-content.md'].includes('## Quick links')
+    && files['home-content.md'].includes('## Metadata')
+    && files['news/fr/hebdo-content.md'].startsWith('# Résumé hebdo')
+    && files['news/fr/hebdo-content.md'].includes('Location: Mock Web | Site Pages | news/fr')
+    // Nothing failed, so no report rides along.
+    && !names.includes('_export-report.md');
+});
+
 await check('pages: drilldown opens on Extract with the reordered tabs and URL copy', async () => {
   await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await page.waitForSelector('.wb-text-rendered');
   const tabs = await page.locator('.wb-view-pages .wb-tab').allTextContents();
   const active = await page.locator('.wb-view-pages .wb-tab.active').textContent();
@@ -1031,6 +1087,118 @@ await check('page-export: content export merges metadata and content per spec', 
         fileDirRef: '/SitePages/News/fr', libraryRootPath: '/SitePages',
       }) === 'FCUPortal | SitePages | News/fr'
       && exportFileStem({ FileLeafRef: 'News-Update.aspx' }) === 'news-update';
+  }));
+
+// ---- bulk page export: the zip writer and its pure naming/report helpers ----
+
+// The archive is parsed back out of the bytes rather than trusted: a zip that
+// only looks right is one no unzipper will open.
+await check('zip: a store-only archive parses back out of its own bytes', async () =>
+  page.evaluate(async () => {
+    const { buildZip } = await import('/src/workbench/zip.js');
+    const bytes = buildZip([
+      { name: 'home-content.md', text: '# Home\n' },
+      { name: 'news/fr/hebdo-content.md', text: '# Hebdo\n' },
+    ], { date: new Date(2026, 7, 22, 10, 30, 0) });
+    const view = new DataView(bytes.buffer);
+    const dec = new TextDecoder();
+
+    // EOCD: last 22 bytes, no archive comment.
+    const eocd = bytes.length - 22;
+    if (view.getUint32(eocd, true) !== 0x06054b50) return false;
+    const count = view.getUint16(eocd + 10, true);
+    const cdSize = view.getUint32(eocd + 12, true);
+    const cdAt = view.getUint32(eocd + 16, true);
+    if (count !== 2 || cdAt + cdSize !== eocd) return false;
+    if (view.getUint32(cdAt, true) !== 0x02014b50) return false;
+
+    // Walk the central directory, then read each payload at its local header.
+    const found = {};
+    let at = cdAt;
+    for (let i = 0; i < count; i += 1) {
+      const nameLen = view.getUint16(at + 28, true);
+      const stored = view.getUint32(at + 20, true);
+      const size = view.getUint32(at + 24, true);
+      const method = view.getUint16(at + 10, true);
+      const offset = view.getUint32(at + 42, true);
+      const name = dec.decode(bytes.subarray(at + 46, at + 46 + nameLen));
+      if (method !== 0 || stored !== size) return false;   // stored, not deflated
+      if (view.getUint32(offset, true) !== 0x04034b50) return false;
+      const body = offset + 30 + view.getUint16(offset + 26, true)
+        + view.getUint16(offset + 28, true);
+      found[name] = dec.decode(bytes.subarray(body, body + size));
+      at += 46 + nameLen;
+    }
+    return found['home-content.md'] === '# Home\n'
+      && found['news/fr/hebdo-content.md'] === '# Hebdo\n';
+  }));
+
+await check('zip: CRC-32 matches the standard check vector', async () =>
+  page.evaluate(async () => {
+    const { crc32 } = await import('/src/workbench/zip.js');
+    return crc32(new TextEncoder().encode('123456789')) === 0xcbf43926;
+  }));
+
+// A page title can be anything; an entry name must never escape the folder the
+// archive is extracted into, and must announce that it is UTF-8.
+await check('zip: names are UTF-8-flagged and can never escape the extract folder', async () =>
+  page.evaluate(async () => {
+    const { buildZip, safeEntryName } = await import('/src/workbench/zip.js');
+    const bytes = buildZip([{ name: 'news/résumé.md', text: 'x' }]);
+    const view = new DataView(bytes.buffer);
+    const nameLen = view.getUint16(26, true);
+    const name = new TextDecoder().decode(bytes.subarray(30, 30 + nameLen));
+    return (view.getUint16(6, true) & 0x0800) !== 0
+      && name === 'news/résumé.md'
+      && safeEntryName('/../../etc/passwd') === 'etc/passwd'
+      && safeEntryName('a\\b/./c.md') === 'a/b/c.md';
+  }));
+
+await check('page-export: bundle entry names mirror the library folder', async () =>
+  page.evaluate(async () => {
+    const { bundleEntryName } = await import('/src/workbench/page-export.js');
+    const { mockResolver } = await import('/src/workbench/mock-data.js');
+    const items = mockResolver(
+      `${location.origin}/_api/web/lists(guid'5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02')/items`,
+    ).value;
+    const at = (leaf) => bundleEntryName(
+      items.find((i) => i.FileLeafRef === leaf), '/SitePages',
+    );
+    return at('Home.aspx') === 'home-content.md'
+      && at('Weekly.aspx') === 'news/weekly-content.md'
+      && at('Hebdo.aspx') === 'news/fr/hebdo-content.md'
+      // A trailing slash on the root, and a folder name needing the same slug
+      // treatment as a file stem.
+      && bundleEntryName(
+        { FileLeafRef: 'A B.aspx', FileDirRef: '/SitePages/My Folder' }, '/SitePages/',
+      ) === 'my-folder/a-b-content.md';
+  }));
+
+await check('page-export: colliding entry names get a numeric suffix', async () =>
+  page.evaluate(async () => {
+    const { dedupeEntryNames } = await import('/src/workbench/page-export.js');
+    return JSON.stringify(dedupeEntryNames([
+      'a-content.md', 'a-content.md', 'a-content.md', 'news/a-content.md', 'b-content.md',
+    ])) === JSON.stringify([
+      'a-content.md', 'a-content-2.md', 'a-content-3.md', 'news/a-content.md', 'b-content.md',
+    ]);
+  }));
+
+// The report rides in the bundle only when something failed, and states the
+// refusal in the neutral register with SharePoint's own sentence.
+await check('page-export: the export report names what could not be read', async () =>
+  page.evaluate(async () => {
+    const { buildExportReport } = await import('/src/workbench/page-export.js');
+    const md = buildExportReport({
+      total: 5,
+      exported: 4,
+      failures: [{ name: 'Hebdo.aspx', reason: '403 Access denied.\n  You do not have permission.' }],
+    });
+    return md.startsWith('# Export report')
+      && md.includes('4 of 5 pages exported.')
+      && md.includes('- Hebdo.aspx — 403 Access denied. You do not have permission.')
+      && !md.toLowerCase().includes('error')
+      && !buildExportReport({ total: 2, exported: 2, failures: [] }).includes('Not exported');
   }));
 
 await check('pages: metadata tab maps field types to editors and guards content fields', async () => {
@@ -1451,7 +1619,7 @@ await check('the library kind is an info chip, not a status chip', async () => {
   });
   // Same paint as the page-kind chip on the drilldown — one register, one look.
   await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Benefits.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await classicPage.waitForSelector('.wb-view-pages .wb-detail-kind');
   const detail = await classicPage.evaluate(() => {
     const chip = document.querySelector('.wb-view-pages .wb-detail-kind');
@@ -1534,7 +1702,7 @@ await check('both: switching library rebuilds the grid for the other shape', asy
 
 await check('both: the drilldown follows the switched library', async () => {
   await bothPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Policies.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await bothPage.waitForSelector('.wb-text-rendered');
   const text = await bothPage.locator('.wb-text-rendered').textContent();
   const kind = await bothPage.locator('.wb-view-pages .wb-detail-kind').textContent();
@@ -1580,7 +1748,7 @@ await check('both: a reload of a secondary-library page keeps its library', asyn
     .selectOption('9c2d4e6f-1111-4222-8333-44445555a002');
   await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr:nth-child(2)');
   await bothPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Policies.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await bothPage.waitForSelector('.wb-view-pages .wb-detail-id');
   const before = await bothPage.locator('.wb-view-pages .wb-detail-id').textContent();
   await bothPage.reload();
@@ -1656,7 +1824,7 @@ await check('both: a routed library that no longer exists fails closed', async (
     .selectOption('9c2d4e6f-1111-4222-8333-44445555a002');
   await bothPage.waitForSelector('.wb-view-pages .wb-table tbody tr:nth-child(2)');
   await bothPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Policies.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await bothPage.waitForSelector('.wb-view-pages .wb-detail-id');
   // Point the saved route at a library id this web does not offer.
   await bothPage.evaluate(() => {
@@ -1745,7 +1913,7 @@ await check('classic: the generated items query omits PromotedState', async () =
 
 await check('classic: drilldown hides Structure and says why', async () => {
   await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Benefits.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await classicPage.waitForSelector('.wb-text-rendered');
   const tabs = await classicPage.locator('.wb-view-pages .wb-tab').allTextContents();
   const chip = classicPage.locator('.wb-view-pages .wb-detail-kind');
@@ -1782,7 +1950,7 @@ await check('classic: a page whose only content is web parts still extracts', as
   await classicPage.locator('.wb-back').click();
   await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
   await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Rates.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await classicPage.waitForSelector('.wb-view-pages .wb-tab-body');
   const heads = await classicPage.locator('.wb-text-part').allTextContents();
   const text = await classicPage.locator('.wb-text-rendered').textContent();
@@ -1801,7 +1969,7 @@ await check('classic: embedded web parts read in body position, not appended', a
   await classicPage.locator('.wb-back').click();
   await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
   await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Newsletter.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await classicPage.waitForSelector('.wb-text-rendered');
   const heads = await classicPage.locator('.wb-text-part').allTextContents();
   const text = await classicPage.locator('.wb-text-rendered').textContent();
@@ -1815,7 +1983,7 @@ await check('classic: a page with no body and no web-part content reads as empty
   await classicPage.locator('.wb-back').click();
   await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
   await classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Empty.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await classicPage.waitForSelector('.wb-view-pages .wb-tab-body');
   const status = await classicPage.locator('.wb-view-pages .wb-tab-body .wb-grid-status')
     .textContent();
@@ -1848,6 +2016,40 @@ await check('classic: content export carries the merged web-part content', async
       && md.includes('<p>90 days.</p>')
       && !md.includes('- PublishingPageContent:');
   }));
+
+// The bulk path derives the reading model itself, where the drilldown hands it
+// one it already built. On a classic page that means going to the web-part
+// manager — the branch the modern zip check never reaches.
+await check('classic: the bulk zip carries the same merged web-part content', async () => {
+  await classicPage.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await classicPage.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const row = classicPage.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Benefits.aspx' });
+  await row.locator('.wb-row-check').check();
+
+  await classicPage.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    classicPage.waitForEvent('download'),
+    classicPage.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip' }).click(),
+  ]);
+  const bytes = readFileSync(await download.path());
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocd = bytes.length - 22;
+  const cdAt = view.getUint32(eocd + 16, true);
+  const nameLen = view.getUint16(cdAt + 28, true);
+  const size = view.getUint32(cdAt + 24, true);
+  const offset = view.getUint32(cdAt + 42, true);
+  const name = bytes.subarray(cdAt + 46, cdAt + 46 + nameLen).toString('utf8');
+  const body = offset + 30 + view.getUint16(offset + 26, true)
+    + view.getUint16(offset + 28, true);
+  const md = bytes.subarray(body, body + size).toString('utf8');
+  await row.locator('.wb-row-check').uncheck();
+
+  return view.getUint16(eocd + 10, true) === 1
+    && name === 'benefits-content.md'
+    && md.includes('## Page content')
+    && md.includes('## Eligibility')
+    && md.includes('90 days');
+});
 
 await classicPage.close();
 
@@ -2047,7 +2249,7 @@ await check('live: page detail expands Author and Editor lookup fields', async (
   await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
   await live.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   await live.waitForSelector('.wb-view-pages .wb-text-rendered', { hasText: 'Live page body' });
   const expand = new URL(pageDetailUrl).searchParams.get('$expand') || '';
   // The probe confirmed the modern fields, so the grid select carries
@@ -2095,7 +2297,7 @@ await check('live: a library that rejects the people projection still opens the 
   await live.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await live.waitForSelector('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' });
   await live.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Live.aspx' })
-    .locator('td').first().click();
+    .locator('td.wb-mono').first().click();
   // The page reads, despite the rejection.
   await live.waitForSelector('.wb-view-pages .wb-text-rendered', { hasText: 'Live page body' });
   const chip = live.locator('.wb-view-pages .wb-detail-head .wb-reduced-chip');

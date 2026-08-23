@@ -173,7 +173,65 @@ export function buildRawExport({ item = {}, controls = [], webParts = [] }) {
   return JSON.stringify(payload, null, 2);
 }
 
+const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '');
+
 export function exportFileStem(item) {
   const name = String(item.FileLeafRef || item.Title || 'page').replace(/\.aspx$/i, '');
-  return name.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'page';
+  return slug(name) || 'page';
+}
+
+// ---- bulk export (Pages grid → one zip of content markdown) ----
+
+// The path a page takes inside the bundle: its folder relative to the library
+// root, then the same '<stem>-content.md' the single-page export writes. Folder
+// segments go through the same slug as the stem, so nothing reaches a zip entry
+// that could not appear in a file name the pad already produces.
+export function bundleEntryName(item, libraryRootPath) {
+  const dir = String(item?.FileDirRef || '');
+  const root = String(libraryRootPath || '').replace(/\/+$/, '');
+  let folder = '';
+  if (root && dir.toLowerCase().startsWith(root.toLowerCase())) {
+    folder = dir.slice(root.length).replace(/^\/+/, '');
+  }
+  const segments = folder.split('/').map(slug).filter(Boolean);
+  segments.push(`${exportFileStem(item || {})}-content.md`);
+  return segments.join('/');
+}
+
+// Two pages in one folder can slug to the same name ('Résumé.aspx' and
+// 'Resume.aspx' both give 'resume'). A zip with a duplicate entry silently
+// loses one on extraction, so the later one is numbered instead.
+export function dedupeEntryNames(names) {
+  const seen = new Set();
+  return (names || []).map((raw) => {
+    const name = String(raw);
+    if (!seen.has(name)) {
+      seen.add(name);
+      return name;
+    }
+    const dot = name.lastIndexOf('.');
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : '';
+    let n = 2;
+    while (seen.has(`${stem}-${n}${ext}`)) n += 1;
+    const unique = `${stem}-${n}${ext}`;
+    seen.add(unique);
+    return unique;
+  });
+}
+
+// Rides along in the bundle when a page could not be read. Neutral register on
+// purpose (see denied.js): a page the account cannot open is a fact about the
+// site, and the reason is SharePoint's own sentence rather than our gloss.
+export function buildExportReport({ total = 0, exported = 0, failures = [] }) {
+  const lines = ['# Export report', '', `${exported} of ${total} pages exported.`, ''];
+  if (failures.length) {
+    lines.push('Not exported:', '');
+    for (const failure of failures) {
+      const reason = String(failure.reason || '').replace(/\s+/g, ' ').trim();
+      lines.push(`- ${failure.name}${reason ? ` — ${reason}` : ''}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
 }
