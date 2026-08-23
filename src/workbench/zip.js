@@ -6,6 +6,14 @@
 // caller into a promise chain for a few hundred KB. The format below is the
 // 1989 baseline every unzipper reads — no Zip64, no data descriptors, no
 // encryption — so sizes and CRCs are all known before a byte is written.
+//
+// It fails closed. Anything classic ZIP cannot encode exactly — too many
+// entries, a name too long or empty or carrying a control character, a
+// payload or archive over 4 GB — throws rather than being narrowed into a
+// field too small to hold it. None of it is reachable from the Pages grid
+// (bundleEntryName slugs every name, and the caller caps the run), but a
+// writer that silently emits an archive contradicting its own headers is not
+// worth having.
 
 const LOCAL_SIG = 0x04034b50;
 const CENTRAL_SIG = 0x02014b50;
@@ -13,6 +21,20 @@ const EOCD_SIG = 0x06054b50;
 const VERSION = 20;          // 2.0 — the floor for a stored entry
 const FLAG_UTF8 = 0x0800;    // bit 11: names are UTF-8, not CP437
 const METHOD_STORE = 0;
+
+// Classic ZIP holds these in fixed 16- and 32-bit fields, and this writer
+// deliberately implements no Zip64. A value that does not fit is refused
+// rather than narrowed: `setUint16(65536)` writes 0, and an archive whose
+// headers disagree with its own bytes is worse than no archive at all.
+const MAX_ENTRIES = 0xffff;
+const MAX_NAME_BYTES = 0xffff;
+const MAX_UINT32 = 0xffffffff;
+
+// A name an extractor would read differently from how it was written. NUL is
+// the dangerous one — Info-ZIP and Python both truncate the name there, so
+// 'report.md\0a' and 'report.md\0b' are two entries to this writer and one
+// file to whoever unpacks it, the second silently overwriting the first.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 let crcTable = null;
 function table() {
@@ -59,14 +81,42 @@ export function safeEntryName(name) {
 export function buildZip(entries, { date = new Date() } = {}) {
   const enc = new TextEncoder();
   const stamp = dosStamp(date);
-  const files = (entries || []).map((entry) => {
-    const name = enc.encode(safeEntryName(entry.name));
+  const list = entries || [];
+  if (list.length > MAX_ENTRIES) {
+    throw new Error(`A zip cannot hold more than ${MAX_ENTRIES} entries (got ${list.length}).`);
+  }
+  const files = list.map((entry) => {
+    const safe = safeEntryName(entry.name);
+    if (!safe) {
+      throw new Error(`Zip entry name ${JSON.stringify(String(entry.name ?? ''))} is empty once `
+        + 'it is made relative — an entry with no name cannot be extracted.');
+    }
+    if (CONTROL_CHARS.test(safe)) {
+      throw new Error(`Zip entry name ${JSON.stringify(safe)} carries a control character — `
+        + 'extractors truncate the name there, so it would unpack under a different name '
+        + 'than it was written under.');
+    }
+    const name = enc.encode(safe);
+    if (name.length > MAX_NAME_BYTES) {
+      throw new Error(`Zip entry name is ${name.length} bytes; the limit is ${MAX_NAME_BYTES}.`);
+    }
     const body = enc.encode(String(entry.text ?? ''));
+    if (body.length > MAX_UINT32) {
+      throw new Error(`Zip entry ${JSON.stringify(safe)} is ${body.length} bytes; `
+        + 'anything over 4 GB needs Zip64, which this writer does not implement.');
+    }
     return { name, body, crc: crc32(body) };
   });
 
   const localSize = files.reduce((n, f) => n + 30 + f.name.length + f.body.length, 0);
   const centralSize = files.reduce((n, f) => n + 46 + f.name.length, 0);
+  // The central directory's offset and size are u32 fields, and every local
+  // header offset is measured from the start — so the whole archive has to
+  // fit, not just each entry.
+  if (localSize + centralSize > MAX_UINT32) {
+    throw new Error(`This archive would be ${localSize + centralSize} bytes; anything over `
+      + '4 GB needs Zip64, which this writer does not implement.');
+  }
   const out = new Uint8Array(localSize + centralSize + 22);
   const view = new DataView(out.buffer);
   let at = 0;
