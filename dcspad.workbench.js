@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "89" : "dev";
-var injectedRevision = true ? "d6ca6cf6" : "";
+var injectedBuild = true ? "147-dirty" : "dev";
+var injectedRevision = true ? "1184dbe0-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5820,6 +5820,8 @@ var EOCD_SIG = 101010256;
 var VERSION = 20;
 var FLAG_UTF8 = 2048;
 var METHOD_STORE = 0;
+var U16_MAX = 65535;
+var U32_MAX = 4294967295;
 var crcTable = null;
 function table() {
   if (crcTable) return crcTable;
@@ -5850,13 +5852,32 @@ function safeEntryName(name) {
 function buildZip(entries, { date = /* @__PURE__ */ new Date() } = {}) {
   const enc = new TextEncoder();
   const stamp = dosStamp(date);
-  const files = (entries || []).map((entry) => {
-    const name = enc.encode(safeEntryName(entry.name));
+  const source = entries || [];
+  if (!Array.isArray(source)) throw new TypeError("ZIP entries must be an array.");
+  if (source.length > U16_MAX) {
+    throw new RangeError(`ZIP supports at most ${U16_MAX} entries without Zip64.`);
+  }
+  const files = source.map((entry) => {
+    const safeName = safeEntryName(entry.name);
+    if (/[\u0000-\u001f\u007f]/.test(safeName)) {
+      throw new RangeError("ZIP entry names must not contain control characters.");
+    }
+    const name = enc.encode(safeName);
     const body = enc.encode(String(entry.text ?? ""));
+    if (!name.length) throw new RangeError("ZIP entry names must not be empty.");
+    if (name.length > U16_MAX) {
+      throw new RangeError(`ZIP entry names must be at most ${U16_MAX} UTF-8 bytes.`);
+    }
+    if (body.length > U32_MAX) {
+      throw new RangeError(`ZIP entry payloads must be at most ${U32_MAX} bytes without Zip64.`);
+    }
     return { name, body, crc: crc32(body) };
   });
   const localSize = files.reduce((n, f) => n + 30 + f.name.length + f.body.length, 0);
   const centralSize = files.reduce((n, f) => n + 46 + f.name.length, 0);
+  if (localSize > U32_MAX || centralSize > U32_MAX || localSize + centralSize + 22 > U32_MAX) {
+    throw new RangeError("ZIP archive is too large without Zip64.");
+  }
   const out = new Uint8Array(localSize + centralSize + 22);
   const view = new DataView(out.buffer);
   let at = 0;

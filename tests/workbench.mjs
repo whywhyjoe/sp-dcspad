@@ -1139,6 +1139,19 @@ await check('zip: CRC-32 matches the standard check vector', async () =>
     return crc32(new TextEncoder().encode('123456789')) === 0xcbf43926;
   }));
 
+await check('zip: classic-format limits fail closed instead of wrapping fields', async () =>
+  page.evaluate(async () => {
+    const { buildZip } = await import('/src/workbench/zip.js');
+    const rejects = (entries) => {
+      try { buildZip(entries); return false; }
+      catch (err) { return err instanceof RangeError; }
+    };
+    return rejects([{ name: '', text: 'unnamed' }])
+      && rejects([{ name: 'visible.md\0hidden.md', text: 'ambiguous name' }])
+      && rejects([{ name: 'a'.repeat(65536), text: 'long name' }])
+      && rejects(Array.from({ length: 65536 }, (_, i) => ({ name: `${i}`, text: '' })));
+  }));
+
 // A page title can be anything; an entry name must never escape the folder the
 // archive is extracted into, and must announce that it is UTF-8.
 await check('zip: names are UTF-8-flagged and can never escape the extract folder', async () =>

@@ -13,6 +13,8 @@ const EOCD_SIG = 0x06054b50;
 const VERSION = 20;          // 2.0 — the floor for a stored entry
 const FLAG_UTF8 = 0x0800;    // bit 11: names are UTF-8, not CP437
 const METHOD_STORE = 0;
+const U16_MAX = 0xffff;
+const U32_MAX = 0xffffffff;
 
 let crcTable = null;
 function table() {
@@ -59,14 +61,33 @@ export function safeEntryName(name) {
 export function buildZip(entries, { date = new Date() } = {}) {
   const enc = new TextEncoder();
   const stamp = dosStamp(date);
-  const files = (entries || []).map((entry) => {
-    const name = enc.encode(safeEntryName(entry.name));
+  const source = entries || [];
+  if (!Array.isArray(source)) throw new TypeError('ZIP entries must be an array.');
+  if (source.length > U16_MAX) {
+    throw new RangeError(`ZIP supports at most ${U16_MAX} entries without Zip64.`);
+  }
+  const files = source.map((entry) => {
+    const safeName = safeEntryName(entry.name);
+    if (/[\u0000-\u001f\u007f]/.test(safeName)) {
+      throw new RangeError('ZIP entry names must not contain control characters.');
+    }
+    const name = enc.encode(safeName);
     const body = enc.encode(String(entry.text ?? ''));
+    if (!name.length) throw new RangeError('ZIP entry names must not be empty.');
+    if (name.length > U16_MAX) {
+      throw new RangeError(`ZIP entry names must be at most ${U16_MAX} UTF-8 bytes.`);
+    }
+    if (body.length > U32_MAX) {
+      throw new RangeError(`ZIP entry payloads must be at most ${U32_MAX} bytes without Zip64.`);
+    }
     return { name, body, crc: crc32(body) };
   });
 
   const localSize = files.reduce((n, f) => n + 30 + f.name.length + f.body.length, 0);
   const centralSize = files.reduce((n, f) => n + 46 + f.name.length, 0);
+  if (localSize > U32_MAX || centralSize > U32_MAX || localSize + centralSize + 22 > U32_MAX) {
+    throw new RangeError('ZIP archive is too large without Zip64.');
+  }
   const out = new Uint8Array(localSize + centralSize + 22);
   const view = new DataView(out.buffer);
   let at = 0;
