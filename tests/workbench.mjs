@@ -1163,8 +1163,11 @@ await check('zip: names are UTF-8-flagged and can never escape the extract folde
 await check('zip: values classic ZIP cannot encode are refused, not narrowed', async () =>
   page.evaluate(async () => {
     const { buildZip } = await import('/src/workbench/zip.js');
+    // instanceof RangeError, not a bare catch: a bare catch would also pass if
+    // buildZip blew up for some unrelated reason, which is the opposite of
+    // what this check is for.
     const refuses = (entries) => {
-      try { buildZip(entries); return false; } catch { return true; }
+      try { buildZip(entries); return false; } catch (err) { return err instanceof RangeError; }
     };
     const NUL = String.fromCharCode(0);
     const DEL = String.fromCharCode(127);

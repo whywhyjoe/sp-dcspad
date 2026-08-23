@@ -82,27 +82,28 @@ export function buildZip(entries, { date = new Date() } = {}) {
   const enc = new TextEncoder();
   const stamp = dosStamp(date);
   const list = entries || [];
+  if (!Array.isArray(list)) throw new TypeError('Zip entries must be an array.');
   if (list.length > MAX_ENTRIES) {
-    throw new Error(`A zip cannot hold more than ${MAX_ENTRIES} entries (got ${list.length}).`);
+    throw new RangeError(`A zip cannot hold more than ${MAX_ENTRIES} entries (got ${list.length}).`);
   }
   const files = list.map((entry) => {
     const safe = safeEntryName(entry.name);
     if (!safe) {
-      throw new Error(`Zip entry name ${JSON.stringify(String(entry.name ?? ''))} is empty once `
+      throw new RangeError(`Zip entry name ${JSON.stringify(String(entry.name ?? ''))} is empty once `
         + 'it is made relative — an entry with no name cannot be extracted.');
     }
     if (CONTROL_CHARS.test(safe)) {
-      throw new Error(`Zip entry name ${JSON.stringify(safe)} carries a control character — `
+      throw new RangeError(`Zip entry name ${JSON.stringify(safe)} carries a control character — `
         + 'extractors truncate the name there, so it would unpack under a different name '
         + 'than it was written under.');
     }
     const name = enc.encode(safe);
     if (name.length > MAX_NAME_BYTES) {
-      throw new Error(`Zip entry name is ${name.length} bytes; the limit is ${MAX_NAME_BYTES}.`);
+      throw new RangeError(`Zip entry name is ${name.length} bytes; the limit is ${MAX_NAME_BYTES}.`);
     }
     const body = enc.encode(String(entry.text ?? ''));
     if (body.length > MAX_UINT32) {
-      throw new Error(`Zip entry ${JSON.stringify(safe)} is ${body.length} bytes; `
+      throw new RangeError(`Zip entry ${JSON.stringify(safe)} is ${body.length} bytes; `
         + 'anything over 4 GB needs Zip64, which this writer does not implement.');
     }
     return { name, body, crc: crc32(body) };
@@ -113,8 +114,9 @@ export function buildZip(entries, { date = new Date() } = {}) {
   // The central directory's offset and size are u32 fields, and every local
   // header offset is measured from the start — so the whole archive has to
   // fit, not just each entry.
-  if (localSize + centralSize > MAX_UINT32) {
-    throw new Error(`This archive would be ${localSize + centralSize} bytes; anything over `
+  if (localSize > MAX_UINT32 || centralSize > MAX_UINT32
+      || localSize + centralSize > MAX_UINT32) {
+    throw new RangeError(`This archive would be ${localSize + centralSize} bytes; anything over `
       + '4 GB needs Zip64, which this writer does not implement.');
   }
   const out = new Uint8Array(localSize + centralSize + 22);
