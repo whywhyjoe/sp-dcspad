@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "92" : "dev";
-var injectedRevision = true ? "1d4897dd" : "";
+var injectedBuild = true ? "94" : "dev";
+var injectedRevision = true ? "e0789719" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5855,31 +5855,32 @@ function buildZip(entries, { date = /* @__PURE__ */ new Date() } = {}) {
   const enc = new TextEncoder();
   const stamp = dosStamp(date);
   const list2 = entries || [];
+  if (!Array.isArray(list2)) throw new TypeError("Zip entries must be an array.");
   if (list2.length > MAX_ENTRIES) {
-    throw new Error(`A zip cannot hold more than ${MAX_ENTRIES} entries (got ${list2.length}).`);
+    throw new RangeError(`A zip cannot hold more than ${MAX_ENTRIES} entries (got ${list2.length}).`);
   }
   const files = list2.map((entry) => {
     const safe = safeEntryName(entry.name);
     if (!safe) {
-      throw new Error(`Zip entry name ${JSON.stringify(String(entry.name ?? ""))} is empty once it is made relative \u2014 an entry with no name cannot be extracted.`);
+      throw new RangeError(`Zip entry name ${JSON.stringify(String(entry.name ?? ""))} is empty once it is made relative \u2014 an entry with no name cannot be extracted.`);
     }
     if (CONTROL_CHARS.test(safe)) {
-      throw new Error(`Zip entry name ${JSON.stringify(safe)} carries a control character \u2014 extractors truncate the name there, so it would unpack under a different name than it was written under.`);
+      throw new RangeError(`Zip entry name ${JSON.stringify(safe)} carries a control character \u2014 extractors truncate the name there, so it would unpack under a different name than it was written under.`);
     }
     const name = enc.encode(safe);
     if (name.length > MAX_NAME_BYTES) {
-      throw new Error(`Zip entry name is ${name.length} bytes; the limit is ${MAX_NAME_BYTES}.`);
+      throw new RangeError(`Zip entry name is ${name.length} bytes; the limit is ${MAX_NAME_BYTES}.`);
     }
     const body = enc.encode(String(entry.text ?? ""));
     if (body.length > MAX_UINT32) {
-      throw new Error(`Zip entry ${JSON.stringify(safe)} is ${body.length} bytes; anything over 4 GB needs Zip64, which this writer does not implement.`);
+      throw new RangeError(`Zip entry ${JSON.stringify(safe)} is ${body.length} bytes; anything over 4 GB needs Zip64, which this writer does not implement.`);
     }
     return { name, body, crc: crc32(body) };
   });
   const localSize = files.reduce((n, f) => n + 30 + f.name.length + f.body.length, 0);
   const centralSize = files.reduce((n, f) => n + 46 + f.name.length, 0);
-  if (localSize + centralSize > MAX_UINT32) {
-    throw new Error(`This archive would be ${localSize + centralSize} bytes; anything over 4 GB needs Zip64, which this writer does not implement.`);
+  if (localSize > MAX_UINT32 || centralSize > MAX_UINT32 || localSize + centralSize > MAX_UINT32) {
+    throw new RangeError(`This archive would be ${localSize + centralSize} bytes; anything over 4 GB needs Zip64, which this writer does not implement.`);
   }
   const out = new Uint8Array(localSize + centralSize + 22);
   const view = new DataView(out.buffer);
