@@ -4,10 +4,12 @@
 //   Content (.md)  — for human reading and archiving. Human-oriented
 //     metadata on top (title, description, created, location), the merged
 //     content of every part in document order under a heading per part, then
-//     a standardized metadata block at the bottom. Text parts contribute
-//     their HTML (readable raw AND rendered by md viewers); other parts
-//     contribute whatever searchable text they carry. Parts with nothing to
-//     read are skipped — this artifact is for reading, not for inventory.
+//     a standardized metadata block at the bottom. Text parts are converted
+//     to real markdown — their own headings, lists, links and tables survive
+//     as markdown, not as the HTML a text web part happens to store; other
+//     parts contribute whatever searchable text they carry. Parts with
+//     nothing to read are skipped — this artifact is for reading, not for
+//     inventory.
 //   Raw (.json)    — the list item plus the normalized controls, for later
 //     script analysis.
 //
@@ -17,6 +19,7 @@
 // Web parts, Structure and Raw tabs.
 
 import { webPartName, textOfControl, sanitizeHtml } from './canvas.js';
+import { htmlToMarkdown } from '../html-markdown.js';
 
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -82,6 +85,21 @@ export function contentParts(controls) {
   return { parts, unreadable };
 }
 
+// A text part's body as markdown.
+//
+// Sanitized first: Script Editor payloads reach this path on classic pages,
+// and a permissive markdown renderer executes inline HTML. The exact
+// unsanitized payload stays available in the raw JSON export.
+//
+// Some markup has no markdown equivalent at all (a bare video embed, a styled
+// container with no text). Rather than drop content silently, a part that
+// converts to nothing falls back to the sanitized HTML — the old behaviour,
+// now only where markdown genuinely cannot carry the part.
+function textPartMarkdown(html) {
+  const safe = sanitizeHtml(html);
+  return htmlToMarkdown(safe, 'pageContent') || safe;
+}
+
 function contentBlocks(controls, override) {
   const { parts, unreadable } = override
     ? { parts: override, unreadable: 0 }
@@ -89,11 +107,8 @@ function contentBlocks(controls, override) {
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
-    // Sanitized: Script Editor payloads reach this path on classic pages,
-    // and a permissive markdown renderer executes inline HTML. The exact
-    // unsanitized payload stays available in the raw JSON export.
     blocks.push(part.kind === 'text'
-      ? sanitizeHtml(part.html)
+      ? textPartMarkdown(part.html)
       : part.lines.map((t) => `- ${t}`).join('\n'));
   }
   if (unreadable) {
@@ -130,7 +145,10 @@ export function buildContentExport({
   const top = [`# ${title}`, ''];
   if (item.Description) top.push(`> ${String(item.Description).replace(/\r?\n/g, ' ')}`, '');
   top.push(`Created ${fmtDate(item.Created)}${author ? ` by ${author}` : ''}  `);
-  if (location) top.push(`Location: ${location}`, '');
+  if (location) top.push(`Location: ${location}`);
+  // The '---' below must stay a thematic break: without this blank line it
+  // would make the last front-matter line a setext heading instead.
+  top.push('');
 
   const meta = ['## Metadata', ''];
   const metaLine = (label, value) => {

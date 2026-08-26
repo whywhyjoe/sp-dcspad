@@ -353,7 +353,9 @@ await check('item-export: markdown document follows the content spec', async () 
         return queried.includes("filter: ProjectStatus eq 'Active'")
           && queried.includes('order: Budget desc');
       })()
-      && htmlToMarkdown('<p>a<br>b</p><h2>T</h2>') === 'a\nb\n\n**T**';
+      // <br> is a markdown hard break; a heading inside a field value
+      // still flattens, so it cannot forge an item heading.
+      && htmlToMarkdown('<p>a<br>b</p><h2>T</h2>') === 'a  \nb\n\n**T**';
   }));
 
 await check('items: query parser respects quoted literals and rejects duplicates', async () =>
@@ -390,8 +392,9 @@ await check('item-export: hardened builders — encoded keys, hostile markdown, 
       { InternalName: 'Body', TypeAsString: 'Text' },
     ], ['_ModerationStatus', 'Secret', 'LinkFilename', 'Body'])
       .map((f) => f.InternalName).join(',');
-    // multiline values are blockquoted, so '##' inside a value can't forge
-    // an item heading; a Title-less item falls back to its ID
+    // multiline values are blockquoted AND the converter escapes markdown
+    // structure in text, so '##' inside a value can't forge an item heading
+    // by either route; a Title-less item falls back to its ID
     const md = buildItemsMarkdown({
       listTitle: 'L',
       webUrl: location.origin,
@@ -411,7 +414,7 @@ await check('item-export: hardened builders — encoded keys, hostile markdown, 
     return viaKey
       && narrowed === 'FileLeafRef,Body'
       && md.includes('## Item 9')
-      && md.includes('> ## forged item')
+      && md.includes('> \\## forged item')
       && !/\n## forged item/.test(md)
       && links[0] === '[A#B (v2).docx](https://x.example/Lists/L/Attachments/9/A%23B%20%28v2%29.docx)'
       && urlScalar === 'https://plain.example/a'
@@ -1087,6 +1090,91 @@ await check('page-export: content export merges metadata and content per spec', 
         fileDirRef: '/SitePages/News/fr', libraryRootPath: '/SitePages',
       }) === 'FCUPortal | SitePages | News/fr'
       && exportFileStem({ FileLeafRef: 'News-Update.aspx' }) === 'news-update';
+  }));
+
+await check('html-markdown: the two profiles keep their structural conventions', async () =>
+  page.evaluate(async () => {
+    const { htmlToMarkdown, HTML_MARKDOWN_PROFILES } =
+      await import('/src/html-markdown.js');
+    const html = '<h2>Mission</h2><p>We build <strong>things</strong>.</p>'
+      + '<table><tr><th>Region</th><th>Owner</th></tr>'
+      + '<tr><td>East | North</td><td>Pat</td></tr><tr><td>West</td></tr></table>';
+    const list = htmlToMarkdown(html, 'listField');
+    const pageMd = htmlToMarkdown(html, 'pageContent');
+    let rejected = '';
+    try { htmlToMarkdown('<p>x</p>', 'nope'); } catch (e) { rejected = e.message; }
+    return HTML_MARKDOWN_PROFILES.join(',') === 'listField,pageContent'
+      // listField: a heading would forge an item heading, so it flattens;
+      // rows join with ' | ' and no separator — readable, not a table.
+      && list.includes('**Mission**') && !list.includes('# Mission')
+      && list.includes('Region | Owner') && !list.includes('| --- |')
+      // pageContent: h2 lands at '###', directly under the part heading.
+      && pageMd.includes('### Mission') && !pageMd.includes('**Mission**')
+      // a real table, with the pipe inside a cell escaped and the short row
+      // padded so it still renders
+      && pageMd.includes('| Region | Owner |')
+      && pageMd.includes('| --- | --- |')
+      && pageMd.includes('| East \\| North | Pat |')
+      && pageMd.includes('| West |  |')
+      // an unknown profile is refused rather than silently converted under
+      // the wrong conventions
+      && rejected.includes('Unknown html-markdown profile')
+      && htmlToMarkdown('', 'pageContent') === '';
+  }));
+
+await check('html-markdown: no markup survives into the output', async () =>
+  page.evaluate(async () => {
+    const { htmlToMarkdown } = await import('/src/html-markdown.js');
+    const md = htmlToMarkdown(
+      '<script>steal()</script><style>i{}</style>'
+      + '<iframe src="//evil.test"></iframe><form><input></form>'
+      + '<div onclick="x()">Visible</div>'
+      + '<a href="javascript:evil()">click</a>'
+      + '<img src="javascript:evil()" alt="bad">',
+      'pageContent',
+    );
+    // Dropped whole: content and all. The converter is safe on its own terms,
+    // not by assumption that its caller sanitized first.
+    return md.includes('Visible') && md.includes('click')
+      && !md.includes('steal') && !md.includes('evil')
+      && !md.includes('javascript:') && !md.includes('onclick')
+      && !md.includes('<');
+  }));
+
+await check('page-export: text parts export as markdown, not as their HTML', async () =>
+  page.evaluate(async () => {
+    const { buildContentExport } = await import('/src/workbench/page-export.js');
+    const html = '<h2>Our mission</h2><p>We build <strong>things</strong> and '
+      + '<a href="https://x.test/a(b)">link</a>.</p>'
+      + '<ul><li>fast<ul><li>very fast</li></ul></li><li>simple</li></ul>';
+    const md = buildContentExport({
+      item: { Title: 'Demo', Created: '2026-05-02T00:00:00Z' },
+      controls: [],
+      parts: [{ kind: 'text', label: 'Text 1', html, lines: [] }],
+    });
+    // Nothing HTML-shaped reaches the file the reader opens.
+    return !md.includes('<h2>') && !md.includes('<p>') && !md.includes('<strong>')
+      && md.includes('## Text 1')
+      && md.includes('### Our mission')          // demoted under the part
+      && md.includes('We build **things**')
+      && md.includes('[link](https://x.test/a%28b%29)')   // parens encoded
+      && md.includes('- fast') && md.includes('  - very fast')   // nesting kept
+      // the front matter's '---' stays a thematic break rather than turning
+      // the line above it into a setext heading
+      && md.includes('Created 2026-05-02  \n\n---');
+  }));
+
+await check('page-export: a part markdown cannot carry falls back to its HTML', async () =>
+  page.evaluate(async () => {
+    const { buildContentExport } = await import('/src/workbench/page-export.js');
+    const md = buildContentExport({
+      item: { Title: 'P' },
+      controls: [],
+      parts: [{ kind: 'text', label: 'Embed', html: '<video src="/clip.mp4"></video>', lines: [] }],
+    });
+    // Content is never dropped silently: markdown has no <video>, so the
+    // sanitized HTML rides along rather than leaving an empty section.
+    return md.includes('## Embed') && md.includes('<video src="/clip.mp4">');
   }));
 
 // ---- bulk page export: the zip writer and its pure naming/report helpers ----
@@ -2044,7 +2132,10 @@ await check('classic: content export carries the merged web-part content', async
     // The body appears as content exactly once — the metadata block excludes
     // content blobs rather than repeating the whole page.
     return md.includes('## Page content') && md.includes('## Eligibility')
-      && md.includes('<p>90 days.</p>')
+      // Converted, not embedded: the body's own heading survives as a
+      // markdown heading demoted under the part heading above it.
+      && md.includes('### Benefits') && md.includes('90 days.')
+      && !md.includes('<p>') && !md.includes('<h2>')
       && !md.includes('- PublishingPageContent:');
   }));
 
