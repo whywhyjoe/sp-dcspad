@@ -3986,8 +3986,10 @@ async function requireOk(response, fallback, code) {
   });
 }
 
-// ../src/sp-files.js?v=5
+// ../src/sp-files.js?v=6
 var DIGEST_SAFETY_MS = 6e4;
+var CHECK_OUT_TYPE_NONE = 2;
+var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 var FILE_METADATA_SPECS = Object.freeze([
   { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
   { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
@@ -4216,8 +4218,84 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
-  async function inspectFileMetadata2(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+  function isCurrentUser(user, ctx, sameWeb) {
+    if (!user) return false;
+    const pageContext = ctx?.pageContext || {};
+    const login = String(pageContext.userLoginName || "").trim().toLowerCase();
+    const claim = String(user.LoginName || "").trim().toLowerCase();
+    if (login && claim) return login === claim;
+    const email = String(pageContext.userEmail || "").trim().toLowerCase();
+    const userEmail = String(user.Email || user.UserPrincipalName || "").trim().toLowerCase();
+    if (email && userEmail) return email === userEmail;
+    const id = Number(pageContext.userId);
+    if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
+    return false;
+  }
+  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx }) {
+    const state3 = {
+      required: false,
+      known: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: "",
+      reason: ""
+    };
+    try {
+      const policyResponse = await request(
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        policyResponse,
+        "Could not read the destination library check-out policy",
+        "checkout-policy"
+      );
+      const list = unwrapJson(await policyResponse.json()) || {};
+      state3.required = Boolean(list.ForceCheckout ?? list.forceCheckout);
+      state3.known = true;
+      if (!state3.required || !filePath) return state3;
+      const path = checkedPath(filePath, rootPath);
+      const fileResponse = await request(
+        `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email&$expand=CheckedOutByUser`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        fileResponse,
+        "Could not read the destination file check-out state",
+        "checkout-state"
+      );
+      const file = unwrapJson(await fileResponse.json()) || {};
+      const type = Number(file.CheckOutType ?? file.checkOutType ?? CHECK_OUT_TYPE_NONE);
+      state3.checkedOut = Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+      if (state3.checkedOut) {
+        const user = file.CheckedOutByUser || file.checkedOutByUser || null;
+        state3.checkedOutBy = String(user?.Title || user?.LoginName || "").trim();
+        state3.checkedOutByCurrentUser = isCurrentUser(user, ctx, webUrl === hostWebUrl);
+      }
+    } catch (error) {
+      state3.known = false;
+      state3.reason = String(error?.message || error);
+    }
+    return state3;
+  }
+  async function checkOutFile2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/CheckOut()`;
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: { Accept: ACCEPT_JSON, "X-RequestDigest": digest }
+      });
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    await requireOk(response, "Could not check out the SharePoint file", "checkout");
+    return { serverRelativeUrl: path };
+  }
+  async function inspectFileMetadata2(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+    const { ctx, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')?$select=ListItemAllFields/ParentList/Id&$expand=ListItemAllFields,ListItemAllFields/ParentList`;
     const libraryResponse = await request(libraryEndpoint, {
@@ -4227,7 +4305,7 @@ function createSpFilesClient({
     let libraryId = String(
       libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
     ).replace(/[{}]/g, "").trim();
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
       const rootLibraryResponse = await request(rootLibraryEndpoint, {
         headers: { Accept: ACCEPT_JSON }
@@ -4240,12 +4318,31 @@ function createSpFilesClient({
       const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
       libraryId = String(rootLibraryData.Id || rootLibraryData.ID || "").replace(/[{}]/g, "").trim();
     }
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       throw new SpFileError(
         "SharePoint did not identify the destination document library.",
         { code: "metadata-library" }
       );
     }
+    const checkout = await checkOutState({
+      webUrl,
+      hostWebUrl,
+      rootPath,
+      libraryId,
+      filePath,
+      ctx
+    });
+    try {
+      return {
+        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
+        checkout
+      };
+    } catch (error) {
+      if (error && typeof error === "object") error.checkout = checkout;
+      throw error;
+    }
+  }
+  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
     const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden`;
     const fieldsResponse = await request(fieldsEndpoint, {
       headers: { Accept: ACCEPT_JSON }
@@ -4299,7 +4396,7 @@ function createSpFilesClient({
         }
       }
     }
-    return { fields };
+    return fields;
   }
   async function writeFileMetadata2(serverRelativePath, fields, values, { webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
@@ -4382,6 +4479,7 @@ function createSpFilesClient({
     getDigest,
     listFolder: listFolder2,
     readTextFile: readTextFile2,
+    checkOutFile: checkOutFile2,
     inspectFileMetadata: inspectFileMetadata2,
     writeFileMetadata: writeFileMetadata2,
     writeTextFile: writeTextFile2
@@ -4392,6 +4490,7 @@ var getSpWebInfo = (webUrl) => defaultClient.webInfo(webUrl);
 var connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 var listFolder = (path, options) => defaultClient.listFolder(path, options);
 var readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+var checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
 var inspectFileMetadata = (folder, options) => defaultClient.inspectFileMetadata(folder, options);
 var writeFileMetadata = (path, fields, values, options) => defaultClient.writeFileMetadata(path, fields, values, options);
 var writeTextFile = (folder, name, text, options) => defaultClient.writeTextFile(folder, name, text, options);
@@ -5464,8 +5563,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "94" : "dev";
-var injectedRevision = true ? "e0789719" : "";
+var injectedBuild = true ? "95" : "dev";
+var injectedRevision = true ? "3a851956" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -6079,6 +6178,10 @@ var spMetadataDialog = document.getElementById("sp-metadata-dialog");
 var spMetadataContext = document.getElementById("sp-metadata-context");
 var spMetadataOverwrite = document.getElementById("sp-metadata-overwrite");
 var spMetadataNotice = document.getElementById("sp-metadata-notice");
+var spMetadataCheckout = document.getElementById("sp-metadata-checkout");
+var spMetadataCheckoutInput = document.getElementById("sp-metadata-checkout-input");
+var spMetadataCheckoutLabel = document.getElementById("sp-metadata-checkout-label");
+var spMetadataCheckoutHint = document.getElementById("sp-metadata-checkout-hint");
 var spMetadataError = document.getElementById("sp-metadata-error");
 var spMetadataClose = document.getElementById("sp-metadata-close");
 var spMetadataCancel = document.getElementById("sp-metadata-cancel");
@@ -6391,9 +6494,19 @@ function setSpMetadataField(key2, field, value) {
   wrapper.classList.toggle("available", field.available);
   wrapper.classList.toggle("unavailable", !field.available);
 }
+function spMetadataGateMet() {
+  const pending = spPendingExport;
+  if (!pending) return true;
+  if (pending.checkoutBlocked) return false;
+  return !pending.checkoutGate || spMetadataCheckoutInput.checked;
+}
+function syncSpMetadataSave() {
+  spMetadataSave.disabled = spMetadataBusy || !spMetadataGateMet();
+}
 function setSpMetadataBusy(busy, label = "") {
   spMetadataBusy = busy;
-  spMetadataSave.disabled = busy;
+  spMetadataCheckoutInput.disabled = busy || !spPendingExport?.checkoutGate;
+  syncSpMetadataSave();
   spMetadataCancel.disabled = busy;
   spMetadataClose.disabled = busy;
   if (label) spMetadataSave.textContent = label;
@@ -6405,6 +6518,10 @@ function setSpMetadataBusy(busy, label = "") {
 function resetSpMetadataDialog() {
   spMetadataOverwrite.textContent = "";
   spMetadataOverwrite.hidden = true;
+  spMetadataCheckout.hidden = true;
+  spMetadataCheckoutInput.checked = false;
+  spMetadataCheckoutLabel.textContent = "";
+  spMetadataCheckoutHint.textContent = "";
   setSpMetadataNotice("");
   setSpMetadataError("");
   spMetadataKeep.hidden = true;
@@ -6445,6 +6562,30 @@ function finishSpExport(metadataStatus = "saved") {
   spPendingExport = null;
   spMetadataBusy = false;
 }
+function applySpCheckoutState(pending) {
+  const checkout = pending.checkout;
+  pending.checkoutGate = false;
+  pending.checkoutBlocked = false;
+  spMetadataCheckoutInput.checked = false;
+  if (!checkout?.required || !pending.existing) {
+    spMetadataCheckout.hidden = true;
+    return;
+  }
+  const { name } = pending.existing;
+  if (checkout.checkedOut && !checkout.checkedOutByCurrentUser) {
+    spMetadataCheckout.hidden = true;
+    pending.checkoutBlocked = true;
+    setSpMetadataError(
+      `${name} is checked out to ${checkout.checkedOutBy || "another user"}. It cannot be overwritten until they check it back in.`
+    );
+    return;
+  }
+  pending.checkoutGate = true;
+  spMetadataCheckoutLabel.textContent = checkout.checkedOutByCurrentUser ? `Overwrite ${name}, which is already checked out to you` : `Check out ${name} before overwriting it`;
+  const hint = checkout.checkedOutByCurrentUser ? "This library requires check-out. The file is already checked out to you, so DCSPad uploads straight over it." : "This library requires check-out. DCSPad checks the file out, then uploads \u2014 SharePoint checks it back in as part of the overwrite.";
+  spMetadataCheckoutHint.textContent = checkout.known ? hint : `${hint} Its current check-out state could not be read: ${checkout.reason}`;
+  spMetadataCheckout.hidden = false;
+}
 async function openSpMetadataDialog({ pane, name, text, existing }) {
   spPendingExport = {
     pane,
@@ -6453,6 +6594,9 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     existing,
     metadataInfo: null,
     metadataInspectionFailed: false,
+    checkout: null,
+    checkoutGate: false,
+    checkoutBlocked: false,
     uploadResult: null
   };
   resetSpMetadataDialog();
@@ -6470,6 +6614,8 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     });
     if (!spPendingExport || spPendingExport.name !== name) return;
     spPendingExport.metadataInfo = metadataInfo;
+    spPendingExport.checkout = metadataInfo.checkout || null;
+    applySpCheckoutState(spPendingExport);
     const destinationTitle = existing && metadataInfo.fields.title.available ? metadataInfo.fields.title.value.trim() : "";
     setSpMetadataField(
       "title",
@@ -6499,6 +6645,7 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
   } catch (error) {
     if (!spPendingExport || spPendingExport.name !== name) return;
     spPendingExport.metadataInspectionFailed = true;
+    spPendingExport.checkout = error?.checkout || null;
     spPendingExport.metadataInfo = {
       fields: Object.fromEntries(Object.keys(spMetadataControls).map((key2) => [
         key2,
@@ -6516,6 +6663,7 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     setSpMetadataNotice(
       `${error.message || error} The file can still be uploaded without metadata.`
     );
+    applySpCheckoutState(spPendingExport);
     setSpMetadataBusy(
       false,
       existing ? "Overwrite without metadata" : "Upload without metadata"
@@ -6531,6 +6679,12 @@ async function saveSpMetadata() {
     pending.uploadResult ? "Saving metadata\u2026" : "Uploading file\u2026"
   );
   try {
+    if (!pending.uploadResult && pending.existing && pending.checkout?.required && !pending.checkout.checkedOutByCurrentUser) {
+      setSpMetadataBusy(true, "Checking out\u2026");
+      await checkOutFile(pending.existing.serverRelativeUrl, { webUrl: spTargetWebUrl });
+      pending.checkout.checkedOutByCurrentUser = true;
+      setSpMetadataBusy(true, "Uploading file\u2026");
+    }
     if (!pending.uploadResult) {
       pending.uploadResult = await writeTextFile(
         spFolder.path,
@@ -6541,6 +6695,7 @@ async function saveSpMetadata() {
           webUrl: spTargetWebUrl
         }
       );
+      pending.checkoutGate = false;
     }
     const fields = pending.metadataInfo?.fields || {};
     const available = Object.values(fields).some((field) => field.available);
@@ -6574,6 +6729,7 @@ async function saveSpMetadata() {
     }
   }
 }
+spMetadataCheckoutInput.addEventListener("change", syncSpMetadataSave);
 spMetadataSave.addEventListener("click", saveSpMetadata);
 spMetadataKeep.addEventListener("click", () => finishSpExport("skipped"));
 spMetadataClose.addEventListener("click", closeSpMetadataDialog);

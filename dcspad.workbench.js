@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "94" : "dev";
-var injectedRevision = true ? "e0789719" : "";
+var injectedBuild = true ? "95" : "dev";
+var injectedRevision = true ? "3a851956" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -3304,6 +3304,8 @@ function createListsView({ client: client2, navigate }) {
 
 // ../src/sp-files.js
 var DIGEST_SAFETY_MS = 6e4;
+var CHECK_OUT_TYPE_NONE = 2;
+var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 var FILE_METADATA_SPECS = Object.freeze([
   { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
   { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
@@ -3532,8 +3534,84 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
-  async function inspectFileMetadata(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+  function isCurrentUser(user2, ctx2, sameWeb) {
+    if (!user2) return false;
+    const pageContext = ctx2?.pageContext || {};
+    const login = String(pageContext.userLoginName || "").trim().toLowerCase();
+    const claim = String(user2.LoginName || "").trim().toLowerCase();
+    if (login && claim) return login === claim;
+    const email = String(pageContext.userEmail || "").trim().toLowerCase();
+    const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
+    if (email && userEmail) return email === userEmail;
+    const id = Number(pageContext.userId);
+    if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user2.Id);
+    return false;
+  }
+  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx: ctx2 }) {
+    const state2 = {
+      required: false,
+      known: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: "",
+      reason: ""
+    };
+    try {
+      const policyResponse = await request(
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        policyResponse,
+        "Could not read the destination library check-out policy",
+        "checkout-policy"
+      );
+      const list2 = unwrapJson(await policyResponse.json()) || {};
+      state2.required = Boolean(list2.ForceCheckout ?? list2.forceCheckout);
+      state2.known = true;
+      if (!state2.required || !filePath) return state2;
+      const path = checkedPath(filePath, rootPath);
+      const fileResponse = await request(
+        `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email&$expand=CheckedOutByUser`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        fileResponse,
+        "Could not read the destination file check-out state",
+        "checkout-state"
+      );
+      const file = unwrapJson(await fileResponse.json()) || {};
+      const type = Number(file.CheckOutType ?? file.checkOutType ?? CHECK_OUT_TYPE_NONE);
+      state2.checkedOut = Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+      if (state2.checkedOut) {
+        const user2 = file.CheckedOutByUser || file.checkedOutByUser || null;
+        state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
+        state2.checkedOutByCurrentUser = isCurrentUser(user2, ctx2, webUrl === hostWebUrl);
+      }
+    } catch (error) {
+      state2.known = false;
+      state2.reason = String(error?.message || error);
+    }
+    return state2;
+  }
+  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/CheckOut()`;
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest2({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: { Accept: ACCEPT_JSON, "X-RequestDigest": digest }
+      });
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    await requireOk(response, "Could not check out the SharePoint file", "checkout");
+    return { serverRelativeUrl: path };
+  }
+  async function inspectFileMetadata(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+    const { ctx: ctx2, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')?$select=ListItemAllFields/ParentList/Id&$expand=ListItemAllFields,ListItemAllFields/ParentList`;
     const libraryResponse = await request(libraryEndpoint, {
@@ -3543,7 +3621,7 @@ function createSpFilesClient({
     let libraryId = String(
       libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
     ).replace(/[{}]/g, "").trim();
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
       const rootLibraryResponse = await request(rootLibraryEndpoint, {
         headers: { Accept: ACCEPT_JSON }
@@ -3556,12 +3634,31 @@ function createSpFilesClient({
       const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
       libraryId = String(rootLibraryData.Id || rootLibraryData.ID || "").replace(/[{}]/g, "").trim();
     }
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       throw new SpFileError(
         "SharePoint did not identify the destination document library.",
         { code: "metadata-library" }
       );
     }
+    const checkout = await checkOutState({
+      webUrl,
+      hostWebUrl,
+      rootPath,
+      libraryId,
+      filePath,
+      ctx: ctx2
+    });
+    try {
+      return {
+        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
+        checkout
+      };
+    } catch (error) {
+      if (error && typeof error === "object") error.checkout = checkout;
+      throw error;
+    }
+  }
+  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
     const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden`;
     const fieldsResponse = await request(fieldsEndpoint, {
       headers: { Accept: ACCEPT_JSON }
@@ -3615,7 +3712,7 @@ function createSpFilesClient({
         }
       }
     }
-    return { fields };
+    return fields;
   }
   async function writeFileMetadata(serverRelativePath, fields, values, { webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
@@ -3698,6 +3795,7 @@ function createSpFilesClient({
     getDigest: getDigest2,
     listFolder,
     readTextFile,
+    checkOutFile,
     inspectFileMetadata,
     writeFileMetadata,
     writeTextFile
