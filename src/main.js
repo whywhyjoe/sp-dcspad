@@ -19,9 +19,9 @@ import {
 } from './io.js?v=2';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
 import {
-  connectSpWeb, getSpWebInfo, inspectFileMetadata, listFolder, readTextFile,
+  checkOutFile, connectSpWeb, getSpWebInfo, inspectFileMetadata, listFolder, readTextFile,
   writeFileMetadata, writeTextFile,
-} from './sp-files.js?v=5';
+} from './sp-files.js?v=6';
 import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js?v=2';
 import { initDocs } from './docs.js?v=3';
@@ -721,6 +721,10 @@ const spMetadataDialog = document.getElementById('sp-metadata-dialog');
 const spMetadataContext = document.getElementById('sp-metadata-context');
 const spMetadataOverwrite = document.getElementById('sp-metadata-overwrite');
 const spMetadataNotice = document.getElementById('sp-metadata-notice');
+const spMetadataCheckout = document.getElementById('sp-metadata-checkout');
+const spMetadataCheckoutInput = document.getElementById('sp-metadata-checkout-input');
+const spMetadataCheckoutLabel = document.getElementById('sp-metadata-checkout-label');
+const spMetadataCheckoutHint = document.getElementById('sp-metadata-checkout-hint');
 const spMetadataError = document.getElementById('sp-metadata-error');
 const spMetadataClose = document.getElementById('sp-metadata-close');
 const spMetadataCancel = document.getElementById('sp-metadata-cancel');
@@ -1092,9 +1096,25 @@ function setSpMetadataField(key, field, value) {
   wrapper.classList.toggle('unavailable', !field.available);
 }
 
+// Save is gated by two independent facts: the dialog must not be busy, and a
+// forced check-out must have been consented to (or be impossible, when the
+// file is held by someone else). Everything that re-enables the button goes
+// through here so neither fact can be lost by a later state change.
+function spMetadataGateMet() {
+  const pending = spPendingExport;
+  if (!pending) return true;
+  if (pending.checkoutBlocked) return false;
+  return !pending.checkoutGate || spMetadataCheckoutInput.checked;
+}
+
+function syncSpMetadataSave() {
+  spMetadataSave.disabled = spMetadataBusy || !spMetadataGateMet();
+}
+
 function setSpMetadataBusy(busy, label = '') {
   spMetadataBusy = busy;
-  spMetadataSave.disabled = busy;
+  spMetadataCheckoutInput.disabled = busy || !spPendingExport?.checkoutGate;
+  syncSpMetadataSave();
   spMetadataCancel.disabled = busy;
   spMetadataClose.disabled = busy;
   if (label) spMetadataSave.textContent = label;
@@ -1107,6 +1127,10 @@ function setSpMetadataBusy(busy, label = '') {
 function resetSpMetadataDialog() {
   spMetadataOverwrite.textContent = '';
   spMetadataOverwrite.hidden = true;
+  spMetadataCheckout.hidden = true;
+  spMetadataCheckoutInput.checked = false;
+  spMetadataCheckoutLabel.textContent = '';
+  spMetadataCheckoutHint.textContent = '';
   setSpMetadataNotice('');
   setSpMetadataError('');
   spMetadataKeep.hidden = true;
@@ -1155,6 +1179,49 @@ function finishSpExport(metadataStatus = 'saved') {
   spMetadataBusy = false;
 }
 
+// Libraries that set ForceCheckout make an overwrite two acts, not one: the
+// file is checked out first, and SharePoint checks it back in as part of the
+// overwriting upload. Checking a file out changes what every other person in
+// the library sees, so the pad never does it on the operator's behalf — the
+// consent box states what will happen and gates the overwrite behind it.
+function applySpCheckoutState(pending) {
+  const checkout = pending.checkout;
+  pending.checkoutGate = false;
+  pending.checkoutBlocked = false;
+  spMetadataCheckoutInput.checked = false;
+  if (!checkout?.required || !pending.existing) {
+    spMetadataCheckout.hidden = true;
+    return;
+  }
+
+  const { name } = pending.existing;
+  if (checkout.checkedOut && !checkout.checkedOutByCurrentUser) {
+    // Nothing to consent to: SharePoint refuses the write until the holder
+    // checks the file back in, so say that instead of offering the box.
+    spMetadataCheckout.hidden = true;
+    pending.checkoutBlocked = true;
+    setSpMetadataError(
+      `${name} is checked out to ${checkout.checkedOutBy || 'another user'}. `
+      + 'It cannot be overwritten until they check it back in.',
+    );
+    return;
+  }
+
+  pending.checkoutGate = true;
+  spMetadataCheckoutLabel.textContent = checkout.checkedOutByCurrentUser
+    ? `Overwrite ${name}, which is already checked out to you`
+    : `Check out ${name} before overwriting it`;
+  const hint = checkout.checkedOutByCurrentUser
+    ? 'This library requires check-out. The file is already checked out to you, '
+      + 'so DCSPad uploads straight over it.'
+    : 'This library requires check-out. DCSPad checks the file out, then uploads — '
+      + 'SharePoint checks it back in as part of the overwrite.';
+  spMetadataCheckoutHint.textContent = checkout.known
+    ? hint
+    : `${hint} Its current check-out state could not be read: ${checkout.reason}`;
+  spMetadataCheckout.hidden = false;
+}
+
 async function openSpMetadataDialog({ pane, name, text, existing }) {
   spPendingExport = {
     pane,
@@ -1163,6 +1230,9 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     existing,
     metadataInfo: null,
     metadataInspectionFailed: false,
+    checkout: null,
+    checkoutGate: false,
+    checkoutBlocked: false,
     uploadResult: null,
   };
   resetSpMetadataDialog();
@@ -1184,6 +1254,8 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     });
     if (!spPendingExport || spPendingExport.name !== name) return;
     spPendingExport.metadataInfo = metadataInfo;
+    spPendingExport.checkout = metadataInfo.checkout || null;
+    applySpCheckoutState(spPendingExport);
 
     const destinationTitle = existing && metadataInfo.fields.title.available
       ? metadataInfo.fields.title.value.trim()
@@ -1221,6 +1293,10 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
   } catch (error) {
     if (!spPendingExport || spPendingExport.name !== name) return;
     spPendingExport.metadataInspectionFailed = true;
+    // The check-out policy is probed before the fields are read, so a fields
+    // failure still carries it: the export may lose its metadata, never the
+    // check-out the library forces.
+    spPendingExport.checkout = error?.checkout || null;
     spPendingExport.metadataInfo = {
       fields: Object.fromEntries(Object.keys(spMetadataControls).map((key) => [
         key,
@@ -1240,6 +1316,7 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     setSpMetadataNotice(
       `${error.message || error} The file can still be uploaded without metadata.`,
     );
+    applySpCheckoutState(spPendingExport);
     setSpMetadataBusy(
       false,
       existing ? 'Overwrite without metadata' : 'Upload without metadata',
@@ -1257,6 +1334,18 @@ async function saveSpMetadata() {
   );
 
   try {
+    if (!pending.uploadResult
+        && pending.existing
+        && pending.checkout?.required
+        && !pending.checkout.checkedOutByCurrentUser) {
+      setSpMetadataBusy(true, 'Checking out…');
+      await checkOutFile(pending.existing.serverRelativeUrl, { webUrl: spTargetWebUrl });
+      // The file is ours now: a retry after a failed upload must not check
+      // out a second time, which SharePoint rejects.
+      pending.checkout.checkedOutByCurrentUser = true;
+      setSpMetadataBusy(true, 'Uploading file…');
+    }
+
     if (!pending.uploadResult) {
       pending.uploadResult = await writeTextFile(
         spFolder.path,
@@ -1267,6 +1356,9 @@ async function saveSpMetadata() {
           webUrl: spTargetWebUrl,
         },
       );
+      // The file exists now; the consent gate has done its job and must not
+      // block the metadata retry that a later failure offers.
+      pending.checkoutGate = false;
     }
 
     const fields = pending.metadataInfo?.fields || {};
@@ -1302,6 +1394,7 @@ async function saveSpMetadata() {
   }
 }
 
+spMetadataCheckoutInput.addEventListener('change', syncSpMetadataSave);
 spMetadataSave.addEventListener('click', saveSpMetadata);
 spMetadataKeep.addEventListener('click', () => finishSpExport('skipped'));
 spMetadataClose.addEventListener('click', closeSpMetadataDialog);

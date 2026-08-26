@@ -11,6 +11,9 @@ import {
 } from './sp-odata.js';
 
 const DIGEST_SAFETY_MS = 60_000;
+// SP.CheckOutType: 0 = checked out online, 1 = checked out offline, 2 = none.
+const CHECK_OUT_TYPE_NONE = 2;
+const LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 // Exported: the SP Workbench upload dialog shares these specs so the two
 // implementations can't drift on availability rules or internal names.
 export const FILE_METADATA_SPECS = Object.freeze([
@@ -285,11 +288,108 @@ export function createSpFilesClient({
     };
   }
 
+  // "Is this file checked out to me?" Login claims are the only identifier
+  // that survives a cross-site export: a site user Id is issued per site
+  // collection, so it is only trusted for the web that supplied the page
+  // context.
+  function isCurrentUser(user, ctx, sameWeb) {
+    if (!user) return false;
+    const pageContext = ctx?.pageContext || {};
+    const login = String(pageContext.userLoginName || '').trim().toLowerCase();
+    const claim = String(user.LoginName || '').trim().toLowerCase();
+    if (login && claim) return login === claim;
+    const email = String(pageContext.userEmail || '').trim().toLowerCase();
+    const userEmail = String(user.Email || user.UserPrincipalName || '').trim().toLowerCase();
+    if (email && userEmail) return email === userEmail;
+    const id = Number(pageContext.userId);
+    if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
+    return false;
+  }
+
+  // Check-out policy of the destination library, plus the destination file's
+  // current check-out state when that policy forces one. Never throws: a
+  // failed probe reports known:false and leaves SharePoint the authority, so
+  // an unrelated probe failure cannot cost the operator their export.
+  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx }) {
+    const state = {
+      required: false,
+      known: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: '',
+      reason: '',
+    };
+    try {
+      const policyResponse = await request(
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
+        { headers: { Accept: ACCEPT_JSON } },
+      );
+      await requireOk(
+        policyResponse,
+        'Could not read the destination library check-out policy',
+        'checkout-policy',
+      );
+      const list = unwrapJson(await policyResponse.json()) || {};
+      state.required = Boolean(list.ForceCheckout ?? list.forceCheckout);
+      state.known = true;
+      if (!state.required || !filePath) return state;
+
+      const path = checkedPath(filePath, rootPath);
+      const fileResponse = await request(
+        `${webUrl}/_api/web/GetFileByServerRelativePath(`
+        + `decodedUrl='${odataPathLiteral(path)}')`
+        + '?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,'
+        + 'CheckedOutByUser/LoginName,CheckedOutByUser/Email'
+        + '&$expand=CheckedOutByUser',
+        { headers: { Accept: ACCEPT_JSON } },
+      );
+      await requireOk(
+        fileResponse,
+        'Could not read the destination file check-out state',
+        'checkout-state',
+      );
+      const file = unwrapJson(await fileResponse.json()) || {};
+      const type = Number(file.CheckOutType ?? file.checkOutType ?? CHECK_OUT_TYPE_NONE);
+      state.checkedOut = Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+      if (state.checkedOut) {
+        const user = file.CheckedOutByUser || file.checkedOutByUser || null;
+        state.checkedOutBy = String(user?.Title || user?.LoginName || '').trim();
+        state.checkedOutByCurrentUser = isCurrentUser(user, ctx, webUrl === hostWebUrl);
+      }
+    } catch (error) {
+      // The library policy may already be known; only the state read failed.
+      state.known = false;
+      state.reason = String(error?.message || error);
+    }
+    return state;
+  }
+
+  // Check a file out ahead of an overwrite. Required by libraries that set
+  // ForceCheckout; SharePoint checks the file back in as part of the
+  // overwriting upload, so there is no matching check-in call here.
+  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')/CheckOut()`;
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: 'POST',
+        headers: { Accept: ACCEPT_JSON, 'X-RequestDigest': digest },
+      });
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    await requireOk(response, 'Could not check out the SharePoint file', 'checkout');
+    return { serverRelativeUrl: path };
+  }
+
   async function inspectFileMetadata(
     folderPath,
     { filePath = '', webUrl: targetWebUrl = '' } = {},
   ) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const { ctx, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(`
       + `decodedUrl='${odataPathLiteral(folder)}')`
@@ -310,7 +410,7 @@ export function createSpFilesClient({
     // A document library's root folder has no corresponding list item, so
     // ListItemAllFields.ParentList can be empty even though files may be saved
     // there. Resolve the list directly from its root URL in that case.
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)`
         + `?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
       const rootLibraryResponse = await request(rootLibraryEndpoint, {
@@ -326,13 +426,32 @@ export function createSpFilesClient({
         .replace(/[{}]/g, '')
         .trim();
     }
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       throw new SpFileError(
         'SharePoint did not identify the destination document library.',
         { code: 'metadata-library' },
       );
     }
 
+    // Probed before the fields read so that a library whose columns cannot be
+    // inspected still reports its check-out policy: the export can proceed
+    // without metadata, but never without the check-out the library forces.
+    const checkout = await checkOutState({
+      webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx,
+    });
+
+    try {
+      return {
+        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
+        checkout,
+      };
+    } catch (error) {
+      if (error && typeof error === 'object') error.checkout = checkout;
+      throw error;
+    }
+  }
+
+  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
     const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields`
       + '?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden';
     const fieldsResponse = await request(fieldsEndpoint, {
@@ -397,7 +516,7 @@ export function createSpFilesClient({
       }
     }
 
-    return { fields };
+    return fields;
   }
 
   async function writeFileMetadata(
@@ -507,6 +626,7 @@ export function createSpFilesClient({
     getDigest,
     listFolder,
     readTextFile,
+    checkOutFile,
     inspectFileMetadata,
     writeFileMetadata,
     writeTextFile,
@@ -520,6 +640,7 @@ export const connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 export const getDigest = (options) => defaultClient.getDigest(options);
 export const listFolder = (path, options) => defaultClient.listFolder(path, options);
 export const readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+export const checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
 export const inspectFileMetadata = (folder, options) =>
   defaultClient.inspectFileMetadata(folder, options);
 export const writeFileMetadata = (path, fields, values, options) =>

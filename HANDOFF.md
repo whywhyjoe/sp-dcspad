@@ -237,6 +237,12 @@ inspector, REPL and network capture all work inside the web part; a live
   extensions onto an editor pane for SharePoint transfer only (the supplied
   config maps `.json` to the JS pane; built-ins can't be overridden and local
   disk import stays HTML/CSS/JS).
+  Libraries that set **ForceCheckout** are probed as part of the destination
+  inspection: overwriting one is gated behind a consent checkbox at the foot
+  of the metadata dialog, and consenting makes the pad `CheckOut()` the file
+  before the upload (SharePoint checks it back in as part of the overwrite).
+  A file held by another user is stated and refused rather than offered the
+  box; one you already hold is overwritten without a second check-out.
   See `plans/file-sp-import-export.md`, which is now an implementation record.
 - Framework rows use drag-and-drop ordering without up/down controls; snippets
   are always displayed alphabetically regardless of file type.
