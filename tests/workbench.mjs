@@ -955,7 +955,7 @@ await check('pages: selected pages download as one zip of content markdown', asy
   await page.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip' }).click(),
+    page.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip (Markdown)' }).click(),
   ]);
   const bytes = readFileSync(await download.path());
 
@@ -997,6 +997,87 @@ await check('pages: selected pages download as one zip of content markdown', asy
     && !names.includes('_export-report.md');
 });
 
+await check('pages: the bulk zip honours the chosen content format', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const row = page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' }).first();
+  await row.locator('.wb-row-check').check();
+  const read = async (entry) => {
+    await page.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.locator('.wb-view-pages .wb-menu-item', { hasText: entry }).click(),
+    ]);
+    const bytes = readFileSync(await download.path());
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const eocd = bytes.length - 22;
+    const cdAt = view.getUint32(eocd + 16, true);
+    const nameLen = view.getUint16(cdAt + 28, true);
+    const size = view.getUint32(cdAt + 24, true);
+    const offset = view.getUint32(cdAt + 42, true);
+    const body = offset + 30 + view.getUint16(offset + 26, true)
+      + view.getUint16(offset + 28, true);
+    return {
+      zip: download.suggestedFilename(),
+      name: bytes.subarray(cdAt + 46, cdAt + 46 + nameLen).toString('utf8'),
+      text: bytes.subarray(body, body + size).toString('utf8'),
+    };
+  };
+  const md = await read('Download content .zip (Markdown)');
+  const html = await read('Download content .zip (original HTML)');
+  await row.locator('.wb-row-check').uncheck();
+
+  // Distinct archive AND entry names: the two bundles must not collide when
+  // extracted side by side.
+  return md.zip === 'sp-pages-content.zip' && md.name === 'home-content.md'
+    && md.text.includes('### Welcome') && !md.text.includes('<h2>')
+    && html.zip === 'sp-pages-content-html.zip' && html.name === 'home-content-html.md'
+    && html.text.includes('<h2>Welcome</h2>');
+});
+
+await check('pages: each row exports either format without opening the page', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const row = page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' }).first();
+  const detailBefore = await page.locator('.wb-view-pages .wb-detail-id').count();
+  const got = {};
+  for (const label of ['MD', 'HTML']) {
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      row.locator('.wb-cell-export', { hasText: new RegExp(`^${label}$`) }).click(),
+    ]);
+    got[label] = {
+      name: download.suggestedFilename(),
+      text: readFileSync(await download.path(), 'utf8'),
+    };
+  }
+  return got.MD.name === 'home-content.md'
+    && got.MD.text.includes('### Welcome')
+    && !got.MD.text.includes('<h2>')
+    && got.HTML.name === 'home-content-html.md'
+    && got.HTML.text.includes('<h2>Welcome</h2>')
+    // The row buttons are their own gesture: exporting must not also trigger
+    // the drilldown the rest of the row opens.
+    && detailBefore === await page.locator('.wb-view-pages .wb-detail-id').count();
+});
+
+await check('pages: control-only columns stay out of every export', async () =>
+  page.evaluate(async () => {
+    const { toCsv, toJson, toMarkdown } = await import('/src/workbench/export.js');
+    const columns = [
+      { key: 'Name', label: 'Name' },
+      { key: 'Export', label: '', action: true, value: (r) => r.Id, format: () => '' },
+    ];
+    const rows = [{ Name: 'Home.aspx', Id: 7 }];
+    // An action column would otherwise contribute an empty CSV column and a
+    // JSON key whose value is whatever the render keyed off.
+    return toCsv(rows, columns).includes('Name\r\nHome.aspx')
+      && !toCsv(rows, columns).includes('Home.aspx,')
+      && JSON.parse(toJson(rows, columns))[0].Export === undefined
+      && JSON.parse(toJson(rows, columns))[0].Name === 'Home.aspx'
+      && toMarkdown(rows, columns) === '| Name |\n| --- |\n| Home.aspx |';
+  }));
+
 await check('pages: drilldown opens on Extract with the reordered tabs and URL copy', async () => {
   await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
     .locator('td.wb-mono').first().click();
@@ -1011,7 +1092,8 @@ await check('pages: drilldown opens on Extract with the reordered tabs and URL c
     && active === 'Extract'
     && fragText === '/SitePages/Home.aspx'
     && fragTitle.includes(`${new URL(WB_URL).origin}/SitePages/Home.aspx`)
-    && actions.join(',').includes('Export content')
+    && actions.join(',').includes('Export MD')
+    && actions.join(',').includes('Export HTML')
     && actions.join(',').includes('Export raw');
 });
 
@@ -1175,6 +1257,42 @@ await check('page-export: a part markdown cannot carry falls back to its HTML', 
     // Content is never dropped silently: markdown has no <video>, so the
     // sanitized HTML rides along rather than leaving an empty section.
     return md.includes('## Embed') && md.includes('<video src="/clip.mp4">');
+  }));
+
+await check('page-export: the html format keeps content blocks as sanitized HTML', async () =>
+  page.evaluate(async () => {
+    const { buildContentExport, contentFileName, bundleEntryName, CONTENT_FORMATS } =
+      await import('/src/workbench/page-export.js');
+    const parts = [{
+      kind: 'text',
+      label: 'Text 1',
+      html: '<h2>Mission</h2><p>We build things.</p><script>steal()</script>',
+      lines: [],
+    }];
+    const item = { Title: 'Demo', FileLeafRef: 'Demo.aspx', Created: '2026-05-02T00:00:00Z' };
+    const md = buildContentExport({ item, controls: [], parts, format: 'markdown' });
+    const html = buildContentExport({ item, controls: [], parts, format: 'html' });
+    let rejected = '';
+    try { buildContentExport({ item, controls: [], parts, format: 'nope' }); }
+    catch (e) { rejected = e.message; }
+    // Only the content blocks differ — the metadata framing is identical, so
+    // the two documents diff cleanly against each other.
+    const frame = (doc) => doc.slice(doc.indexOf('## Metadata'));
+    return CONTENT_FORMATS.join(',') === 'markdown,html'
+      && md.includes('### Mission') && !md.includes('<h2>')
+      && html.includes('<h2>Mission</h2>') && html.includes('<p>We build things.</p>')
+      && !html.includes('### Mission')
+      // sanitized in both: the html format is the pre-conversion behaviour,
+      // not an unsanitized passthrough
+      && !html.includes('steal') && !md.includes('steal')
+      && frame(md) === frame(html)
+      // distinct stems, so both can land in one folder or zip without one
+      // silently overwriting the other
+      && contentFileName(item) === 'demo-content.md'
+      && contentFileName(item, 'html') === 'demo-content-html.md'
+      && bundleEntryName({ ...item, FileDirRef: '/SitePages/news' }, '/SitePages', 'html')
+        === 'news/demo-content-html.md'
+      && rejected.includes('Unknown page content format');
   }));
 
 // ---- bulk page export: the zip writer and its pure naming/report helpers ----
@@ -2151,7 +2269,7 @@ await check('classic: the bulk zip carries the same merged web-part content', as
   await classicPage.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
   const [download] = await Promise.all([
     classicPage.waitForEvent('download'),
-    classicPage.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip' }).click(),
+    classicPage.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip (Markdown)' }).click(),
   ]);
   const bytes = readFileSync(await download.path());
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

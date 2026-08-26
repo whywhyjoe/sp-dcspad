@@ -9,7 +9,11 @@
 //     as markdown, not as the HTML a text web part happens to store; other
 //     parts contribute whatever searchable text they carry. Parts with
 //     nothing to read are skipped — this artifact is for reading, not for
-//     inventory.
+//     inventory. The conversion is good but not perfect, so the same document
+//     can be built in either of two content formats — 'markdown' (default) or
+//     'html', which emits the sanitized source markup the way this export did
+//     before conversion existed. Only the content blocks differ: the file is
+//     .md either way, so the metadata framing stays identical and diffable.
 //   Raw (.json)    — the list item plus the normalized controls, for later
 //     script analysis.
 //
@@ -85,22 +89,28 @@ export function contentParts(controls) {
   return { parts, unreadable };
 }
 
-// A text part's body as markdown.
+// The two content formats. 'markdown' is the default and what a reader
+// wants; 'html' is the escape hatch for a page whose conversion came out
+// wrong, and reproduces exactly what this export emitted before conversion.
+export const CONTENT_FORMATS = ['markdown', 'html'];
+
+// A text part's body in the requested format.
 //
-// Sanitized first: Script Editor payloads reach this path on classic pages,
-// and a permissive markdown renderer executes inline HTML. The exact
+// Sanitized either way: Script Editor payloads reach this path on classic
+// pages, and a permissive markdown renderer executes inline HTML. The exact
 // unsanitized payload stays available in the raw JSON export.
 //
 // Some markup has no markdown equivalent at all (a bare video embed, a styled
 // container with no text). Rather than drop content silently, a part that
-// converts to nothing falls back to the sanitized HTML — the old behaviour,
-// now only where markdown genuinely cannot carry the part.
-function textPartMarkdown(html) {
+// converts to nothing falls back to the sanitized HTML — so 'markdown' is
+// lossless in the sense that matters: nothing disappears.
+function textPartBody(html, format) {
   const safe = sanitizeHtml(html);
+  if (format === 'html') return safe;
   return htmlToMarkdown(safe, 'pageContent') || safe;
 }
 
-function contentBlocks(controls, override) {
+function contentBlocks(controls, override, format) {
   const { parts, unreadable } = override
     ? { parts: override, unreadable: 0 }
     : contentParts(controls);
@@ -108,7 +118,7 @@ function contentBlocks(controls, override) {
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
     blocks.push(part.kind === 'text'
-      ? textPartMarkdown(part.html)
+      ? textPartBody(part.html, format)
       : part.lines.map((t) => `- ${t}`).join('\n'));
   }
   if (unreadable) {
@@ -128,8 +138,13 @@ const METADATA_SKIP = new Set([
 
 export function buildContentExport({
   item = {}, controls = [], parts = null, siteTitle = '', webUrl = '',
-  libraryTitle = '', libraryRootPath = '',
+  libraryTitle = '', libraryRootPath = '', format = 'markdown',
 }) {
+  // An unrecognized format must not silently fall through to markdown and
+  // hand back a document the caller did not ask for.
+  if (!CONTENT_FORMATS.includes(format)) {
+    throw new Error(`Unknown page content format: ${format}`);
+  }
   const title = item.Title || item.FileLeafRef || 'Untitled page';
   const author = item.Author?.Title || '';
   const editor = item.Editor?.Title || '';
@@ -176,7 +191,7 @@ export function buildContentExport({
     ...top,
     '---',
     '',
-    contentBlocks(controls, parts).join('\n\n'),
+    contentBlocks(controls, parts, format).join('\n\n'),
     '',
     '---',
     '',
@@ -198,13 +213,22 @@ export function exportFileStem(item) {
   return slug(name) || 'page';
 }
 
+// The one place a content file is named. Both formats are .md — the metadata
+// framing is identical and only the content blocks differ — so the stem is
+// what distinguishes them. Without that, exporting a page both ways into one
+// folder (or one zip) would silently overwrite, and a file on disk could not
+// say which it was.
+export function contentFileName(item, format = 'markdown') {
+  return `${exportFileStem(item)}-content${format === 'html' ? '-html' : ''}.md`;
+}
+
 // ---- bulk export (Pages grid → one zip of content markdown) ----
 
 // The path a page takes inside the bundle: its folder relative to the library
-// root, then the same '<stem>-content.md' the single-page export writes. Folder
+// root, then the same contentFileName() the single-page export writes. Folder
 // segments go through the same slug as the stem, so nothing reaches a zip entry
 // that could not appear in a file name the pad already produces.
-export function bundleEntryName(item, libraryRootPath) {
+export function bundleEntryName(item, libraryRootPath, format = 'markdown') {
   const dir = String(item?.FileDirRef || '');
   const root = String(libraryRootPath || '').replace(/\/+$/, '');
   let folder = '';
@@ -212,7 +236,7 @@ export function bundleEntryName(item, libraryRootPath) {
     folder = dir.slice(root.length).replace(/^\/+/, '');
   }
   const segments = folder.split('/').map(slug).filter(Boolean);
-  segments.push(`${exportFileStem(item || {})}-content.md`);
+  segments.push(contentFileName(item || {}, format));
   return segments.join('/');
 }
 
