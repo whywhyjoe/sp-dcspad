@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "155" : "dev";
-var injectedRevision = true ? "627b581b" : "";
+var injectedBuild = true ? "157" : "dev";
+var injectedRevision = true ? "1487b67a" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1354,18 +1354,21 @@ function cellText(row, col) {
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
+var dataColumns = (columns) => (columns || []).filter((c) => !c.action);
 function toCsv(rows, columns) {
+  const cols = dataColumns(columns);
   const quote = (s) => /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-  const lines = [columns.map((c) => quote(String(c.label ?? c.key))).join(",")];
+  const lines = [cols.map((c) => quote(String(c.label ?? c.key))).join(",")];
   for (const row of rows) {
-    lines.push(columns.map((c) => quote(cellText(row, c))).join(","));
+    lines.push(cols.map((c) => quote(cellText(row, c))).join(","));
   }
   return `\uFEFF${lines.join("\r\n")}`;
 }
 function toJson(rows, columns) {
+  const cols = dataColumns(columns);
   const out = rows.map((row) => {
     const record = {};
-    for (const c of columns) {
+    for (const c of cols) {
       const v = cellValue(row, c);
       record[c.key] = v === void 0 ? null : v;
     }
@@ -6403,16 +6406,18 @@ function contentParts(controls) {
   }
   return { parts, unreadable };
 }
-function textPartMarkdown(html) {
+var CONTENT_FORMATS = ["markdown", "html"];
+function textPartBody(html, format) {
   const safe = sanitizeHtml(html);
+  if (format === "html") return safe;
   return htmlToMarkdown(safe, "pageContent") || safe;
 }
-function contentBlocks(controls, override) {
+function contentBlocks(controls, override, format) {
   const { parts, unreadable } = override ? { parts: override, unreadable: 0 } : contentParts(controls);
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
-    blocks.push(part.kind === "text" ? textPartMarkdown(part.html) : part.lines.map((t) => `- ${t}`).join("\n"));
+    blocks.push(part.kind === "text" ? textPartBody(part.html, format) : part.lines.map((t) => `- ${t}`).join("\n"));
   }
   if (unreadable) {
     blocks.push(`*[${unreadable} part${unreadable === 1 ? "" : "s"} could not be read \u2014 see the raw export.]*`);
@@ -6436,8 +6441,12 @@ function buildContentExport({
   siteTitle = "",
   webUrl = "",
   libraryTitle = "",
-  libraryRootPath = ""
+  libraryRootPath = "",
+  format = "markdown"
 }) {
+  if (!CONTENT_FORMATS.includes(format)) {
+    throw new Error(`Unknown page content format: ${format}`);
+  }
   const title = item2.Title || item2.FileLeafRef || "Untitled page";
   const author = item2.Author?.Title || "";
   const editor = item2.Editor?.Title || "";
@@ -6483,7 +6492,7 @@ function buildContentExport({
     ...top,
     "---",
     "",
-    contentBlocks(controls, parts).join("\n\n"),
+    contentBlocks(controls, parts, format).join("\n\n"),
     "",
     "---",
     "",
@@ -6501,7 +6510,10 @@ function exportFileStem(item2) {
   const name = String(item2.FileLeafRef || item2.Title || "page").replace(/\.aspx$/i, "");
   return slug(name) || "page";
 }
-function bundleEntryName(item2, libraryRootPath) {
+function contentFileName(item2, format = "markdown") {
+  return `${exportFileStem(item2)}-content${format === "html" ? "-html" : ""}.md`;
+}
+function bundleEntryName(item2, libraryRootPath, format = "markdown") {
   const dir = String(item2?.FileDirRef || "");
   const root2 = String(libraryRootPath || "").replace(/\/+$/, "");
   let folder = "";
@@ -6509,7 +6521,7 @@ function bundleEntryName(item2, libraryRootPath) {
     folder = dir.slice(root2.length).replace(/^\/+/, "");
   }
   const segments = folder.split("/").map(slug).filter(Boolean);
-  segments.push(`${exportFileStem(item2 || {})}-content.md`);
+  segments.push(contentFileName(item2 || {}, format));
   return segments.join("/");
 }
 function dedupeEntryNames(names) {
@@ -7102,7 +7114,7 @@ ${current.rootPath}` : "");
     if (!root3 || !dir.toLowerCase().startsWith(root3.toLowerCase())) return "";
     return dir.slice(root3.length).replace(/^\/+/, "");
   }
-  async function contentMarkdownFor(item2, sitePages, parts = null) {
+  async function contentMarkdownFor(item2, sitePages, parts = null, format = "markdown") {
     const parsed = parseCanvasContent(item2.CanvasContent1);
     let readingParts = parts;
     if (!readingParts) {
@@ -7121,6 +7133,7 @@ ${current.rootPath}` : "");
     const web = await webIdentity();
     return buildContentExport({
       item: item2,
+      format,
       controls: parsed.controls,
       parts: readingParts,
       siteTitle: web.Title || "",
@@ -7130,7 +7143,7 @@ ${current.rootPath}` : "");
     });
   }
   let exporting = false;
-  async function exportContentZip() {
+  async function exportContentZip(format = "markdown") {
     if (exporting || !grid || !current) return;
     const sitePages = current;
     const rows = grid.getExportRows();
@@ -7158,7 +7171,7 @@ ${current.rootPath}` : "");
           const row = rows[i];
           try {
             const { item: item2 } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
-            results[i] = { item: item2, text: await contentMarkdownFor(item2, sitePages) };
+            results[i] = { item: item2, text: await contentMarkdownFor(item2, sitePages, null, format) };
           } catch (err) {
             results[i] = {
               failure: {
@@ -7181,7 +7194,7 @@ ${current.rootPath}` : "");
       const ok = results.filter((r) => r && r.text !== void 0);
       const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
       const names = dedupeEntryNames(
-        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath))
+        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath, format))
       );
       const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
       if (failures.length) {
@@ -7195,13 +7208,55 @@ ${current.rootPath}` : "");
         masterStatus.hidden = false;
         return;
       }
-      downloadBytes("sp-pages-content.zip", buildZip(entries), "application/zip");
+      downloadBytes(
+        `sp-pages-content${format === "html" ? "-html" : ""}.zip`,
+        buildZip(entries),
+        "application/zip"
+      );
       masterStatus.hidden = true;
     } catch (err) {
       showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
     } finally {
       exporting = false;
     }
+  }
+  async function exportRowContent(row, format, btn) {
+    if (btn.disabled || !current) return;
+    const sitePages = current;
+    btn.disabled = true;
+    try {
+      const plan = await queryPlan(sitePages);
+      const { item: item2 } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
+      if (current !== sitePages) return;
+      downloadText(
+        contentFileName(item2, format),
+        await contentMarkdownFor(item2, sitePages, null, format),
+        "text/markdown;charset=utf-8"
+      );
+      masterStatus.hidden = true;
+    } catch (err) {
+      showFailure(masterStatus, err, row.FileLeafRef || row.Title || `page ${row.Id}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  function rowExportCell(row) {
+    const span = el11("span", "wb-page-row-actions");
+    for (const [label, format, title] of [
+      ["MD", "markdown", "Export this page as .md with its content converted to markdown"],
+      ["HTML", "html", "Export this page as .md with each content block left as its original HTML"]
+    ]) {
+      const btn = el11("button", "wb-cell-link wb-cell-export", label);
+      btn.type = "button";
+      btn.title = title;
+      btn.setAttribute("aria-label", `${title} (${row.FileLeafRef || row.Title || `page ${row.Id}`})`);
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        exportRowContent(row, format, btn);
+      });
+      span.append(btn);
+    }
+    return span;
   }
   async function loadPages() {
     if (pagesLoaded) return;
@@ -7242,6 +7297,15 @@ ${current.rootPath}` : "");
             { key: "Modified", label: "Modified", format: fmtDate4 },
             { key: "Editor", label: "Editor", value: (row) => row.Editor?.Title || "" },
             {
+              key: "Export",
+              label: "",
+              // Controls only — no data, so CSV/JSON/markdown skip it.
+              action: true,
+              value: (row) => row.Id,
+              format: () => "",
+              render: (_id, row) => rowExportCell(row)
+            },
+            {
               key: "FileRef",
               label: "",
               format: () => "",
@@ -7276,7 +7340,8 @@ ${current.rootPath}` : "");
           // opening one stay distinct gestures on the same row.
           selectable: true,
           exportExtras: [
-            ["Download content .zip", () => exportContentZip()]
+            ["Download content .zip (Markdown)", () => exportContentZip("markdown")],
+            ["Download content .zip (original HTML)", () => exportContentZip("html")]
           ],
           // The same object the ladder rewrites below, on purpose: the
           // "Copy as…" menu reads it at click time, so a script copied out of
@@ -7602,13 +7667,16 @@ ${fullUrl}`;
     headRow.append(kindChip);
     if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
     const actions = el11("span", "wb-detail-actions");
-    const exportContent = el11("button", "btn btn-xs", "Export content");
+    const exportContent = el11("button", "btn btn-xs", "Export MD");
     exportContent.type = "button";
-    exportContent.title = "One human-readable file: metadata, merged web-part content, full metadata";
+    exportContent.title = "One human-readable .md: metadata plus the merged web-part content converted to markdown";
+    const exportContentHtml = el11("button", "btn btn-xs", "Export HTML");
+    exportContentHtml.type = "button";
+    exportContentHtml.title = "The same .md, but each content block keeps its original HTML \u2014 for a page the markdown conversion got wrong";
     const exportRaw = el11("button", "btn btn-xs", "Export raw");
     exportRaw.type = "button";
     exportRaw.title = "Item + parsed canvas controls as JSON, for scripts";
-    actions.append(exportContent, exportRaw);
+    actions.append(exportContent, exportContentHtml, exportRaw);
     if (item2.FileRef) {
       const open = el11("a", "btn btn-xs", "Open page \u2197");
       open.href = item2.FileRef;
@@ -7616,13 +7684,15 @@ ${fullUrl}`;
       actions.append(open);
     }
     headRow.append(actions);
-    exportContent.addEventListener("click", async () => {
+    const downloadContent = async (format) => {
       downloadText(
-        `${exportFileStem(item2)}-content.md`,
-        await contentMarkdownFor(item2, sitePages, readingParts),
+        contentFileName(item2, format),
+        await contentMarkdownFor(item2, sitePages, readingParts, format),
         "text/markdown;charset=utf-8"
       );
-    });
+    };
+    exportContent.addEventListener("click", () => downloadContent("markdown"));
+    exportContentHtml.addEventListener("click", () => downloadContent("html"));
     exportRaw.addEventListener("click", () => {
       downloadText(
         `${exportFileStem(item2)}-raw.json`,
