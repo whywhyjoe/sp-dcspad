@@ -11,6 +11,9 @@ import { copyText } from '../export.js';
 import { odataPathLiteral } from '../../sp-odata.js';
 import { createSpWriteClient, MAX_UPLOAD_BYTES } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
+// One rule for "checked out", and for "checked out to me", shared with the
+// pad's SharePoint export so the two cannot drift.
+import { isCheckedOut, isCheckedOutByCurrentUser } from '../../sp-files.js';
 import {
   metadataFieldStates, anyMetadataAvailable, openUploadMetadataDialog,
 } from '../upload-metadata.js';
@@ -379,7 +382,11 @@ export function createBrowserView({ client, navigate }) {
   }
 
   // ---- upload ----
-  function showConsent(message, onConfirm) {
+  // `gate`, when given, is a sentence the operator must tick before Replace
+  // becomes clickable — the forced-check-out consent. It rides the pad's
+  // .sp-metadata-consent classes (app.css loads before workbench.css), so
+  // the two consents look like one component.
+  function showConsent(message, onConfirm, { gate = '' } = {}) {
     consent.textContent = '';
     consent.hidden = false;
     consent.append(el('span', 'wb-consent-text', message));
@@ -389,6 +396,16 @@ export function createBrowserView({ client, navigate }) {
     const cancel = el('button', 'btn btn-xs', 'Cancel');
     cancel.type = 'button';
     cancel.addEventListener('click', () => { consent.hidden = true; });
+    if (gate) {
+      replace.disabled = true;
+      const row = el('label', 'sp-metadata-consent__row wb-consent-gate');
+      const box = el('input');
+      box.type = 'checkbox';
+      box.className = 'wb-consent-checkout';
+      box.addEventListener('change', () => { replace.disabled = !box.checked; });
+      row.append(box, el('span', 'sp-metadata-consent__label', gate));
+      consent.append(row);
+    }
     consent.append(replace, cancel);
   }
 
@@ -417,13 +434,86 @@ export function createBrowserView({ client, navigate }) {
       (f) => String(f.Name).toLowerCase() === file.name.toLowerCase(),
     );
     if (existing) {
-      showConsent(
-        `“${file.name}” already exists in this folder. Replace it?`,
-        () => runUpload(file, { overwrite: true, folderPath }),
-      );
+      await confirmReplace(file, folderPath, { existing });
       return;
     }
     await runUpload(file, { overwrite: false, folderPath });
+  }
+
+  // ---- forced check-out ----------------------------------------------------
+  // A library with ForceCheckout refuses a write to a file that is not
+  // checked out, so replacing one there is two acts: the check-out, then the
+  // upload that SharePoint checks back in. Checking a file out changes what
+  // everyone else in the library sees, so it is consented to, never implied
+  // by the Replace button — the same contract as the pad's export dialog.
+  // Deliberately uncached: it costs one GET per replace-consent (a rare,
+  // already-interactive moment), and a policy someone flipped mid-session
+  // must not be answered from a stale yes/no.
+  async function libraryForcesCheckout(folderPath) {
+    const listId = await parentListId(folderPath);
+    const list = await client.get(`web/lists(guid'${listId}')`, { select: 'ForceCheckout' });
+    return Boolean(list?.ForceCheckout);
+  }
+
+  // The listing already carries CheckOutType per file, so a checked-in file
+  // costs no request; the holder (and, on the 409-race path, the state
+  // itself) is read from the server only when it is actually needed.
+  async function readCheckOut(filePath, existing) {
+    if (existing && !isCheckedOut(existing.CheckOutType)) return { checkedOut: false };
+    const file = await client.get(fileApi(filePath, ''), {
+      select: 'CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,'
+        + 'CheckedOutByUser/LoginName,CheckedOutByUser/Email',
+      expand: 'CheckedOutByUser',
+    });
+    return {
+      checkedOut: isCheckedOut(file?.CheckOutType),
+      user: file?.CheckedOutByUser || null,
+    };
+  }
+
+  // Never throws: an unreadable policy leaves SharePoint the authority and
+  // the upload behaves as it did before this gate existed.
+  async function checkOutState(folderPath, fileName, existing) {
+    const state = {
+      required: false, checkedOut: false, checkedOutByCurrentUser: false, checkedOutBy: '',
+    };
+    try {
+      state.required = await libraryForcesCheckout(folderPath);
+      if (!state.required) return state;
+      const { checkedOut, user } = await readCheckOut(`${folderPath}/${fileName}`, existing);
+      state.checkedOut = checkedOut;
+      if (!checkedOut) return state;
+      state.checkedOutBy = String(user?.Title || user?.LoginName || '').trim();
+      state.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+        user,
+        client.context()?.pageContext,
+        { sameWeb: client.webUrl() === client.hostWebUrl() },
+      );
+    } catch { /* policy unknown — leave the gate off */ }
+    return state;
+  }
+
+  async function confirmReplace(file, folderPath, { existing = null, carriedValues = null } = {}) {
+    const checkout = await checkOutState(folderPath, file.name, existing);
+    if (checkout.checkedOut && !checkout.checkedOutByCurrentUser) {
+      uploadNotice(
+        `“${file.name}” is checked out to ${checkout.checkedOutBy || 'another user'}. `
+        + 'It cannot be replaced until they check it back in.',
+        true,
+      );
+      return;
+    }
+    let gate = '';
+    if (checkout.required) {
+      gate = checkout.checkedOutByCurrentUser
+        ? `This library requires check-out — “${file.name}” is already checked out to you.`
+        : `This library requires check-out — check “${file.name}” out before replacing it.`;
+    }
+    showConsent(
+      `“${file.name}” already exists in this folder. Replace it?`,
+      () => runUpload(file, { overwrite: true, folderPath, carriedValues, checkout }),
+      { gate },
+    );
   }
 
   // Probe the destination library for the pad's three curated metadata
@@ -454,7 +544,9 @@ export function createBrowserView({ client, navigate }) {
     return values;
   }
 
-  async function runUpload(file, { overwrite, folderPath, carriedValues = null }) {
+  async function runUpload(file, {
+    overwrite, folderPath, carriedValues = null, checkout = null,
+  }) {
     let data;
     try {
       data = await file.arrayBuffer();
@@ -462,7 +554,15 @@ export function createBrowserView({ client, navigate }) {
       uploadNotice(`Could not read the file: ${err?.message || err}`, true);
       return;
     }
-    const bareUpload = () => spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    const bareUpload = async () => {
+      if (overwrite && checkout?.required && !checkout.checkedOutByCurrentUser) {
+        await spWrite.checkOutFile(`${folderPath}/${file.name}`);
+        // The file is ours now: a retry must not check it out a second time,
+        // which SharePoint rejects.
+        checkout.checkedOutByCurrentUser = true;
+      }
+      return spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    };
     const states = await uploadMetadataStates(folderPath);
 
     if (!states) {
@@ -523,12 +623,10 @@ export function createBrowserView({ client, navigate }) {
 
   function handleUploadError(err, file, folderPath, overwrite, carriedValues) {
     if (err?.code === 'conflict' && !overwrite) {
-      // Race: the file appeared between listing and upload. The retry
-      // carries the values the user already typed into the dialog.
-      showConsent(
-        `“${file.name}” already exists in this folder. Replace it?`,
-        () => runUpload(file, { overwrite: true, folderPath, carriedValues }),
-      );
+      // Race: the file appeared between listing and upload. The retry carries
+      // the values the user already typed into the dialog, and the file is
+      // not in our listing, so its check-out state is read from the server.
+      void confirmReplace(file, folderPath, { carriedValues, existing: null });
       return;
     }
     uploadNotice(`Upload failed: ${err?.message || err}`, true);

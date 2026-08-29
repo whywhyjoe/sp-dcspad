@@ -11,9 +11,32 @@ import {
 } from './sp-odata.js';
 
 const DIGEST_SAFETY_MS = 60_000;
-// SP.CheckOutType: 0 = checked out online, 1 = checked out offline, 2 = none.
-const CHECK_OUT_TYPE_NONE = 2;
 const LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+// SP.CheckOutType: 0 = checked out online, 1 = checked out offline, 2 = none.
+export const CHECK_OUT_TYPE_NONE = 2;
+
+export function isCheckedOut(checkOutType) {
+  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
+  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+}
+
+// "Is this file checked out to me?" Login claims are the only identifier that
+// survives a cross-site write: a site user Id is issued per site collection,
+// so it is only trusted for the web that supplied the page context.
+// Exported: the SP Workbench Files uploader shares this rule, so the two
+// forced-check-out implementations can't drift on what "to me" means.
+export function isCheckedOutByCurrentUser(user, pageContext = {}, { sameWeb = true } = {}) {
+  if (!user) return false;
+  const login = String(pageContext?.userLoginName || '').trim().toLowerCase();
+  const claim = String(user.LoginName || '').trim().toLowerCase();
+  if (login && claim) return login === claim;
+  const email = String(pageContext?.userEmail || '').trim().toLowerCase();
+  const userEmail = String(user.Email || user.UserPrincipalName || '').trim().toLowerCase();
+  if (email && userEmail) return email === userEmail;
+  const id = Number(pageContext?.userId);
+  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
+  return false;
+}
 // Exported: the SP Workbench upload dialog shares these specs so the two
 // implementations can't drift on availability rules or internal names.
 export const FILE_METADATA_SPECS = Object.freeze([
@@ -288,24 +311,6 @@ export function createSpFilesClient({
     };
   }
 
-  // "Is this file checked out to me?" Login claims are the only identifier
-  // that survives a cross-site export: a site user Id is issued per site
-  // collection, so it is only trusted for the web that supplied the page
-  // context.
-  function isCurrentUser(user, ctx, sameWeb) {
-    if (!user) return false;
-    const pageContext = ctx?.pageContext || {};
-    const login = String(pageContext.userLoginName || '').trim().toLowerCase();
-    const claim = String(user.LoginName || '').trim().toLowerCase();
-    if (login && claim) return login === claim;
-    const email = String(pageContext.userEmail || '').trim().toLowerCase();
-    const userEmail = String(user.Email || user.UserPrincipalName || '').trim().toLowerCase();
-    if (email && userEmail) return email === userEmail;
-    const id = Number(pageContext.userId);
-    if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
-    return false;
-  }
-
   // Check-out policy of the destination library, plus the destination file's
   // current check-out state when that policy forces one. Never throws: a
   // failed probe reports known:false and leaves SharePoint the authority, so
@@ -349,12 +354,13 @@ export function createSpFilesClient({
         'checkout-state',
       );
       const file = unwrapJson(await fileResponse.json()) || {};
-      const type = Number(file.CheckOutType ?? file.checkOutType ?? CHECK_OUT_TYPE_NONE);
-      state.checkedOut = Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+      state.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
       if (state.checkedOut) {
         const user = file.CheckedOutByUser || file.checkedOutByUser || null;
         state.checkedOutBy = String(user?.Title || user?.LoginName || '').trim();
-        state.checkedOutByCurrentUser = isCurrentUser(user, ctx, webUrl === hostWebUrl);
+        state.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+          user, ctx?.pageContext, { sameWeb: webUrl === hostWebUrl },
+        );
       }
     } catch (error) {
       // The library policy may already be known; only the state read failed.

@@ -292,7 +292,11 @@ concurrent debugging on main):
 - **Files browser** (`views/browser.js`) — every file type, paged listing,
   breadcrumbs + library picker, download via `download.aspx`, upload with
   overwrite consent (pre-flight and 409-race), post-upload metadata panel
-  with keep-without-metadata / retry-that-never-reuploads.
+  with keep-without-metadata / retry-that-never-reuploads. A library with
+  **ForceCheckout** puts a consent checkbox on that overwrite bar and
+  `CheckOut()`s the file before the upload — the same contract as the pad's
+  export, sharing `isCheckedOut` / `isCheckedOutByCurrentUser` from
+  sp-files.js so the two cannot drift.
 
 **Tier 2 refinement pass (same day, Joe's feedback on the first cut):**
 

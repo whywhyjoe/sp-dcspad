@@ -154,6 +154,18 @@ export function createSpWriteClient({
     };
   }
 
+  // Check a file out ahead of an overwrite, for libraries that set
+  // ForceCheckout. SharePoint checks the file back in as part of the
+  // overwriting upload, so there is no matching check-in call here — the
+  // same contract as the pad's export (sp-files.js checkOutFile).
+  async function checkOutFile(fileServerRelativeUrl) {
+    const endpoint = `${client.webUrl()}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')/CheckOut()`;
+    await post(endpoint, { body: '' },
+      { fallback: 'Could not check out the file', code: 'checkout' });
+    return { serverRelativeUrl: fileServerRelativeUrl };
+  }
+
   // Create a subfolder. '#' and '%' are legal in modern SPO names (hence
   // ResourcePath addressing); the rejected set is what SharePoint itself
   // refuses: " * : < > ? / \ | plus leading/trailing dots.
@@ -188,5 +200,7 @@ export function createSpWriteClient({
     return post(url, { body: JSON.stringify(body) }, { fallback, code });
   }
 
-  return { validateUpdateListItem, uploadFile, createFolder, postJson, isMock };
+  return {
+    validateUpdateListItem, uploadFile, checkOutFile, createFolder, postJson, isMock,
+  };
 }

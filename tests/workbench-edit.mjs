@@ -243,7 +243,9 @@ const uploads = [];        // { url, digest, bodyLength }
 const vuliCalls = [];      // { url, digest, body }
 const prefillUrls = [];
 const libraryLookups = [];
-const flags = { failMetadata: false, racyConflictOnce: true };
+const flags = { failMetadata: false, racyConflictOnce: true, forceCheckout: false };
+const checkOuts = [];      // { url, digest, order }
+let callSeq = 0;           // orders a check-out against the upload it precedes
 
 const LIVE_FILES = [
   {
@@ -268,6 +270,8 @@ await live.addInitScript(() => {
   window.__DCSPAD_SP_CONTEXT__ = {
     webAbsoluteUrl: location.origin,
     userDisplayName: 'Stub User',
+    // The login claim is what identifies "checked out to me".
+    userLoginName: 'i:0#.f|membership|stub@x',
   };
 });
 
@@ -289,6 +293,7 @@ await live.route('**/_api/**', async (route) => {
       url,
       digest: request.headers()['x-requestdigest'] || '',
       bodyLength: request.postDataBuffer()?.length ?? 0,
+      order: ++callSeq,
     };
     uploads.push(record);
     if (url.includes('racy.bin') && url.includes('overwrite=false') && flags.racyConflictOnce) {
@@ -302,6 +307,22 @@ await live.route('**/_api/**', async (route) => {
     return route.fulfill({
       json: { ServerRelativeUrl: `/Shared Documents/${decodeURIComponent(name)}` },
     });
+  }
+  if (url.includes('/CheckOut()')) {
+    checkOuts.push({
+      url,
+      digest: request.headers()['x-requestdigest'] || '',
+      order: ++callSeq,
+    });
+    return route.fulfill({ json: {} });
+  }
+  if (/lists\(guid'/i.test(url)
+      && new URL(url).searchParams.get('$select') === 'ForceCheckout') {
+    return route.fulfill({ json: { ForceCheckout: flags.forceCheckout } });
+  }
+  if (url.includes('GetFileByServerRelativePath(')
+      && (new URL(url).searchParams.get('$select') || '').includes('CheckOutType')) {
+    return route.fulfill({ json: LIVE_FILES[0] });
   }
   if (url.includes('/ValidateUpdateListItem')) {
     const body = JSON.parse(request.postData() || '{}');
@@ -495,6 +516,82 @@ await check('live: a 409 race re-consents and the retry keeps the typed values',
     && carried === 'Racy T'   // values survive the race retry
     && attempts[0].url.includes('overwrite=false')
     && attempts[1].url.includes('overwrite=true');
+});
+
+// ---- forced check-out ------------------------------------------------------
+// Same contract as the pad's export: replacing a file in a ForceCheckout
+// library is consented to, then checked out, then uploaded.
+flags.forceCheckout = true;
+
+await check('live: a forced-check-out library gates Replace behind a consent box', async () => {
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('c1'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  const gateText = await live.locator('.wb-consent-gate').textContent();
+  const blocked = await live.locator('.wb-consent .btn', { hasText: 'Replace' }).isDisabled();
+  await live.check('.wb-consent .wb-consent-checkout');
+  const enabled = !(await live.locator('.wb-consent .btn', { hasText: 'Replace' }).isDisabled());
+  return gateText.includes('requires check-out')
+    && gateText.includes('before replacing it')
+    && blocked && enabled;
+});
+
+await check('live: consenting checks the file out before the overwrite upload', async () => {
+  const before = uploads.length;
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  const landed = await until(() => uploads.length > before);
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “proposal.docx” ✓'));
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  const replaced = uploads[uploads.length - 1];
+  return landed
+    && checkOuts.length === 1
+    && decodeURIComponent(checkOuts[0].url).includes("decodedUrl='/Shared Documents/proposal.docx'")
+    && checkOuts[0].digest === 'WB-DIGEST'
+    && checkOuts[0].order < replaced.order
+    && replaced.url.includes('overwrite=true');
+});
+
+await check('live: a file checked out to someone else is refused, not consented to', async () => {
+  LIVE_FILES[0].CheckOutType = 1;
+  LIVE_FILES[0].CheckedOutByUser = { Id: 42, Title: 'Dana Lee', LoginName: 'i:0#.f|membership|dana@x' };
+  await live.locator('.wb-view-files .btn', { hasText: 'Refresh' }).click();
+  await live.waitForTimeout(200);
+  const before = uploads.length;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('c2'),
+  });
+  await live.waitForSelector('.wb-consent-error');
+  const text = await live.locator('.wb-consent').textContent();
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  return text.includes('checked out to Dana Lee')
+    && uploads.length === before
+    && checkOuts.length === 1;   // and nothing was checked out
+});
+
+await check('live: a file you already hold is replaced without a second check-out', async () => {
+  LIVE_FILES[0].CheckedOutByUser = {
+    Id: 7, Title: 'Stub User', LoginName: 'i:0#.f|membership|stub@x',
+  };
+  await live.locator('.wb-view-files .btn', { hasText: 'Refresh' }).click();
+  await live.waitForTimeout(200);
+  const before = uploads.length;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('c3'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  const gateText = await live.locator('.wb-consent-gate').textContent();
+  await live.check('.wb-consent .wb-consent-checkout');
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  const landed = await until(() => uploads.length > before);
+  return landed
+    && gateText.includes('already checked out to you')
+    && checkOuts.length === 1;   // no second CheckOut()
 });
 
 await live.close();
