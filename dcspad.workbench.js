@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "95" : "dev";
-var injectedRevision = true ? "3a851956" : "";
+var injectedBuild = true ? "97" : "dev";
+var injectedRevision = true ? "a1026119" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -3304,8 +3304,24 @@ function createListsView({ client: client2, navigate }) {
 
 // ../src/sp-files.js
 var DIGEST_SAFETY_MS = 6e4;
-var CHECK_OUT_TYPE_NONE = 2;
 var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+var CHECK_OUT_TYPE_NONE = 2;
+function isCheckedOut(checkOutType) {
+  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
+  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+}
+function isCheckedOutByCurrentUser(user2, pageContext = {}, { sameWeb = true } = {}) {
+  if (!user2) return false;
+  const login = String(pageContext?.userLoginName || "").trim().toLowerCase();
+  const claim = String(user2.LoginName || "").trim().toLowerCase();
+  if (login && claim) return login === claim;
+  const email = String(pageContext?.userEmail || "").trim().toLowerCase();
+  const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
+  if (email && userEmail) return email === userEmail;
+  const id = Number(pageContext?.userId);
+  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user2.Id);
+  return false;
+}
 var FILE_METADATA_SPECS = Object.freeze([
   { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
   { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
@@ -3534,19 +3550,6 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
-  function isCurrentUser(user2, ctx2, sameWeb) {
-    if (!user2) return false;
-    const pageContext = ctx2?.pageContext || {};
-    const login = String(pageContext.userLoginName || "").trim().toLowerCase();
-    const claim = String(user2.LoginName || "").trim().toLowerCase();
-    if (login && claim) return login === claim;
-    const email = String(pageContext.userEmail || "").trim().toLowerCase();
-    const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
-    if (email && userEmail) return email === userEmail;
-    const id = Number(pageContext.userId);
-    if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user2.Id);
-    return false;
-  }
   async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx: ctx2 }) {
     const state2 = {
       required: false,
@@ -3581,12 +3584,15 @@ function createSpFilesClient({
         "checkout-state"
       );
       const file = unwrapJson(await fileResponse.json()) || {};
-      const type = Number(file.CheckOutType ?? file.checkOutType ?? CHECK_OUT_TYPE_NONE);
-      state2.checkedOut = Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+      state2.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
       if (state2.checkedOut) {
         const user2 = file.CheckedOutByUser || file.checkedOutByUser || null;
         state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
-        state2.checkedOutByCurrentUser = isCurrentUser(user2, ctx2, webUrl === hostWebUrl);
+        state2.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+          user2,
+          ctx2?.pageContext,
+          { sameWeb: webUrl === hostWebUrl }
+        );
       }
     } catch (error) {
       state2.known = false;
@@ -3924,6 +3930,15 @@ function createSpWriteClient({
       serverRelativeUrl: result.ServerRelativeUrl || `${folder === "/" ? "" : folder}/${safeName}`
     };
   }
+  async function checkOutFile(fileServerRelativeUrl) {
+    const endpoint = `${client2.webUrl()}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')/CheckOut()`;
+    await post(
+      endpoint,
+      { body: "" },
+      { fallback: "Could not check out the file", code: "checkout" }
+    );
+    return { serverRelativeUrl: fileServerRelativeUrl };
+  }
   async function createFolder(parentServerRelativeUrl, name) {
     const clean = String(name || "").trim();
     if (!clean || /["*:<>?/\\|]/.test(clean) || clean.startsWith(".") || clean.endsWith(".")) {
@@ -3952,7 +3967,14 @@ function createSpWriteClient({
     const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
     return post(url, { body: JSON.stringify(body) }, { fallback, code });
   }
-  return { validateUpdateListItem, uploadFile, createFolder, postJson, isMock };
+  return {
+    validateUpdateListItem,
+    uploadFile,
+    checkOutFile,
+    createFolder,
+    postJson,
+    isMock
+  };
 }
 
 // ../src/workbench/views/security.js
@@ -7596,7 +7618,7 @@ function createBrowserView({ client: client2, navigate }) {
       grid.setError(err);
     }
   }
-  function showConsent(message, onConfirm) {
+  function showConsent(message, onConfirm, { gate = "" } = {}) {
     consent.textContent = "";
     consent.hidden = false;
     consent.append(el13("span", "wb-consent-text", message));
@@ -7611,6 +7633,18 @@ function createBrowserView({ client: client2, navigate }) {
     cancel.addEventListener("click", () => {
       consent.hidden = true;
     });
+    if (gate) {
+      replace.disabled = true;
+      const row = el13("label", "sp-metadata-consent__row wb-consent-gate");
+      const box = el13("input");
+      box.type = "checkbox";
+      box.className = "wb-consent-checkout";
+      box.addEventListener("change", () => {
+        replace.disabled = !box.checked;
+      });
+      row.append(box, el13("span", "sp-metadata-consent__label", gate));
+      consent.append(row);
+    }
     consent.append(replace, cancel);
   }
   function uploadNotice(message, isError = false) {
@@ -7639,13 +7673,68 @@ function createBrowserView({ client: client2, navigate }) {
       (f) => String(f.Name).toLowerCase() === file.name.toLowerCase()
     );
     if (existing) {
-      showConsent(
-        `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-        () => runUpload(file, { overwrite: true, folderPath })
-      );
+      await confirmReplace(file, folderPath, { existing });
       return;
     }
     await runUpload(file, { overwrite: false, folderPath });
+  }
+  async function libraryForcesCheckout(folderPath) {
+    const listId = await parentListId(folderPath);
+    const list2 = await client2.get(`web/lists(guid'${listId}')`, { select: "ForceCheckout" });
+    return Boolean(list2?.ForceCheckout);
+  }
+  async function readCheckOut(filePath, existing) {
+    if (existing && !isCheckedOut(existing.CheckOutType)) return { checkedOut: false };
+    const file = await client2.get(fileApi(filePath, ""), {
+      select: "CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email",
+      expand: "CheckedOutByUser"
+    });
+    return {
+      checkedOut: isCheckedOut(file?.CheckOutType),
+      user: file?.CheckedOutByUser || null
+    };
+  }
+  async function checkOutState(folderPath, fileName, existing) {
+    const state2 = {
+      required: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: ""
+    };
+    try {
+      state2.required = await libraryForcesCheckout(folderPath);
+      if (!state2.required) return state2;
+      const { checkedOut, user: user2 } = await readCheckOut(`${folderPath}/${fileName}`, existing);
+      state2.checkedOut = checkedOut;
+      if (!checkedOut) return state2;
+      state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
+      state2.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+        user2,
+        client2.context()?.pageContext,
+        { sameWeb: client2.webUrl() === client2.hostWebUrl() }
+      );
+    } catch {
+    }
+    return state2;
+  }
+  async function confirmReplace(file, folderPath, { existing = null, carriedValues = null } = {}) {
+    const checkout = await checkOutState(folderPath, file.name, existing);
+    if (checkout.checkedOut && !checkout.checkedOutByCurrentUser) {
+      uploadNotice(
+        `\u201C${file.name}\u201D is checked out to ${checkout.checkedOutBy || "another user"}. It cannot be replaced until they check it back in.`,
+        true
+      );
+      return;
+    }
+    let gate = "";
+    if (checkout.required) {
+      gate = checkout.checkedOutByCurrentUser ? `This library requires check-out \u2014 \u201C${file.name}\u201D is already checked out to you.` : `This library requires check-out \u2014 check \u201C${file.name}\u201D out before replacing it.`;
+    }
+    showConsent(
+      `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
+      () => runUpload(file, { overwrite: true, folderPath, carriedValues, checkout }),
+      { gate }
+    );
   }
   async function uploadMetadataStates(folderPath) {
     try {
@@ -7672,7 +7761,12 @@ function createBrowserView({ client: client2, navigate }) {
     }
     return values;
   }
-  async function runUpload(file, { overwrite, folderPath, carriedValues = null }) {
+  async function runUpload(file, {
+    overwrite,
+    folderPath,
+    carriedValues = null,
+    checkout = null
+  }) {
     let data;
     try {
       data = await file.arrayBuffer();
@@ -7680,7 +7774,13 @@ function createBrowserView({ client: client2, navigate }) {
       uploadNotice(`Could not read the file: ${err?.message || err}`, true);
       return;
     }
-    const bareUpload = () => spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    const bareUpload = async () => {
+      if (overwrite && checkout?.required && !checkout.checkedOutByCurrentUser) {
+        await spWrite.checkOutFile(`${folderPath}/${file.name}`);
+        checkout.checkedOutByCurrentUser = true;
+      }
+      return spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    };
     const states = await uploadMetadataStates(folderPath);
     if (!states) {
       uploadNotice(`Uploading \u201C${file.name}\u201D\u2026`);
@@ -7727,10 +7827,7 @@ function createBrowserView({ client: client2, navigate }) {
   }
   function handleUploadError(err, file, folderPath, overwrite, carriedValues) {
     if (err?.code === "conflict" && !overwrite) {
-      showConsent(
-        `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-        () => runUpload(file, { overwrite: true, folderPath, carriedValues })
-      );
+      void confirmReplace(file, folderPath, { carriedValues, existing: null });
       return;
     }
     uploadNotice(`Upload failed: ${err?.message || err}`, true);

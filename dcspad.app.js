@@ -3988,8 +3988,24 @@ async function requireOk(response, fallback, code) {
 
 // ../src/sp-files.js?v=6
 var DIGEST_SAFETY_MS = 6e4;
-var CHECK_OUT_TYPE_NONE = 2;
 var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+var CHECK_OUT_TYPE_NONE = 2;
+function isCheckedOut(checkOutType) {
+  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
+  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+}
+function isCheckedOutByCurrentUser(user, pageContext = {}, { sameWeb = true } = {}) {
+  if (!user) return false;
+  const login = String(pageContext?.userLoginName || "").trim().toLowerCase();
+  const claim = String(user.LoginName || "").trim().toLowerCase();
+  if (login && claim) return login === claim;
+  const email = String(pageContext?.userEmail || "").trim().toLowerCase();
+  const userEmail = String(user.Email || user.UserPrincipalName || "").trim().toLowerCase();
+  if (email && userEmail) return email === userEmail;
+  const id = Number(pageContext?.userId);
+  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
+  return false;
+}
 var FILE_METADATA_SPECS = Object.freeze([
   { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
   { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
@@ -4218,19 +4234,6 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
-  function isCurrentUser(user, ctx, sameWeb) {
-    if (!user) return false;
-    const pageContext = ctx?.pageContext || {};
-    const login = String(pageContext.userLoginName || "").trim().toLowerCase();
-    const claim = String(user.LoginName || "").trim().toLowerCase();
-    if (login && claim) return login === claim;
-    const email = String(pageContext.userEmail || "").trim().toLowerCase();
-    const userEmail = String(user.Email || user.UserPrincipalName || "").trim().toLowerCase();
-    if (email && userEmail) return email === userEmail;
-    const id = Number(pageContext.userId);
-    if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
-    return false;
-  }
   async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx }) {
     const state3 = {
       required: false,
@@ -4265,12 +4268,15 @@ function createSpFilesClient({
         "checkout-state"
       );
       const file = unwrapJson(await fileResponse.json()) || {};
-      const type = Number(file.CheckOutType ?? file.checkOutType ?? CHECK_OUT_TYPE_NONE);
-      state3.checkedOut = Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+      state3.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
       if (state3.checkedOut) {
         const user = file.CheckedOutByUser || file.checkedOutByUser || null;
         state3.checkedOutBy = String(user?.Title || user?.LoginName || "").trim();
-        state3.checkedOutByCurrentUser = isCurrentUser(user, ctx, webUrl === hostWebUrl);
+        state3.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+          user,
+          ctx?.pageContext,
+          { sameWeb: webUrl === hostWebUrl }
+        );
       }
     } catch (error) {
       state3.known = false;
@@ -5563,8 +5569,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "95" : "dev";
-var injectedRevision = true ? "3a851956" : "";
+var injectedBuild = true ? "97" : "dev";
+var injectedRevision = true ? "a1026119" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
