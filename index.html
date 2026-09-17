@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DCSPad — SharePoint Developer Workbench</title>
-<link rel="stylesheet" href="styles/app.css?v=21">
+<link rel="stylesheet" href="styles/app.css?v=22">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⌘</text></svg>">
 </head>
 <body>
@@ -435,6 +435,13 @@
     </div>
     <p id="sp-metadata-context" class="app-dialog__context"></p>
     <div id="sp-metadata-overwrite" class="sp-files-notice" role="alert" hidden></div>
+    <label id="sp-metadata-checkout-row" class="sp-metadata-checkout" for="sp-metadata-checkout" hidden>
+      <input type="checkbox" id="sp-metadata-checkout">
+      <span class="sp-metadata-checkout__body">
+        <span class="sp-metadata-checkout__label">Check out the file before overwriting.</span>
+        <span id="sp-metadata-checkout-hint" class="sp-metadata-field__hint"></span>
+      </span>
+    </label>
     <div id="sp-metadata-notice" class="sp-files-notice" role="status" hidden></div>
     <label class="app-dialog__field sp-metadata-field" for="sp-metadata-title-input">
       <span class="sp-metadata-field__head">
@@ -477,6 +484,6 @@
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js?v=25"></script>
+<script type="module" src="src/main.js?v=26"></script>
 </body>
 </html>

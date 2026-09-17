@@ -52,10 +52,13 @@ SharePoint in the built-in or configured file types. There is no DCSPad backend.
   a metadata dialog. Missing or incompatible fields remain visible but disabled.
   Existing files supply their current values; an existing destination Title wins
   over a conflicting project title. Overwrite is called out in this metadata
-  dialog instead of requiring a separate confirmation step. If the file uploads
-  but SharePoint rejects its metadata, the dialog can retry metadata without
-  uploading again or keep the uploaded file without metadata. These operations
-  use the signed-in user's SharePoint REST permissions—no Graph app,
+  dialog instead of requiring a separate confirmation step. When the library
+  requires check-out, the dialog offers to check out an existing file before
+  replacing it, then uploads, writes metadata, and checks the file in. A
+  check-out rejection missed by the pre-flight probe reveals the same option
+  for retry. If a later stage fails after DCSPad created the check-out, the
+  dialog can resume without uploading again or explicitly discard the check-out.
+  These operations use the signed-in user's SharePoint REST permissions—no Graph app,
   PnP.PowerShell, or separate login. Project, framework-catalog, and snippet
   JSON never use this picker.
 - **Framework catalog** — the checkbox list in the sidebar is a single stored JSON document, seeded once with the built-in presets and then yours: add entries by URL (with an optional name), remove any entry, and drag rows to reorder them. Order is injection order, so put a plugin below the library it extends. The ⤓/⤒ buttons save/load the whole catalog as a file; reset restores the built-in presets and clears framework selections. If a loaded project references a framework you've since removed, it still loads — you get a console warning naming it, and the run fails with the usual `X is not defined` until you re-add it.
@@ -242,6 +245,10 @@ SharePoint session there.
    SharePoint…** and verify a new upload succeeds. Repeat with the same name
    and confirm that the metadata dialog clearly identifies the overwrite before
    it saves.
+8. Repeat the overwrite in a library with **Require Check Out** enabled. Confirm
+  that the metadata dialog preselects check-out, the save completes, and the
+  file is checked in afterward. Also verify a file checked out by another user
+  is blocked before upload.
 
 ## Using the pad
 

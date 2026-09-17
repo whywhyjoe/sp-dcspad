@@ -397,7 +397,69 @@ export function createSpFilesClient({
       }
     }
 
-    return { fields };
+    const checkout = {
+      required: null,
+      state: 'none',
+      byDisplayName: '',
+      probeFailed: false,
+    };
+    try {
+      const checkoutLibraryEndpoint =
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`;
+      const checkoutLibraryResponse = await request(checkoutLibraryEndpoint, {
+        headers: { Accept: ACCEPT_JSON },
+      });
+      if (checkoutLibraryResponse.ok) {
+        const checkoutLibraryData = unwrapJson(await checkoutLibraryResponse.json()) || {};
+        checkout.required = typeof checkoutLibraryData.ForceCheckout === 'boolean'
+          ? checkoutLibraryData.ForceCheckout
+          : null;
+        checkout.probeFailed = checkout.required === null;
+      } else {
+        checkout.probeFailed = true;
+      }
+
+      if (filePath) {
+        const path = checkedPath(filePath, rootPath);
+        const checkoutFileEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+          + `decodedUrl='${odataPathLiteral(path)}')`
+          + '?$select=CheckOutType,CheckedOutByUser/Title,CheckedOutByUser/LoginName'
+          + '&$expand=CheckedOutByUser';
+        const checkoutFileResponse = await request(checkoutFileEndpoint, {
+          headers: { Accept: ACCEPT_JSON },
+        });
+        if (!checkoutFileResponse.ok) throw new Error('file checkout probe failed');
+        const checkoutFileData = unwrapJson(await checkoutFileResponse.json()) || {};
+        const checkedOut = checkoutFileData.CheckOutType === 0
+          || checkoutFileData.CheckOutType === 1;
+        if (checkedOut) {
+          const checkedOutLogin = String(
+            checkoutFileData.CheckedOutByUser?.LoginName || '',
+          ).trim();
+          const currentLogin = String(
+            context({ refresh: true }).pageContext?.userLoginName || '',
+          ).trim();
+          checkout.state = checkedOutLogin && currentLogin
+            && checkedOutLogin.localeCompare(
+              currentLogin,
+              undefined,
+              { sensitivity: 'base' },
+            ) === 0
+            ? 'mine'
+            : 'other';
+          if (checkout.state === 'other') {
+            checkout.byDisplayName = String(
+              checkoutFileData.CheckedOutByUser?.Title || '',
+            ).trim();
+          }
+        }
+      }
+    } catch {
+      checkout.required = null;
+      checkout.probeFailed = true;
+    }
+
+    return { fields, checkout };
   }
 
   async function writeFileMetadata(
@@ -501,6 +563,71 @@ export function createSpFilesClient({
     };
   }
 
+  async function checkOutFile(
+    serverRelativePath,
+    { webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')/CheckOut()`;
+    const op = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: 'POST',
+        headers: { Accept: ACCEPT_JSON, 'X-RequestDigest': digest },
+      });
+    };
+    let response = await op(false);
+    if (response.status === 403) response = await op(true);
+    await requireOk(response, 'Could not check out the SharePoint file', 'checkout');
+  }
+
+  async function checkInFile(
+    serverRelativePath,
+    { comment = '', checkInType = 0, webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const safeComment = String(comment || '').slice(0, 1023);
+    const safeCheckInType = [0, 1, 2].includes(Number(checkInType))
+      ? Number(checkInType)
+      : 0;
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')/CheckIn(`
+      + `comment='${odataPathLiteral(safeComment)}',checkintype=${safeCheckInType})`;
+    const op = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: 'POST',
+        headers: { Accept: ACCEPT_JSON, 'X-RequestDigest': digest },
+      });
+    };
+    let response = await op(false);
+    if (response.status === 403) response = await op(true);
+    await requireOk(response, 'Could not check in the SharePoint file', 'checkin');
+  }
+
+  async function undoCheckOutFile(
+    serverRelativePath,
+    { webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')/UndoCheckOut()`;
+    const op = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: 'POST',
+        headers: { Accept: ACCEPT_JSON, 'X-RequestDigest': digest },
+      });
+    };
+    let response = await op(false);
+    if (response.status === 403) response = await op(true);
+    await requireOk(response, 'Could not discard the check out', 'checkout-undo');
+  }
+
   return {
     webInfo,
     connectWeb,
@@ -510,6 +637,9 @@ export function createSpFilesClient({
     inspectFileMetadata,
     writeFileMetadata,
     writeTextFile,
+    checkOutFile,
+    checkInFile,
+    undoCheckOutFile,
   };
 }
 
@@ -526,3 +656,7 @@ export const writeFileMetadata = (path, fields, values, options) =>
   defaultClient.writeFileMetadata(path, fields, values, options);
 export const writeTextFile = (folder, name, text, options) =>
   defaultClient.writeTextFile(folder, name, text, options);
+export const checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
+export const checkInFile = (path, options) => defaultClient.checkInFile(path, options);
+export const undoCheckOutFile = (path, options) =>
+  defaultClient.undoCheckOutFile(path, options);

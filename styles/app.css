@@ -811,6 +811,27 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
   min-height: 13px; color: var(--fg-faint); font: 10.5px/1.25 var(--sans);
 }
 .sp-metadata-actions { flex-wrap: wrap; }
+/* Overwrite check-out consent: an inline option that belongs to the
+   overwrite banner above it, not to the metadata fields below. Quiet
+   surface — it is a choice, not a warning; the banner carries the alarm. */
+.sp-metadata-checkout {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 10px; margin-top: -4px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: var(--radius-m); cursor: pointer;
+}
+.sp-metadata-checkout input {
+  flex: none; margin: 1px 0 0; accent-color: var(--accent); color-scheme: dark;
+}
+.sp-metadata-checkout__body { display: grid; gap: 3px; min-width: 0; }
+.sp-metadata-checkout__label { color: var(--fg-row); font-size: 12px; line-height: 1.4; }
+.sp-metadata-checkout:hover { border-color: var(--border-strong); }
+.sp-metadata-checkout:hover .sp-metadata-checkout__label { color: var(--fg-strong); }
+.sp-metadata-checkout:focus-within {
+  border-color: var(--accent-soft-line); box-shadow: 0 0 0 2px var(--accent-ring);
+}
+.sp-metadata-checkout.is-blocked { cursor: default; }
+.sp-metadata-checkout.is-blocked .sp-metadata-checkout__label { color: var(--fg-dim); }
 .sp-files-panel {
   gap: 10px;
 }

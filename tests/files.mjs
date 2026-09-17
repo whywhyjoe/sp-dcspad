@@ -75,6 +75,12 @@ const uploads = [];
 const metadataUpdates = [];
 let includeDocVersion = true;
 let failMetadataUpdate = false;
+let forceCheckout = false;
+let checkoutProbeStatus = 200;
+let checkOutType = 2;
+let checkedOutByUser = null;
+let checkoutUploadFailures = 0;
+const checkoutOperations = [];
 const metadataLibraryId = '11111111-2222-3333-4444-555555555555';
 await page.route('**/_api/**', async (route) => {
   const request = route.request();
@@ -99,7 +105,23 @@ await page.route('**/_api/**', async (route) => {
     });
     return;
   }
+  if (url.includes('/CheckOut()')) {
+    checkoutOperations.push('CheckOut');
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    return;
+  }
+  if (url.includes('/CheckIn(')) {
+    checkoutOperations.push('CheckIn');
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    return;
+  }
+  if (url.includes('/UndoCheckOut()')) {
+    checkoutOperations.push('UndoCheckOut');
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    return;
+  }
   if (url.includes('/Files/AddUsingPath(')) {
+    checkoutOperations.push('AddUsingPath');
     const otherSite = url.includes('/sites/other/_api/');
     upload = {
       url,
@@ -107,6 +129,21 @@ await page.route('**/_api/**', async (route) => {
       digest: request.headers()['x-requestdigest'],
     };
     uploads.push(upload);
+    if (checkoutUploadFailures > 0) {
+      checkoutUploadFailures -= 1;
+      await route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
+            message: {
+              value: 'Microsoft.SharePoint.SPFileCheckOutException: The file must be checked out.',
+            },
+          },
+        }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -176,7 +213,16 @@ await page.route('**/_api/**', async (route) => {
     });
     return;
   }
+  if (/\/lists\(guid/i.test(url) && url.includes('$select=ForceCheckout')) {
+    await route.fulfill({
+      status: checkoutProbeStatus,
+      contentType: 'application/json',
+      body: JSON.stringify({ ForceCheckout: forceCheckout }),
+    });
+    return;
+  }
   if (url.includes('/ValidateUpdateListItem')) {
+    checkoutOperations.push('ValidateUpdateListItem');
     const body = JSON.parse(request.postData() || '{}');
     metadataUpdates.push({
       url,
@@ -195,6 +241,18 @@ await page.route('**/_api/**', async (route) => {
             ? 'The test library rejected this metadata value.'
             : null,
         })),
+      }),
+    });
+    return;
+  }
+  if (url.includes('/GetFileByServerRelativePath(')
+      && url.includes('$select=CheckOutType')) {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        CheckOutType: checkOutType,
+        CheckedOutByUser: checkedOutByUser,
       }),
     });
     return;
@@ -373,6 +431,7 @@ await page.addInitScript(() => {
   } else {
     window.__DCSPAD_SP_CONTEXT__ = {
       webAbsoluteUrl: location.origin,
+      userLoginName: 'context.test@example.com',
       userDisplayName: 'Context Test User',
     };
   }
@@ -658,6 +717,139 @@ await check('keeping an uploaded file without metadata does not upload it twice'
   uploads.length === uploadsBeforeMetadataFailure + 1
   && decodeURIComponent(uploads.at(-1).url).includes("decodedUrl='metadata-failure'"));
 failMetadataUpdate = false;
+
+async function openCheckoutExport(name) {
+  await page.click('#btn-file');
+  await page.click('#mi-sp-export');
+  await page.waitForSelector('#sp-files-dialog[open]');
+  await page.waitForFunction(() =>
+    !document.getElementById('sp-files-list')?.textContent
+      .includes('Loading SharePoint folder'));
+  await page.selectOption('#sp-export-type', 'css');
+  await page.fill('#sp-export-name', name);
+  await page.click('#sp-files-primary');
+  await page.waitForSelector('#sp-metadata-dialog[open]');
+  await page.waitForFunction(() =>
+    document.getElementById('sp-metadata-save')?.textContent !== 'Checking fields…');
+}
+
+forceCheckout = true;
+const checkoutOrderStart = checkoutOperations.length;
+await openCheckoutExport('existing.css');
+await check('ForceCheckout existing file shows checkout consent ticked by default', async () =>
+  await page.locator('#sp-metadata-checkout-row').isVisible()
+  && await page.locator('#sp-metadata-checkout').isChecked()
+  && !(await page.locator('#sp-metadata-checkout').isDisabled()));
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+await check('checkout overwrite runs checkout, upload, metadata, and check-in in order', () =>
+  checkoutOperations.slice(checkoutOrderStart).join(',')
+    === 'CheckOut,AddUsingPath,ValidateUpdateListItem,CheckIn');
+
+forceCheckout = false;
+await openCheckoutExport('existing.css');
+await check('non-ForceCheckout library keeps checkout consent hidden', () =>
+  page.locator('#sp-metadata-checkout-row').isHidden());
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+
+checkOutType = 0;
+checkedOutByUser = {
+  Title: 'Other Editor',
+  LoginName: 'other.editor@example.com',
+};
+await openCheckoutExport('existing.css');
+await check('file checked out by another user blocks overwrite', async () =>
+  await page.locator('#sp-metadata-checkout').isDisabled()
+  && await page.locator('#sp-metadata-checkout-row').evaluate((row) =>
+    row.classList.contains('is-blocked'))
+  && await page.locator('#sp-metadata-save').isDisabled()
+  && (await page.locator('#sp-metadata-save').textContent()) === 'Cannot overwrite');
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+checkOutType = 2;
+checkedOutByUser = null;
+
+forceCheckout = true;
+failMetadataUpdate = true;
+const failedCheckoutStart = checkoutOperations.length;
+const uploadsBeforeCheckoutFailure = uploads.length;
+await openCheckoutExport('existing.css');
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-error').hidden);
+await check('metadata failure leaves the DCSPad checkout resumable without re-upload', async () => {
+  const operations = checkoutOperations.slice(failedCheckoutStart);
+  return uploads.length === uploadsBeforeCheckoutFailure + 1
+    && operations.filter((operation) => operation === 'AddUsingPath').length === 1
+    && !operations.includes('CheckIn')
+    && (await page.locator('#sp-metadata-error').textContent())
+      .includes('still checked out to you')
+    && (await page.locator('#sp-metadata-keep').textContent()) === 'Discard check out'
+    && await page.locator('#sp-metadata-keep').isVisible();
+});
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+await check('discarding a DCSPad checkout issues UndoCheckOut and closes', () =>
+  checkoutOperations.at(-1) === 'UndoCheckOut');
+failMetadataUpdate = false;
+
+checkoutProbeStatus = 500;
+const probeFailureStart = checkoutOperations.length;
+await openCheckoutExport('existing.css');
+const failedProbeRowHidden = await page.locator('#sp-metadata-checkout-row').isHidden();
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+await check('failed checkout probe stays hidden and does not block upload', () =>
+  failedProbeRowHidden
+  && checkoutOperations.slice(probeFailureStart).includes('AddUsingPath'));
+checkoutProbeStatus = 200;
+
+forceCheckout = false;
+checkoutUploadFailures = 2;
+await openCheckoutExport('existing.css');
+const reactiveRowInitiallyHidden =
+  await page.locator('#sp-metadata-checkout-row').isHidden();
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-error').hidden);
+const reactiveCode = await page.evaluate(async () => {
+  const { requireOk } = await import('/src/sp-odata.js');
+  try {
+    await requireOk(new Response(JSON.stringify({
+      error: { message: { value: 'SPFileCheckOutException' } },
+    }), { status: 403 }), 'fallback', 'write');
+  } catch (error) {
+    return error.code;
+  }
+  return '';
+});
+const reactiveRowVisible = await page.locator('#sp-metadata-checkout-row').isVisible();
+const reactiveRowChecked = await page.locator('#sp-metadata-checkout').isChecked();
+const reactiveRetryStart = checkoutOperations.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+await check('checkout rejection reveals consent and retry succeeds through check-in', () =>
+  reactiveRowInitiallyHidden
+  && reactiveCode === 'checkout-required'
+  && reactiveRowVisible
+  && reactiveRowChecked
+  && checkoutOperations.slice(reactiveRetryStart).join(',')
+    === 'CheckOut,AddUsingPath,ValidateUpdateListItem,CheckIn');
+
+forceCheckout = true;
+const newForceCheckoutStart = checkoutOperations.length;
+await openCheckoutExport('checkout-new.css');
+const newCheckoutRowHidden = await page.locator('#sp-metadata-checkout-row').isHidden();
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+await check('new file in ForceCheckout library skips consent but is checked in', () => {
+  const operations = checkoutOperations.slice(newForceCheckoutStart);
+  return newCheckoutRowHidden
+    && !operations.includes('CheckOut')
+    && operations.join(',') === 'AddUsingPath,ValidateUpdateListItem,CheckIn';
+});
+forceCheckout = false;
 
 await page.click('#extras-tabs [data-extra="docs"]');
 await page.click('#browser-browse');

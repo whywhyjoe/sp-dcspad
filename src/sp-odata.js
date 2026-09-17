@@ -46,6 +46,11 @@ export async function responseMessage(response) {
   }
 }
 
+function isCheckoutSignature(detail) {
+  return /SPFileCheckOutException|-2147018029|must be checked out|checked out for editing|currently checked out/i
+    .test(String(detail || ''));
+}
+
 export async function requireOk(response, fallback, code) {
   if (response.ok) return response;
   const detail = await responseMessage(response);
@@ -59,6 +64,10 @@ export async function requireOk(response, fallback, code) {
     message = detail
       || 'SharePoint could not authenticate this request. Reload the page to sign in again.';
     normalizedCode = 'auth';
+  } else if ((response.status === 403 || response.status === 409)
+      && isCheckoutSignature(detail)) {
+    message = detail || 'This file must be checked out before it can be changed.';
+    normalizedCode = 'checkout-required';
   } else if (response.status === 403) {
     message = detail
       || 'SharePoint denied this request. Check library permissions and try again.';
