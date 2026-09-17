@@ -3962,6 +3962,9 @@ async function responseMessage(response) {
     }
   }
 }
+function isCheckoutRefusal(detail) {
+  return /SPFileCheckOutException|-2147018029|must be checked out|checked out for editing|currently checked out/i.test(String(detail || ""));
+}
 async function requireOk(response, fallback, code) {
   if (response.ok) return response;
   const detail = await responseMessage(response);
@@ -3970,6 +3973,9 @@ async function requireOk(response, fallback, code) {
   if (response.status === 401) {
     message = detail || "SharePoint could not authenticate this request. Reload the page to sign in again.";
     normalizedCode = "auth";
+  } else if ([403, 409, 423].includes(response.status) && isCheckoutRefusal(detail)) {
+    message = detail || "This file must be checked out before it can be changed.";
+    normalizedCode = "checkout-required";
   } else if (response.status === 403) {
     message = detail || "SharePoint denied this request. Check library permissions and try again.";
     normalizedCode = "permission";
@@ -4256,7 +4262,7 @@ function createSpFilesClient({
       const list = unwrapJson(await policyResponse.json()) || {};
       state3.required = Boolean(list.ForceCheckout ?? list.forceCheckout);
       state3.known = true;
-      if (!state3.required || !filePath) return state3;
+      if (!filePath) return state3;
       const path = checkedPath(filePath, rootPath);
       const fileResponse = await request(
         `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email&$expand=CheckedOutByUser`,
@@ -4284,10 +4290,8 @@ function createSpFilesClient({
     }
     return state3;
   }
-  async function checkOutFile2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/CheckOut()`;
+  async function postFileMethod(webUrl, path, method, fallback, code) {
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/${method}`;
     const attempt = async (forceDigest) => {
       const digest = await getDigest({ force: forceDigest, webUrl });
       return request(endpoint, {
@@ -4297,7 +4301,57 @@ function createSpFilesClient({
     };
     let response = await attempt(false);
     if (response.status === 403) response = await attempt(true);
-    await requireOk(response, "Could not check out the SharePoint file", "checkout");
+    await requireOk(response, fallback, code);
+  }
+  async function checkOutFile2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl,
+      path,
+      "CheckOut()",
+      "Could not check out the SharePoint file",
+      "checkout"
+    );
+    return { serverRelativeUrl: path };
+  }
+  async function checkInFile2(serverRelativePath, { comment = "", checkInType = 0, webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const stateResponse = await request(
+      `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType`,
+      { headers: { Accept: ACCEPT_JSON } }
+    );
+    await requireOk(
+      stateResponse,
+      "Could not read the file check-out state",
+      "checkout-state"
+    );
+    const file = unwrapJson(await stateResponse.json()) || {};
+    if (!isCheckedOut(file.CheckOutType ?? file.checkOutType)) {
+      return { serverRelativeUrl: path, checkedIn: false };
+    }
+    const type = [0, 1, 2].includes(Number(checkInType)) ? Number(checkInType) : 0;
+    const safeComment = String(comment || "").slice(0, 1023);
+    await postFileMethod(
+      webUrl,
+      path,
+      `CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=${type})`,
+      "Could not check in the SharePoint file",
+      "checkin"
+    );
+    return { serverRelativeUrl: path, checkedIn: true };
+  }
+  async function undoCheckOutFile2(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl,
+      path,
+      "UndoCheckOut()",
+      "Could not discard the check-out",
+      "checkout-undo"
+    );
     return { serverRelativeUrl: path };
   }
   async function inspectFileMetadata2(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
@@ -4486,6 +4540,8 @@ function createSpFilesClient({
     listFolder: listFolder2,
     readTextFile: readTextFile2,
     checkOutFile: checkOutFile2,
+    checkInFile: checkInFile2,
+    undoCheckOutFile: undoCheckOutFile2,
     inspectFileMetadata: inspectFileMetadata2,
     writeFileMetadata: writeFileMetadata2,
     writeTextFile: writeTextFile2
@@ -4497,6 +4553,8 @@ var connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 var listFolder = (path, options) => defaultClient.listFolder(path, options);
 var readTextFile = (path, options) => defaultClient.readTextFile(path, options);
 var checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
+var checkInFile = (path, options) => defaultClient.checkInFile(path, options);
+var undoCheckOutFile = (path, options) => defaultClient.undoCheckOutFile(path, options);
 var inspectFileMetadata = (folder, options) => defaultClient.inspectFileMetadata(folder, options);
 var writeFileMetadata = (path, fields, values, options) => defaultClient.writeFileMetadata(path, fields, values, options);
 var writeTextFile = (folder, name, text, options) => defaultClient.writeTextFile(folder, name, text, options);
@@ -5569,8 +5627,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "97" : "dev";
-var injectedRevision = true ? "a1026119" : "";
+var injectedBuild = true ? "157" : "dev";
+var injectedRevision = true ? "63e89ad4" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -6531,6 +6589,7 @@ function resetSpMetadataDialog() {
   setSpMetadataNotice("");
   setSpMetadataError("");
   spMetadataKeep.hidden = true;
+  spMetadataKeep.textContent = "Keep file without metadata";
   spMetadataCancel.hidden = false;
   spMetadataClose.hidden = false;
   for (const control of Object.values(spMetadataControls)) {
@@ -6544,7 +6603,7 @@ function resetSpMetadataDialog() {
   setSpMetadataBusy(true, "Checking fields\u2026");
 }
 function closeSpMetadataDialog() {
-  if (spMetadataBusy || spPendingExport?.uploadResult) return;
+  if (spMetadataBusy || spPendingExport?.uploadResult || spPendingExport?.checkedOutByUs) return;
   if (spMetadataDialog.open) spMetadataDialog.close();
   spPendingExport = null;
   spFilesPrimary.disabled = false;
@@ -6558,9 +6617,13 @@ function metadataValues() {
 }
 function finishSpExport(metadataStatus = "saved") {
   if (!spPendingExport) return;
-  const { name } = spPendingExport;
+  const { name, checkedIn, leftCheckedOut } = spPendingExport;
   const detail = metadataStatus === "saved" ? " Metadata saved." : metadataStatus === "unavailable" ? " No supported metadata fields were available." : " Metadata was skipped.";
-  showToast(`${name} uploaded to SharePoint.${detail}`, "success");
+  const checkInDetail = leftCheckedOut ? " It is still checked out to you." : checkedIn ? " Checked in." : "";
+  showToast(
+    `${name} uploaded to SharePoint.${detail}${checkInDetail}`,
+    leftCheckedOut ? "" : "success"
+  );
   statusRun.textContent = `${name} uploaded to SharePoint`;
   statusRun.className = "status-item";
   if (spMetadataDialog.open) spMetadataDialog.close();
@@ -6573,23 +6636,22 @@ function applySpCheckoutState(pending) {
   pending.checkoutGate = false;
   pending.checkoutBlocked = false;
   spMetadataCheckoutInput.checked = false;
-  if (!checkout?.required || !pending.existing) {
-    spMetadataCheckout.hidden = true;
-    return;
-  }
+  spMetadataCheckout.hidden = true;
+  if (!checkout || !pending.existing) return;
   const { name } = pending.existing;
   if (checkout.checkedOut && !checkout.checkedOutByCurrentUser) {
-    spMetadataCheckout.hidden = true;
     pending.checkoutBlocked = true;
     setSpMetadataError(
       `${name} is checked out to ${checkout.checkedOutBy || "another user"}. It cannot be overwritten until they check it back in.`
     );
     return;
   }
+  if (!checkout.required && !checkout.checkedOutByCurrentUser) return;
   pending.checkoutGate = true;
   spMetadataCheckoutLabel.textContent = checkout.checkedOutByCurrentUser ? `Overwrite ${name}, which is already checked out to you` : `Check out ${name} before overwriting it`;
-  const hint = checkout.checkedOutByCurrentUser ? "This library requires check-out. The file is already checked out to you, so DCSPad uploads straight over it." : "This library requires check-out. DCSPad checks the file out, then uploads \u2014 SharePoint checks it back in as part of the overwrite.";
-  spMetadataCheckoutHint.textContent = checkout.known ? hint : `${hint} Its current check-out state could not be read: ${checkout.reason}`;
+  const policy = checkout.required ? "This library requires check-out. " : "";
+  const hint = checkout.checkedOutByCurrentUser ? `${policy}The file is already checked out to you, so DCSPad uploads straight over it, then checks it back in.` : `${policy}DCSPad checks the file out, uploads, then checks it back in.`;
+  spMetadataCheckoutHint.textContent = checkout.known || !checkout.reason ? hint : `${hint} Its current check-out state could not be read: ${checkout.reason}`;
   spMetadataCheckout.hidden = false;
 }
 async function openSpMetadataDialog({ pane, name, text, existing }) {
@@ -6603,7 +6665,16 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     checkout: null,
     checkoutGate: false,
     checkoutBlocked: false,
-    uploadResult: null
+    uploadResult: null,
+    // Check-out lifecycle. checkedOutByUs is true only for a check-out this
+    // export made (or a new file born checked out), which is what makes it
+    // ours to discard; one the operator made beforehand is theirs.
+    checkedOutByUs: false,
+    stage: "",
+    metadataStatus: "",
+    skipMetadata: false,
+    checkedIn: false,
+    leftCheckedOut: false
   };
   resetSpMetadataDialog();
   spMetadataContext.textContent = existing ? `Review the destination metadata before replacing ${existing.name}.` : `Add metadata before uploading ${name}.`;
@@ -6676,22 +6747,25 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
     );
   }
 }
+function spExportNeedsCheckIn(pending) {
+  return pending.checkedOutByUs || Boolean(pending.checkout?.checkedOutByCurrentUser) || Boolean(!pending.existing && pending.checkout?.required);
+}
 async function saveSpMetadata() {
   if (spMetadataBusy || !spPendingExport) return;
   const pending = spPendingExport;
   setSpMetadataError("");
-  setSpMetadataBusy(
-    true,
-    pending.uploadResult ? "Saving metadata\u2026" : "Uploading file\u2026"
-  );
+  setSpMetadataBusy(true);
   try {
     if (!pending.uploadResult && pending.existing && pending.checkout?.required && !pending.checkout.checkedOutByCurrentUser) {
+      pending.stage = "checkout";
       setSpMetadataBusy(true, "Checking out\u2026");
       await checkOutFile(pending.existing.serverRelativeUrl, { webUrl: spTargetWebUrl });
+      pending.checkedOutByUs = true;
       pending.checkout.checkedOutByCurrentUser = true;
-      setSpMetadataBusy(true, "Uploading file\u2026");
     }
     if (!pending.uploadResult) {
+      pending.stage = "upload";
+      setSpMetadataBusy(true, "Uploading file\u2026");
       pending.uploadResult = await writeTextFile(
         spFolder.path,
         pending.name,
@@ -6703,31 +6777,74 @@ async function saveSpMetadata() {
       );
       pending.checkoutGate = false;
     }
-    const fields = pending.metadataInfo?.fields || {};
-    const available = Object.values(fields).some((field) => field.available);
-    if (!pending.metadataInspectionFailed && available) {
-      await writeFileMetadata(
-        pending.uploadResult.serverRelativeUrl,
-        fields,
-        metadataValues(),
-        { webUrl: spTargetWebUrl }
-      );
-      finishSpExport("saved");
-    } else {
-      finishSpExport("unavailable");
+    if (!pending.metadataStatus) {
+      const fields = pending.metadataInfo?.fields || {};
+      const available = Object.values(fields).some((field) => field.available);
+      if (pending.skipMetadata) {
+        pending.metadataStatus = "skipped";
+      } else if (!pending.metadataInspectionFailed && available) {
+        pending.stage = "metadata";
+        setSpMetadataBusy(true, "Saving metadata\u2026");
+        await writeFileMetadata(
+          pending.uploadResult.serverRelativeUrl,
+          fields,
+          metadataValues(),
+          { webUrl: spTargetWebUrl }
+        );
+        pending.metadataStatus = "saved";
+      } else {
+        pending.metadataStatus = "unavailable";
+      }
     }
+    if (spExportNeedsCheckIn(pending)) {
+      pending.stage = "checkin";
+      setSpMetadataBusy(true, "Checking in\u2026");
+      const result = await checkInFile(pending.uploadResult.serverRelativeUrl, {
+        comment: "Saved from DCSPad",
+        webUrl: spTargetWebUrl
+      });
+      pending.checkedIn = result.checkedIn;
+      pending.checkedOutByUs = false;
+    }
+    finishSpExport(pending.metadataStatus);
   } catch (error) {
     if (!spPendingExport) return;
-    if (pending.uploadResult) {
+    const message = error.message || String(error);
+    if (pending.stage === "checkin") {
+      setSpMetadataError(`The file was saved, but it was not checked in. ${message}`);
+      spMetadataKeep.textContent = "Leave checked out";
+      spMetadataKeep.hidden = false;
+      spMetadataCancel.hidden = true;
+      spMetadataClose.hidden = true;
+      setSpMetadataBusy(false, "Retry check-in");
+    } else if (pending.uploadResult) {
       setSpMetadataError(
-        `The file was uploaded, but its metadata was not saved. ${error.message || error}`
+        `The file was uploaded, but its metadata was not saved. ${message}`
       );
+      spMetadataKeep.textContent = "Keep file without metadata";
       spMetadataKeep.hidden = false;
       spMetadataCancel.hidden = true;
       spMetadataClose.hidden = true;
       setSpMetadataBusy(false, "Retry metadata");
+    } else if (pending.checkedOutByUs) {
+      setSpMetadataError(`${message} The file is still checked out to you.`);
+      spMetadataKeep.textContent = "Discard check-out";
+      spMetadataKeep.hidden = false;
+      spMetadataCancel.hidden = true;
+      spMetadataClose.hidden = true;
+      setSpMetadataBusy(false, "Try overwrite again");
     } else {
-      setSpMetadataError(error.message || String(error));
+      if (error?.code === "checkout-required" && pending.existing) {
+        pending.checkout = {
+          ...pending.checkout || {},
+          required: true,
+          checkedOut: false,
+          checkedOutByCurrentUser: false,
+          reason: ""
+        };
+        applySpCheckoutState(pending);
+      }
+      setSpMetadataError(message);
       setSpMetadataBusy(
         false,
         pending.existing ? "Try overwrite again" : "Try upload again"
@@ -6735,9 +6852,39 @@ async function saveSpMetadata() {
     }
   }
 }
+async function keepSpExport() {
+  if (spMetadataBusy || !spPendingExport) return;
+  const pending = spPendingExport;
+  if (pending.stage === "checkin") {
+    pending.leftCheckedOut = true;
+    finishSpExport(pending.metadataStatus);
+    return;
+  }
+  if (pending.uploadResult) {
+    pending.skipMetadata = true;
+    await saveSpMetadata();
+    return;
+  }
+  setSpMetadataError("");
+  setSpMetadataBusy(true, "Discarding check-out\u2026");
+  try {
+    await undoCheckOutFile(pending.existing.serverRelativeUrl, { webUrl: spTargetWebUrl });
+    showToast(`Check-out of ${pending.existing.name} discarded. Nothing was uploaded.`);
+    spMetadataBusy = false;
+    if (spMetadataDialog.open) spMetadataDialog.close();
+    spPendingExport = null;
+    spFilesPrimary.disabled = false;
+  } catch (error) {
+    if (!spPendingExport) return;
+    setSpMetadataError(
+      `${error.message || error} The file is still checked out to you.`
+    );
+    setSpMetadataBusy(false, "Try overwrite again");
+  }
+}
 spMetadataCheckoutInput.addEventListener("change", syncSpMetadataSave);
 spMetadataSave.addEventListener("click", saveSpMetadata);
-spMetadataKeep.addEventListener("click", () => finishSpExport("skipped"));
+spMetadataKeep.addEventListener("click", keepSpExport);
 spMetadataClose.addEventListener("click", closeSpMetadataDialog);
 spMetadataCancel.addEventListener("click", closeSpMetadataDialog);
 spMetadataDialog.addEventListener("cancel", (event) => {
