@@ -94,6 +94,11 @@ let failNextUpload = false;
 let refuseUploadUntilCheckedOut = false;
 let newFilesBornCheckedOut = false;
 let failCheckIn = false;
+let failUndoCheckOut = false;
+let failPolicyProbe = false;
+let refuseUploadHeldByAnother = false;
+// ValidateUpdateListItem with bNewDocumentUpdate checks a checked-out file in.
+let metadataChecksIn = false;
 const metadataLibraryId = '11111111-2222-3333-4444-555555555555';
 await page.route('**/_api/**', async (route) => {
   const request = route.request();
@@ -138,14 +143,29 @@ await page.route('**/_api/**', async (route) => {
       });
       return;
     }
-    if (refuseUploadUntilCheckedOut && fileCheckOut.CheckOutType === 2) {
+    if (refuseUploadHeldByAnother) {
       await route.fulfill({
         status: 423,
         contentType: 'application/json',
         body: JSON.stringify({
           error: {
+            code: '-2147018887, Microsoft.SharePoint.SPFileLockException',
+            message: { value: 'The file "existing.css" is checked out for editing by i:0#.f|membership|dana@example.com.' },
+          },
+        }),
+      });
+      return;
+    }
+    if (refuseUploadUntilCheckedOut && fileCheckOut.CheckOutType === 2) {
+      // SharePoint's own sentence, and a 403: nothing but the text (and the
+      // unlocalized code) tells this from a permission error.
+      await route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
             code: '-2147018029, Microsoft.SharePoint.SPFileCheckOutException',
-            message: { value: 'The file "existing.css" must be checked out before it can be changed.' },
+            message: { value: 'The file "existing.css" is not checked out. You must first check out this document before making changes.' },
           },
         }),
       });
@@ -157,6 +177,7 @@ await page.route('**/_api/**', async (route) => {
       contentType: 'application/json',
       body: JSON.stringify({
         ServerRelativeUrl: otherSite ? '/sites/other/existing.css' : '/existing.css',
+        CheckOutType: fileCheckOut.CheckOutType,
       }),
     });
     return;
@@ -251,11 +272,23 @@ await page.route('**/_api/**', async (route) => {
   }
   if (url.includes('/UndoCheckOut()')) {
     undoCheckOuts.push({ url, digest: request.headers()['x-requestdigest'] });
+    if (failUndoCheckOut) {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: { value: 'Undo stub failure.' } } }),
+      });
+      return;
+    }
     fileCheckOut = { CheckOutType: 2 };
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     return;
   }
   if (/\/lists\(guid/i.test(url) && new URL(url).searchParams.get('$select') === 'ForceCheckout') {
+    if (failPolicyProbe) {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -280,6 +313,7 @@ await page.route('**/_api/**', async (route) => {
       digest: request.headers()['x-requestdigest'],
       order: apiRequests.length,
     });
+    if (metadataChecksIn && !failMetadataUpdate) fileCheckOut = { CheckOutType: 2 };
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -471,7 +505,9 @@ await page.addInitScript(() => {
     window.__DCSPAD_SP_CONTEXT__ = {
       webAbsoluteUrl: location.origin,
       userDisplayName: 'Context Test User',
-      userLoginName: 'i:0#.f|membership|tester@example.com',
+      // As on SharePoint Online: page context carries the bare UPN, while the
+      // CheckedOutByUser stubs carry the full claim. "To me" must match both.
+      userLoginName: 'tester@example.com',
     };
   }
 });
@@ -989,7 +1025,7 @@ await page.waitForFunction(() =>
   !document.getElementById('sp-metadata-checkout').hidden);
 await check('a check-out refusal the probe missed reveals the consent gate', async () =>
   checkOuts.length === checkOutsBeforeRefusal
-  && (await page.locator('#sp-metadata-error').textContent()).includes('must be checked out')
+  && (await page.locator('#sp-metadata-error').textContent()).includes('is not checked out')
   && !(await page.locator('#sp-metadata-checkout-input').isChecked())
   && (await page.locator('#sp-metadata-save').isDisabled()));
 await page.check('#sp-metadata-checkout-input');
@@ -1005,6 +1041,77 @@ await check('the consented retry checks out, uploads, and checks in', () =>
   && checkOuts.at(-1).order < uploads.at(-1).order
   && uploads.at(-1).order < checkIns.at(-1).order
   && fileCheckOut.CheckOutType === 2);
+
+// The refusal names a holder: consent cannot fix that, so it is stated and the
+// overwrite blocked rather than offered a check-out that can only fail.
+refuseUploadHeldByAnother = true;
+await openSpExport('existing.css');
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  (document.getElementById('sp-metadata-error')?.textContent || '').includes('checked out for editing by'));
+refuseUploadHeldByAnother = false;
+await check('a refusal naming another holder blocks the overwrite instead of offering consent', async () =>
+  (await page.locator('#sp-metadata-checkout').isHidden())
+  && (await page.locator('#sp-metadata-save').isDisabled())
+  && !(await page.locator('#sp-metadata-cancel').isHidden()));
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+
+// SharePoint checks a checked-out file in as part of the metadata write
+// (bNewDocumentUpdate), so the explicit CheckIn() has nothing left to do — and
+// posting it anyway would be an error. The comment rides the metadata write.
+forceCheckout = true;
+metadataChecksIn = true;
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+const checkInsBeforeImplicit = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+metadataChecksIn = false;
+await check('a metadata write that checks the file in is not followed by a CheckIn post', async () =>
+  checkIns.length === checkInsBeforeImplicit
+  && metadataUpdates.at(-1).body.bNewDocumentUpdate === true
+  && metadataUpdates.at(-1).body.checkInComment === 'Saved from DCSPad'
+  && fileCheckOut.CheckOutType === 2
+  && (await page.locator('#app-toast').textContent()).includes('Checked in.'));
+
+// The probe could not run, so nothing is known about the library — and a new
+// file there is born checked out. The upload response says so.
+failPolicyProbe = true;
+newFilesBornCheckedOut = true;
+await openSpExport('probe-failed-new.css', { existing: false });
+const checkInsBeforeBlind = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+failPolicyProbe = false;
+newFilesBornCheckedOut = false;
+await check('a new file born checked out is checked in even when the policy probe failed', () =>
+  checkIns.length === checkInsBeforeBlind + 1 && fileCheckOut.CheckOutType === 2);
+
+// Retry and discard both failing must not trap the operator in the dialog.
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+failNextUpload = true;
+failUndoCheckOut = true;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-keep').hidden);
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() =>
+  document.getElementById('sp-metadata-keep')?.textContent === 'Leave checked out');
+const uploadsBeforeLeave = uploads.length;
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+failUndoCheckOut = false;
+await check('a failed discard offers an honest way out of the dialog', async () =>
+  uploads.length === uploadsBeforeLeave
+  && (await page.locator('#app-toast').textContent()).includes('may still be checked out to you')
+  && page.locator('#sp-files-dialog').evaluate((dialog) => dialog.open));
+await page.click('#sp-files-cancel');
+forceCheckout = false;
 
 // A file held by someone else refuses the write in any library, forced or not.
 fileCheckOut = {

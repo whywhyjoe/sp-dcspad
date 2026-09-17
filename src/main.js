@@ -18,10 +18,11 @@ import {
   downloadText, sharePointFileTypes, wireJsonImport, wirePaneImport,
 } from './io.js?v=2';
 import { applyContextIndicators, getSpContext } from './bridge/sp-context.js';
+import { isHeldByAnotherRefusal } from './sp-odata.js';
 import {
-  checkInFile, checkOutFile, connectSpWeb, getSpWebInfo, inspectFileMetadata, listFolder,
-  readTextFile, undoCheckOutFile, writeFileMetadata, writeTextFile,
-} from './sp-files.js?v=6';
+  CHECK_IN_COMMENT, checkInFile, checkOutFile, connectSpWeb, getSpWebInfo, inspectFileMetadata,
+  isCheckedOut, listFolder, readTextFile, undoCheckOutFile, writeFileMetadata, writeTextFile,
+} from './sp-files.js?v=7';
 import { showSplash } from './splash.js';
 import { loadAppConfig } from './config.js?v=2';
 import { initDocs } from './docs.js?v=3';
@@ -1344,14 +1345,24 @@ async function openSpMetadataDialog({ pane, name, text, existing }) {
   }
 }
 
-// True when this export leaves (or may leave) the file checked out to the
-// operator: a check-out made here, one they already held, or a new file in a
-// ForceCheckout library, which SharePoint creates checked out. checkInFile()
-// reads the real state before acting, so "may" is safe.
-function spExportNeedsCheckIn(pending) {
+// True when the export is known to hold the file: a check-out made here, one
+// the operator already had, or an upload whose response says the file is
+// checked out (a new file in a ForceCheckout library is born that way).
+function spExportHoldsFile(pending) {
   return pending.checkedOutByUs
     || Boolean(pending.checkout?.checkedOutByCurrentUser)
-    || Boolean(!pending.existing && pending.checkout?.required);
+    || isCheckedOut(pending.uploadResult?.checkOutType);
+}
+
+// True when this export leaves (or may leave) the file checked out. Beyond a
+// known hold, that is a new file in a ForceCheckout library and any export
+// whose probe failed or never ran — where nothing is known, so SharePoint is
+// asked.
+// checkInFile() reads the real state before acting, so "may" is safe.
+function spExportNeedsCheckIn(pending) {
+  return spExportHoldsFile(pending)
+    || Boolean(!pending.existing && pending.checkout?.required)
+    || pending.checkout?.known !== true;
 }
 
 // Each stage is recorded as done on the pending export, so "Try again" after
@@ -1415,11 +1426,14 @@ async function saveSpMetadata() {
     if (spExportNeedsCheckIn(pending)) {
       pending.stage = 'checkin';
       setSpMetadataBusy(true, 'Checking in…');
+      // The metadata write may already have checked the file in (see
+      // writeFileMetadata); either way a held file has ended checked in.
+      const held = spExportHoldsFile(pending);
       const result = await checkInFile(pending.uploadResult.serverRelativeUrl, {
-        comment: 'Saved from DCSPad',
+        comment: CHECK_IN_COMMENT,
         webUrl: spTargetWebUrl,
       });
-      pending.checkedIn = result.checkedIn;
+      pending.checkedIn = result.checkedIn || held;
       pending.checkedOutByUs = false;
     }
 
@@ -1443,9 +1457,33 @@ async function saveSpMetadata() {
       spMetadataCancel.hidden = true;
       spMetadataClose.hidden = true;
       setSpMetadataBusy(false, 'Retry metadata');
+    } else if (error?.code === 'checkout-required' && pending.existing) {
+      // SharePoint refused the write over the file's check-out state, and it
+      // is the authority — whatever the probe said, and even if this export
+      // believed it held the file (a hold an admin discarded is gone). Drop
+      // that belief so a retry checks out afresh, then either state that
+      // someone else holds the file or offer the consent the probe would have.
+      const heldByAnother = isHeldByAnotherRefusal(message);
+      pending.checkedOutByUs = false;
+      pending.checkout = {
+        ...(pending.checkout || {}),
+        required: true,
+        known: true,
+        checkedOut: heldByAnother,
+        checkedOutByCurrentUser: false,
+        checkedOutBy: '',
+        reason: '',
+      };
+      applySpCheckoutState(pending);
+      spMetadataKeep.hidden = true;
+      spMetadataCancel.hidden = false;
+      spMetadataClose.hidden = false;
+      // SharePoint's own sentence names the holder; prefer it to ours.
+      setSpMetadataError(message);
+      setSpMetadataBusy(false, 'Try overwrite again');
     } else if (pending.checkedOutByUs) {
       // Checked out by this export, nothing uploaded yet: discarding is safe
-      // (there is no work to lose) and is the only honest way out.
+      // (there is no work to lose) and is the honest way out.
       setSpMetadataError(`${message} The file is still checked out to you.`);
       spMetadataKeep.textContent = 'Discard check-out';
       spMetadataKeep.hidden = false;
@@ -1453,19 +1491,6 @@ async function saveSpMetadata() {
       spMetadataClose.hidden = true;
       setSpMetadataBusy(false, 'Try overwrite again');
     } else {
-      if (error?.code === 'checkout-required' && pending.existing) {
-        // The pre-flight probe missed it (or could not run) and SharePoint
-        // refused the write. It is the authority: offer the same consent the
-        // probe would have, and let the retry go through the check-out.
-        pending.checkout = {
-          ...(pending.checkout || {}),
-          required: true,
-          checkedOut: false,
-          checkedOutByCurrentUser: false,
-          reason: '',
-        };
-        applySpCheckoutState(pending);
-      }
       setSpMetadataError(message);
       setSpMetadataBusy(
         false,
@@ -1492,20 +1517,32 @@ async function keepSpExport() {
     return;
   }
 
-  setSpMetadataError('');
-  setSpMetadataBusy(true, 'Discarding check-out…');
-  try {
-    await undoCheckOutFile(pending.existing.serverRelativeUrl, { webUrl: spTargetWebUrl });
-    showToast(`Check-out of ${pending.existing.name} discarded. Nothing was uploaded.`);
+  const leave = (toast) => {
+    showToast(toast);
     spMetadataBusy = false;
     if (spMetadataDialog.open) spMetadataDialog.close();
     spPendingExport = null;
     spFilesPrimary.disabled = false;
+  };
+  if (pending.discardFailed) {
+    // The discard itself failed, so neither button can finish the job. The
+    // dialog must not become a trap: leave, and say what was left behind.
+    leave(`${pending.existing.name} was not uploaded and may still be checked out to you.`);
+    return;
+  }
+
+  setSpMetadataError('');
+  setSpMetadataBusy(true, 'Discarding check-out…');
+  try {
+    await undoCheckOutFile(pending.existing.serverRelativeUrl, { webUrl: spTargetWebUrl });
+    leave(`Check-out of ${pending.existing.name} discarded. Nothing was uploaded.`);
   } catch (error) {
     if (!spPendingExport) return;
+    pending.discardFailed = true;
     setSpMetadataError(
-      `${error.message || error} The file is still checked out to you.`,
+      `The check-out could not be discarded. ${error.message || error}`,
     );
+    spMetadataKeep.textContent = 'Leave checked out';
     setSpMetadataBusy(false, 'Try overwrite again');
   }
 }

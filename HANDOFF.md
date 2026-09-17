@@ -250,7 +250,15 @@ inspector, REPL and network capture all work inside the web part; a live
   **Discard check-out** (`UndoCheckOut`, safe because nothing was uploaded), a
   failed check-in offers **Retry check-in** / **Leave checked out**, and a
   write SharePoint refuses with a check-out error the probe missed
-  (`checkout-required` in sp-odata.js) reveals the same consent for the retry.
+  (`checkout-required` in sp-odata.js, classified on the unlocalized OData
+  error code as well as the message) reveals the same consent for the retry —
+  unless the refusal names another holder, which blocks instead.
+  Two SharePoint facts this rests on: `ValidateUpdateListItem` with
+  `bNewDocumentUpdate` checks a checked-out file in by itself (so the comment
+  rides that write as `checkInComment`, and the explicit `CheckIn()` is usually
+  a no-op); and page context carries the login as a bare UPN while
+  `CheckedOutByUser.LoginName` is the full claim, so "checked out to me"
+  accepts either form (`isCheckedOutByCurrentUser`).
   This lifecycle first shipped to the work prod tenant from an uncommitted
   tree (bundle stamp `47edb5d4-dirty`); it was merged here with the gate.
   See `plans/file-sp-import-export.md`, which is now an implementation record.

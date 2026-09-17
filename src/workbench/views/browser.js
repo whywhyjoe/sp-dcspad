@@ -25,6 +25,8 @@ const FIELD_SELECT = [
 ];
 
 const DOCUMENT_LIBRARY_BASE_TYPE = 1;
+// Recorded on the version when an upload here ends a check-out.
+const CHECK_IN_COMMENT = 'Uploaded from SP Workbench';
 const GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 const FOLDER_SELECT = ['Name', 'ServerRelativeUrl', 'ItemCount', 'TimeLastModified'];
@@ -578,10 +580,10 @@ export function createBrowserView({ client, navigate }) {
       const held = checkout?.checkedOutByCurrentUser || isCheckedOut(uploaded?.checkOutType);
       if (!held) return finishUpload(file, folderPath, message);
       try {
-        const { checkedIn } = await spWrite.checkInFile(
-          `${folderPath}/${file.name}`, { comment: 'Uploaded from SP Workbench' },
-        );
-        return finishUpload(file, folderPath, checkedIn ? `${message} Checked in.` : message);
+        // The metadata write may already have checked the file in; either
+        // way a file that was held has ended checked in.
+        await spWrite.checkInFile(`${folderPath}/${file.name}`, { comment: CHECK_IN_COMMENT });
+        return finishUpload(file, folderPath, `${message} Checked in.`);
       } catch (err) {
         return finishUpload(
           file,
@@ -592,9 +594,17 @@ export function createBrowserView({ client, navigate }) {
         );
       }
     };
-    const fail = (err, carried) => {
+    const fail = async (err, carried) => {
       if (checkedOutHere && !uploaded) {
-        err.message = `${err?.message || err} The file is still checked out to you.`;
+        // The listing still shows the file checked in. Refresh it, or the
+        // next attempt reads that stale row and posts a second CheckOut(),
+        // which SharePoint rejects.
+        if (currentPath === folderPath) await listFolder(folderPath, { force: true });
+        uploadNotice(
+          `Upload failed: ${err?.message || err} “${file.name}” is still checked out to you.`,
+          true,
+        );
+        return;
       }
       handleUploadError(err, file, folderPath, overwrite, carried);
     };
@@ -606,7 +616,7 @@ export function createBrowserView({ client, navigate }) {
         await bareUpload();
         await settle(`Uploaded “${file.name}” ✓`);
       } catch (err) {
-        fail(err, null);
+        await fail(err, null);
       }
       return;
     }
@@ -638,7 +648,7 @@ export function createBrowserView({ client, navigate }) {
           await spWrite.validateUpdateListItem(
             { fileServerRelativeUrl: filePath },
             formValues,
-            { newDocumentUpdate: true },
+            { newDocumentUpdate: true, checkInComment: CHECK_IN_COMMENT },
           );
         },
       });
@@ -647,7 +657,7 @@ export function createBrowserView({ client, navigate }) {
         ? `Uploaded “${file.name}” ✓`
         : `Uploaded “${file.name}” ✓ (kept without metadata)`);
     } catch (err) {
-      fail(err, err?.uploadMetadataValues || null);
+      await fail(err, err?.uploadMetadataValues || null);
     }
   }
 

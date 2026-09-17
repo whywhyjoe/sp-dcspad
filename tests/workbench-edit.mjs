@@ -245,6 +245,7 @@ const prefillUrls = [];
 const libraryLookups = [];
 const flags = {
   failMetadata: false, racyConflictOnce: true, forceCheckout: false, bornCheckedOut: false,
+  failNextOverwrite: false,
 };
 const checkOuts = [];      // { url, digest, order }
 const checkIns = [];       // { url, digest, order }
@@ -308,6 +309,13 @@ await live.route('**/_api/**', async (route) => {
       return route.fulfill({
         status: 409,
         json: { 'odata.error': { message: { value: 'The file already exists.' } } },
+      });
+    }
+    if (flags.failNextOverwrite && url.includes('overwrite=true')) {
+      flags.failNextOverwrite = false;
+      return route.fulfill({
+        status: 500,
+        json: { 'odata.error': { message: { value: 'Upload stub failure.' } } },
       });
     }
     const name = decodeURIComponent(/AddUsingPath\(decodedUrl='([^']*)'/.exec(url)?.[1] || 'file');
@@ -657,6 +665,44 @@ await check('live: a new file born checked out is checked in, with no CheckOut c
     && decodeURIComponent(checkIns.at(-1).url).includes('fresh-checkout.bin')
     && checkOuts.length === 1
     && freshFileCheckOutType === 2;
+});
+
+// The upload fails after the Workbench's own check-out. The listing must be
+// refreshed: read stale, it still says "checked in", and the next attempt
+// would post a second CheckOut(), which SharePoint rejects.
+await check('live: an upload failing after the check-out is stated, and the retry does not check out twice', async () => {
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  const checkOutsBefore = checkOuts.length;
+  const checkInsBefore = checkIns.length;
+  flags.failNextOverwrite = true;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('f1'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  await live.check('.wb-consent .wb-consent-checkout');
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('still checked out to you'));
+  const failedOnce = checkOuts.length === checkOutsBefore + 1
+    && LIVE_FILES[0].CheckOutType === 0;
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('f2'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  const gateText = await live.locator('.wb-consent-gate').textContent();
+  await live.check('.wb-consent .wb-consent-checkout');
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  await until(() => checkIns.length > checkInsBefore);
+  return failedOnce
+    && gateText.includes('already checked out to you')
+    && checkOuts.length === checkOutsBefore + 1   // no second CheckOut()
+    && LIVE_FILES[0].CheckOutType === 2;
 });
 
 await live.close();

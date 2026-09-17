@@ -88,7 +88,9 @@ export function createSpWriteClient({
   // see field-editor.js toFormValue for the per-type conventions).
   // Throws SpFileError('metadata-write') carrying err.fieldErrors
   // ({ FieldName: message }) so forms can map failures onto editors.
-  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false } = {}) {
+  async function validateUpdateListItem(
+    pathKind, formValues, { newDocumentUpdate = false, checkInComment = '' } = {},
+  ) {
     if (!Array.isArray(formValues) || !formValues.length) return { updated: [] };
     const base = `${client.webUrl()}/_api/web`;
     const endpoint = pathKind.fileServerRelativeUrl
@@ -98,7 +100,13 @@ export function createSpWriteClient({
       : `${base}/lists(guid'${pathKind.listId}')/items(${Number(pathKind.itemId)})`
         + '/ValidateUpdateListItem';
     const data = await post(endpoint, {
-      body: JSON.stringify({ formValues, bNewDocumentUpdate: Boolean(newDocumentUpdate) }),
+      // With bNewDocumentUpdate SharePoint checks a checked-out file in as
+      // part of the update; checkInComment is what it records when it does.
+      body: JSON.stringify({
+        formValues,
+        bNewDocumentUpdate: Boolean(newDocumentUpdate),
+        ...(newDocumentUpdate && checkInComment ? { checkInComment } : {}),
+      }),
     }, { fallback: 'Could not save the item metadata', code: 'metadata-write' });
 
     const results = resultArray(data.value || data.ValidateUpdateListItem || data);

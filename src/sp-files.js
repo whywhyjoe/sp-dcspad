@@ -12,6 +12,7 @@ import {
 
 const DIGEST_SAFETY_MS = 60_000;
 const LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+export const CHECK_IN_COMMENT = 'Saved from DCSPad';
 // SP.CheckOutType: 0 = checked out online, 1 = checked out offline, 2 = none.
 export const CHECK_OUT_TYPE_NONE = 2;
 
@@ -27,9 +28,16 @@ export function isCheckedOut(checkOutType) {
 // forced-check-out implementations can't drift on what "to me" means.
 export function isCheckedOutByCurrentUser(user, pageContext = {}, { sameWeb = true } = {}) {
   if (!user) return false;
+  // Page context carries the login as a bare UPN on SharePoint Online
+  // ("joe@tenant.com") while SP.User.LoginName is the full claim
+  // ("i:0#.f|membership|joe@tenant.com"), so a match is either form. A
+  // mismatch is not an answer: fall through to the other identifiers.
   const login = String(pageContext?.userLoginName || '').trim().toLowerCase();
   const claim = String(user.LoginName || '').trim().toLowerCase();
-  if (login && claim) return login === claim;
+  if (login && claim
+      && (login === claim || claim.endsWith(`|${login}`) || login.endsWith(`|${claim}`))) {
+    return true;
+  }
   const email = String(pageContext?.userEmail || '').trim().toLowerCase();
   const userEmail = String(user.Email || user.UserPrincipalName || '').trim().toLowerCase();
   if (email && userEmail) return email === userEmail;
@@ -613,9 +621,13 @@ export function createSpFilesClient({
           'Content-Type': 'application/json;odata=nometadata',
           'X-RequestDigest': digest,
         },
+        // bNewDocumentUpdate makes this the tail of the upload rather than a
+        // new version — and on a checked-out file SharePoint checks it in as
+        // part of the update, recording checkInComment.
         body: JSON.stringify({
           formValues,
           bNewDocumentUpdate: true,
+          checkInComment: CHECK_IN_COMMENT,
         }),
       });
     };
@@ -683,6 +695,9 @@ export function createSpFilesClient({
       fileName: safeName,
       serverRelativeUrl:
         result.ServerRelativeUrl || `${folder.replace(/\/$/, '')}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out. Undefined when the server doesn't say.
+      checkOutType: result.CheckOutType,
     };
   }
 
