@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "157" : "dev";
-var injectedRevision = true ? "63e89ad4" : "";
+var injectedBuild = true ? "160" : "dev";
+var injectedRevision = true ? "2f7b5800" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -227,8 +227,16 @@ async function responseMessage(response) {
     }
   }
 }
-function isCheckoutRefusal(detail) {
-  return /SPFileCheckOutException|-2147018029|must be checked out|checked out for editing|currently checked out/i.test(String(detail || ""));
+async function responseErrorCode(response) {
+  try {
+    const body = await response.clone().json();
+    return String(body?.error?.code || body?.["odata.error"]?.code || "");
+  } catch {
+    return "";
+  }
+}
+function isCheckoutRefusal(detail, errorCode) {
+  return /SPFileCheckOutException|-2147018029/i.test(String(errorCode || "")) || /is not checked out|must first check out|must be checked out|checked out for editing|currently checked out|is checked out (?:or locked )?(?:for editing )?by|locked for (?:shared|exclusive) use/i.test(String(detail || ""));
 }
 async function requireOk(response, fallback, code) {
   if (response.ok) return response;
@@ -238,7 +246,7 @@ async function requireOk(response, fallback, code) {
   if (response.status === 401) {
     message = detail || "SharePoint could not authenticate this request. Reload the page to sign in again.";
     normalizedCode = "auth";
-  } else if ([403, 409, 423].includes(response.status) && isCheckoutRefusal(detail)) {
+  } else if ([403, 409, 423].includes(response.status) && isCheckoutRefusal(detail, await responseErrorCode(response))) {
     message = detail || "This file must be checked out before it can be changed.";
     normalizedCode = "checkout-required";
   } else if (response.status === 403) {
@@ -3311,6 +3319,7 @@ function createListsView({ client: client2, navigate }) {
 // ../src/sp-files.js
 var DIGEST_SAFETY_MS = 6e4;
 var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+var CHECK_IN_COMMENT = "Saved from DCSPad";
 var CHECK_OUT_TYPE_NONE = 2;
 function isCheckedOut(checkOutType) {
   const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
@@ -3320,7 +3329,9 @@ function isCheckedOutByCurrentUser(user2, pageContext = {}, { sameWeb = true } =
   if (!user2) return false;
   const login = String(pageContext?.userLoginName || "").trim().toLowerCase();
   const claim = String(user2.LoginName || "").trim().toLowerCase();
-  if (login && claim) return login === claim;
+  if (login && claim && (login === claim || claim.endsWith(`|${login}`) || login.endsWith(`|${claim}`))) {
+    return true;
+  }
   const email = String(pageContext?.userEmail || "").trim().toLowerCase();
   const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
   if (email && userEmail) return email === userEmail;
@@ -3792,9 +3803,13 @@ function createSpFilesClient({
           "Content-Type": "application/json;odata=nometadata",
           "X-RequestDigest": digest
         },
+        // bNewDocumentUpdate makes this the tail of the upload rather than a
+        // new version — and on a checked-out file SharePoint checks it in as
+        // part of the update, recording checkInComment.
         body: JSON.stringify({
           formValues,
-          bNewDocumentUpdate: true
+          bNewDocumentUpdate: true,
+          checkInComment: CHECK_IN_COMMENT
         })
       });
     };
@@ -3846,7 +3861,10 @@ function createSpFilesClient({
     }
     return {
       fileName: safeName,
-      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`
+      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out. Undefined when the server doesn't say.
+      checkOutType: result.CheckOutType
     };
   }
   return {
@@ -3936,12 +3954,18 @@ function createSpWriteClient({
       return {};
     }
   }
-  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false } = {}) {
+  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false, checkInComment = "" } = {}) {
     if (!Array.isArray(formValues) || !formValues.length) return { updated: [] };
     const base = `${client2.webUrl()}/_api/web`;
     const endpoint = pathKind.fileServerRelativeUrl ? `${base}/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(pathKind.fileServerRelativeUrl)}')/ListItemAllFields/ValidateUpdateListItem` : `${base}/lists(guid'${pathKind.listId}')/items(${Number(pathKind.itemId)})/ValidateUpdateListItem`;
     const data = await post(endpoint, {
-      body: JSON.stringify({ formValues, bNewDocumentUpdate: Boolean(newDocumentUpdate) })
+      // With bNewDocumentUpdate SharePoint checks a checked-out file in as
+      // part of the update; checkInComment is what it records when it does.
+      body: JSON.stringify({
+        formValues,
+        bNewDocumentUpdate: Boolean(newDocumentUpdate),
+        ...newDocumentUpdate && checkInComment ? { checkInComment } : {}
+      })
     }, { fallback: "Could not save the item metadata", code: "metadata-write" });
     const results = resultArray(data.value || data.ValidateUpdateListItem || data);
     const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
@@ -7367,7 +7391,7 @@ function openUploadMetadataDialog({
   });
 }
 
-// ../src/workbench/views/browser.js?v=3
+// ../src/workbench/views/browser.js?v=4
 var FIELD_SELECT4 = [
   "Id",
   "Title",
@@ -7385,6 +7409,7 @@ var FIELD_SELECT4 = [
   "FillInChoice"
 ];
 var DOCUMENT_LIBRARY_BASE_TYPE = 1;
+var CHECK_IN_COMMENT2 = "Uploaded from SP Workbench";
 var GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 var FOLDER_SELECT = ["Name", "ServerRelativeUrl", "ItemCount", "TimeLastModified"];
 var FILE_SELECT = [
@@ -7867,11 +7892,8 @@ function createBrowserView({ client: client2, navigate }) {
       const held = checkout?.checkedOutByCurrentUser || isCheckedOut(uploaded?.checkOutType);
       if (!held) return finishUpload(file, folderPath, message);
       try {
-        const { checkedIn } = await spWrite.checkInFile(
-          `${folderPath}/${file.name}`,
-          { comment: "Uploaded from SP Workbench" }
-        );
-        return finishUpload(file, folderPath, checkedIn ? `${message} Checked in.` : message);
+        await spWrite.checkInFile(`${folderPath}/${file.name}`, { comment: CHECK_IN_COMMENT2 });
+        return finishUpload(file, folderPath, `${message} Checked in.`);
       } catch (err) {
         return finishUpload(
           file,
@@ -7881,9 +7903,14 @@ function createBrowserView({ client: client2, navigate }) {
         );
       }
     };
-    const fail = (err, carried) => {
+    const fail = async (err, carried) => {
       if (checkedOutHere && !uploaded) {
-        err.message = `${err?.message || err} The file is still checked out to you.`;
+        if (currentPath === folderPath) await listFolder(folderPath, { force: true });
+        uploadNotice(
+          `Upload failed: ${err?.message || err} \u201C${file.name}\u201D is still checked out to you.`,
+          true
+        );
+        return;
       }
       handleUploadError(err, file, folderPath, overwrite, carried);
     };
@@ -7894,7 +7921,7 @@ function createBrowserView({ client: client2, navigate }) {
         await bareUpload();
         await settle(`Uploaded \u201C${file.name}\u201D \u2713`);
       } catch (err) {
-        fail(err, null);
+        await fail(err, null);
       }
       return;
     }
@@ -7917,14 +7944,14 @@ function createBrowserView({ client: client2, navigate }) {
           await spWrite.validateUpdateListItem(
             { fileServerRelativeUrl: filePath },
             formValues,
-            { newDocumentUpdate: true }
+            { newDocumentUpdate: true, checkInComment: CHECK_IN_COMMENT2 }
           );
         }
       });
       if (outcome === "cancelled") return;
       await settle(outcome === "saved" ? `Uploaded \u201C${file.name}\u201D \u2713` : `Uploaded \u201C${file.name}\u201D \u2713 (kept without metadata)`);
     } catch (err) {
-      fail(err, err?.uploadMetadataValues || null);
+      await fail(err, err?.uploadMetadataValues || null);
     }
   }
   async function finishUpload(file, folderPath, message, isError = false) {
