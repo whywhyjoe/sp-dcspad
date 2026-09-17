@@ -46,6 +46,32 @@ export async function responseMessage(response) {
   }
 }
 
+// The OData error code ("-2147018029, Microsoft.SharePoint.SPFileCheckOutException").
+// Unlike the message it is not localized, so classification reads it as well.
+async function responseErrorCode(response) {
+  try {
+    const body = await response.clone().json();
+    return String(body?.error?.code || body?.['odata.error']?.code || '');
+  } catch { return ''; }
+}
+
+// SharePoint's refusal of a write to a file that is not checked out (or is
+// held by someone else) arrives as a 403/409/423 with nothing else to tell it
+// from a permission or name-conflict error. Its usual sentence is 'The file
+// "x" is not checked out. You must first check out this document before
+// making changes.'
+function isCheckoutRefusal(detail, errorCode) {
+  return /SPFileCheckOutException|-2147018029/i.test(String(errorCode || ''))
+    || /is not checked out|must first check out|must be checked out|checked out for editing|currently checked out|is checked out (?:or locked )?(?:for editing )?by|locked for (?:shared|exclusive) use/i
+      .test(String(detail || ''));
+}
+
+// True when a check-out refusal names a holder: consent cannot fix that one.
+export function isHeldByAnotherRefusal(message) {
+  return /checked out (?:or locked )?(?:for editing )?by|locked for (?:shared|exclusive) use by/i
+    .test(String(message || ''));
+}
+
 export async function requireOk(response, fallback, code) {
   if (response.ok) return response;
   const detail = await responseMessage(response);
@@ -59,6 +85,10 @@ export async function requireOk(response, fallback, code) {
     message = detail
       || 'SharePoint could not authenticate this request. Reload the page to sign in again.';
     normalizedCode = 'auth';
+  } else if ([403, 409, 423].includes(response.status)
+      && isCheckoutRefusal(detail, await responseErrorCode(response))) {
+    message = detail || 'This file must be checked out before it can be changed.';
+    normalizedCode = 'checkout-required';
   } else if (response.status === 403) {
     message = detail
       || 'SharePoint denied this request. Check library permissions and try again.';

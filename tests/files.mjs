@@ -75,6 +75,30 @@ const uploads = [];
 const metadataUpdates = [];
 let includeDocVersion = true;
 let failMetadataUpdate = false;
+let forceCheckout = false;
+// SP.CheckOutType 2 = not checked out.
+let fileCheckOut = { CheckOutType: 2 };
+const checkOuts = [];
+const checkIns = [];
+const undoCheckOuts = [];
+// The stub keeps SharePoint's side of the bargain: CheckOut() hands the file
+// to the signed-in user and it stays theirs — across the overwrite too —
+// until CheckIn() or UndoCheckOut() releases it.
+const checkedOutToTester = {
+  CheckOutType: 0,
+  CheckedOutByUser: {
+    Id: 7, Title: 'Context Test User', LoginName: 'i:0#.f|membership|tester@example.com',
+  },
+};
+let failNextUpload = false;
+let refuseUploadUntilCheckedOut = false;
+let newFilesBornCheckedOut = false;
+let failCheckIn = false;
+let failUndoCheckOut = false;
+let failPolicyProbe = false;
+let refuseUploadHeldByAnother = false;
+// ValidateUpdateListItem with bNewDocumentUpdate checks a checked-out file in.
+let metadataChecksIn = false;
 const metadataLibraryId = '11111111-2222-3333-4444-555555555555';
 await page.route('**/_api/**', async (route) => {
   const request = route.request();
@@ -105,13 +129,55 @@ await page.route('**/_api/**', async (route) => {
       url,
       body: request.postData() || '',
       digest: request.headers()['x-requestdigest'],
+      // apiRequests grows once per stubbed call, so its length orders the
+      // check-out against the upload it must precede.
+      order: apiRequests.length,
     };
     uploads.push(upload);
+    if (failNextUpload) {
+      failNextUpload = false;
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: { value: 'Upload stub failure.' } } }),
+      });
+      return;
+    }
+    if (refuseUploadHeldByAnother) {
+      await route.fulfill({
+        status: 423,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
+            code: '-2147018887, Microsoft.SharePoint.SPFileLockException',
+            message: { value: 'The file "existing.css" is checked out for editing by i:0#.f|membership|dana@example.com.' },
+          },
+        }),
+      });
+      return;
+    }
+    if (refuseUploadUntilCheckedOut && fileCheckOut.CheckOutType === 2) {
+      // SharePoint's own sentence, and a 403: nothing but the text (and the
+      // unlocalized code) tells this from a permission error.
+      await route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
+            code: '-2147018029, Microsoft.SharePoint.SPFileCheckOutException',
+            message: { value: 'The file "existing.css" is not checked out. You must first check out this document before making changes.' },
+          },
+        }),
+      });
+      return;
+    }
+    if (newFilesBornCheckedOut) fileCheckOut = checkedOutToTester;
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         ServerRelativeUrl: otherSite ? '/sites/other/existing.css' : '/existing.css',
+        CheckOutType: fileCheckOut.CheckOutType,
       }),
     });
     return;
@@ -176,13 +242,78 @@ await page.route('**/_api/**', async (route) => {
     });
     return;
   }
+  if (url.includes('/CheckOut()')) {
+    checkOuts.push({
+      url,
+      digest: request.headers()['x-requestdigest'],
+      order: apiRequests.length,
+    });
+    fileCheckOut = checkedOutToTester;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    return;
+  }
+  if (url.includes('/CheckIn(')) {
+    checkIns.push({
+      url,
+      digest: request.headers()['x-requestdigest'],
+      order: apiRequests.length,
+    });
+    if (failCheckIn) {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: { value: 'Check-in stub failure.' } } }),
+      });
+      return;
+    }
+    fileCheckOut = { CheckOutType: 2 };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    return;
+  }
+  if (url.includes('/UndoCheckOut()')) {
+    undoCheckOuts.push({ url, digest: request.headers()['x-requestdigest'] });
+    if (failUndoCheckOut) {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: { value: 'Undo stub failure.' } } }),
+      });
+      return;
+    }
+    fileCheckOut = { CheckOutType: 2 };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    return;
+  }
+  if (/\/lists\(guid/i.test(url) && new URL(url).searchParams.get('$select') === 'ForceCheckout') {
+    if (failPolicyProbe) {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ForceCheckout: forceCheckout }),
+    });
+    return;
+  }
+  if (url.includes('/GetFileByServerRelativePath(')
+      && (new URL(url).searchParams.get('$select') || '').includes('CheckOutType')) {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(fileCheckOut),
+    });
+    return;
+  }
   if (url.includes('/ValidateUpdateListItem')) {
     const body = JSON.parse(request.postData() || '{}');
     metadataUpdates.push({
       url,
       body,
       digest: request.headers()['x-requestdigest'],
+      order: apiRequests.length,
     });
+    if (metadataChecksIn && !failMetadataUpdate) fileCheckOut = { CheckOutType: 2 };
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -374,6 +505,9 @@ await page.addInitScript(() => {
     window.__DCSPAD_SP_CONTEXT__ = {
       webAbsoluteUrl: location.origin,
       userDisplayName: 'Context Test User',
+      // As on SharePoint Online: page context carries the bare UPN, while the
+      // CheckedOutByUser stubs carry the full claim. "To me" must match both.
+      userLoginName: 'tester@example.com',
     };
   }
 });
@@ -391,7 +525,8 @@ await page.waitForSelector('#sp-files-dialog[open]');
 // list has swapped its "Loading SharePoint folder…" placeholder for content,
 // or these checks race the stub under load.
 await page.waitForFunction(() =>
-  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await check('SharePoint picker filters out unsupported files', async () => {
   const text = await page.locator('#sp-files-list').textContent();
   return text.includes('sample.js')
@@ -456,7 +591,8 @@ await page.click('#btn-file');
 await page.click('#mi-sp-import');
 await page.waitForSelector('#sp-files-dialog[open]');
 await page.waitForFunction(() =>
-  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await check('configured JSON files appear in the SharePoint picker with their label', async () => {
   const row = page.locator('.sp-file-row', { hasText: 'settings.json' });
   return await row.isVisible()
@@ -478,7 +614,8 @@ await page.click('#btn-file');
 await page.click('#mi-sp-export');
 await page.waitForSelector('#sp-files-dialog[open]');
 await page.waitForFunction(() =>
-  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await check('untitled SharePoint export requires a user-supplied file name', async () =>
   (await page.locator('#sp-export-name').inputValue()) === ''
   && (await page.locator('#sp-export-name').getAttribute('required')) !== null
@@ -529,7 +666,8 @@ await page.waitForSelector('#sp-files-dialog[open]');
 // list has swapped its "Loading SharePoint folder…" placeholder for content,
 // or these checks race the stub under load.
 await page.waitForFunction(() =>
-  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await page.selectOption('#sp-export-type', { label: 'JSON' });
 await check('JSON export maps the JS editor and defaults to a JSON file name', async () =>
   (await page.locator('#sp-export-name').inputValue()) === 'current-project-title.json');
@@ -549,7 +687,8 @@ await page.click('#btn-file');
 await page.click('#mi-sp-export');
 await page.waitForSelector('#sp-files-dialog[open]');
 await page.waitForFunction(() =>
-  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await page.selectOption('#sp-export-type', 'css');
 await page.fill('#sp-export-name', 'existing.css');
 await page.click('#sp-files-primary');
@@ -622,7 +761,8 @@ await page.click('#btn-file');
 await page.click('#mi-sp-export');
 await page.waitForSelector('#sp-files-dialog[open]');
 await page.waitForFunction(() =>
-  !document.getElementById('sp-files-list')?.textContent.includes('Loading SharePoint folder'));
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await page.selectOption('#sp-export-type', 'css');
 await page.fill('#sp-export-name', 'metadata-failure');
 const uploadsBeforeMetadataFailure = uploads.length;
@@ -659,9 +799,341 @@ await check('keeping an uploaded file without metadata does not upload it twice'
   && decodeURIComponent(uploads.at(-1).url).includes("decodedUrl='metadata-failure'"));
 failMetadataUpdate = false;
 
+// ---- Libraries that force check-out ---------------------------------------
+// Overwriting in such a library is three acts, not one. The pad says so in a
+// consent box, gates the overwrite behind it, checks the file out before
+// uploading, and checks it back in once the file and its metadata have landed.
+async function openSpExport(fileName, { existing = true } = {}) {
+  await page.click('#btn-file');
+  await page.click('#mi-sp-export');
+  await page.waitForSelector('#sp-files-dialog[open]');
+  await page.waitForFunction(() =>
+    !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
+  if (existing) {
+    await page.locator('.sp-file-row', { hasText: fileName }).click();
+  } else {
+    await page.selectOption('#sp-export-type', 'css');
+    await page.fill('#sp-export-name', fileName);
+  }
+  await page.click('#sp-files-primary');
+  await page.waitForSelector('#sp-metadata-dialog[open]');
+  // The inspection is async; its completion is what relabels the button.
+  await page.waitForFunction(() =>
+    document.getElementById('sp-metadata-save')?.textContent !== 'Checking fields…');
+}
+
+forceCheckout = true;
+fileCheckOut = { CheckOutType: 2 };
+await openSpExport('existing.css');
+await check('a forced-check-out library gates the overwrite behind an unchecked box', async () =>
+  !(await page.locator('#sp-metadata-checkout').isHidden())
+  && (await page.locator('#sp-metadata-checkout-label').textContent())
+    === 'Check out existing.css before overwriting it'
+  && !(await page.locator('#sp-metadata-checkout-input').isChecked())
+  && (await page.locator('#sp-metadata-save').isDisabled())
+  && (await page.locator('#sp-metadata-save').textContent()) === 'Overwrite file'
+  && (await page.locator('#sp-metadata-checkout-hint').textContent())
+    .includes('checks it back in'));
+await page.check('#sp-metadata-checkout-input');
+await check('consenting to the check-out enables the overwrite', async () =>
+  !(await page.locator('#sp-metadata-save').isDisabled()));
+const uploadsBeforeCheckOut = uploads.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+await check('the forced check-out is posted with a digest before the overwrite', () =>
+  checkOuts.length === 1
+  && decodeURIComponent(checkOuts[0].url).includes("decodedUrl='/sites/other/existing.css'")
+  && checkOuts[0].digest === 'OTHER-DIGEST'
+  && uploads.length === uploadsBeforeCheckOut + 1
+  && checkOuts[0].order < uploads.at(-1).order
+  && /overwrite=true/i.test(uploads.at(-1).url));
+await check('the overwrite is checked back in after the upload and its metadata', async () =>
+  checkIns.length === 1
+  && decodeURIComponent(checkIns[0].url).includes("decodedUrl='/sites/other/existing.css'")
+  && /checkintype=0/i.test(checkIns[0].url)
+  && checkIns[0].digest === 'OTHER-DIGEST'
+  && checkIns[0].order > uploads.at(-1).order
+  && checkIns[0].order > metadataUpdates.at(-1).order
+  && fileCheckOut.CheckOutType === 2
+  && (await page.locator('#app-toast').textContent()).includes('Checked in.'));
+
+// Held by someone else: there is nothing to consent to, because SharePoint
+// will refuse the write until they check it back in.
+fileCheckOut = {
+  CheckOutType: 0,
+  CheckedOutByUser: {
+    Id: 42, Title: 'Dana Lee', LoginName: 'i:0#.f|membership|dana@example.com',
+  },
+};
+await openSpExport('existing.css');
+await check('a file checked out to another user is refused, not offered consent', async () =>
+  (await page.locator('#sp-metadata-checkout').isHidden())
+  && (await page.locator('#sp-metadata-error').textContent())
+    .includes('checked out to Dana Lee')
+  && (await page.locator('#sp-metadata-save').isDisabled()));
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+
+// Held by the operator: consent still gates the overwrite, but checking the
+// file out a second time is what SharePoint rejects, so the pad must not.
+fileCheckOut = {
+  CheckOutType: 1,
+  CheckedOutByUser: {
+    Id: 7, Title: 'Context Test User', LoginName: 'i:0#.f|membership|tester@example.com',
+  },
+};
+await openSpExport('existing.css');
+await check('a file already checked out to you states that on the consent box', async () =>
+  !(await page.locator('#sp-metadata-checkout').isHidden())
+  && (await page.locator('#sp-metadata-checkout-label').textContent())
+    === 'Overwrite existing.css, which is already checked out to you'
+  && (await page.locator('#sp-metadata-save').isDisabled()));
+await page.check('#sp-metadata-checkout-input');
+const uploadsBeforeOwnCheckOut = uploads.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+await check('overwriting a file you hold does not check it out twice, and checks it in', () =>
+  checkOuts.length === 1
+  && uploads.length === uploadsBeforeOwnCheckOut + 1
+  && checkIns.length === 2
+  && checkIns[1].order > uploads.at(-1).order);
+
+// A new file has nothing to check out, and a library without the policy has
+// nothing to consent to.
+fileCheckOut = { CheckOutType: 2 };
+await openSpExport('brand-new-checkout.css', { existing: false });
+await check('a new file in a forced-check-out library needs no consent', async () =>
+  (await page.locator('#sp-metadata-checkout').isHidden())
+  && !(await page.locator('#sp-metadata-save').isDisabled()));
+// SharePoint creates a file in such a library checked out to its author, so
+// the upload is not finished until the pad has checked it in.
+newFilesBornCheckedOut = true;
+const checkInsBeforeNewFile = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+newFilesBornCheckedOut = false;
+await check('a new file born checked out is checked in without a CheckOut call', () =>
+  checkOuts.length === 1
+  && checkIns.length === checkInsBeforeNewFile + 1
+  && fileCheckOut.CheckOutType === 2);
+
+// The upload fails after the pad's own check-out: nothing has been uploaded,
+// so discarding the check-out loses no work and is the honest way out. A retry
+// must not check out a second time.
+fileCheckOut = { CheckOutType: 2 };
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+failNextUpload = true;
+const checkOutsBeforeFailure = checkOuts.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-keep').hidden);
+await check('an upload failure after the check-out offers to discard it', async () =>
+  checkOuts.length === checkOutsBeforeFailure + 1
+  && (await page.locator('#sp-metadata-keep').textContent()) === 'Discard check-out'
+  && (await page.locator('#sp-metadata-error').textContent())
+    .includes('still checked out to you')
+  && (await page.locator('#sp-metadata-cancel').isHidden())
+  && (await page.locator('#sp-metadata-save').textContent()) === 'Try overwrite again');
+await page.keyboard.press('Escape');
+await check('Esc cannot abandon a file the export checked out', async () =>
+  page.locator('#sp-metadata-dialog').evaluate((dialog) => dialog.open));
+const uploadsBeforeDiscard = uploads.length;
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+await check('discarding posts UndoCheckOut, uploads nothing, and never says "uploaded"', async () =>
+  undoCheckOuts.length === 1
+  && decodeURIComponent(undoCheckOuts[0].url).includes("decodedUrl='/sites/other/existing.css'")
+  && undoCheckOuts[0].digest === 'OTHER-DIGEST'
+  && uploads.length === uploadsBeforeDiscard
+  && fileCheckOut.CheckOutType === 2
+  && (await page.locator('#app-toast').textContent()).includes('Nothing was uploaded')
+  && page.locator('#sp-files-dialog').evaluate((dialog) => dialog.open));
+await page.click('#sp-files-cancel');
+
+// The check-in fails: the file and its metadata are safe, so the retry repeats
+// only the check-in, and leaving it checked out is stated, not silent.
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+failCheckIn = true;
+const uploadsBeforeCheckInFailure = uploads.length;
+const updatesBeforeCheckInFailure = metadataUpdates.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-keep').hidden);
+await check('a failed check-in says the file was saved and offers to leave it checked out', async () =>
+  (await page.locator('#sp-metadata-error').textContent())
+    .includes('saved, but it was not checked in')
+  && (await page.locator('#sp-metadata-keep').textContent()) === 'Leave checked out'
+  && (await page.locator('#sp-metadata-save').textContent()) === 'Retry check-in');
+failCheckIn = false;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+await check('retrying the check-in repeats neither the upload nor the metadata write', () =>
+  uploads.length === uploadsBeforeCheckInFailure + 1
+  && metadataUpdates.length === updatesBeforeCheckInFailure + 1
+  && fileCheckOut.CheckOutType === 2);
+
+// Skipping metadata must not skip the check-in that follows it.
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+failMetadataUpdate = true;
+const checkInsBeforeSkip = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-keep').hidden);
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+failMetadataUpdate = false;
+await check('keeping a checked-out file without metadata still checks it in', async () =>
+  checkIns.length === checkInsBeforeSkip + 1
+  && fileCheckOut.CheckOutType === 2
+  && (await page.locator('#app-toast').textContent()).includes('Metadata was skipped. Checked in.'));
+
+forceCheckout = false;
+await openSpExport('existing.css');
+await check('a library without forced check-out overwrites with no extra gate', async () =>
+  (await page.locator('#sp-metadata-checkout').isHidden())
+  && !(await page.locator('#sp-metadata-save').isDisabled()));
+const checkInsBeforePlain = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+await check('an overwrite with no check-out involved posts no CheckIn', () =>
+  checkIns.length === checkInsBeforePlain);
+
+// The pre-flight probe reported no policy, but SharePoint refuses the write.
+// It is the authority: the same consent appears and the retry goes through the
+// whole check-out lifecycle.
+refuseUploadUntilCheckedOut = true;
+await openSpExport('existing.css');
+const checkOutsBeforeRefusal = checkOuts.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-metadata-checkout').hidden);
+await check('a check-out refusal the probe missed reveals the consent gate', async () =>
+  checkOuts.length === checkOutsBeforeRefusal
+  && (await page.locator('#sp-metadata-error').textContent()).includes('is not checked out')
+  && !(await page.locator('#sp-metadata-checkout-input').isChecked())
+  && (await page.locator('#sp-metadata-save').isDisabled()));
+await page.check('#sp-metadata-checkout-input');
+const checkInsBeforeReactive = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+refuseUploadUntilCheckedOut = false;
+await check('the consented retry checks out, uploads, and checks in', () =>
+  checkOuts.length === checkOutsBeforeRefusal + 1
+  && checkIns.length === checkInsBeforeReactive + 1
+  && checkOuts.at(-1).order < uploads.at(-1).order
+  && uploads.at(-1).order < checkIns.at(-1).order
+  && fileCheckOut.CheckOutType === 2);
+
+// The refusal names a holder: consent cannot fix that, so it is stated and the
+// overwrite blocked rather than offered a check-out that can only fail.
+refuseUploadHeldByAnother = true;
+await openSpExport('existing.css');
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  (document.getElementById('sp-metadata-error')?.textContent || '').includes('checked out for editing by'));
+refuseUploadHeldByAnother = false;
+await check('a refusal naming another holder blocks the overwrite instead of offering consent', async () =>
+  (await page.locator('#sp-metadata-checkout').isHidden())
+  && (await page.locator('#sp-metadata-save').isDisabled())
+  && !(await page.locator('#sp-metadata-cancel').isHidden()));
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+
+// SharePoint checks a checked-out file in as part of the metadata write
+// (bNewDocumentUpdate), so the explicit CheckIn() has nothing left to do — and
+// posting it anyway would be an error. The comment rides the metadata write.
+forceCheckout = true;
+metadataChecksIn = true;
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+const checkInsBeforeImplicit = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+metadataChecksIn = false;
+await check('a metadata write that checks the file in is not followed by a CheckIn post', async () =>
+  checkIns.length === checkInsBeforeImplicit
+  && metadataUpdates.at(-1).body.bNewDocumentUpdate === true
+  && metadataUpdates.at(-1).body.checkInComment === 'Saved from DCSPad'
+  && fileCheckOut.CheckOutType === 2
+  && (await page.locator('#app-toast').textContent()).includes('Checked in.'));
+
+// The probe could not run, so nothing is known about the library — and a new
+// file there is born checked out. The upload response says so.
+failPolicyProbe = true;
+newFilesBornCheckedOut = true;
+await openSpExport('probe-failed-new.css', { existing: false });
+const checkInsBeforeBlind = checkIns.length;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() =>
+  !document.getElementById('sp-files-dialog').open
+  && !document.getElementById('sp-metadata-dialog').open);
+failPolicyProbe = false;
+newFilesBornCheckedOut = false;
+await check('a new file born checked out is checked in even when the policy probe failed', () =>
+  checkIns.length === checkInsBeforeBlind + 1 && fileCheckOut.CheckOutType === 2);
+
+// Retry and discard both failing must not trap the operator in the dialog.
+await openSpExport('existing.css');
+await page.check('#sp-metadata-checkout-input');
+failNextUpload = true;
+failUndoCheckOut = true;
+await page.click('#sp-metadata-save');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-keep').hidden);
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() =>
+  document.getElementById('sp-metadata-keep')?.textContent === 'Leave checked out');
+const uploadsBeforeLeave = uploads.length;
+await page.click('#sp-metadata-keep');
+await page.waitForFunction(() => !document.getElementById('sp-metadata-dialog').open);
+failUndoCheckOut = false;
+await check('a failed discard offers an honest way out of the dialog', async () =>
+  uploads.length === uploadsBeforeLeave
+  && (await page.locator('#app-toast').textContent()).includes('may still be checked out to you')
+  && page.locator('#sp-files-dialog').evaluate((dialog) => dialog.open));
+await page.click('#sp-files-cancel');
+forceCheckout = false;
+
+// A file held by someone else refuses the write in any library, forced or not.
+fileCheckOut = {
+  CheckOutType: 0,
+  CheckedOutByUser: {
+    Id: 42, Title: 'Dana Lee', LoginName: 'i:0#.f|membership|dana@example.com',
+  },
+};
+await openSpExport('existing.css');
+await check('another user\'s check-out blocks the overwrite without the library policy too', async () =>
+  (await page.locator('#sp-metadata-error').textContent()).includes('checked out to Dana Lee')
+  && (await page.locator('#sp-metadata-save').isDisabled()));
+fileCheckOut = { CheckOutType: 2 };
+await page.click('#sp-metadata-cancel');
+await page.click('#sp-files-cancel');
+
 await page.click('#extras-tabs [data-extra="docs"]');
 await page.click('#browser-browse');
 await page.waitForSelector('#sp-files-dialog[open]');
+await page.waitForFunction(() =>
+  !/Loading SharePoint folder|Connecting to SharePoint site/.test(
+    document.getElementById('sp-files-list')?.textContent || 'Loading SharePoint folder'));
 await check('Browser uses the shared SharePoint picker in resource mode', async () =>
   (await page.locator('#sp-files-title').textContent()) === 'Browse SharePoint'
   && (await page.locator('#sp-files-primary').textContent()) === 'Open file'

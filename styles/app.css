@@ -811,6 +811,25 @@ code { font-family: var(--mono); font-size: 12px; color: var(--info); }
   min-height: 13px; color: var(--fg-faint); font: 10.5px/1.25 var(--sans);
 }
 .sp-metadata-actions { flex-wrap: wrap; }
+/* Check-out consent. A library with ForceCheckout turns an overwrite into a
+   two-step act, so the gate is stated as a quiet field: the warning above it
+   already carries the destructive register, and duplicating that colour here
+   would say "status" about a control that is really a fact plus a choice. */
+.sp-metadata-consent {
+  display: grid; gap: 4px;
+  padding: 9px 10px; background: var(--bg-1);
+  border: 1px solid var(--border); border-radius: var(--radius-m);
+}
+.sp-metadata-consent__row {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0;
+  color: var(--fg-row); font: 12px/1.35 var(--sans); cursor: pointer;
+}
+.sp-metadata-consent__row input[type=checkbox] {
+  flex: none; margin: 1px 0 0; accent-color: var(--accent); color-scheme: dark;
+}
+.sp-metadata-consent__row input[type=checkbox]:disabled { cursor: not-allowed; }
+.sp-metadata-consent__label { min-width: 0; }
+.sp-metadata-consent .sp-metadata-field__hint { padding-left: 21px; }
 .sp-files-panel {
   gap: 10px;
 }

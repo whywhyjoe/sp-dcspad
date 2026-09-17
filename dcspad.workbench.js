@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "94" : "dev";
-var injectedRevision = true ? "e0789719" : "";
+var injectedBuild = true ? "160" : "dev";
+var injectedRevision = true ? "2f7b5800" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -227,6 +227,17 @@ async function responseMessage(response) {
     }
   }
 }
+async function responseErrorCode(response) {
+  try {
+    const body = await response.clone().json();
+    return String(body?.error?.code || body?.["odata.error"]?.code || "");
+  } catch {
+    return "";
+  }
+}
+function isCheckoutRefusal(detail, errorCode) {
+  return /SPFileCheckOutException|-2147018029/i.test(String(errorCode || "")) || /is not checked out|must first check out|must be checked out|checked out for editing|currently checked out|is checked out (?:or locked )?(?:for editing )?by|locked for (?:shared|exclusive) use/i.test(String(detail || ""));
+}
 async function requireOk(response, fallback, code) {
   if (response.ok) return response;
   const detail = await responseMessage(response);
@@ -235,6 +246,9 @@ async function requireOk(response, fallback, code) {
   if (response.status === 401) {
     message = detail || "SharePoint could not authenticate this request. Reload the page to sign in again.";
     normalizedCode = "auth";
+  } else if ([403, 409, 423].includes(response.status) && isCheckoutRefusal(detail, await responseErrorCode(response))) {
+    message = detail || "This file must be checked out before it can be changed.";
+    normalizedCode = "checkout-required";
   } else if (response.status === 403) {
     message = detail || "SharePoint denied this request. Check library permissions and try again.";
     normalizedCode = "permission";
@@ -3304,6 +3318,27 @@ function createListsView({ client: client2, navigate }) {
 
 // ../src/sp-files.js
 var DIGEST_SAFETY_MS = 6e4;
+var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+var CHECK_IN_COMMENT = "Saved from DCSPad";
+var CHECK_OUT_TYPE_NONE = 2;
+function isCheckedOut(checkOutType) {
+  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
+  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+}
+function isCheckedOutByCurrentUser(user2, pageContext = {}, { sameWeb = true } = {}) {
+  if (!user2) return false;
+  const login = String(pageContext?.userLoginName || "").trim().toLowerCase();
+  const claim = String(user2.LoginName || "").trim().toLowerCase();
+  if (login && claim && (login === claim || claim.endsWith(`|${login}`) || login.endsWith(`|${claim}`))) {
+    return true;
+  }
+  const email = String(pageContext?.userEmail || "").trim().toLowerCase();
+  const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
+  if (email && userEmail) return email === userEmail;
+  const id = Number(pageContext?.userId);
+  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user2.Id);
+  return false;
+}
 var FILE_METADATA_SPECS = Object.freeze([
   { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
   { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
@@ -3532,8 +3567,122 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
-  async function inspectFileMetadata(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx: ctx2 }) {
+    const state2 = {
+      required: false,
+      known: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: "",
+      reason: ""
+    };
+    try {
+      const policyResponse = await request(
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        policyResponse,
+        "Could not read the destination library check-out policy",
+        "checkout-policy"
+      );
+      const list2 = unwrapJson(await policyResponse.json()) || {};
+      state2.required = Boolean(list2.ForceCheckout ?? list2.forceCheckout);
+      state2.known = true;
+      if (!filePath) return state2;
+      const path = checkedPath(filePath, rootPath);
+      const fileResponse = await request(
+        `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email&$expand=CheckedOutByUser`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        fileResponse,
+        "Could not read the destination file check-out state",
+        "checkout-state"
+      );
+      const file = unwrapJson(await fileResponse.json()) || {};
+      state2.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
+      if (state2.checkedOut) {
+        const user2 = file.CheckedOutByUser || file.checkedOutByUser || null;
+        state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
+        state2.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+          user2,
+          ctx2?.pageContext,
+          { sameWeb: webUrl === hostWebUrl }
+        );
+      }
+    } catch (error) {
+      state2.known = false;
+      state2.reason = String(error?.message || error);
+    }
+    return state2;
+  }
+  async function postFileMethod(webUrl, path, method, fallback, code) {
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/${method}`;
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest2({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: { Accept: ACCEPT_JSON, "X-RequestDigest": digest }
+      });
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    await requireOk(response, fallback, code);
+  }
+  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl,
+      path,
+      "CheckOut()",
+      "Could not check out the SharePoint file",
+      "checkout"
+    );
+    return { serverRelativeUrl: path };
+  }
+  async function checkInFile(serverRelativePath, { comment = "", checkInType = 0, webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const stateResponse = await request(
+      `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType`,
+      { headers: { Accept: ACCEPT_JSON } }
+    );
+    await requireOk(
+      stateResponse,
+      "Could not read the file check-out state",
+      "checkout-state"
+    );
+    const file = unwrapJson(await stateResponse.json()) || {};
+    if (!isCheckedOut(file.CheckOutType ?? file.checkOutType)) {
+      return { serverRelativeUrl: path, checkedIn: false };
+    }
+    const type = [0, 1, 2].includes(Number(checkInType)) ? Number(checkInType) : 0;
+    const safeComment = String(comment || "").slice(0, 1023);
+    await postFileMethod(
+      webUrl,
+      path,
+      `CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=${type})`,
+      "Could not check in the SharePoint file",
+      "checkin"
+    );
+    return { serverRelativeUrl: path, checkedIn: true };
+  }
+  async function undoCheckOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl,
+      path,
+      "UndoCheckOut()",
+      "Could not discard the check-out",
+      "checkout-undo"
+    );
+    return { serverRelativeUrl: path };
+  }
+  async function inspectFileMetadata(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+    const { ctx: ctx2, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')?$select=ListItemAllFields/ParentList/Id&$expand=ListItemAllFields,ListItemAllFields/ParentList`;
     const libraryResponse = await request(libraryEndpoint, {
@@ -3543,7 +3692,7 @@ function createSpFilesClient({
     let libraryId = String(
       libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
     ).replace(/[{}]/g, "").trim();
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
       const rootLibraryResponse = await request(rootLibraryEndpoint, {
         headers: { Accept: ACCEPT_JSON }
@@ -3556,12 +3705,31 @@ function createSpFilesClient({
       const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
       libraryId = String(rootLibraryData.Id || rootLibraryData.ID || "").replace(/[{}]/g, "").trim();
     }
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       throw new SpFileError(
         "SharePoint did not identify the destination document library.",
         { code: "metadata-library" }
       );
     }
+    const checkout = await checkOutState({
+      webUrl,
+      hostWebUrl,
+      rootPath,
+      libraryId,
+      filePath,
+      ctx: ctx2
+    });
+    try {
+      return {
+        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
+        checkout
+      };
+    } catch (error) {
+      if (error && typeof error === "object") error.checkout = checkout;
+      throw error;
+    }
+  }
+  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
     const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden`;
     const fieldsResponse = await request(fieldsEndpoint, {
       headers: { Accept: ACCEPT_JSON }
@@ -3615,7 +3783,7 @@ function createSpFilesClient({
         }
       }
     }
-    return { fields };
+    return fields;
   }
   async function writeFileMetadata(serverRelativePath, fields, values, { webUrl: targetWebUrl = "" } = {}) {
     const { webUrl, rootPath } = webInfo(targetWebUrl);
@@ -3635,9 +3803,13 @@ function createSpFilesClient({
           "Content-Type": "application/json;odata=nometadata",
           "X-RequestDigest": digest
         },
+        // bNewDocumentUpdate makes this the tail of the upload rather than a
+        // new version — and on a checked-out file SharePoint checks it in as
+        // part of the update, recording checkInComment.
         body: JSON.stringify({
           formValues,
-          bNewDocumentUpdate: true
+          bNewDocumentUpdate: true,
+          checkInComment: CHECK_IN_COMMENT
         })
       });
     };
@@ -3689,7 +3861,10 @@ function createSpFilesClient({
     }
     return {
       fileName: safeName,
-      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`
+      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out. Undefined when the server doesn't say.
+      checkOutType: result.CheckOutType
     };
   }
   return {
@@ -3698,6 +3873,9 @@ function createSpFilesClient({
     getDigest: getDigest2,
     listFolder,
     readTextFile,
+    checkOutFile,
+    checkInFile,
+    undoCheckOutFile,
     inspectFileMetadata,
     writeFileMetadata,
     writeTextFile
@@ -3776,12 +3954,18 @@ function createSpWriteClient({
       return {};
     }
   }
-  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false } = {}) {
+  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false, checkInComment = "" } = {}) {
     if (!Array.isArray(formValues) || !formValues.length) return { updated: [] };
     const base = `${client2.webUrl()}/_api/web`;
     const endpoint = pathKind.fileServerRelativeUrl ? `${base}/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(pathKind.fileServerRelativeUrl)}')/ListItemAllFields/ValidateUpdateListItem` : `${base}/lists(guid'${pathKind.listId}')/items(${Number(pathKind.itemId)})/ValidateUpdateListItem`;
     const data = await post(endpoint, {
-      body: JSON.stringify({ formValues, bNewDocumentUpdate: Boolean(newDocumentUpdate) })
+      // With bNewDocumentUpdate SharePoint checks a checked-out file in as
+      // part of the update; checkInComment is what it records when it does.
+      body: JSON.stringify({
+        formValues,
+        bNewDocumentUpdate: Boolean(newDocumentUpdate),
+        ...newDocumentUpdate && checkInComment ? { checkInComment } : {}
+      })
     }, { fallback: "Could not save the item metadata", code: "metadata-write" });
     const results = resultArray(data.value || data.ValidateUpdateListItem || data);
     const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
@@ -3823,8 +4007,37 @@ function createSpWriteClient({
     }, { fallback: "Could not upload the file", code: "write" });
     return {
       fileName: safeName,
-      serverRelativeUrl: result.ServerRelativeUrl || `${folder === "/" ? "" : folder}/${safeName}`
+      serverRelativeUrl: result.ServerRelativeUrl || `${folder === "/" ? "" : folder}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out, and an overwrite leaves a check-out
+      // standing. Undefined when the server (or the mock) doesn't say.
+      checkOutType: result.CheckOutType
     };
+  }
+  async function checkOutFile(fileServerRelativeUrl) {
+    const endpoint = `${client2.webUrl()}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')/CheckOut()`;
+    await post(
+      endpoint,
+      { body: "" },
+      { fallback: "Could not check out the file", code: "checkout" }
+    );
+    return { serverRelativeUrl: fileServerRelativeUrl };
+  }
+  async function checkInFile(fileServerRelativeUrl, { comment = "" } = {}) {
+    const file = `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')`;
+    if (!isMock()) {
+      const state2 = await client2.get(file, { select: "CheckOutType" });
+      if (!isCheckedOut(state2?.CheckOutType)) {
+        return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: false };
+      }
+    }
+    const safeComment = String(comment || "").slice(0, 1023);
+    await post(
+      `${client2.webUrl()}/_api/${file}/CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=0)`,
+      { body: "" },
+      { fallback: "Could not check in the file", code: "checkin" }
+    );
+    return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: true };
   }
   async function createFolder(parentServerRelativeUrl, name) {
     const clean = String(name || "").trim();
@@ -3854,7 +4067,15 @@ function createSpWriteClient({
     const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
     return post(url, { body: JSON.stringify(body) }, { fallback, code });
   }
-  return { validateUpdateListItem, uploadFile, createFolder, postJson, isMock };
+  return {
+    validateUpdateListItem,
+    uploadFile,
+    checkOutFile,
+    checkInFile,
+    createFolder,
+    postJson,
+    isMock
+  };
 }
 
 // ../src/workbench/views/security.js
@@ -7170,7 +7391,7 @@ function openUploadMetadataDialog({
   });
 }
 
-// ../src/workbench/views/browser.js?v=2
+// ../src/workbench/views/browser.js?v=4
 var FIELD_SELECT4 = [
   "Id",
   "Title",
@@ -7188,6 +7409,7 @@ var FIELD_SELECT4 = [
   "FillInChoice"
 ];
 var DOCUMENT_LIBRARY_BASE_TYPE = 1;
+var CHECK_IN_COMMENT2 = "Uploaded from SP Workbench";
 var GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 var FOLDER_SELECT = ["Name", "ServerRelativeUrl", "ItemCount", "TimeLastModified"];
 var FILE_SELECT = [
@@ -7498,7 +7720,7 @@ function createBrowserView({ client: client2, navigate }) {
       grid.setError(err);
     }
   }
-  function showConsent(message, onConfirm) {
+  function showConsent(message, onConfirm, { gate = "" } = {}) {
     consent.textContent = "";
     consent.hidden = false;
     consent.append(el13("span", "wb-consent-text", message));
@@ -7513,6 +7735,18 @@ function createBrowserView({ client: client2, navigate }) {
     cancel.addEventListener("click", () => {
       consent.hidden = true;
     });
+    if (gate) {
+      replace.disabled = true;
+      const row = el13("label", "sp-metadata-consent__row wb-consent-gate");
+      const box = el13("input");
+      box.type = "checkbox";
+      box.className = "wb-consent-checkout";
+      box.addEventListener("change", () => {
+        replace.disabled = !box.checked;
+      });
+      row.append(box, el13("span", "sp-metadata-consent__label", gate));
+      consent.append(row);
+    }
     consent.append(replace, cancel);
   }
   function uploadNotice(message, isError = false) {
@@ -7541,13 +7775,69 @@ function createBrowserView({ client: client2, navigate }) {
       (f) => String(f.Name).toLowerCase() === file.name.toLowerCase()
     );
     if (existing) {
-      showConsent(
-        `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-        () => runUpload(file, { overwrite: true, folderPath })
-      );
+      await confirmReplace(file, folderPath, { existing });
       return;
     }
     await runUpload(file, { overwrite: false, folderPath });
+  }
+  async function libraryForcesCheckout(folderPath) {
+    const listId = await parentListId(folderPath);
+    const list2 = await client2.get(`web/lists(guid'${listId}')`, { select: "ForceCheckout" });
+    return Boolean(list2?.ForceCheckout);
+  }
+  async function readCheckOut(filePath, existing) {
+    if (existing && !isCheckedOut(existing.CheckOutType)) return { checkedOut: false };
+    const file = await client2.get(fileApi(filePath, ""), {
+      select: "CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email",
+      expand: "CheckedOutByUser"
+    });
+    return {
+      checkedOut: isCheckedOut(file?.CheckOutType),
+      user: file?.CheckedOutByUser || null
+    };
+  }
+  async function checkOutState(folderPath, fileName, existing) {
+    const state2 = {
+      required: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: ""
+    };
+    try {
+      state2.required = await libraryForcesCheckout(folderPath);
+      const { checkedOut, user: user2 } = await readCheckOut(`${folderPath}/${fileName}`, existing);
+      state2.checkedOut = checkedOut;
+      if (!checkedOut) return state2;
+      state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
+      state2.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+        user2,
+        client2.context()?.pageContext,
+        { sameWeb: client2.webUrl() === client2.hostWebUrl() }
+      );
+    } catch {
+    }
+    return state2;
+  }
+  async function confirmReplace(file, folderPath, { existing = null, carriedValues = null } = {}) {
+    const checkout = await checkOutState(folderPath, file.name, existing);
+    if (checkout.checkedOut && !checkout.checkedOutByCurrentUser) {
+      uploadNotice(
+        `\u201C${file.name}\u201D is checked out to ${checkout.checkedOutBy || "another user"}. It cannot be replaced until they check it back in.`,
+        true
+      );
+      return;
+    }
+    let gate = "";
+    if (checkout.checkedOutByCurrentUser) {
+      gate = `${checkout.required ? "This library requires check-out \u2014 " : ""}\u201C${file.name}\u201D is already checked out to you. Replace it and check it back in.`;
+    } else if (checkout.required) {
+      gate = `This library requires check-out \u2014 check \u201C${file.name}\u201D out before replacing it, then back in.`;
+    }
+    showConsent(
+      `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
+      () => runUpload(file, { overwrite: true, folderPath, carriedValues, checkout }),
+      { gate }
+    );
   }
   async function uploadMetadataStates(folderPath) {
     try {
@@ -7574,7 +7864,12 @@ function createBrowserView({ client: client2, navigate }) {
     }
     return values;
   }
-  async function runUpload(file, { overwrite, folderPath, carriedValues = null }) {
+  async function runUpload(file, {
+    overwrite,
+    folderPath,
+    carriedValues = null,
+    checkout = null
+  }) {
     let data;
     try {
       data = await file.arrayBuffer();
@@ -7582,15 +7877,51 @@ function createBrowserView({ client: client2, navigate }) {
       uploadNotice(`Could not read the file: ${err?.message || err}`, true);
       return;
     }
-    const bareUpload = () => spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+    let uploaded = null;
+    let checkedOutHere = false;
+    const bareUpload = async () => {
+      if (overwrite && checkout?.required && !checkout.checkedOutByCurrentUser) {
+        await spWrite.checkOutFile(`${folderPath}/${file.name}`);
+        checkout.checkedOutByCurrentUser = true;
+        checkedOutHere = true;
+      }
+      uploaded = await spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+      return uploaded;
+    };
+    const settle = async (message) => {
+      const held = checkout?.checkedOutByCurrentUser || isCheckedOut(uploaded?.checkOutType);
+      if (!held) return finishUpload(file, folderPath, message);
+      try {
+        await spWrite.checkInFile(`${folderPath}/${file.name}`, { comment: CHECK_IN_COMMENT2 });
+        return finishUpload(file, folderPath, `${message} Checked in.`);
+      } catch (err) {
+        return finishUpload(
+          file,
+          folderPath,
+          `${message} It could not be checked in and is still checked out to you: ${err?.message || err}`,
+          true
+        );
+      }
+    };
+    const fail = async (err, carried) => {
+      if (checkedOutHere && !uploaded) {
+        if (currentPath === folderPath) await listFolder(folderPath, { force: true });
+        uploadNotice(
+          `Upload failed: ${err?.message || err} \u201C${file.name}\u201D is still checked out to you.`,
+          true
+        );
+        return;
+      }
+      handleUploadError(err, file, folderPath, overwrite, carried);
+    };
     const states = await uploadMetadataStates(folderPath);
     if (!states) {
       uploadNotice(`Uploading \u201C${file.name}\u201D\u2026`);
       try {
         await bareUpload();
-        await finishUpload(file, folderPath, `Uploaded \u201C${file.name}\u201D \u2713`);
+        await settle(`Uploaded \u201C${file.name}\u201D \u2713`);
       } catch (err) {
-        handleUploadError(err, file, folderPath, overwrite, null);
+        await fail(err, null);
       }
       return;
     }
@@ -7613,26 +7944,23 @@ function createBrowserView({ client: client2, navigate }) {
           await spWrite.validateUpdateListItem(
             { fileServerRelativeUrl: filePath },
             formValues,
-            { newDocumentUpdate: true }
+            { newDocumentUpdate: true, checkInComment: CHECK_IN_COMMENT2 }
           );
         }
       });
       if (outcome === "cancelled") return;
-      await finishUpload(file, folderPath, outcome === "saved" ? `Uploaded \u201C${file.name}\u201D \u2713` : `Uploaded \u201C${file.name}\u201D \u2713 (kept without metadata)`);
+      await settle(outcome === "saved" ? `Uploaded \u201C${file.name}\u201D \u2713` : `Uploaded \u201C${file.name}\u201D \u2713 (kept without metadata)`);
     } catch (err) {
-      handleUploadError(err, file, folderPath, overwrite, err?.uploadMetadataValues || null);
+      await fail(err, err?.uploadMetadataValues || null);
     }
   }
-  async function finishUpload(file, folderPath, message) {
+  async function finishUpload(file, folderPath, message, isError = false) {
     if (currentPath === folderPath) await listFolder(folderPath, { force: true });
-    uploadNotice(message);
+    uploadNotice(message, isError);
   }
   function handleUploadError(err, file, folderPath, overwrite, carriedValues) {
     if (err?.code === "conflict" && !overwrite) {
-      showConsent(
-        `\u201C${file.name}\u201D already exists in this folder. Replace it?`,
-        () => runUpload(file, { overwrite: true, folderPath, carriedValues })
-      );
+      void confirmReplace(file, folderPath, { carriedValues, existing: null });
       return;
     }
     uploadNotice(`Upload failed: ${err?.message || err}`, true);

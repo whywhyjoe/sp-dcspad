@@ -10,7 +10,7 @@
 // editors stay exercisable (and testable) with zero network. Mock writes
 // are recorded on globalThis.__DCSPAD_WB_WRITES__ for tests.
 
-import { getDigest } from '../sp-files.js';
+import { getDigest, isCheckedOut } from '../sp-files.js';
 import {
   ACCEPT_JSON, SpFileError, odataPathLiteral, resultArray, unwrapJson, requireOk,
 } from '../sp-odata.js';
@@ -88,7 +88,9 @@ export function createSpWriteClient({
   // see field-editor.js toFormValue for the per-type conventions).
   // Throws SpFileError('metadata-write') carrying err.fieldErrors
   // ({ FieldName: message }) so forms can map failures onto editors.
-  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false } = {}) {
+  async function validateUpdateListItem(
+    pathKind, formValues, { newDocumentUpdate = false, checkInComment = '' } = {},
+  ) {
     if (!Array.isArray(formValues) || !formValues.length) return { updated: [] };
     const base = `${client.webUrl()}/_api/web`;
     const endpoint = pathKind.fileServerRelativeUrl
@@ -98,7 +100,13 @@ export function createSpWriteClient({
       : `${base}/lists(guid'${pathKind.listId}')/items(${Number(pathKind.itemId)})`
         + '/ValidateUpdateListItem';
     const data = await post(endpoint, {
-      body: JSON.stringify({ formValues, bNewDocumentUpdate: Boolean(newDocumentUpdate) }),
+      // With bNewDocumentUpdate SharePoint checks a checked-out file in as
+      // part of the update; checkInComment is what it records when it does.
+      body: JSON.stringify({
+        formValues,
+        bNewDocumentUpdate: Boolean(newDocumentUpdate),
+        ...(newDocumentUpdate && checkInComment ? { checkInComment } : {}),
+      }),
     }, { fallback: 'Could not save the item metadata', code: 'metadata-write' });
 
     const results = resultArray(data.value || data.ValidateUpdateListItem || data);
@@ -151,7 +159,47 @@ export function createSpWriteClient({
     return {
       fileName: safeName,
       serverRelativeUrl: result.ServerRelativeUrl || `${folder === '/' ? '' : folder}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out, and an overwrite leaves a check-out
+      // standing. Undefined when the server (or the mock) doesn't say.
+      checkOutType: result.CheckOutType,
     };
+  }
+
+  // Check a file out ahead of an overwrite, for libraries that set
+  // ForceCheckout. The overwriting upload does not end the check-out, so the
+  // caller pairs this with checkInFile() — the same contract as the pad's
+  // export (sp-files.js checkOutFile / checkInFile).
+  async function checkOutFile(fileServerRelativeUrl) {
+    const endpoint = `${client.webUrl()}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')/CheckOut()`;
+    await post(endpoint, { body: '' },
+      { fallback: 'Could not check out the file', code: 'checkout' });
+    return { serverRelativeUrl: fileServerRelativeUrl };
+  }
+
+  // Check a file back in, but only if SharePoint still reports it checked
+  // out: CheckIn() on a file that isn't is an error, and whether an upload
+  // left one standing is the server's business, so the state is read rather
+  // than assumed. The mock has no such state; it records the call.
+  async function checkInFile(fileServerRelativeUrl, { comment = '' } = {}) {
+    const file = `web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')`;
+    if (!isMock()) {
+      const state = await client.get(file, { select: 'CheckOutType' });
+      if (!isCheckedOut(state?.CheckOutType)) {
+        return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: false };
+      }
+    }
+    const safeComment = String(comment || '').slice(0, 1023);
+    // SP.CheckinType 0 = minor version, matching the pad's export.
+    await post(
+      `${client.webUrl()}/_api/${file}/CheckIn(`
+        + `comment='${odataPathLiteral(safeComment)}',checkintype=0)`,
+      { body: '' },
+      { fallback: 'Could not check in the file', code: 'checkin' },
+    );
+    return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: true };
   }
 
   // Create a subfolder. '#' and '%' are legal in modern SPO names (hence
@@ -188,5 +236,8 @@ export function createSpWriteClient({
     return post(url, { body: JSON.stringify(body) }, { fallback, code });
   }
 
-  return { validateUpdateListItem, uploadFile, createFolder, postJson, isMock };
+  return {
+    validateUpdateListItem, uploadFile, checkOutFile, checkInFile, createFolder, postJson,
+    isMock,
+  };
 }

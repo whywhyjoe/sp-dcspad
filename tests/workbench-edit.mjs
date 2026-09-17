@@ -243,7 +243,17 @@ const uploads = [];        // { url, digest, bodyLength }
 const vuliCalls = [];      // { url, digest, body }
 const prefillUrls = [];
 const libraryLookups = [];
-const flags = { failMetadata: false, racyConflictOnce: true };
+const flags = {
+  failMetadata: false, racyConflictOnce: true, forceCheckout: false, bornCheckedOut: false,
+  failNextOverwrite: false,
+};
+const checkOuts = [];      // { url, digest, order }
+const checkIns = [];       // { url, digest, order }
+// The stub keeps SharePoint's side of the bargain: a check-out stands — across
+// the overwrite too — until CheckIn() releases it.
+const STUB_HOLDER = { Id: 7, Title: 'Stub User', LoginName: 'i:0#.f|membership|stub@x' };
+let freshFileCheckOutType = 2;
+let callSeq = 0;           // orders a check-out against the upload it precedes
 
 const LIVE_FILES = [
   {
@@ -268,6 +278,8 @@ await live.addInitScript(() => {
   window.__DCSPAD_SP_CONTEXT__ = {
     webAbsoluteUrl: location.origin,
     userDisplayName: 'Stub User',
+    // The login claim is what identifies "checked out to me".
+    userLoginName: 'i:0#.f|membership|stub@x',
   };
 });
 
@@ -289,6 +301,7 @@ await live.route('**/_api/**', async (route) => {
       url,
       digest: request.headers()['x-requestdigest'] || '',
       bodyLength: request.postDataBuffer()?.length ?? 0,
+      order: ++callSeq,
     };
     uploads.push(record);
     if (url.includes('racy.bin') && url.includes('overwrite=false') && flags.racyConflictOnce) {
@@ -298,9 +311,55 @@ await live.route('**/_api/**', async (route) => {
         json: { 'odata.error': { message: { value: 'The file already exists.' } } },
       });
     }
-    const name = /AddUsingPath\(decodedUrl='([^']*)'/.exec(url)?.[1] || 'file';
+    if (flags.failNextOverwrite && url.includes('overwrite=true')) {
+      flags.failNextOverwrite = false;
+      return route.fulfill({
+        status: 500,
+        json: { 'odata.error': { message: { value: 'Upload stub failure.' } } },
+      });
+    }
+    const name = decodeURIComponent(/AddUsingPath\(decodedUrl='([^']*)'/.exec(url)?.[1] || 'file');
+    let checkOutType = name === 'proposal.docx' ? LIVE_FILES[0].CheckOutType : 2;
+    if (flags.bornCheckedOut && url.includes('overwrite=false')) {
+      freshFileCheckOutType = 0;
+      checkOutType = 0;
+    }
     return route.fulfill({
-      json: { ServerRelativeUrl: `/Shared Documents/${decodeURIComponent(name)}` },
+      json: { ServerRelativeUrl: `/Shared Documents/${name}`, CheckOutType: checkOutType },
+    });
+  }
+  if (url.includes('/CheckOut()')) {
+    checkOuts.push({
+      url,
+      digest: request.headers()['x-requestdigest'] || '',
+      order: ++callSeq,
+    });
+    LIVE_FILES[0].CheckOutType = 0;
+    LIVE_FILES[0].CheckedOutByUser = STUB_HOLDER;
+    return route.fulfill({ json: {} });
+  }
+  if (url.includes('/CheckIn(')) {
+    checkIns.push({
+      url,
+      digest: request.headers()['x-requestdigest'] || '',
+      order: ++callSeq,
+    });
+    if (url.includes('proposal.docx')) {
+      LIVE_FILES[0].CheckOutType = 2;
+      delete LIVE_FILES[0].CheckedOutByUser;
+    } else {
+      freshFileCheckOutType = 2;
+    }
+    return route.fulfill({ json: {} });
+  }
+  if (/lists\(guid'/i.test(url)
+      && new URL(url).searchParams.get('$select') === 'ForceCheckout') {
+    return route.fulfill({ json: { ForceCheckout: flags.forceCheckout } });
+  }
+  if (url.includes('GetFileByServerRelativePath(')
+      && (new URL(url).searchParams.get('$select') || '').includes('CheckOutType')) {
+    return route.fulfill({
+      json: url.includes('proposal.docx') ? LIVE_FILES[0] : { CheckOutType: freshFileCheckOutType },
     });
   }
   if (url.includes('/ValidateUpdateListItem')) {
@@ -495,6 +554,155 @@ await check('live: a 409 race re-consents and the retry keeps the typed values',
     && carried === 'Racy T'   // values survive the race retry
     && attempts[0].url.includes('overwrite=false')
     && attempts[1].url.includes('overwrite=true');
+});
+
+// ---- forced check-out ------------------------------------------------------
+// Same contract as the pad's export: replacing a file in a ForceCheckout
+// library is consented to, then checked out, uploaded, and checked back in.
+flags.forceCheckout = true;
+
+await check('live: a forced-check-out library gates Replace behind a consent box', async () => {
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('c1'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  const gateText = await live.locator('.wb-consent-gate').textContent();
+  const blocked = await live.locator('.wb-consent .btn', { hasText: 'Replace' }).isDisabled();
+  await live.check('.wb-consent .wb-consent-checkout');
+  const enabled = !(await live.locator('.wb-consent .btn', { hasText: 'Replace' }).isDisabled());
+  return gateText.includes('requires check-out')
+    && gateText.includes('before replacing it')
+    && blocked && enabled;
+});
+
+await check('live: consenting checks the file out before the overwrite upload', async () => {
+  const before = uploads.length;
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  const landed = await until(() => uploads.length > before);
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Uploaded “proposal.docx” ✓'));
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  const replaced = uploads[uploads.length - 1];
+  return landed
+    && checkOuts.length === 1
+    && decodeURIComponent(checkOuts[0].url).includes("decodedUrl='/Shared Documents/proposal.docx'")
+    && checkOuts[0].digest === 'WB-DIGEST'
+    && checkOuts[0].order < replaced.order
+    && replaced.url.includes('overwrite=true');
+});
+
+await check('live: the replaced file is checked back in after the upload', async () => {
+  const replaced = uploads[uploads.length - 1];
+  return checkIns.length === 1
+    && decodeURIComponent(checkIns[0].url).includes("decodedUrl='/Shared Documents/proposal.docx'")
+    && /checkintype=0/i.test(checkIns[0].url)
+    && checkIns[0].digest === 'WB-DIGEST'
+    && checkIns[0].order > replaced.order
+    && LIVE_FILES[0].CheckOutType === 2;
+});
+
+await check('live: a file checked out to someone else is refused, not consented to', async () => {
+  LIVE_FILES[0].CheckOutType = 1;
+  LIVE_FILES[0].CheckedOutByUser = { Id: 42, Title: 'Dana Lee', LoginName: 'i:0#.f|membership|dana@x' };
+  await live.locator('.wb-view-files .btn', { hasText: 'Refresh' }).click();
+  await live.waitForTimeout(200);
+  const before = uploads.length;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('c2'),
+  });
+  await live.waitForSelector('.wb-consent-error');
+  const text = await live.locator('.wb-consent').textContent();
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  return text.includes('checked out to Dana Lee')
+    && uploads.length === before
+    && checkOuts.length === 1;   // and nothing was checked out
+});
+
+await check('live: a file you already hold is replaced without a second check-out', async () => {
+  LIVE_FILES[0].CheckedOutByUser = {
+    Id: 7, Title: 'Stub User', LoginName: 'i:0#.f|membership|stub@x',
+  };
+  await live.locator('.wb-view-files .btn', { hasText: 'Refresh' }).click();
+  await live.waitForTimeout(200);
+  const before = uploads.length;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('c3'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  const gateText = await live.locator('.wb-consent-gate').textContent();
+  await live.check('.wb-consent .wb-consent-checkout');
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  const landed = await until(() => uploads.length > before);
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Checked in.'));
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  return landed
+    && gateText.includes('already checked out to you')
+    && checkOuts.length === 1    // no second CheckOut()
+    && checkIns.length === 2     // but it is checked back in
+    && LIVE_FILES[0].CheckOutType === 2;
+});
+
+await check('live: a new file born checked out is checked in, with no CheckOut call', async () => {
+  flags.bornCheckedOut = true;
+  const before = checkIns.length;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'fresh-checkout.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('n1'),
+  });
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  // A dismissed notice keeps its text, so wait on this file's own notice.
+  await live.waitForFunction(() => {
+    const text = document.querySelector('.wb-consent')?.textContent || '';
+    return text.includes('fresh-checkout.bin') && text.includes('Checked in.');
+  });
+  flags.bornCheckedOut = false;
+  return checkIns.length === before + 1
+    && decodeURIComponent(checkIns.at(-1).url).includes('fresh-checkout.bin')
+    && checkOuts.length === 1
+    && freshFileCheckOutType === 2;
+});
+
+// The upload fails after the Workbench's own check-out. The listing must be
+// refreshed: read stale, it still says "checked in", and the next attempt
+// would post a second CheckOut(), which SharePoint rejects.
+await check('live: an upload failing after the check-out is stated, and the retry does not check out twice', async () => {
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+  const checkOutsBefore = checkOuts.length;
+  const checkInsBefore = checkIns.length;
+  flags.failNextOverwrite = true;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('f1'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  await live.check('.wb-consent .wb-consent-checkout');
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('still checked out to you'));
+  const failedOnce = checkOuts.length === checkOutsBefore + 1
+    && LIVE_FILES[0].CheckOutType === 0;
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
+
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'proposal.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('f2'),
+  });
+  await live.waitForSelector('.wb-consent .wb-consent-checkout');
+  const gateText = await live.locator('.wb-consent-gate').textContent();
+  await live.check('.wb-consent .wb-consent-checkout');
+  await live.locator('.wb-consent .btn', { hasText: 'Replace' }).click();
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  await until(() => checkIns.length > checkInsBefore);
+  return failedOnce
+    && gateText.includes('already checked out to you')
+    && checkOuts.length === checkOutsBefore + 1   // no second CheckOut()
+    && LIVE_FILES[0].CheckOutType === 2;
 });
 
 await live.close();

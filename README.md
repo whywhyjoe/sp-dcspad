@@ -52,9 +52,16 @@ SharePoint in the built-in or configured file types. There is no DCSPad backend.
   a metadata dialog. Missing or incompatible fields remain visible but disabled.
   Existing files supply their current values; an existing destination Title wins
   over a conflicting project title. Overwrite is called out in this metadata
-  dialog instead of requiring a separate confirmation step. If the file uploads
+  dialog instead of requiring a separate confirmation step. When the library
+  requires check-out (or you already hold the file), a consent box gates the
+  overwrite; once ticked, DCSPad checks the file out, uploads, writes metadata,
+  and checks it back in. A file checked out to someone else is refused up
+  front, and a check-out refusal the pre-flight probe missed reveals the same
+  consent for the retry. If the file uploads
   but SharePoint rejects its metadata, the dialog can retry metadata without
-  uploading again or keep the uploaded file without metadata. These operations
+  uploading again or keep the uploaded file without metadata; either way the
+  check-in still runs. If the upload itself fails after DCSPad's check-out,
+  the dialog can retry or discard that check-out. These operations
   use the signed-in user's SharePoint REST permissions—no Graph app,
   PnP.PowerShell, or separate login. Project, framework-catalog, and snippet
   JSON never use this picker.
@@ -242,6 +249,12 @@ SharePoint session there.
    SharePoint…** and verify a new upload succeeds. Repeat with the same name
    and confirm that the metadata dialog clearly identifies the overwrite before
    it saves.
+8. Repeat the overwrite in a library with **Require Check Out** enabled. Confirm
+   that the metadata dialog gates the overwrite behind the check-out consent,
+   the save completes, and the file is checked in afterward (version history
+   shows the "Saved from DCSPad" comment). Also verify that a file checked out
+   by another user is blocked before upload, and that a brand-new file is not
+   left checked out.
 
 ## Using the pad
 

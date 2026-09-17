@@ -11,6 +11,40 @@ import {
 } from './sp-odata.js';
 
 const DIGEST_SAFETY_MS = 60_000;
+const LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+export const CHECK_IN_COMMENT = 'Saved from DCSPad';
+// SP.CheckOutType: 0 = checked out online, 1 = checked out offline, 2 = none.
+export const CHECK_OUT_TYPE_NONE = 2;
+
+export function isCheckedOut(checkOutType) {
+  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
+  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+}
+
+// "Is this file checked out to me?" Login claims are the only identifier that
+// survives a cross-site write: a site user Id is issued per site collection,
+// so it is only trusted for the web that supplied the page context.
+// Exported: the SP Workbench Files uploader shares this rule, so the two
+// forced-check-out implementations can't drift on what "to me" means.
+export function isCheckedOutByCurrentUser(user, pageContext = {}, { sameWeb = true } = {}) {
+  if (!user) return false;
+  // Page context carries the login as a bare UPN on SharePoint Online
+  // ("joe@tenant.com") while SP.User.LoginName is the full claim
+  // ("i:0#.f|membership|joe@tenant.com"), so a match is either form. A
+  // mismatch is not an answer: fall through to the other identifiers.
+  const login = String(pageContext?.userLoginName || '').trim().toLowerCase();
+  const claim = String(user.LoginName || '').trim().toLowerCase();
+  if (login && claim
+      && (login === claim || claim.endsWith(`|${login}`) || login.endsWith(`|${claim}`))) {
+    return true;
+  }
+  const email = String(pageContext?.userEmail || '').trim().toLowerCase();
+  const userEmail = String(user.Email || user.UserPrincipalName || '').trim().toLowerCase();
+  if (email && userEmail) return email === userEmail;
+  const id = Number(pageContext?.userId);
+  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user.Id);
+  return false;
+}
 // Exported: the SP Workbench upload dialog shares these specs so the two
 // implementations can't drift on availability rules or internal names.
 export const FILE_METADATA_SPECS = Object.freeze([
@@ -285,11 +319,151 @@ export function createSpFilesClient({
     };
   }
 
+  // Check-out policy of the destination library, plus the destination file's
+  // current check-out state. The file state is read whether or not the
+  // library forces a check-out: a file held by someone else refuses the write
+  // in any library, and one the operator holds stays checked out after it.
+  // Never throws: a failed probe reports known:false and leaves SharePoint the
+  // authority, so an unrelated probe failure cannot cost the operator their
+  // export.
+  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx }) {
+    const state = {
+      required: false,
+      known: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: '',
+      reason: '',
+    };
+    try {
+      const policyResponse = await request(
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
+        { headers: { Accept: ACCEPT_JSON } },
+      );
+      await requireOk(
+        policyResponse,
+        'Could not read the destination library check-out policy',
+        'checkout-policy',
+      );
+      const list = unwrapJson(await policyResponse.json()) || {};
+      state.required = Boolean(list.ForceCheckout ?? list.forceCheckout);
+      state.known = true;
+      if (!filePath) return state;
+
+      const path = checkedPath(filePath, rootPath);
+      const fileResponse = await request(
+        `${webUrl}/_api/web/GetFileByServerRelativePath(`
+        + `decodedUrl='${odataPathLiteral(path)}')`
+        + '?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,'
+        + 'CheckedOutByUser/LoginName,CheckedOutByUser/Email'
+        + '&$expand=CheckedOutByUser',
+        { headers: { Accept: ACCEPT_JSON } },
+      );
+      await requireOk(
+        fileResponse,
+        'Could not read the destination file check-out state',
+        'checkout-state',
+      );
+      const file = unwrapJson(await fileResponse.json()) || {};
+      state.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
+      if (state.checkedOut) {
+        const user = file.CheckedOutByUser || file.checkedOutByUser || null;
+        state.checkedOutBy = String(user?.Title || user?.LoginName || '').trim();
+        state.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+          user, ctx?.pageContext, { sameWeb: webUrl === hostWebUrl },
+        );
+      }
+    } catch (error) {
+      // The library policy may already be known; only the state read failed.
+      state.known = false;
+      state.reason = String(error?.message || error);
+    }
+    return state;
+  }
+
+  // The three check-out verbs share one shape: a digest-bearing POST to a
+  // method on the file, with the same 403 force-refresh retry as every other
+  // write here.
+  async function postFileMethod(webUrl, path, method, fallback, code) {
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')/${method}`;
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: 'POST',
+        headers: { Accept: ACCEPT_JSON, 'X-RequestDigest': digest },
+      });
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    await requireOk(response, fallback, code);
+  }
+
+  // Check a file out ahead of an overwrite. Required by libraries that set
+  // ForceCheckout. The overwriting upload does not end the check-out — see
+  // checkInFile(), which the caller runs once the file and its metadata land.
+  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl, path, 'CheckOut()', 'Could not check out the SharePoint file', 'checkout',
+    );
+    return { serverRelativeUrl: path };
+  }
+
+  // Check a file back in, but only if SharePoint still reports it checked out.
+  // Whether an overwriting upload leaves the check-out standing is the
+  // server's business (and a new file in a ForceCheckout library is born
+  // checked out), so the state is read rather than assumed: CheckIn() on a
+  // file that is not checked out is an error, and skipping it on one that is
+  // leaves the operator's work invisible to everyone else.
+  async function checkInFile(
+    serverRelativePath,
+    { comment = '', checkInType = 0, webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const stateResponse = await request(
+      `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType`,
+      { headers: { Accept: ACCEPT_JSON } },
+    );
+    await requireOk(
+      stateResponse, 'Could not read the file check-out state', 'checkout-state',
+    );
+    const file = unwrapJson(await stateResponse.json()) || {};
+    if (!isCheckedOut(file.CheckOutType ?? file.checkOutType)) {
+      return { serverRelativeUrl: path, checkedIn: false };
+    }
+    // SP.CheckinType: 0 = minor, 1 = major, 2 = overwrite.
+    const type = [0, 1, 2].includes(Number(checkInType)) ? Number(checkInType) : 0;
+    const safeComment = String(comment || '').slice(0, 1023);
+    await postFileMethod(
+      webUrl,
+      path,
+      `CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=${type})`,
+      'Could not check in the SharePoint file',
+      'checkin',
+    );
+    return { serverRelativeUrl: path, checkedIn: true };
+  }
+
+  // Discard a check-out. SharePoint reverts the file to its last checked-in
+  // version, so this is only offered before anything has been uploaded.
+  async function undoCheckOutFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl, path, 'UndoCheckOut()', 'Could not discard the check-out', 'checkout-undo',
+    );
+    return { serverRelativeUrl: path };
+  }
+
   async function inspectFileMetadata(
     folderPath,
     { filePath = '', webUrl: targetWebUrl = '' } = {},
   ) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const { ctx, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
     const folder = checkedPath(folderPath, rootPath);
     const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(`
       + `decodedUrl='${odataPathLiteral(folder)}')`
@@ -310,7 +484,7 @@ export function createSpFilesClient({
     // A document library's root folder has no corresponding list item, so
     // ListItemAllFields.ParentList can be empty even though files may be saved
     // there. Resolve the list directly from its root URL in that case.
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)`
         + `?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
       const rootLibraryResponse = await request(rootLibraryEndpoint, {
@@ -326,13 +500,32 @@ export function createSpFilesClient({
         .replace(/[{}]/g, '')
         .trim();
     }
-    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(libraryId)) {
+    if (!LIBRARY_GUID.test(libraryId)) {
       throw new SpFileError(
         'SharePoint did not identify the destination document library.',
         { code: 'metadata-library' },
       );
     }
 
+    // Probed before the fields read so that a library whose columns cannot be
+    // inspected still reports its check-out policy: the export can proceed
+    // without metadata, but never without the check-out the library forces.
+    const checkout = await checkOutState({
+      webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx,
+    });
+
+    try {
+      return {
+        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
+        checkout,
+      };
+    } catch (error) {
+      if (error && typeof error === 'object') error.checkout = checkout;
+      throw error;
+    }
+  }
+
+  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
     const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields`
       + '?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden';
     const fieldsResponse = await request(fieldsEndpoint, {
@@ -397,7 +590,7 @@ export function createSpFilesClient({
       }
     }
 
-    return { fields };
+    return fields;
   }
 
   async function writeFileMetadata(
@@ -428,9 +621,13 @@ export function createSpFilesClient({
           'Content-Type': 'application/json;odata=nometadata',
           'X-RequestDigest': digest,
         },
+        // bNewDocumentUpdate makes this the tail of the upload rather than a
+        // new version — and on a checked-out file SharePoint checks it in as
+        // part of the update, recording checkInComment.
         body: JSON.stringify({
           formValues,
           bNewDocumentUpdate: true,
+          checkInComment: CHECK_IN_COMMENT,
         }),
       });
     };
@@ -498,6 +695,9 @@ export function createSpFilesClient({
       fileName: safeName,
       serverRelativeUrl:
         result.ServerRelativeUrl || `${folder.replace(/\/$/, '')}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out. Undefined when the server doesn't say.
+      checkOutType: result.CheckOutType,
     };
   }
 
@@ -507,6 +707,9 @@ export function createSpFilesClient({
     getDigest,
     listFolder,
     readTextFile,
+    checkOutFile,
+    checkInFile,
+    undoCheckOutFile,
     inspectFileMetadata,
     writeFileMetadata,
     writeTextFile,
@@ -520,6 +723,10 @@ export const connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 export const getDigest = (options) => defaultClient.getDigest(options);
 export const listFolder = (path, options) => defaultClient.listFolder(path, options);
 export const readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+export const checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
+export const checkInFile = (path, options) => defaultClient.checkInFile(path, options);
+export const undoCheckOutFile = (path, options) =>
+  defaultClient.undoCheckOutFile(path, options);
 export const inspectFileMetadata = (folder, options) =>
   defaultClient.inspectFileMetadata(folder, options);
 export const writeFileMetadata = (path, fields, values, options) =>

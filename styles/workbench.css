@@ -406,6 +406,14 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-consent[hidden] { display: none; }
 .wb-consent-error { color: var(--error-fg); border-color: var(--error-soft-line); background: var(--error-bg); box-shadow: inset 2px 0 0 var(--error); }
 .wb-consent-text { flex: 1; }
+/* Forced-check-out gate: the sentence the operator ticks before Replace
+   becomes clickable. It composes the pad's consent row (.sp-metadata-consent__row
+   in app.css, which also styles the checkbox) so the two gates cannot drift;
+   only the two things the bar itself decides are restated — the bar is a
+   single centred line, and its own warn colour owns the text. */
+.wb-consent-gate {
+  flex: none; align-items: center; color: inherit;
+}
 .wb-file-meta { max-height: 55%; }
 .wb-file-meta-head { display: flex; align-items: center; gap: 10px; }
 .wb-file-meta-head .wb-subpanel-title { flex: 1; }

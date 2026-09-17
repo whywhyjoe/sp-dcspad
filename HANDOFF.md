@@ -237,6 +237,30 @@ inspector, REPL and network capture all work inside the web part; a live
   extensions onto an editor pane for SharePoint transfer only (the supplied
   config maps `.json` to the JS pane; built-ins can't be overridden and local
   disk import stays HTML/CSS/JS).
+  Libraries that set **ForceCheckout** are probed as part of the destination
+  inspection: overwriting one is gated behind a consent checkbox at the foot
+  of the metadata dialog, and consenting makes the pad `CheckOut()` the file,
+  upload, write metadata, then `CheckIn()` — the check-in reads the file's
+  state first and only posts when SharePoint still reports it checked out, so
+  it is correct whether or not the tenant's overwrite ends the check-out.
+  A file held by another user is stated and refused (in any library) rather
+  than offered the box; one you already hold is overwritten without a second
+  check-out and checked in; a new file born checked out is checked in. Every
+  stage is resumable: an upload failure after the pad's own check-out offers
+  **Discard check-out** (`UndoCheckOut`, safe because nothing was uploaded), a
+  failed check-in offers **Retry check-in** / **Leave checked out**, and a
+  write SharePoint refuses with a check-out error the probe missed
+  (`checkout-required` in sp-odata.js, classified on the unlocalized OData
+  error code as well as the message) reveals the same consent for the retry —
+  unless the refusal names another holder, which blocks instead.
+  Two SharePoint facts this rests on: `ValidateUpdateListItem` with
+  `bNewDocumentUpdate` checks a checked-out file in by itself (so the comment
+  rides that write as `checkInComment`, and the explicit `CheckIn()` is usually
+  a no-op); and page context carries the login as a bare UPN while
+  `CheckedOutByUser.LoginName` is the full claim, so "checked out to me"
+  accepts either form (`isCheckedOutByCurrentUser`).
+  This lifecycle first shipped to the work prod tenant from an uncommitted
+  tree (bundle stamp `47edb5d4-dirty`); it was merged here with the gate.
   See `plans/file-sp-import-export.md`, which is now an implementation record.
 - Framework rows use drag-and-drop ordering without up/down controls; snippets
   are always displayed alphabetically regardless of file type.
@@ -286,7 +310,12 @@ concurrent debugging on main):
 - **Files browser** (`views/browser.js`) — every file type, paged listing,
   breadcrumbs + library picker, download via `download.aspx`, upload with
   overwrite consent (pre-flight and 409-race), post-upload metadata panel
-  with keep-without-metadata / retry-that-never-reuploads.
+  with keep-without-metadata / retry-that-never-reuploads. A library with
+  **ForceCheckout** puts a consent checkbox on that overwrite bar,
+  `CheckOut()`s the file before the upload and `CheckIn()`s it after (also for
+  a new file born checked out) — the same contract as the pad's
+  export, sharing `isCheckedOut` / `isCheckedOutByCurrentUser` from
+  sp-files.js so the two cannot drift.
 
 **Tier 2 refinement pass (same day, Joe's feedback on the first cut):**
 

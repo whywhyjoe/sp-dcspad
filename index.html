@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DCSPad — SharePoint Developer Workbench</title>
-<link rel="stylesheet" href="styles/app.css?v=21">
+<link rel="stylesheet" href="styles/app.css?v=22">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⌘</text></svg>">
 </head>
 <body>
@@ -460,6 +460,13 @@
       <input id="sp-metadata-doc-version" type="text" maxlength="255" autocomplete="off" spellcheck="false" disabled>
       <span id="sp-metadata-doc-version-hint" class="sp-metadata-field__hint"></span>
     </label>
+    <div id="sp-metadata-checkout" class="sp-metadata-consent" hidden>
+      <label class="sp-metadata-consent__row" for="sp-metadata-checkout-input">
+        <input id="sp-metadata-checkout-input" type="checkbox">
+        <span id="sp-metadata-checkout-label" class="sp-metadata-consent__label"></span>
+      </label>
+      <span id="sp-metadata-checkout-hint" class="sp-metadata-field__hint"></span>
+    </div>
     <div id="sp-metadata-error" class="sp-files-error" role="alert" hidden></div>
     <div class="app-dialog__actions sp-metadata-actions">
       <button id="sp-metadata-cancel" class="btn btn-ghost" type="button">Cancel</button>
@@ -477,6 +484,6 @@
 <input type="file" id="import-snippets-file" accept=".json,application/json" hidden>
 <input type="file" id="import-catalog-file" accept=".json,application/json" hidden>
 
-<script type="module" src="src/main.js?v=25"></script>
+<script type="module" src="src/main.js?v=27"></script>
 </body>
 </html>
