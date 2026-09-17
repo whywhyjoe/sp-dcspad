@@ -46,6 +46,14 @@ export async function responseMessage(response) {
   }
 }
 
+// SharePoint's refusal of a write to a file that is not checked out (or is
+// held by someone else) arrives as a 403/409/423 whose only distinguishing
+// mark is its message, so that is what is matched.
+function isCheckoutRefusal(detail) {
+  return /SPFileCheckOutException|-2147018029|must be checked out|checked out for editing|currently checked out/i
+    .test(String(detail || ''));
+}
+
 export async function requireOk(response, fallback, code) {
   if (response.ok) return response;
   const detail = await responseMessage(response);
@@ -59,6 +67,9 @@ export async function requireOk(response, fallback, code) {
     message = detail
       || 'SharePoint could not authenticate this request. Reload the page to sign in again.';
     normalizedCode = 'auth';
+  } else if ([403, 409, 423].includes(response.status) && isCheckoutRefusal(detail)) {
+    message = detail || 'This file must be checked out before it can be changed.';
+    normalizedCode = 'checkout-required';
   } else if (response.status === 403) {
     message = detail
       || 'SharePoint denied this request. Check library permissions and try again.';

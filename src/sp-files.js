@@ -312,9 +312,12 @@ export function createSpFilesClient({
   }
 
   // Check-out policy of the destination library, plus the destination file's
-  // current check-out state when that policy forces one. Never throws: a
-  // failed probe reports known:false and leaves SharePoint the authority, so
-  // an unrelated probe failure cannot cost the operator their export.
+  // current check-out state. The file state is read whether or not the
+  // library forces a check-out: a file held by someone else refuses the write
+  // in any library, and one the operator holds stays checked out after it.
+  // Never throws: a failed probe reports known:false and leaves SharePoint the
+  // authority, so an unrelated probe failure cannot cost the operator their
+  // export.
   async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx }) {
     const state = {
       required: false,
@@ -337,7 +340,7 @@ export function createSpFilesClient({
       const list = unwrapJson(await policyResponse.json()) || {};
       state.required = Boolean(list.ForceCheckout ?? list.forceCheckout);
       state.known = true;
-      if (!state.required || !filePath) return state;
+      if (!filePath) return state;
 
       const path = checkedPath(filePath, rootPath);
       const fileResponse = await request(
@@ -370,14 +373,12 @@ export function createSpFilesClient({
     return state;
   }
 
-  // Check a file out ahead of an overwrite. Required by libraries that set
-  // ForceCheckout; SharePoint checks the file back in as part of the
-  // overwriting upload, so there is no matching check-in call here.
-  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
+  // The three check-out verbs share one shape: a digest-bearing POST to a
+  // method on the file, with the same 403 force-refresh retry as every other
+  // write here.
+  async function postFileMethod(webUrl, path, method, fallback, code) {
     const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
-      + `decodedUrl='${odataPathLiteral(path)}')/CheckOut()`;
+      + `decodedUrl='${odataPathLiteral(path)}')/${method}`;
     const attempt = async (forceDigest) => {
       const digest = await getDigest({ force: forceDigest, webUrl });
       return request(endpoint, {
@@ -387,7 +388,66 @@ export function createSpFilesClient({
     };
     let response = await attempt(false);
     if (response.status === 403) response = await attempt(true);
-    await requireOk(response, 'Could not check out the SharePoint file', 'checkout');
+    await requireOk(response, fallback, code);
+  }
+
+  // Check a file out ahead of an overwrite. Required by libraries that set
+  // ForceCheckout. The overwriting upload does not end the check-out — see
+  // checkInFile(), which the caller runs once the file and its metadata land.
+  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl, path, 'CheckOut()', 'Could not check out the SharePoint file', 'checkout',
+    );
+    return { serverRelativeUrl: path };
+  }
+
+  // Check a file back in, but only if SharePoint still reports it checked out.
+  // Whether an overwriting upload leaves the check-out standing is the
+  // server's business (and a new file in a ForceCheckout library is born
+  // checked out), so the state is read rather than assumed: CheckIn() on a
+  // file that is not checked out is an error, and skipping it on one that is
+  // leaves the operator's work invisible to everyone else.
+  async function checkInFile(
+    serverRelativePath,
+    { comment = '', checkInType = 0, webUrl: targetWebUrl = '' } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const stateResponse = await request(
+      `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType`,
+      { headers: { Accept: ACCEPT_JSON } },
+    );
+    await requireOk(
+      stateResponse, 'Could not read the file check-out state', 'checkout-state',
+    );
+    const file = unwrapJson(await stateResponse.json()) || {};
+    if (!isCheckedOut(file.CheckOutType ?? file.checkOutType)) {
+      return { serverRelativeUrl: path, checkedIn: false };
+    }
+    // SP.CheckinType: 0 = minor, 1 = major, 2 = overwrite.
+    const type = [0, 1, 2].includes(Number(checkInType)) ? Number(checkInType) : 0;
+    const safeComment = String(comment || '').slice(0, 1023);
+    await postFileMethod(
+      webUrl,
+      path,
+      `CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=${type})`,
+      'Could not check in the SharePoint file',
+      'checkin',
+    );
+    return { serverRelativeUrl: path, checkedIn: true };
+  }
+
+  // Discard a check-out. SharePoint reverts the file to its last checked-in
+  // version, so this is only offered before anything has been uploaded.
+  async function undoCheckOutFile(serverRelativePath, { webUrl: targetWebUrl = '' } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl, path, 'UndoCheckOut()', 'Could not discard the check-out', 'checkout-undo',
+    );
     return { serverRelativeUrl: path };
   }
 
@@ -633,6 +693,8 @@ export function createSpFilesClient({
     listFolder,
     readTextFile,
     checkOutFile,
+    checkInFile,
+    undoCheckOutFile,
     inspectFileMetadata,
     writeFileMetadata,
     writeTextFile,
@@ -647,6 +709,9 @@ export const getDigest = (options) => defaultClient.getDigest(options);
 export const listFolder = (path, options) => defaultClient.listFolder(path, options);
 export const readTextFile = (path, options) => defaultClient.readTextFile(path, options);
 export const checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
+export const checkInFile = (path, options) => defaultClient.checkInFile(path, options);
+export const undoCheckOutFile = (path, options) =>
+  defaultClient.undoCheckOutFile(path, options);
 export const inspectFileMetadata = (folder, options) =>
   defaultClient.inspectFileMetadata(folder, options);
 export const writeFileMetadata = (path, fields, values, options) =>

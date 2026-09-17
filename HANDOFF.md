@@ -239,10 +239,20 @@ inspector, REPL and network capture all work inside the web part; a live
   disk import stays HTML/CSS/JS).
   Libraries that set **ForceCheckout** are probed as part of the destination
   inspection: overwriting one is gated behind a consent checkbox at the foot
-  of the metadata dialog, and consenting makes the pad `CheckOut()` the file
-  before the upload (SharePoint checks it back in as part of the overwrite).
-  A file held by another user is stated and refused rather than offered the
-  box; one you already hold is overwritten without a second check-out.
+  of the metadata dialog, and consenting makes the pad `CheckOut()` the file,
+  upload, write metadata, then `CheckIn()` — the check-in reads the file's
+  state first and only posts when SharePoint still reports it checked out, so
+  it is correct whether or not the tenant's overwrite ends the check-out.
+  A file held by another user is stated and refused (in any library) rather
+  than offered the box; one you already hold is overwritten without a second
+  check-out and checked in; a new file born checked out is checked in. Every
+  stage is resumable: an upload failure after the pad's own check-out offers
+  **Discard check-out** (`UndoCheckOut`, safe because nothing was uploaded), a
+  failed check-in offers **Retry check-in** / **Leave checked out**, and a
+  write SharePoint refuses with a check-out error the probe missed
+  (`checkout-required` in sp-odata.js) reveals the same consent for the retry.
+  This lifecycle first shipped to the work prod tenant from an uncommitted
+  tree (bundle stamp `47edb5d4-dirty`); it was merged here with the gate.
   See `plans/file-sp-import-export.md`, which is now an implementation record.
 - Framework rows use drag-and-drop ordering without up/down controls; snippets
   are always displayed alphabetically regardless of file type.
@@ -293,8 +303,9 @@ concurrent debugging on main):
   breadcrumbs + library picker, download via `download.aspx`, upload with
   overwrite consent (pre-flight and 409-race), post-upload metadata panel
   with keep-without-metadata / retry-that-never-reuploads. A library with
-  **ForceCheckout** puts a consent checkbox on that overwrite bar and
-  `CheckOut()`s the file before the upload — the same contract as the pad's
+  **ForceCheckout** puts a consent checkbox on that overwrite bar,
+  `CheckOut()`s the file before the upload and `CheckIn()`s it after (also for
+  a new file born checked out) — the same contract as the pad's
   export, sharing `isCheckedOut` / `isCheckedOutByCurrentUser` from
   sp-files.js so the two cannot drift.
 

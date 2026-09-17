@@ -243,8 +243,15 @@ const uploads = [];        // { url, digest, bodyLength }
 const vuliCalls = [];      // { url, digest, body }
 const prefillUrls = [];
 const libraryLookups = [];
-const flags = { failMetadata: false, racyConflictOnce: true, forceCheckout: false };
+const flags = {
+  failMetadata: false, racyConflictOnce: true, forceCheckout: false, bornCheckedOut: false,
+};
 const checkOuts = [];      // { url, digest, order }
+const checkIns = [];       // { url, digest, order }
+// The stub keeps SharePoint's side of the bargain: a check-out stands — across
+// the overwrite too — until CheckIn() releases it.
+const STUB_HOLDER = { Id: 7, Title: 'Stub User', LoginName: 'i:0#.f|membership|stub@x' };
+let freshFileCheckOutType = 2;
 let callSeq = 0;           // orders a check-out against the upload it precedes
 
 const LIVE_FILES = [
@@ -303,9 +310,14 @@ await live.route('**/_api/**', async (route) => {
         json: { 'odata.error': { message: { value: 'The file already exists.' } } },
       });
     }
-    const name = /AddUsingPath\(decodedUrl='([^']*)'/.exec(url)?.[1] || 'file';
+    const name = decodeURIComponent(/AddUsingPath\(decodedUrl='([^']*)'/.exec(url)?.[1] || 'file');
+    let checkOutType = name === 'proposal.docx' ? LIVE_FILES[0].CheckOutType : 2;
+    if (flags.bornCheckedOut && url.includes('overwrite=false')) {
+      freshFileCheckOutType = 0;
+      checkOutType = 0;
+    }
     return route.fulfill({
-      json: { ServerRelativeUrl: `/Shared Documents/${decodeURIComponent(name)}` },
+      json: { ServerRelativeUrl: `/Shared Documents/${name}`, CheckOutType: checkOutType },
     });
   }
   if (url.includes('/CheckOut()')) {
@@ -314,6 +326,22 @@ await live.route('**/_api/**', async (route) => {
       digest: request.headers()['x-requestdigest'] || '',
       order: ++callSeq,
     });
+    LIVE_FILES[0].CheckOutType = 0;
+    LIVE_FILES[0].CheckedOutByUser = STUB_HOLDER;
+    return route.fulfill({ json: {} });
+  }
+  if (url.includes('/CheckIn(')) {
+    checkIns.push({
+      url,
+      digest: request.headers()['x-requestdigest'] || '',
+      order: ++callSeq,
+    });
+    if (url.includes('proposal.docx')) {
+      LIVE_FILES[0].CheckOutType = 2;
+      delete LIVE_FILES[0].CheckedOutByUser;
+    } else {
+      freshFileCheckOutType = 2;
+    }
     return route.fulfill({ json: {} });
   }
   if (/lists\(guid'/i.test(url)
@@ -322,7 +350,9 @@ await live.route('**/_api/**', async (route) => {
   }
   if (url.includes('GetFileByServerRelativePath(')
       && (new URL(url).searchParams.get('$select') || '').includes('CheckOutType')) {
-    return route.fulfill({ json: LIVE_FILES[0] });
+    return route.fulfill({
+      json: url.includes('proposal.docx') ? LIVE_FILES[0] : { CheckOutType: freshFileCheckOutType },
+    });
   }
   if (url.includes('/ValidateUpdateListItem')) {
     const body = JSON.parse(request.postData() || '{}');
@@ -520,7 +550,7 @@ await check('live: a 409 race re-consents and the retry keeps the typed values',
 
 // ---- forced check-out ------------------------------------------------------
 // Same contract as the pad's export: replacing a file in a ForceCheckout
-// library is consented to, then checked out, then uploaded.
+// library is consented to, then checked out, uploaded, and checked back in.
 flags.forceCheckout = true;
 
 await check('live: a forced-check-out library gates Replace behind a consent box', async () => {
@@ -553,6 +583,16 @@ await check('live: consenting checks the file out before the overwrite upload', 
     && checkOuts[0].digest === 'WB-DIGEST'
     && checkOuts[0].order < replaced.order
     && replaced.url.includes('overwrite=true');
+});
+
+await check('live: the replaced file is checked back in after the upload', async () => {
+  const replaced = uploads[uploads.length - 1];
+  return checkIns.length === 1
+    && decodeURIComponent(checkIns[0].url).includes("decodedUrl='/Shared Documents/proposal.docx'")
+    && /checkintype=0/i.test(checkIns[0].url)
+    && checkIns[0].digest === 'WB-DIGEST'
+    && checkIns[0].order > replaced.order
+    && LIVE_FILES[0].CheckOutType === 2;
 });
 
 await check('live: a file checked out to someone else is refused, not consented to', async () => {
@@ -589,9 +629,34 @@ await check('live: a file you already hold is replaced without a second check-ou
   await live.waitForSelector('.wb-upload-metadata');
   await live.locator('.wb-upload-meta-go').click();
   const landed = await until(() => uploads.length > before);
+  await live.waitForFunction(() =>
+    document.querySelector('.wb-consent')?.textContent.includes('Checked in.'));
+  await live.locator('.wb-consent .btn', { hasText: 'Dismiss' }).click();
   return landed
     && gateText.includes('already checked out to you')
-    && checkOuts.length === 1;   // no second CheckOut()
+    && checkOuts.length === 1    // no second CheckOut()
+    && checkIns.length === 2     // but it is checked back in
+    && LIVE_FILES[0].CheckOutType === 2;
+});
+
+await check('live: a new file born checked out is checked in, with no CheckOut call', async () => {
+  flags.bornCheckedOut = true;
+  const before = checkIns.length;
+  await live.setInputFiles('.wb-view-files input[type=file]', {
+    name: 'fresh-checkout.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('n1'),
+  });
+  await live.waitForSelector('.wb-upload-metadata');
+  await live.locator('.wb-upload-meta-go').click();
+  // A dismissed notice keeps its text, so wait on this file's own notice.
+  await live.waitForFunction(() => {
+    const text = document.querySelector('.wb-consent')?.textContent || '';
+    return text.includes('fresh-checkout.bin') && text.includes('Checked in.');
+  });
+  flags.bornCheckedOut = false;
+  return checkIns.length === before + 1
+    && decodeURIComponent(checkIns.at(-1).url).includes('fresh-checkout.bin')
+    && checkOuts.length === 1
+    && freshFileCheckOutType === 2;
 });
 
 await live.close();

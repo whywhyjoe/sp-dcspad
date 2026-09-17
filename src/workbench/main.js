@@ -16,7 +16,7 @@ import { createSiteHomeView } from './views/site-home.js';
 import { createLinksView } from './views/links.js';
 import { createQueryView } from './views/query.js?v=2';
 import { createPagesView } from './views/pages.js?v=2';
-import { createBrowserView } from './views/browser.js?v=2';
+import { createBrowserView } from './views/browser.js?v=3';
 import {
   getFavorites, getRecents, isFavorite, addFavorite, removeFavorite,
   pushRecent, onQuotaError,

@@ -440,12 +440,13 @@ export function createBrowserView({ client, navigate }) {
     await runUpload(file, { overwrite: false, folderPath });
   }
 
-  // ---- forced check-out ----------------------------------------------------
+  // ---- check-out -----------------------------------------------------------
   // A library with ForceCheckout refuses a write to a file that is not
-  // checked out, so replacing one there is two acts: the check-out, then the
-  // upload that SharePoint checks back in. Checking a file out changes what
-  // everyone else in the library sees, so it is consented to, never implied
-  // by the Replace button — the same contract as the pad's export dialog.
+  // checked out, so replacing one there is three acts: the check-out, the
+  // upload, and the check-in that makes it visible. Checking a file out
+  // changes what everyone else in the library sees, so it is consented to,
+  // never implied by the Replace button — the same contract as the pad's
+  // export dialog.
   // Deliberately uncached: it costs one GET per replace-consent (a rare,
   // already-interactive moment), and a policy someone flipped mid-session
   // must not be answered from a stale yes/no.
@@ -479,7 +480,8 @@ export function createBrowserView({ client, navigate }) {
     };
     try {
       state.required = await libraryForcesCheckout(folderPath);
-      if (!state.required) return state;
+      // Read in any library: a file someone else holds refuses the write
+      // whatever the policy, and one the operator holds needs checking in.
       const { checkedOut, user } = await readCheckOut(`${folderPath}/${fileName}`, existing);
       state.checkedOut = checkedOut;
       if (!checkedOut) return state;
@@ -504,10 +506,12 @@ export function createBrowserView({ client, navigate }) {
       return;
     }
     let gate = '';
-    if (checkout.required) {
-      gate = checkout.checkedOutByCurrentUser
-        ? `This library requires check-out — “${file.name}” is already checked out to you.`
-        : `This library requires check-out — check “${file.name}” out before replacing it.`;
+    if (checkout.checkedOutByCurrentUser) {
+      gate = `${checkout.required ? 'This library requires check-out — ' : ''}`
+        + `“${file.name}” is already checked out to you. Replace it and check it back in.`;
+    } else if (checkout.required) {
+      gate = `This library requires check-out — check “${file.name}” out before replacing it, `
+        + 'then back in.';
     }
     showConsent(
       `“${file.name}” already exists in this folder. Replace it?`,
@@ -554,14 +558,45 @@ export function createBrowserView({ client, navigate }) {
       uploadNotice(`Could not read the file: ${err?.message || err}`, true);
       return;
     }
+    let uploaded = null;
+    let checkedOutHere = false;
     const bareUpload = async () => {
       if (overwrite && checkout?.required && !checkout.checkedOutByCurrentUser) {
         await spWrite.checkOutFile(`${folderPath}/${file.name}`);
         // The file is ours now: a retry must not check it out a second time,
         // which SharePoint rejects.
         checkout.checkedOutByCurrentUser = true;
+        checkedOutHere = true;
       }
-      return spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+      uploaded = await spWrite.uploadFile(folderPath, file.name, data, { overwrite });
+      return uploaded;
+    };
+    // Runs once the file (and any metadata) has landed. A check-out made or
+    // already held here is released, and so is the one SharePoint puts on a
+    // new file in a ForceCheckout library — the upload response says so.
+    const settle = async (message) => {
+      const held = checkout?.checkedOutByCurrentUser || isCheckedOut(uploaded?.checkOutType);
+      if (!held) return finishUpload(file, folderPath, message);
+      try {
+        const { checkedIn } = await spWrite.checkInFile(
+          `${folderPath}/${file.name}`, { comment: 'Uploaded from SP Workbench' },
+        );
+        return finishUpload(file, folderPath, checkedIn ? `${message} Checked in.` : message);
+      } catch (err) {
+        return finishUpload(
+          file,
+          folderPath,
+          `${message} It could not be checked in and is still checked out to you: `
+            + `${err?.message || err}`,
+          true,
+        );
+      }
+    };
+    const fail = (err, carried) => {
+      if (checkedOutHere && !uploaded) {
+        err.message = `${err?.message || err} The file is still checked out to you.`;
+      }
+      handleUploadError(err, file, folderPath, overwrite, carried);
     };
     const states = await uploadMetadataStates(folderPath);
 
@@ -569,9 +604,9 @@ export function createBrowserView({ client, navigate }) {
       uploadNotice(`Uploading “${file.name}”…`);
       try {
         await bareUpload();
-        await finishUpload(file, folderPath, `Uploaded “${file.name}” ✓`);
+        await settle(`Uploaded “${file.name}” ✓`);
       } catch (err) {
-        handleUploadError(err, file, folderPath, overwrite, null);
+        fail(err, null);
       }
       return;
     }
@@ -608,17 +643,17 @@ export function createBrowserView({ client, navigate }) {
         },
       });
       if (outcome === 'cancelled') return;
-      await finishUpload(file, folderPath, outcome === 'saved'
+      await settle(outcome === 'saved'
         ? `Uploaded “${file.name}” ✓`
         : `Uploaded “${file.name}” ✓ (kept without metadata)`);
     } catch (err) {
-      handleUploadError(err, file, folderPath, overwrite, err?.uploadMetadataValues || null);
+      fail(err, err?.uploadMetadataValues || null);
     }
   }
 
-  async function finishUpload(file, folderPath, message) {
+  async function finishUpload(file, folderPath, message, isError = false) {
     if (currentPath === folderPath) await listFolder(folderPath, { force: true });
-    uploadNotice(message);
+    uploadNotice(message, isError);
   }
 
   function handleUploadError(err, file, folderPath, overwrite, carriedValues) {
