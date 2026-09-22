@@ -502,8 +502,11 @@ leftovers to delete by hand.
 - SPUtils ⇄ Workbench document round-trip, both directions: `SPUtils.getListSchema`
   → New from schema… → created (13/13 columns, internal names intact), and a
   Workbench v2 export → `SPUtils.createListFromSchema` → created (13 columns, no
-  failures). Note when driving SPUtils from a modern page: hide `define.amd`
-  across the pnp2 bundle load or `window.pnp2` is never set.
+  failures). Note for AUTOMATION only: a harness that injects the pnp2 bundle
+  late (evaluating its text, or a createElement('script')) must hide
+  `define.amd` across that load or `window.pnp2` is never set. A literal
+  `<script src>` in Script Editor markup — the normal way SPUtils is used on a
+  page — is early enough and needs nothing (verified on SPutils.aspx).
 
 **Still open:** the 429 path (cannot be forced on demand — left unproven).
 
