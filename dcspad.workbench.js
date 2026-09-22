@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "160" : "dev";
-var injectedRevision = true ? "2f7b5800" : "";
+var injectedBuild = true ? "166" : "dev";
+var injectedRevision = true ? "3a7d6e39" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -434,6 +434,858 @@ function createSpRestClient({
   return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
 }
 
+// ../src/io.js?v=2
+var MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+function saveBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1e3);
+}
+function downloadText(filename, text, type = "application/json") {
+  saveBlob(filename, new Blob([text], { type }));
+}
+function downloadBytes(filename, bytes, type = "application/octet-stream") {
+  saveBlob(filename, new Blob([bytes], { type }));
+}
+var BUILT_IN_SHAREPOINT_FILE_TYPES = Object.freeze([
+  Object.freeze({
+    id: "html",
+    label: "HTML",
+    extensions: Object.freeze(["html", "htm"]),
+    pane: "html",
+    defaultExtension: "html"
+  }),
+  Object.freeze({
+    id: "css",
+    label: "CSS",
+    extensions: Object.freeze(["css"]),
+    pane: "css",
+    defaultExtension: "css"
+  }),
+  Object.freeze({
+    id: "javascript",
+    label: "JavaScript",
+    extensions: Object.freeze(["js"]),
+    pane: "js",
+    defaultExtension: "js"
+  })
+]);
+function sharePointFileTypes(additionalTypes = []) {
+  const usedExtensions = new Set(
+    BUILT_IN_SHAREPOINT_FILE_TYPES.flatMap((type) => type.extensions)
+  );
+  const types = [...BUILT_IN_SHAREPOINT_FILE_TYPES];
+  for (const [index, raw] of additionalTypes.entries()) {
+    if (!raw || typeof raw !== "object") continue;
+    const extensions = (Array.isArray(raw.extensions) ? raw.extensions : []).map((extension) => String(extension || "").trim().replace(/^\./, "").toLowerCase()).filter((extension) => extension && !usedExtensions.has(extension));
+    if (!extensions.length || !["html", "css", "js"].includes(raw.pane)) continue;
+    for (const extension of extensions) usedExtensions.add(extension);
+    types.push(Object.freeze({
+      id: `additional-${index}-${extensions[0]}`,
+      label: String(raw.label || "").trim() || extensions[0].toUpperCase(),
+      extensions: Object.freeze(extensions),
+      pane: raw.pane,
+      defaultExtension: extensions[0]
+    }));
+  }
+  return types;
+}
+function fileTypeForFileName(fileName, additionalTypes = []) {
+  const match = /\.([^.]+)$/i.exec(String(fileName || "").trim());
+  const extension = match?.[1]?.toLowerCase();
+  if (!extension) return null;
+  return sharePointFileTypes(additionalTypes).find((type) => type.extensions.includes(extension)) || null;
+}
+
+// ../src/sp-files.js
+var DIGEST_SAFETY_MS = 6e4;
+var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+var CHECK_IN_COMMENT = "Saved from DCSPad";
+var CHECK_OUT_TYPE_NONE = 2;
+function isCheckedOut(checkOutType) {
+  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
+  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
+}
+function isCheckedOutByCurrentUser(user2, pageContext = {}, { sameWeb = true } = {}) {
+  if (!user2) return false;
+  const login = String(pageContext?.userLoginName || "").trim().toLowerCase();
+  const claim = String(user2.LoginName || "").trim().toLowerCase();
+  if (login && claim && (login === claim || claim.endsWith(`|${login}`) || login.endsWith(`|${claim}`))) {
+    return true;
+  }
+  const email = String(pageContext?.userEmail || "").trim().toLowerCase();
+  const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
+  if (email && userEmail) return email === userEmail;
+  const id = Number(pageContext?.userId);
+  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user2.Id);
+  return false;
+}
+var FILE_METADATA_SPECS = Object.freeze([
+  { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
+  { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
+  { key: "docVersion", label: "DocVersion", internalName: "DocVersion", types: ["Text"] }
+]);
+function normalizedPath(value) {
+  let path = String(value || "").trim().replaceAll("\\", "/");
+  if (!path.startsWith("/")) path = `/${path}`;
+  path = path.replace(/\/{2,}/g, "/");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
+  return path;
+}
+function pathFromWebUrl(webUrl) {
+  try {
+    return normalizedPath(decodeURIComponent(new URL(webUrl).pathname));
+  } catch {
+    return "/";
+  }
+}
+function browserTypeForFileName(fileName) {
+  const name = String(fileName || "");
+  if (/\.html?$/i.test(name)) return "html";
+  if (/\.(?:md|markdown)$/i.test(name)) return "markdown";
+  if (/\.css$/i.test(name)) return "css";
+  if (/\.js$/i.test(name)) return "javascript";
+  if (/\.json$/i.test(name)) return "json";
+  if (/\.csv$/i.test(name)) return "csv";
+  if (/\.txt$/i.test(name)) return "text";
+  return "";
+}
+function createSpFilesClient({
+  fetchImpl = (...args) => fetch(...args),
+  getContext = getSpContext
+} = {}) {
+  const digestCache = /* @__PURE__ */ new Map();
+  function context({ refresh = false } = {}) {
+    const ctx2 = getContext({ refresh });
+    if (!ctx2?.live || !ctx2.pageContext?.webAbsoluteUrl) {
+      throw new SpFileError(
+        "SharePoint file transfer requires an SP: Live context.",
+        { code: "not-live" }
+      );
+    }
+    return ctx2;
+  }
+  function webInfo(targetWebUrl = "") {
+    const ctx2 = context({ refresh: true });
+    const hostWebUrl = ctx2.pageContext.webAbsoluteUrl.replace(/\/+$/, "");
+    let webUrl = hostWebUrl;
+    if (targetWebUrl) {
+      try {
+        const candidate = new URL(String(targetWebUrl).trim(), hostWebUrl);
+        if (!/^https?:$/.test(candidate.protocol) || candidate.origin !== new URL(hostWebUrl).origin) {
+          throw new Error("origin");
+        }
+        candidate.hash = "";
+        candidate.search = "";
+        webUrl = candidate.href.replace(/\/+$/, "");
+      } catch {
+        throw new SpFileError(
+          "Enter a SharePoint site URL on this tenant, such as /sites/ProjectName.",
+          { code: "invalid-web-url" }
+        );
+      }
+    }
+    const rootPath = normalizedPath(
+      webUrl === hostWebUrl && ctx2.pageContext.webServerRelativeUrl ? ctx2.pageContext.webServerRelativeUrl : pathFromWebUrl(webUrl)
+    );
+    return { ctx: ctx2, webUrl, rootPath, hostWebUrl };
+  }
+  function checkedPath(path, rootPath) {
+    const normalized = normalizedPath(path || rootPath);
+    if (rootPath !== "/" && normalized !== rootPath && !normalized.startsWith(`${rootPath}/`)) {
+      throw new SpFileError(
+        "That path is outside the current SharePoint web.",
+        { code: "outside-web" }
+      );
+    }
+    return normalized;
+  }
+  async function request(url, options = {}) {
+    try {
+      return await fetchImpl(url, {
+        credentials: "same-origin",
+        ...options
+      });
+    } catch (cause) {
+      throw new SpFileError(
+        `Could not reach SharePoint (${cause.message || cause}).`,
+        { code: "network", cause }
+      );
+    }
+  }
+  async function fetchContextInfo(targetWebUrl = "") {
+    const requested = webInfo(targetWebUrl);
+    const { webUrl } = requested;
+    const response = await request(`${webUrl}/_api/contextinfo`, {
+      method: "POST",
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(response, "Could not obtain SharePoint request context", "context");
+    const info = unwrapJson(await response.json()) || {};
+    const value = info.FormDigestValue || info.formDigestValue;
+    if (!value) {
+      throw new SpFileError(
+        "SharePoint contextinfo did not return a request digest.",
+        { code: "context" }
+      );
+    }
+    const timeoutSeconds = Number(info.FormDigestTimeoutSeconds || info.formDigestTimeoutSeconds) || 1800;
+    const canonicalWebUrl = webInfo(
+      info.WebFullUrl || info.webFullUrl || webUrl
+    ).webUrl;
+    const cached2 = {
+      value,
+      expiresAt: Date.now() + timeoutSeconds * 1e3,
+      webFullUrl: canonicalWebUrl,
+      siteFullUrl: info.SiteFullUrl || info.siteFullUrl || ""
+    };
+    digestCache.set(webUrl.toLowerCase(), cached2);
+    digestCache.set(canonicalWebUrl.toLowerCase(), cached2);
+    return {
+      ...cached2,
+      webUrl: canonicalWebUrl,
+      rootPath: pathFromWebUrl(canonicalWebUrl)
+    };
+  }
+  async function connectWeb(targetWebUrl = "") {
+    const info = await fetchContextInfo(targetWebUrl);
+    return {
+      webUrl: info.webUrl,
+      rootPath: info.rootPath,
+      siteFullUrl: info.siteFullUrl
+    };
+  }
+  async function getDigest2({ force = false, webUrl: targetWebUrl = "" } = {}) {
+    const target = webInfo(targetWebUrl);
+    const cacheKey = target.webUrl.toLowerCase();
+    const cached2 = digestCache.get(cacheKey);
+    if (!force && cached2?.expiresAt - DIGEST_SAFETY_MS > Date.now()) {
+      return cached2.value;
+    }
+    if (!force && !cached2 && target.webUrl === target.hostWebUrl) {
+      const ctx2 = context({ refresh: true });
+      const value = ctx2.pageContext.formDigestValue;
+      const timeoutSeconds = Number(ctx2.pageContext.formDigestTimeoutSeconds) || 0;
+      if (value && !ctx2.pageContext.isDcsPadMock && timeoutSeconds > 0) {
+        const pageDigest = {
+          value,
+          expiresAt: (ctx2.capturedAt || Date.now()) + timeoutSeconds * 1e3,
+          webFullUrl: ctx2.pageContext.webAbsoluteUrl,
+          siteFullUrl: ctx2.pageContext.siteAbsoluteUrl || ""
+        };
+        digestCache.set(cacheKey, pageDigest);
+        if (pageDigest.expiresAt - DIGEST_SAFETY_MS > Date.now()) return value;
+      }
+    }
+    return (await fetchContextInfo(target.webUrl)).value;
+  }
+  async function listFolder(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code", additionalTypes = [] } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/Length,Files/TimeLastModified&$expand=Folders,Files`;
+    const response = await request(endpoint, {
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(response, "Could not list the SharePoint folder", "list");
+    const data = unwrapJson(await response.json()) || {};
+    const folders = resultArray(data.Folders).map((item2) => ({
+      kind: "folder",
+      name: String(item2.Name || ""),
+      serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath)
+    })).filter((item2) => item2.name).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    const files = resultArray(data.Files).map((item2) => {
+      const fileType = fileTypeForFileName(item2.Name, additionalTypes);
+      return {
+        kind: "file",
+        name: String(item2.Name || ""),
+        pane: fileType?.pane || "",
+        fileType,
+        browserType: browserTypeForFileName(item2.Name),
+        serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath),
+        length: Number(item2.Length) || 0,
+        modified: item2.TimeLastModified || ""
+      };
+    }).filter((item2) => item2.name && (purpose === "browser" ? item2.browserType : item2.fileType)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
+    return {
+      path: checkedPath(data.ServerRelativeUrl || path, rootPath),
+      rootPath,
+      folders,
+      files
+    };
+  }
+  async function readTextFile(serverRelativePath, { webUrl: targetWebUrl = "", additionalTypes = [] } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const fileType = fileTypeForFileName(path, additionalTypes);
+    if (!fileType) {
+      throw new SpFileError(
+        "That file type is not supported for SharePoint import.",
+        { code: "unsupported-file" }
+      );
+    }
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/$value`;
+    const response = await request(endpoint);
+    await requireOk(response, "Could not download the SharePoint file", "read");
+    const length = Number(response.headers.get("content-length")) || 0;
+    if (length > MAX_IMPORT_BYTES) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the 5 MB import limit.",
+        { code: "too-large" }
+      );
+    }
+    const text = await response.text();
+    if (new Blob([text]).size > MAX_IMPORT_BYTES) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the 5 MB import limit.",
+        { code: "too-large" }
+      );
+    }
+    return {
+      fileName: path.slice(path.lastIndexOf("/") + 1),
+      pane: fileType.pane,
+      fileType,
+      text,
+      serverRelativeUrl: path
+    };
+  }
+  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx: ctx2 }) {
+    const state2 = {
+      required: false,
+      known: false,
+      checkedOut: false,
+      checkedOutByCurrentUser: false,
+      checkedOutBy: "",
+      reason: ""
+    };
+    try {
+      const policyResponse = await request(
+        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        policyResponse,
+        "Could not read the destination library check-out policy",
+        "checkout-policy"
+      );
+      const list2 = unwrapJson(await policyResponse.json()) || {};
+      state2.required = Boolean(list2.ForceCheckout ?? list2.forceCheckout);
+      state2.known = true;
+      if (!filePath) return state2;
+      const path = checkedPath(filePath, rootPath);
+      const fileResponse = await request(
+        `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email&$expand=CheckedOutByUser`,
+        { headers: { Accept: ACCEPT_JSON } }
+      );
+      await requireOk(
+        fileResponse,
+        "Could not read the destination file check-out state",
+        "checkout-state"
+      );
+      const file = unwrapJson(await fileResponse.json()) || {};
+      state2.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
+      if (state2.checkedOut) {
+        const user2 = file.CheckedOutByUser || file.checkedOutByUser || null;
+        state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
+        state2.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
+          user2,
+          ctx2?.pageContext,
+          { sameWeb: webUrl === hostWebUrl }
+        );
+      }
+    } catch (error) {
+      state2.known = false;
+      state2.reason = String(error?.message || error);
+    }
+    return state2;
+  }
+  async function postFileMethod(webUrl, path, method, fallback, code) {
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/${method}`;
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest2({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: { Accept: ACCEPT_JSON, "X-RequestDigest": digest }
+      });
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    await requireOk(response, fallback, code);
+  }
+  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl,
+      path,
+      "CheckOut()",
+      "Could not check out the SharePoint file",
+      "checkout"
+    );
+    return { serverRelativeUrl: path };
+  }
+  async function checkInFile(serverRelativePath, { comment = "", checkInType = 0, webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const stateResponse = await request(
+      `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType`,
+      { headers: { Accept: ACCEPT_JSON } }
+    );
+    await requireOk(
+      stateResponse,
+      "Could not read the file check-out state",
+      "checkout-state"
+    );
+    const file = unwrapJson(await stateResponse.json()) || {};
+    if (!isCheckedOut(file.CheckOutType ?? file.checkOutType)) {
+      return { serverRelativeUrl: path, checkedIn: false };
+    }
+    const type = [0, 1, 2].includes(Number(checkInType)) ? Number(checkInType) : 0;
+    const safeComment = String(comment || "").slice(0, 1023);
+    await postFileMethod(
+      webUrl,
+      path,
+      `CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=${type})`,
+      "Could not check in the SharePoint file",
+      "checkin"
+    );
+    return { serverRelativeUrl: path, checkedIn: true };
+  }
+  async function undoCheckOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    await postFileMethod(
+      webUrl,
+      path,
+      "UndoCheckOut()",
+      "Could not discard the check-out",
+      "checkout-undo"
+    );
+    return { serverRelativeUrl: path };
+  }
+  async function inspectFileMetadata(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
+    const { ctx: ctx2, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
+    const folder = checkedPath(folderPath, rootPath);
+    const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')?$select=ListItemAllFields/ParentList/Id&$expand=ListItemAllFields,ListItemAllFields/ParentList`;
+    const libraryResponse = await request(libraryEndpoint, {
+      headers: { Accept: ACCEPT_JSON }
+    });
+    const libraryData = libraryResponse.ok ? unwrapJson(await libraryResponse.json()) || {} : {};
+    let libraryId = String(
+      libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
+    ).replace(/[{}]/g, "").trim();
+    if (!LIBRARY_GUID.test(libraryId)) {
+      const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
+      const rootLibraryResponse = await request(rootLibraryEndpoint, {
+        headers: { Accept: ACCEPT_JSON }
+      });
+      await requireOk(
+        rootLibraryResponse,
+        "Could not resolve the destination SharePoint library",
+        "metadata-library"
+      );
+      const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
+      libraryId = String(rootLibraryData.Id || rootLibraryData.ID || "").replace(/[{}]/g, "").trim();
+    }
+    if (!LIBRARY_GUID.test(libraryId)) {
+      throw new SpFileError(
+        "SharePoint did not identify the destination document library.",
+        { code: "metadata-library" }
+      );
+    }
+    const checkout = await checkOutState({
+      webUrl,
+      hostWebUrl,
+      rootPath,
+      libraryId,
+      filePath,
+      ctx: ctx2
+    });
+    try {
+      return {
+        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
+        checkout
+      };
+    } catch (error) {
+      if (error && typeof error === "object") error.checkout = checkout;
+      throw error;
+    }
+  }
+  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
+    const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden`;
+    const fieldsResponse = await request(fieldsEndpoint, {
+      headers: { Accept: ACCEPT_JSON }
+    });
+    await requireOk(
+      fieldsResponse,
+      "Could not inspect the destination library metadata fields",
+      "metadata-fields"
+    );
+    const fieldsData = unwrapJson(await fieldsResponse.json()) || {};
+    const libraryFields = resultArray(fieldsData.value || fieldsData);
+    const fields = {};
+    for (const spec of FILE_METADATA_SPECS) {
+      const match = libraryFields.find((field2) => String(field2.InternalName || "").toLowerCase() === spec.internalName.toLowerCase());
+      let reason = "";
+      if (!match) reason = `${spec.internalName} is not available in this library.`;
+      else if (match.ReadOnlyField) reason = `${spec.internalName} is read-only.`;
+      else if (match.Hidden) reason = `${spec.internalName} is hidden in this library.`;
+      else if (!spec.types.includes(String(match.TypeAsString || ""))) {
+        reason = `${spec.internalName} is not a supported text field.`;
+      }
+      fields[spec.key] = {
+        label: spec.label,
+        internalName: match?.InternalName || spec.internalName,
+        entityPropertyName: match?.EntityPropertyName || match?.InternalName || spec.internalName,
+        available: !reason,
+        reason,
+        value: ""
+      };
+    }
+    if (filePath) {
+      const path = checkedPath(filePath, rootPath);
+      const selected = Object.values(fields).filter((field2) => field2.available).map((field2) => field2.entityPropertyName);
+      if (selected.length) {
+        const valuesEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields?$select=${selected.map(encodeURIComponent).join(",")}`;
+        const valuesResponse = await request(valuesEndpoint, {
+          headers: { Accept: ACCEPT_JSON }
+        });
+        await requireOk(
+          valuesResponse,
+          "Could not read the destination file metadata",
+          "metadata-read"
+        );
+        const values = unwrapJson(await valuesResponse.json()) || {};
+        for (const field2 of Object.values(fields)) {
+          if (field2.available) {
+            field2.value = String(
+              values[field2.entityPropertyName] ?? values[field2.internalName] ?? ""
+            );
+          }
+        }
+      }
+    }
+    return fields;
+  }
+  async function writeFileMetadata(serverRelativePath, fields, values, { webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const formValues = Object.entries(fields || {}).filter(([key2, field2]) => field2?.available && Object.hasOwn(values || {}, key2)).map(([key2, field2]) => ({
+      FieldName: field2.internalName,
+      FieldValue: String(values[key2] ?? "")
+    }));
+    if (!formValues.length) return { updated: [] };
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields/ValidateUpdateListItem`;
+    const update = async (forceDigest) => {
+      const digest = await getDigest2({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: ACCEPT_JSON,
+          "Content-Type": "application/json;odata=nometadata",
+          "X-RequestDigest": digest
+        },
+        // bNewDocumentUpdate makes this the tail of the upload rather than a
+        // new version — and on a checked-out file SharePoint checks it in as
+        // part of the update, recording checkInComment.
+        body: JSON.stringify({
+          formValues,
+          bNewDocumentUpdate: true,
+          checkInComment: CHECK_IN_COMMENT
+        })
+      });
+    };
+    let response = await update(false);
+    if (response.status === 403) response = await update(true);
+    await requireOk(response, "Could not save the SharePoint file metadata", "metadata-write");
+    const data = unwrapJson(await response.json()) || {};
+    const results = resultArray(data.value || data.ValidateUpdateListItem || data);
+    const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
+    if (failures.length) {
+      const detail = failures.map((result) => `${result.FieldName || "Field"}: ${result.ErrorMessage || "SharePoint rejected the value."}`).join(" ");
+      throw new SpFileError(
+        `SharePoint rejected the file metadata. ${detail}`,
+        { code: "metadata-write" }
+      );
+    }
+    return { updated: formValues.map((value) => value.FieldName) };
+  }
+  async function writeTextFile(folderPath, fileName, text, { overwrite = false, webUrl: targetWebUrl = "" } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const folder = checkedPath(folderPath, rootPath);
+    const safeName = String(fileName || "").trim();
+    if (!safeName || safeName === "." || safeName === ".." || /[\\/]/.test(safeName)) {
+      throw new SpFileError(
+        "Enter a file name without folder separators.",
+        { code: "invalid-name" }
+      );
+    }
+    const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')/Files/AddUsingPath(decodedUrl='${odataPathLiteral(safeName)}',overwrite=${overwrite ? "true" : "false"})`;
+    const upload = async (forceDigest) => {
+      const digest = await getDigest2({ force: forceDigest, webUrl });
+      return request(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: ACCEPT_JSON,
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-RequestDigest": digest
+        },
+        body: text
+      });
+    };
+    let response = await upload(false);
+    if (response.status === 403) response = await upload(true);
+    await requireOk(response, "Could not upload the SharePoint file", "write");
+    let result = {};
+    try {
+      result = unwrapJson(await response.json()) || {};
+    } catch {
+    }
+    return {
+      fileName: safeName,
+      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out. Undefined when the server doesn't say.
+      checkOutType: result.CheckOutType
+    };
+  }
+  return {
+    webInfo,
+    connectWeb,
+    getDigest: getDigest2,
+    listFolder,
+    readTextFile,
+    checkOutFile,
+    checkInFile,
+    undoCheckOutFile,
+    inspectFileMetadata,
+    writeFileMetadata,
+    writeTextFile
+  };
+}
+var defaultClient = createSpFilesClient();
+var getDigest = (options) => defaultClient.getDigest(options);
+
+// ../src/workbench/sp-write.js
+var MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+function defaultMockWriter(url, body, contentType, headers) {
+  const writes = globalThis.__DCSPAD_WB_WRITES__ ||= [];
+  writes.push({ url, body, contentType, headers });
+  const lower = String(url).toLowerCase();
+  if (lower.includes("validateupdatelistitem")) {
+    let formValues = [];
+    try {
+      formValues = JSON.parse(body)?.formValues || [];
+    } catch {
+    }
+    return {
+      value: formValues.map((fv) => ({
+        FieldName: fv.FieldName,
+        HasException: false,
+        ErrorMessage: null
+      }))
+    };
+  }
+  if (lower.includes("addusingpath")) {
+    const name = /addusingpath\(decodedurl='([^']*)'/.exec(lower)?.[1] || "file";
+    const folder = /getfolderbyserverrelativepath\(decodedurl='([^']*)'/.exec(lower)?.[1] || "";
+    return { ServerRelativeUrl: `${decodeURIComponent(folder)}/${decodeURIComponent(name)}` };
+  }
+  return { ok: true };
+}
+function createSpWriteClient({
+  client: client2,
+  // the workbench sp-rest client
+  fetchImpl = (...args) => fetch(...args),
+  mockWriter = null
+} = {}) {
+  const isMock = () => !client2.context().live;
+  async function post(url, { body, contentType = "application/json;odata=nometadata", headers = {} } = {}, {
+    fallback = "SharePoint write failed",
+    code = "write"
+  } = {}) {
+    if (isMock()) {
+      return structuredClone((mockWriter || defaultMockWriter)(url, body, contentType, headers));
+    }
+    const attempt = async (forceDigest) => {
+      const digest = await getDigest({ force: forceDigest, webUrl: client2.webUrl() });
+      try {
+        return await fetchImpl(url, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: ACCEPT_JSON,
+            "Content-Type": contentType,
+            "X-RequestDigest": digest,
+            ...headers
+          },
+          body
+        });
+      } catch (cause) {
+        throw new SpFileError(
+          `Could not reach SharePoint (${cause.message || cause}).`,
+          { code: "network", cause }
+        );
+      }
+    };
+    let response = await attempt(false);
+    if (response.status === 403) response = await attempt(true);
+    if (response.status === 429 || response.status === 503) {
+      const after = Number(response.headers.get("Retry-After")) || 2;
+      await new Promise((r) => setTimeout(r, Math.min(after, 30) * 1e3));
+      response = await attempt(false);
+    }
+    await requireOk(response, fallback, code);
+    try {
+      return unwrapJson(await response.json()) || {};
+    } catch {
+      return {};
+    }
+  }
+  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false, checkInComment = "" } = {}) {
+    if (!Array.isArray(formValues) || !formValues.length) return { updated: [] };
+    const base = `${client2.webUrl()}/_api/web`;
+    const endpoint = pathKind.fileServerRelativeUrl ? `${base}/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(pathKind.fileServerRelativeUrl)}')/ListItemAllFields/ValidateUpdateListItem` : `${base}/lists(guid'${pathKind.listId}')/items(${Number(pathKind.itemId)})/ValidateUpdateListItem`;
+    const data = await post(endpoint, {
+      // With bNewDocumentUpdate SharePoint checks a checked-out file in as
+      // part of the update; checkInComment is what it records when it does.
+      body: JSON.stringify({
+        formValues,
+        bNewDocumentUpdate: Boolean(newDocumentUpdate),
+        ...newDocumentUpdate && checkInComment ? { checkInComment } : {}
+      })
+    }, { fallback: "Could not save the item metadata", code: "metadata-write" });
+    const results = resultArray(data.value || data.ValidateUpdateListItem || data);
+    const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
+    if (failures.length) {
+      const fieldErrors = {};
+      for (const failure of failures) {
+        fieldErrors[failure.FieldName || ""] = failure.ErrorMessage || "SharePoint rejected the value.";
+      }
+      const detail = failures.map((f) => `${f.FieldName || "Field"}: ${f.ErrorMessage || "SharePoint rejected the value."}`).join(" ");
+      const err = new SpFileError(
+        `SharePoint rejected the metadata. ${detail}`,
+        { code: "metadata-write" }
+      );
+      err.fieldErrors = fieldErrors;
+      throw err;
+    }
+    return { updated: formValues.map((fv) => fv.FieldName) };
+  }
+  async function uploadFile(folderServerRelativeUrl, fileName, data, { overwrite = false } = {}) {
+    const safeName = String(fileName || "").trim();
+    if (!safeName || safeName === "." || safeName === ".." || /[\\/]/.test(safeName)) {
+      throw new SpFileError(
+        "Enter a file name without folder separators.",
+        { code: "invalid-name" }
+      );
+    }
+    const size = data?.byteLength ?? data?.size ?? (typeof data === "string" ? data.length : 0);
+    if (size > MAX_UPLOAD_BYTES) {
+      throw new SpFileError(
+        `The file is larger than the ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB upload limit.`,
+        { code: "too-large" }
+      );
+    }
+    const folder = String(folderServerRelativeUrl || "/").replace(/\/+$/, "") || "/";
+    const endpoint = `${client2.webUrl()}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')/Files/AddUsingPath(decodedUrl='${odataPathLiteral(safeName)}',overwrite=${overwrite ? "true" : "false"})`;
+    const result = await post(endpoint, {
+      body: data,
+      contentType: "application/octet-stream"
+    }, { fallback: "Could not upload the file", code: "write" });
+    return {
+      fileName: safeName,
+      serverRelativeUrl: result.ServerRelativeUrl || `${folder === "/" ? "" : folder}/${safeName}`,
+      // SP.File as returned by the upload: a new file in a ForceCheckout
+      // library is born checked out, and an overwrite leaves a check-out
+      // standing. Undefined when the server (or the mock) doesn't say.
+      checkOutType: result.CheckOutType
+    };
+  }
+  async function checkOutFile(fileServerRelativeUrl) {
+    const endpoint = `${client2.webUrl()}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')/CheckOut()`;
+    await post(
+      endpoint,
+      { body: "" },
+      { fallback: "Could not check out the file", code: "checkout" }
+    );
+    return { serverRelativeUrl: fileServerRelativeUrl };
+  }
+  async function checkInFile(fileServerRelativeUrl, { comment = "" } = {}) {
+    const file = `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')`;
+    if (!isMock()) {
+      const state2 = await client2.get(file, { select: "CheckOutType" });
+      if (!isCheckedOut(state2?.CheckOutType)) {
+        return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: false };
+      }
+    }
+    const safeComment = String(comment || "").slice(0, 1023);
+    await post(
+      `${client2.webUrl()}/_api/${file}/CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=0)`,
+      { body: "" },
+      { fallback: "Could not check in the file", code: "checkin" }
+    );
+    return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: true };
+  }
+  async function createFolder(parentServerRelativeUrl, name) {
+    const clean = String(name || "").trim();
+    if (!clean || /["*:<>?/\\|]/.test(clean) || clean.startsWith(".") || clean.endsWith(".")) {
+      throw new SpFileError(
+        'Folder names cannot contain " * : < > ? / \\ | or start or end with a dot.',
+        { code: "invalid-name" }
+      );
+    }
+    if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)(\..*)?$/i.test(clean) || /_vti_/i.test(clean)) {
+      throw new SpFileError(
+        "That folder name is reserved by SharePoint.",
+        { code: "invalid-name" }
+      );
+    }
+    const parent = String(parentServerRelativeUrl || "/").replace(/\/+$/, "") || "";
+    const path = `${parent}/${clean}`;
+    const endpoint = `${client2.webUrl()}/_api/web/Folders/AddUsingPath(decodedUrl='${odataPathLiteral(path)}')`;
+    await post(
+      endpoint,
+      { body: "" },
+      { fallback: "Could not create the folder", code: "write" }
+    );
+    return { name: clean, serverRelativeUrl: path };
+  }
+  async function postJson(path, body = {}, {
+    fallback = "SharePoint write failed",
+    code = "write",
+    headers = {}
+  } = {}) {
+    const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
+    return post(url, { body: JSON.stringify(body), headers }, { fallback, code });
+  }
+  async function mergeJson(path, body = {}, {
+    fallback = "SharePoint write failed",
+    code = "write",
+    headers = {}
+  } = {}) {
+    const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
+    return post(url, {
+      body: JSON.stringify(body),
+      headers: { "X-HTTP-Method": "MERGE", "IF-MATCH": "*", ...headers }
+    }, { fallback, code });
+  }
+  return {
+    validateUpdateListItem,
+    uploadFile,
+    checkOutFile,
+    checkInFile,
+    createFolder,
+    postJson,
+    mergeJson,
+    isMock
+  };
+}
+
 // ../src/workbench/mock-data.js
 var WEB_URL = location.origin;
 var LISTS = [
@@ -536,6 +1388,230 @@ function field(title, internal, type, kind, extra = {}) {
     ...extra
   };
 }
+function schemaField(title, internal, type, kind, { xmlAttrs = {}, xmlInner = "", ...extra } = {}) {
+  fieldSeq++;
+  const id = `bb1e2c1d-4444-5555-9999-${String(fieldSeq).padStart(12, "0")}`;
+  const row = {
+    Id: id,
+    Title: title,
+    InternalName: internal,
+    StaticName: internal,
+    TypeAsString: type,
+    FieldTypeKind: kind,
+    Required: false,
+    Hidden: false,
+    ReadOnlyField: false,
+    FromBaseType: false,
+    CanBeDeleted: true,
+    Sealed: false,
+    Group: "Custom Columns",
+    DefaultValue: null,
+    Description: "",
+    EnforceUniqueValues: false,
+    Indexed: false,
+    CustomFormatter: "",
+    LookupList: null,
+    LookupField: null,
+    IsDependentLookup: false,
+    PrimaryFieldId: null,
+    ...extra
+  };
+  const attrs = {
+    ID: `{${id}}`,
+    SourceID: "{deadbeef-0000-4000-8000-000000000000}",
+    ColName: `tp_${internal}`,
+    RowOrdinal: "0",
+    Version: "1",
+    Name: internal,
+    StaticName: internal,
+    DisplayName: title,
+    Type: type,
+    ...row.Required ? { Required: "TRUE" } : {},
+    ...row.Indexed ? { Indexed: "TRUE" } : {},
+    ...row.EnforceUniqueValues ? { EnforceUniqueValues: "TRUE" } : {},
+    ...xmlAttrs
+  };
+  const attrText = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(" ");
+  row.SchemaXml = xmlInner ? `<Field ${attrText}>${xmlInner}</Field>` : `<Field ${attrText} />`;
+  return row;
+}
+var SCHEMA_REQUESTS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a01";
+var SCHEMA_CLIENTS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a02";
+var SCHEMA_REGIONS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a03";
+var SCHEMA_DOCUMENTS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a04";
+var fRequestsTitle = schemaField("Title", "Title", "Text", 2, { FromBaseType: true, CanBeDeleted: false, Required: true });
+var fRequestsId = schemaField("ID", "ID", "Counter", 5, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true });
+var fStatus = schemaField("Status", "Status", "Choice", 6, { Choices: ["New", "Active", "Closed"], DefaultValue: "New" });
+var fNotes = schemaField("Notes", "RequestNotes", "Note", 3, { xmlAttrs: { AppendOnly: "TRUE" } });
+var fBudget = schemaField("Budget", "Budget", "Number", 9, {});
+var fDue = schemaField("Due", "RequestDue", "DateTime", 4, {});
+var fApproved = schemaField("Approved", "Approved", "Boolean", 8, {});
+var fReference = schemaField("Reference", "Reference", "URL", 11, {});
+var fOwner = schemaField("Owner", "RequestOwner", "User", 20, { xmlAttrs: { List: "UserInfo", ShowField: "Name" } });
+var fClient = schemaField("Client", "Client", "Lookup", 7, {
+  LookupList: SCHEMA_CLIENTS_ID,
+  LookupField: "Title",
+  xmlAttrs: { List: `{${SCHEMA_CLIENTS_ID}}`, ShowField: "Title" }
+});
+var fClientCode = schemaField("Client code", "ClientCode", "Lookup", 7, {
+  LookupList: SCHEMA_CLIENTS_ID,
+  LookupField: "ClientCode",
+  IsDependentLookup: true,
+  PrimaryFieldId: fClient.Id,
+  xmlAttrs: { List: `{${SCHEMA_CLIENTS_ID}}`, ShowField: "ClientCode", FieldRef: `{${fClient.Id}}` }
+});
+var fParent = schemaField("Parent request", "ParentRequest", "Lookup", 7, {
+  LookupList: SCHEMA_REQUESTS_ID,
+  LookupField: "Title",
+  xmlAttrs: { List: `{${SCHEMA_REQUESTS_ID}}`, ShowField: "Title" }
+});
+var fRegion = schemaField("Region", "Region", "Lookup", 7, {
+  LookupList: SCHEMA_REGIONS_ID,
+  LookupField: "Title",
+  xmlAttrs: { List: `{${SCHEMA_REGIONS_ID}}`, ShowField: "Title" }
+});
+var fTotal = schemaField("Total", "Total", "Calculated", 12, {
+  ReadOnlyField: true,
+  xmlInner: `<Formula>=[Budget]*1</Formula><FieldRefs><FieldRef ID="{${fBudget.Id}}" Name="Budget"/></FieldRefs>`
+});
+var fTracking = schemaField("Tracking code", "TrackingCode", "Text", 2, { Indexed: true, EnforceUniqueValues: true });
+var fFormatted = schemaField("Formatted note", "FormattedNote", "Text", 2, { CustomFormatter: '{"schema":"https://developer.microsoft.com/json-schemas/sp/column-formatting.schema.json"}' });
+var fCategory = schemaField("Category", "RequestCategory", "TaxonomyFieldType", 26, {});
+var fContentType = schemaField("Content Type", "ContentType", "Computed", 12, { FromBaseType: true, CanBeDeleted: false, Hidden: true, ReadOnlyField: true });
+var fAttachmentsF = schemaField("Attachments", "Attachments", "Attachments", 23, { FromBaseType: true, CanBeDeleted: false, Hidden: true });
+var fAuthor = schemaField("Created By", "Author", "User", 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: "UserInfo" } });
+var SCHEMA_REQUESTS_FIELDS = [
+  fRequestsTitle,
+  fRequestsId,
+  fStatus,
+  fNotes,
+  fBudget,
+  fDue,
+  fApproved,
+  fReference,
+  fOwner,
+  fClient,
+  fClientCode,
+  fParent,
+  fRegion,
+  fTotal,
+  fTracking,
+  fFormatted,
+  fCategory,
+  fContentType,
+  fAttachmentsF,
+  fAuthor
+];
+var SCHEMA_REQUESTS_LIST = {
+  Id: SCHEMA_REQUESTS_ID,
+  Title: "Requests",
+  BaseTemplate: 100,
+  BaseType: 0,
+  ItemCount: 12,
+  Hidden: false,
+  Created: "2025-01-05T00:00:00Z",
+  LastItemModifiedDate: "2026-08-01T00:00:00Z",
+  EntityTypeName: "Requests",
+  Description: "Schema source list.",
+  DefaultViewUrl: "/sites/schema/Lists/Requests/AllItems.aspx",
+  RootFolder: { ServerRelativeUrl: "/sites/schema/Lists/Requests", Name: "Requests" },
+  ContentTypesEnabled: true,
+  EnableVersioning: true,
+  MajorVersionLimit: 50,
+  EnableMinorVersions: false,
+  ForceCheckout: false,
+  EnableAttachments: true,
+  EnableFolderCreation: false,
+  EnableModeration: false,
+  OnQuickLaunch: true,
+  ValidationFormula: "=[Budget]>0",
+  ValidationMessage: "Budget must be positive.",
+  NoCrawl: false,
+  DisableGridEditing: false,
+  Ordered: false,
+  ReadSecurity: 1,
+  WriteSecurity: 1,
+  ListExperienceOptions: 0,
+  EnableRequestSignOff: false
+};
+var SCHEMA_CLIENTS_LIST = list("Clients", SCHEMA_CLIENTS_ID, 100, 0, 5, false, "/sites/schema/Lists/Clients");
+var SCHEMA_REGIONS_LIST = list("Regions", SCHEMA_REGIONS_ID, 100, 0, 4, false, "/sites/schema/Lists/Regions");
+var SCHEMA_DOCUMENTS_LIST = list("Documents", SCHEMA_DOCUMENTS_ID, 101, 1, 6, false, "/sites/schema/Documents");
+var SCHEMA_LISTS = [SCHEMA_REQUESTS_LIST, SCHEMA_CLIENTS_LIST, SCHEMA_REGIONS_LIST, SCHEMA_DOCUMENTS_LIST];
+var SCHEMA_FIELDS = {
+  [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_FIELDS,
+  [SCHEMA_CLIENTS_ID]: [
+    schemaField("Title", "Title", "Text", 2, { FromBaseType: true, CanBeDeleted: false }),
+    schemaField("Client code", "ClientCode", "Text", 2, {})
+  ],
+  [SCHEMA_REGIONS_ID]: [schemaField("Title", "Title", "Text", 2, { FromBaseType: true, CanBeDeleted: false })],
+  [SCHEMA_DOCUMENTS_ID]: [schemaField("Title", "Title", "Text", 2, {})]
+};
+var SCHEMA_REQUESTS_VIEWS = [
+  {
+    Id: "cc1e2c1d-5555-6666-aaaa-000000000001",
+    Title: "All Items",
+    DefaultView: true,
+    PersonalView: false,
+    Hidden: false,
+    ServerRelativeUrl: "/sites/schema/Lists/Requests/AllItems.aspx",
+    RowLimit: 30,
+    Paged: true,
+    ViewQuery: '<OrderBy><FieldRef Name="ID"/></OrderBy>',
+    ViewFields: { Items: ["LinkTitle", "Status", "Budget"] }
+  },
+  {
+    Id: "cc1e2c1d-5555-6666-aaaa-000000000002",
+    Title: "Active only",
+    DefaultView: false,
+    PersonalView: false,
+    Hidden: false,
+    ServerRelativeUrl: "/sites/schema/Lists/Requests/Active.aspx",
+    RowLimit: 100,
+    Paged: true,
+    ViewQuery: '<Where><Eq><FieldRef Name="Status"/><Value Type="Choice">Active</Value></Eq></Where>',
+    ViewFields: { Items: ["LinkTitle", "Status", "Client"] }
+  }
+];
+var REQUEST_PARENT_CT = "0x0100442912F2B6C7409A8FF25CE5504F1FD";
+var REQUEST_LIST_CT = `${REQUEST_PARENT_CT}00${"A".repeat(32)}`;
+var SCHEMA_REQUESTS_CTS = [
+  { Id: { StringValue: REQUEST_LIST_CT }, Name: "Request", Group: "Custom Content Types", Hidden: false, ReadOnly: false, Sealed: false, Description: "A schema-source request." },
+  { Id: { StringValue: "0x01" }, Name: "Item", Group: "List Content Types", Hidden: false, ReadOnly: false, Sealed: false, Description: "Create a new list item." }
+];
+var VIEWS_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_VIEWS };
+var CONTENT_TYPES_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_CTS };
+var TARGET_CLIENTS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b01";
+var TARGET_TASKS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b02";
+var TARGET_DOCUMENTS_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b03";
+var TARGET_ARCHIVE_ID = "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b04";
+var TARGET_LISTS = [
+  list("Clients", TARGET_CLIENTS_ID, 100, 0, 3, false, "/sites/target/Lists/Clients"),
+  list("Tasks", TARGET_TASKS_ID, 171, 0, 10, false, "/sites/target/Lists/Tasks"),
+  list("Documents", TARGET_DOCUMENTS_ID, 101, 1, 4, false, "/sites/target/Documents"),
+  list("Archive Requests", TARGET_ARCHIVE_ID, 100, 0, 2, false, "/sites/target/Lists/ArchiveRequests")
+];
+var TARGET_FIELDS = {
+  [TARGET_ARCHIVE_ID]: [
+    schemaField("Title", "Title", "Text", 2, { FromBaseType: true, CanBeDeleted: false }),
+    schemaField("Status", "Status", "Choice", 6, { Choices: ["New", "Active", "Closed"], DefaultValue: "New" })
+  ],
+  [TARGET_CLIENTS_ID]: [schemaField("Title", "Title", "Text", 2, { FromBaseType: true, CanBeDeleted: false })]
+};
+var TARGET_AVAILABLE_CTS = [
+  { StringId: REQUEST_PARENT_CT, Name: "Request", Group: "Custom Content Types" },
+  { StringId: "0x0101", Name: "Document", Group: "Document Content Types" }
+];
+var writerState = {
+  lists: /* @__PURE__ */ new Map(),
+  // `${webBase}::${lower title}` -> list row
+  fields: /* @__PURE__ */ new Map(),
+  // listId -> Map(internalName -> field row)
+  views: /* @__PURE__ */ new Map(),
+  // listId -> Map(viewId -> { Id, Title, fields: [] })
+  contentTypes: /* @__PURE__ */ new Map()
+  // listId -> Set(parentId)
+};
 var PROJECT_ITEMS = [
   item(1, "Intranet refresh", {
     ProjectStatus: "Active",
@@ -1048,8 +2124,12 @@ function mockResolver(rawUrl) {
   const webBase = url.slice(0, url.indexOf("/_api/")).replace(/[/]+$/, "");
   const classic = /[/]sites[/]classic$/i.test(webBase);
   const both = /[/]sites[/]both$/i.test(webBase);
-  const lists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : LISTS;
+  const schema = /[/]sites[/]schema$/i.test(webBase);
+  const target = /[/]sites[/]target$/i.test(webBase);
+  const staticLists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : schema ? SCHEMA_LISTS : target ? TARGET_LISTS : LISTS;
   const itemsByList = both ? BOTH_ITEMS : classic ? CLASSIC_ITEMS : ITEMS;
+  const dynamicLists = [...writerState.lists.entries()].filter(([key2]) => key2.startsWith(`${webBase}::`)).map(([, entry]) => entry);
+  const lists = [...staticLists, ...dynamicLists];
   const wpFile = /getfilebyserverrelativepath[(]decodedurl='([^']*)'[)][/]getlimitedwebpartmanager/.exec(path)?.[1];
   if (wpFile !== void 0 && path.includes("/webparts")) {
     let decoded = wpFile;
@@ -1079,14 +2159,50 @@ function mockResolver(rawUrl) {
       return { value: rows };
     }
     if (path.includes("/fields")) {
-      const perWeb = both ? BOTH_FIELDS : FIELDS;
+      const dyn = writerState.fields.get(found.Id);
+      if (dyn) return { value: [...dyn.values()] };
+      const perWeb = both ? BOTH_FIELDS : schema ? SCHEMA_FIELDS : target ? TARGET_FIELDS : FIELDS;
       return { value: perWeb[found.Id] || DEFAULT_FIELDS };
     }
     if (/\/views\(guid'/.test(path) && path.includes("/viewfields")) {
       return { Items: ["LinkTitle", "ProjectStatus", "DueDate"] };
     }
-    if (path.includes("/views")) return { value: VIEWS };
-    if (path.includes("/contenttypes")) return { value: CONTENT_TYPES };
+    if (path.includes("/views")) {
+      const dyn = writerState.views.get(found.Id);
+      if (dyn) {
+        return {
+          value: [...dyn.values()].map((v) => ({
+            Id: v.Id,
+            Title: v.Title,
+            DefaultView: false,
+            PersonalView: false,
+            Hidden: false,
+            RowLimit: 30,
+            Paged: true,
+            ViewQuery: "",
+            ViewFields: { Items: v.fields }
+          }))
+        };
+      }
+      return { value: VIEWS_BY_LIST[found.Id] || VIEWS };
+    }
+    if (path.includes("/contenttypes")) {
+      const dyn = writerState.contentTypes.get(found.Id);
+      if (dyn) {
+        return {
+          value: [...dyn].map((id2) => ({
+            Id: { StringValue: id2 },
+            Name: id2,
+            Group: "",
+            Hidden: false,
+            ReadOnly: false,
+            Sealed: false,
+            Description: ""
+          }))
+        };
+      }
+      return { value: CONTENT_TYPES_BY_LIST[found.Id] || CONTENT_TYPES };
+    }
     if (path.includes("/roleassignments")) return { value: ROLE_ASSIGNMENTS };
     return found;
   }
@@ -1145,6 +2261,9 @@ function mockResolver(rawUrl) {
   if (path.startsWith("web/features")) return { value: FEATURES.web };
   if (path.startsWith("site/features")) return { value: FEATURES.site };
   if (path.startsWith("site")) return SITE;
+  if (path.startsWith("web/availablecontenttypes")) {
+    return { value: target ? TARGET_AVAILABLE_CTS : [] };
+  }
   if (path.startsWith("web")) {
     const base = url.slice(0, url.indexOf("/_api/")).replace(/\/+$/, "");
     let rel = "/";
@@ -1267,74 +2386,6 @@ function showFailure(node, err, subject = "") {
   else node.removeAttribute("title");
   node.hidden = false;
   return node;
-}
-
-// ../src/io.js?v=2
-var MAX_IMPORT_BYTES = 5 * 1024 * 1024;
-function saveBlob(filename, blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1e3);
-}
-function downloadText(filename, text, type = "application/json") {
-  saveBlob(filename, new Blob([text], { type }));
-}
-function downloadBytes(filename, bytes, type = "application/octet-stream") {
-  saveBlob(filename, new Blob([bytes], { type }));
-}
-var BUILT_IN_SHAREPOINT_FILE_TYPES = Object.freeze([
-  Object.freeze({
-    id: "html",
-    label: "HTML",
-    extensions: Object.freeze(["html", "htm"]),
-    pane: "html",
-    defaultExtension: "html"
-  }),
-  Object.freeze({
-    id: "css",
-    label: "CSS",
-    extensions: Object.freeze(["css"]),
-    pane: "css",
-    defaultExtension: "css"
-  }),
-  Object.freeze({
-    id: "javascript",
-    label: "JavaScript",
-    extensions: Object.freeze(["js"]),
-    pane: "js",
-    defaultExtension: "js"
-  })
-]);
-function sharePointFileTypes(additionalTypes = []) {
-  const usedExtensions = new Set(
-    BUILT_IN_SHAREPOINT_FILE_TYPES.flatMap((type) => type.extensions)
-  );
-  const types = [...BUILT_IN_SHAREPOINT_FILE_TYPES];
-  for (const [index, raw] of additionalTypes.entries()) {
-    if (!raw || typeof raw !== "object") continue;
-    const extensions = (Array.isArray(raw.extensions) ? raw.extensions : []).map((extension) => String(extension || "").trim().replace(/^\./, "").toLowerCase()).filter((extension) => extension && !usedExtensions.has(extension));
-    if (!extensions.length || !["html", "css", "js"].includes(raw.pane)) continue;
-    for (const extension of extensions) usedExtensions.add(extension);
-    types.push(Object.freeze({
-      id: `additional-${index}-${extensions[0]}`,
-      label: String(raw.label || "").trim() || extensions[0].toUpperCase(),
-      extensions: Object.freeze(extensions),
-      pane: raw.pane,
-      defaultExtension: extensions[0]
-    }));
-  }
-  return types;
-}
-function fileTypeForFileName(fileName, additionalTypes = []) {
-  const match = /\.([^.]+)$/i.exec(String(fileName || "").trim());
-  const extension = match?.[1]?.toLowerCase();
-  if (!extension) return null;
-  return sharePointFileTypes(additionalTypes).find((type) => type.extensions.includes(extension)) || null;
 }
 
 // ../src/workbench/export.js
@@ -1530,6 +2581,32 @@ function bindNewTab(a) {
   });
   return a;
 }
+function createMenuButton(label, title, items) {
+  const wrap = el2("span", "wb-menu-wrap");
+  const btn = el2("button", "btn btn-xs", label);
+  btn.type = "button";
+  btn.title = title;
+  const menu = el2("div", "wb-menu");
+  menu.hidden = true;
+  for (const [itemLabel, run] of items) {
+    const item2 = el2("button", "wb-menu-item", itemLabel);
+    item2.type = "button";
+    item2.addEventListener("click", () => {
+      menu.hidden = true;
+      run(btn);
+    });
+    menu.append(item2);
+  }
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  document.addEventListener("click", () => {
+    menu.hidden = true;
+  });
+  wrap.append(btn, menu);
+  return wrap;
+}
 var cellValue2 = (row, col) => typeof col.value === "function" ? col.value(row) : row[col.key];
 function displayValue(row, col) {
   const v = cellValue2(row, col);
@@ -1572,30 +2649,7 @@ function createGrid({
   const actions = el2("span", "wb-grid-actions");
   toolbar.append(count, filter, ...toolbarExtras ? [toolbarExtras] : [], actions);
   function menuButton(label, title, items) {
-    const wrap = el2("span", "wb-menu-wrap");
-    const btn = el2("button", "btn btn-xs", label);
-    btn.type = "button";
-    btn.title = title;
-    const menu = el2("div", "wb-menu");
-    menu.hidden = true;
-    for (const [itemLabel, run] of items) {
-      const item2 = el2("button", "wb-menu-item", itemLabel);
-      item2.type = "button";
-      item2.addEventListener("click", () => {
-        menu.hidden = true;
-        run(btn);
-      });
-      menu.append(item2);
-    }
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      menu.hidden = !menu.hidden;
-    });
-    document.addEventListener("click", () => {
-      menu.hidden = true;
-    });
-    wrap.append(btn, menu);
-    actions.append(wrap);
+    actions.append(createMenuButton(label, title, items));
   }
   if (descriptor) {
     menuButton("Copy as \u25BE", "Copy this query as a runnable script", [
@@ -2669,6 +3723,973 @@ function toNode(v, depth = 0, { maxDepth = 6, maxItems = 100 } = {}) {
   };
 }
 
+// ../src/workbench/list-schema.js
+var SCHEMA_KIND = "dcspad-sputils-list-schema";
+var SCHEMA_VERSION = 2;
+var LOOKUP_TYPES = /* @__PURE__ */ new Set(["Lookup", "LookupMulti"]);
+var USER_TYPES = /* @__PURE__ */ new Set(["User", "UserMulti"]);
+var TAXONOMY_TYPES = /* @__PURE__ */ new Set(["TaxonomyFieldType", "TaxonomyFieldTypeMulti"]);
+var NOT_INDEXABLE_TYPES = /* @__PURE__ */ new Set(["Note", "Computed", "Attachments", "Calculated"]);
+function cleanGuid(v) {
+  const s = String(v ?? "").replace(/[{}]/g, "").trim();
+  return s ? s.toLowerCase() : null;
+}
+var GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isGuidLike(v) {
+  const g = cleanGuid(v);
+  return !!g && GUID_RE.test(g);
+}
+function lookupMapGet(lookupMap, title) {
+  if (!title || !lookupMap) return void 0;
+  if (Object.prototype.hasOwnProperty.call(lookupMap, title)) return lookupMap[title];
+  const wanted = String(title).toLowerCase();
+  const key2 = Object.keys(lookupMap).find((k) => k.toLowerCase() === wanted);
+  return key2 !== void 0 ? lookupMap[key2] : void 0;
+}
+function isCustomField(f) {
+  return !f?.FromBaseType && f?.CanBeDeleted === true && !f?.Hidden && f?.TypeAsString !== "Computed";
+}
+function isLibrary(list2) {
+  return Number(list2?.baseType ?? list2?.BaseType) === 1;
+}
+function fieldTier(f) {
+  if (f?.type === "Calculated") return 3;
+  if (f?.isDependentLookup) return 2;
+  if (LOOKUP_TYPES.has(f?.type)) return 1;
+  return 0;
+}
+function orderFields(fields) {
+  return (fields || []).map((f, i) => [f, i]).sort((a, b) => fieldTier(a[0]) - fieldTier(b[0]) || a[1] - b[1]).map(([f]) => f);
+}
+function indexableType(type) {
+  return !NOT_INDEXABLE_TYPES.has(type);
+}
+function parentContentTypeId(listCtId) {
+  const id = String(listCtId || "");
+  const m = /^(.*?)00[0-9a-f]{32}$/i.exec(id);
+  return m ? m[1] : id;
+}
+var LIST_DEFAULTS = {
+  title: "",
+  description: "",
+  baseTemplate: 100,
+  enableVersioning: false,
+  majorVersionLimit: null,
+  enableMinorVersions: false,
+  majorWithMinorVersionsLimit: null,
+  draftVersionVisibility: 0,
+  forceCheckout: false,
+  hidden: false,
+  contentTypesEnabled: false,
+  enableAttachments: true,
+  enableFolderCreation: false,
+  enableModeration: false,
+  validationFormula: "",
+  validationMessage: "",
+  onQuickLaunch: false,
+  noCrawl: false,
+  disableGridEditing: false,
+  ordered: false,
+  readSecurity: null,
+  writeSecurity: null,
+  listExperienceOptions: null,
+  enableRequestSignOff: false,
+  library: null,
+  contentTypeOrder: []
+};
+function normalizeList(raw = {}) {
+  return {
+    ...LIST_DEFAULTS,
+    title: raw.Title,
+    description: raw.Description || "",
+    baseTemplate: raw.BaseTemplate,
+    enableVersioning: !!raw.EnableVersioning,
+    majorVersionLimit: raw.MajorVersionLimit ?? null,
+    enableMinorVersions: !!raw.EnableMinorVersions,
+    majorWithMinorVersionsLimit: raw.MajorWithMinorVersionsLimit ?? null,
+    draftVersionVisibility: raw.DraftVersionVisibility ?? 0,
+    forceCheckout: !!raw.ForceCheckout,
+    hidden: !!raw.Hidden,
+    contentTypesEnabled: !!raw.ContentTypesEnabled,
+    enableAttachments: raw.EnableAttachments !== false,
+    enableFolderCreation: !!raw.EnableFolderCreation,
+    enableModeration: !!raw.EnableModeration,
+    validationFormula: raw.ValidationFormula || "",
+    validationMessage: raw.ValidationMessage || "",
+    onQuickLaunch: !!raw.OnQuickLaunch,
+    noCrawl: !!raw.NoCrawl,
+    disableGridEditing: !!raw.DisableGridEditing,
+    ordered: !!raw.Ordered,
+    readSecurity: raw.ReadSecurity ?? null,
+    writeSecurity: raw.WriteSecurity ?? null,
+    listExperienceOptions: raw.ListExperienceOptions ?? null,
+    enableRequestSignOff: !!raw.EnableRequestSignOff,
+    library: raw.BaseType === 1 ? { documentTemplateUrl: raw.DocumentTemplateUrl || "", irmEnabled: !!raw.IrmEnabled } : null,
+    contentTypeOrder: []
+  };
+}
+var FIELD_DEFAULTS = {
+  fieldTypeKind: null,
+  group: "",
+  hidden: false,
+  sealed: false,
+  canBeDeleted: true,
+  formula: "",
+  outputType: "",
+  displayFormat: null,
+  richText: false,
+  validationFormula: "",
+  validationMessage: "",
+  jsLink: "",
+  baseTweak: null
+};
+function baseTweakFor(raw, custom) {
+  if (custom) return null;
+  if (raw.InternalName !== "Title" && raw.InternalName !== "_ExtendedDescription") return null;
+  return { title: raw.Title, required: !!raw.Required, description: raw.Description || "" };
+}
+function normalizeField(raw, { listId = "", lookupTitleById = () => null } = {}) {
+  const type = raw.TypeAsString || "";
+  const isLookup = LOOKUP_TYPES.has(type);
+  const custom = isCustomField(raw);
+  const lookupListId = isLookup && custom ? cleanGuid(raw.LookupList) : null;
+  return {
+    ...FIELD_DEFAULTS,
+    // v1 keys, verbatim from SPUtils getListSchema.
+    id: cleanGuid(raw.Id),
+    internalName: raw.InternalName,
+    staticName: raw.StaticName,
+    displayName: raw.Title,
+    type,
+    required: !!raw.Required,
+    readOnly: !!raw.ReadOnlyField,
+    fromBaseType: !!raw.FromBaseType,
+    custom,
+    description: raw.Description || "",
+    defaultValue: raw.DefaultValue ?? null,
+    choices: Array.isArray(raw.Choices) ? raw.Choices : raw.Choices?.results || [],
+    maxLength: raw.MaxLength ?? null,
+    indexed: !!raw.Indexed,
+    enforceUniqueValues: !!raw.EnforceUniqueValues,
+    allowMultipleValues: !!raw.AllowMultipleValues || type.endsWith("Multi"),
+    customFormatter: raw.CustomFormatter || "",
+    lookupListId,
+    lookupList: lookupListId ? lookupTitleById(lookupListId) : null,
+    lookupField: isLookup ? raw.LookupField || "Title" : null,
+    isSelfLookup: !!lookupListId && lookupListId === cleanGuid(listId),
+    isDependentLookup: !!raw.IsDependentLookup,
+    primaryFieldId: raw.IsDependentLookup ? cleanGuid(raw.PrimaryFieldId) : null,
+    schemaXml: raw.SchemaXml,
+    // v2 additions.
+    fieldTypeKind: raw.FieldTypeKind ?? null,
+    group: raw.Group || "",
+    hidden: !!raw.Hidden,
+    sealed: !!raw.Sealed,
+    canBeDeleted: raw.CanBeDeleted !== false,
+    formula: raw.Formula || "",
+    outputType: raw.OutputType || "",
+    displayFormat: raw.DisplayFormat ?? null,
+    richText: !!raw.RichText,
+    validationFormula: raw.ValidationFormula || "",
+    validationMessage: raw.ValidationMessage || "",
+    jsLink: raw.JSLink || "",
+    baseTweak: baseTweakFor(raw, custom)
+  };
+}
+var VIEW_DEFAULTS = {
+  viewTypeKind: null,
+  scope: null,
+  aggregations: "",
+  aggregationsStatus: "",
+  tabularView: true,
+  mobileView: false,
+  mobileDefaultView: false,
+  viewData: "",
+  viewJoins: "",
+  readOnlyView: false,
+  includeRootFolder: false,
+  serverRelativeUrl: ""
+};
+function normalizeView(raw = {}, viewFieldNames = []) {
+  return {
+    ...VIEW_DEFAULTS,
+    id: raw.Id,
+    title: raw.Title,
+    defaultView: !!raw.DefaultView,
+    hidden: !!raw.Hidden,
+    viewType: raw.ViewType || "HTML",
+    viewQuery: raw.ViewQuery || "",
+    rowLimit: raw.RowLimit ?? 30,
+    paged: raw.Paged !== false,
+    customFormatter: raw.CustomFormatter || "",
+    jsLink: raw.JSLink || "",
+    fields: viewFieldNames || [],
+    viewTypeKind: raw.ViewTypeKind ?? null,
+    scope: raw.Scope ?? null,
+    aggregations: raw.Aggregations || "",
+    aggregationsStatus: raw.AggregationsStatus || "",
+    tabularView: raw.TabularView !== false,
+    mobileView: !!raw.MobileView,
+    mobileDefaultView: !!raw.MobileDefaultView,
+    viewData: raw.ViewData || "",
+    viewJoins: raw.ViewJoins || "",
+    readOnlyView: !!raw.ReadOnlyView,
+    includeRootFolder: !!raw.IncludeRootFolder,
+    serverRelativeUrl: raw.ServerRelativeUrl || ""
+  };
+}
+var CT_DEFAULTS = { parentId: "", sealed: false, documentTemplate: "", fieldLinks: [] };
+function normalizeContentType(raw = {}, fieldLinks = []) {
+  const id = raw.StringId || raw.Id?.StringValue || String(raw.Id || "");
+  return {
+    ...CT_DEFAULTS,
+    name: raw.Name,
+    id,
+    description: raw.Description || "",
+    group: raw.Group || "",
+    hidden: !!raw.Hidden,
+    readOnly: !!raw.ReadOnly,
+    parentId: parentContentTypeId(id),
+    sealed: !!raw.Sealed,
+    documentTemplate: raw.DocumentTemplate || "",
+    fieldLinks: fieldLinks || []
+  };
+}
+function buildSchemaDoc({
+  source = {},
+  list: list2 = {},
+  fields = [],
+  views = [],
+  contentTypes = [],
+  warnings = [],
+  generatorBuild = "dev"
+} = {}) {
+  return {
+    kind: SCHEMA_KIND,
+    version: SCHEMA_VERSION,
+    exported: (/* @__PURE__ */ new Date()).toISOString(),
+    generator: { tool: "dcspad-workbench", build: generatorBuild },
+    source,
+    list: list2,
+    fields,
+    views,
+    contentTypes,
+    warnings
+  };
+}
+function normalizeSchemaDoc(doc) {
+  if (!doc || typeof doc !== "object" || doc.kind !== SCHEMA_KIND) {
+    throw new SpFileError(
+      `Not a list schema document (expected kind ${SCHEMA_KIND}).`,
+      { code: "bad-schema" }
+    );
+  }
+  const sourceVersion = Number(doc.version) || 1;
+  const list2 = { ...LIST_DEFAULTS, ...doc.list || {} };
+  const fields = (doc.fields || []).map((f) => ({ ...FIELD_DEFAULTS, ...f }));
+  const views = (doc.views || []).map((v) => ({ ...VIEW_DEFAULTS, ...v }));
+  const contentTypes = (doc.contentTypes || []).map((c) => ({
+    ...CT_DEFAULTS,
+    ...c,
+    parentId: c.parentId || parentContentTypeId(c.id)
+  }));
+  return {
+    kind: doc.kind,
+    version: SCHEMA_VERSION,
+    exported: doc.exported || "",
+    generator: doc.generator || { tool: "unknown", build: "" },
+    source: doc.source || {},
+    list: list2,
+    fields,
+    views,
+    contentTypes,
+    warnings: doc.warnings || [],
+    _sourceVersion: sourceVersion
+  };
+}
+var BASE_TEMPLATE_LABELS = { 100: "Generic list", 101: "Document library" };
+function schemaSummary(doc) {
+  const d = normalizeSchemaDoc(doc);
+  const fields = d.fields || [];
+  const custom = fields.filter((f) => f.custom).length;
+  const views = d.views || [];
+  return {
+    kind: BASE_TEMPLATE_LABELS[d.list.baseTemplate] || `List (template ${d.list.baseTemplate})`,
+    fieldsText: `${fields.length} field${fields.length === 1 ? "" : "s"} \xB7 ${custom} custom`,
+    viewsText: `${views.length} view${views.length === 1 ? "" : "s"}`,
+    contentTypesText: d.list.contentTypesEnabled ? "content types on" : "content types off",
+    versioningText: d.list.enableVersioning ? "versioning on" : "versioning off",
+    isLibrary: d.list.baseTemplate === 101 || d.source?.baseType === 1
+  };
+}
+var STRIP_ATTRS = [
+  "ID",
+  "SourceID",
+  "ColName",
+  "RowOrdinal",
+  "Version",
+  "WebId",
+  "List",
+  "Sealed",
+  "Customization",
+  "Indexed",
+  "EnforceUniqueValues"
+];
+function scrubSchemaXml(xml, { lookupListId = null, primaryFieldId = null, fieldType = "" } = {}) {
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(String(xml || ""), "text/xml");
+  } catch (cause) {
+    throw new SpFileError("SchemaXml could not be parsed.", { code: "bad-xml", cause });
+  }
+  const root = doc.documentElement;
+  if (!root || root.nodeName === "parsererror" || doc.getElementsByTagName("parsererror").length) {
+    throw new SpFileError("SchemaXml could not be parsed.", { code: "bad-xml" });
+  }
+  for (const attr of STRIP_ATTRS) root.removeAttribute(attr);
+  if (LOOKUP_TYPES.has(fieldType) && lookupListId) {
+    root.setAttribute("List", `{${cleanGuid(lookupListId)}}`);
+  } else if (USER_TYPES.has(fieldType)) {
+    root.setAttribute("List", "UserInfo");
+  }
+  if (LOOKUP_TYPES.has(fieldType) && primaryFieldId) {
+    root.setAttribute("FieldRef", `{${cleanGuid(primaryFieldId)}}`);
+  }
+  const refs = root.getElementsByTagName("FieldRef");
+  for (let i = 0; i < refs.length; i++) refs[i].removeAttribute("ID");
+  return new XMLSerializer().serializeToString(root);
+}
+function textFallbackXml(field2) {
+  const name = String(field2?.internalName || "").replaceAll('"', "&quot;");
+  const display = String(field2?.displayName || field2?.internalName || "").replaceAll('"', "&quot;");
+  const required = field2?.required ? ' Required="TRUE"' : "";
+  return `<Field Type="Text" Name="${name}" DisplayName="${display}"${required} />`;
+}
+function xmlHasAttr(xml, name) {
+  try {
+    const doc = new DOMParser().parseFromString(String(xml || ""), "text/xml");
+    return doc.documentElement?.hasAttribute(name) ?? false;
+  } catch {
+    return false;
+  }
+}
+function step(id, kind, label, {
+  dependsOn = [],
+  payload = {},
+  refs = {},
+  optional = false,
+  status = "planned",
+  error = ""
+} = {}) {
+  return { id, kind, label, dependsOn, payload, refs, optional, status, error, result: null };
+}
+function isBuiltinParent(parentId) {
+  return parentId === "0x01" || parentId === "0x0120" || parentId === "0x0101";
+}
+function settingsPayload(list2, { reconcile = false } = {}) {
+  if (reconcile) {
+    const groupA2 = {};
+    if (list2.enableAttachments && !isLibrary(list2)) groupA2.EnableAttachments = true;
+    if (list2.enableFolderCreation) groupA2.EnableFolderCreation = true;
+    return { groupA: groupA2, groupB: {} };
+  }
+  const groupA = {
+    EnableVersioning: list2.enableVersioning,
+    EnableAttachments: list2.enableAttachments,
+    EnableFolderCreation: list2.enableFolderCreation,
+    EnableModeration: list2.enableModeration,
+    Hidden: list2.hidden,
+    OnQuickLaunch: list2.onQuickLaunch,
+    NoCrawl: list2.noCrawl,
+    DisableGridEditing: list2.disableGridEditing,
+    Ordered: list2.ordered,
+    ReadSecurity: list2.readSecurity,
+    WriteSecurity: list2.writeSecurity,
+    ListExperienceOptions: list2.listExperienceOptions,
+    EnableRequestSignOff: list2.enableRequestSignOff,
+    ForceCheckout: list2.forceCheckout
+  };
+  if (list2.description) groupA.Description = list2.description;
+  const groupB = {};
+  if (list2.enableVersioning && list2.majorVersionLimit) groupB.MajorVersionLimit = list2.majorVersionLimit;
+  if (list2.enableVersioning && list2.enableMinorVersions) {
+    groupB.EnableMinorVersions = true;
+    if (list2.majorWithMinorVersionsLimit) groupB.MajorWithMinorVersionsLimit = list2.majorWithMinorVersionsLimit;
+  }
+  if (list2.enableModeration || list2.enableMinorVersions) groupB.DraftVersionVisibility = list2.draftVersionVisibility;
+  if (isLibrary(list2) || Number(list2.baseTemplate) === 101) delete groupA.EnableAttachments;
+  const defined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v != null));
+  return { groupA: defined(groupA), groupB: defined(groupB) };
+}
+function defaultTargetTitle(doc, targetLists = []) {
+  const source = doc?.list?.title || doc?.source?.listTitle || "List";
+  const taken = new Set((targetLists || []).map((l) => String(l.title || "").toLowerCase()));
+  if (!taken.has(source.toLowerCase())) return source;
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${source} Copy` : `${source} Copy ${n}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+function fieldMergePayload(f, warnings) {
+  const merges = {};
+  if (f.indexed && indexableType(f.type)) merges.Indexed = true;
+  if (f.enforceUniqueValues && indexableType(f.type)) merges.EnforceUniqueValues = true;
+  if (f.customFormatter && !xmlHasAttr(f.schemaXml, "CustomFormatter")) {
+    merges.CustomFormatter = f.customFormatter;
+  }
+  if (f.indexed && !indexableType(f.type)) {
+    warnings.push(`Column \u2018${f.internalName}\u2019 (${f.type}) cannot be indexed \u2014 Indexed was not re-applied.`);
+  }
+  return merges;
+}
+function pushMergeStep(steps, mergeStepIds, f, dependsOnId, merges) {
+  if (!Object.keys(merges).length) return;
+  const mergeId = `merge:${f.internalName}`;
+  mergeStepIds.push(mergeId);
+  steps.push(step(mergeId, "field.merge", `Apply ${Object.keys(merges).join(", ")} on \u2018${f.internalName}\u2019`, {
+    dependsOn: [dependsOnId],
+    payload: { internalName: f.internalName, merges },
+    optional: true
+  }));
+}
+function buildApplyPlan(doc, options = {}, probe = {}) {
+  const d = normalizeSchemaDoc(doc);
+  const warnings = [];
+  const title = String(options.title || "").trim() || defaultTargetTitle(d, probe.targetLists || []);
+  const existing = probe.existingList || null;
+  const steps = [];
+  if (existing) {
+    if ((options.existing || "fail") === "fail") {
+      throw new SpFileError(
+        `A list named \u2018${title}\u2019 already exists on the target.`,
+        { code: "exists" }
+      );
+    }
+    steps.push(step("list", "list.adopt", `Add to existing list \u2018${title}\u2019`, {
+      payload: { listId: existing.id, title },
+      refs: { listId: { self: true } }
+    }));
+  } else {
+    steps.push(step("list", "list.create", `Create list \u2018${title}\u2019 (${BASE_TEMPLATE_LABELS[d.list.baseTemplate] || d.list.baseTemplate})`, {
+      payload: {
+        title,
+        description: options.description ?? d.list.description ?? "",
+        baseTemplate: d.list.baseTemplate || 100,
+        contentTypesEnabled: !!d.list.contentTypesEnabled,
+        urlName: options.urlName || ""
+      }
+    }));
+  }
+  steps.push(step("settings", "list.settings", existing ? "Reconcile list settings" : "Apply list settings", {
+    dependsOn: ["list"],
+    payload: settingsPayload(d.list, { reconcile: Boolean(existing) }),
+    refs: { listId: { self: true } }
+  }));
+  const ctStepIds = [];
+  if (d.list.contentTypesEnabled) {
+    const already = new Set(probe.existingContentTypeIds || []);
+    const available = new Set((probe.availableContentTypes || []).map((c) => c.id));
+    const seen = /* @__PURE__ */ new Set();
+    for (const ct of d.contentTypes) {
+      const parentId = ct.parentId || parentContentTypeId(ct.id);
+      if (isBuiltinParent(parentId) || already.has(parentId) || seen.has(parentId)) continue;
+      seen.add(parentId);
+      const id = `ct:${parentId}`;
+      ctStepIds.push(id);
+      const isAvailable = available.has(parentId);
+      steps.push(step(id, "ct.attach", `Attach content type \u2018${ct.name}\u2019`, {
+        dependsOn: ["settings"],
+        payload: { contentTypeId: parentId, name: ct.name },
+        refs: { listId: { self: true } },
+        optional: true,
+        status: isAvailable ? "planned" : "failed",
+        error: isAvailable ? "" : `\u2018${ct.name}\u2019 is not available on the target web \u2014 publish the content type there first.`
+      }));
+    }
+  }
+  const custom = orderFields(d.fields.filter((f) => f.custom));
+  const existingFields = probe.existingFields || [];
+  const createdInternalNames = /* @__PURE__ */ new Set();
+  const fieldStepIds = [];
+  const mergeStepIds = [];
+  const missingLookupPolicy = options.missingLookup === "text" ? "text" : "skip";
+  const lookupMap = options.lookupMap || {};
+  const baseFieldNames = new Set(d.fields.filter((f) => !f.custom && f.fromBaseType).map((f) => f.internalName));
+  const fieldOptions = d.list.contentTypesEnabled && ctStepIds.length > 0 ? 8 | 4 : 8;
+  for (const f of custom) {
+    const id = `field:${f.internalName}`;
+    fieldStepIds.push(id);
+    const present = existingFields.find((ef) => ef.internalName === f.internalName);
+    if (present) {
+      const same = present.typeAsString === f.type;
+      steps.push(step(id, "field.create", `Column \u2018${f.displayName}\u2019 (${f.internalName})`, {
+        dependsOn: [...ctStepIds, "settings"],
+        payload: { field: f, options: fieldOptions },
+        status: same ? "skipped" : "failed",
+        error: same ? "" : `exists on the target as ${present.typeAsString}, source is ${f.type} \u2014 values will not import.`
+      }));
+      if (same) {
+        createdInternalNames.add(f.internalName);
+        pushMergeStep(steps, mergeStepIds, f, id, fieldMergePayload(f, warnings));
+      }
+      continue;
+    }
+    const titleTaken = existingFields.some((ef) => ef.internalName !== f.internalName && String(ef.title || "").toLowerCase() === String(f.displayName || "").toLowerCase());
+    if (titleTaken) {
+      steps.push(step(id, "field.create", `Column \u2018${f.displayName}\u2019 (${f.internalName})`, {
+        dependsOn: [...ctStepIds, "settings"],
+        payload: { field: f, options: fieldOptions },
+        status: "failed",
+        error: `a different column already uses the display name \u2018${f.displayName}\u2019.`
+      }));
+      continue;
+    }
+    if (TAXONOMY_TYPES.has(f.type)) {
+      steps.push(step(id, "field.create", `Column \u2018${f.displayName}\u2019 (${f.internalName})`, {
+        dependsOn: [...ctStepIds, "settings"],
+        payload: { field: f, options: fieldOptions },
+        status: "failed",
+        error: "managed metadata columns are not recreated automatically."
+      }));
+      continue;
+    }
+    const refs = {};
+    let asText = false;
+    let blocked = false;
+    let blockReason = "";
+    if (f.isDependentLookup) {
+      const primaryField = d.fields.find((pf) => pf.id === f.primaryFieldId);
+      if (primaryField && createdInternalNames.has(primaryField.internalName)) {
+        refs.primaryFieldId = { field: primaryField.internalName };
+      } else {
+        blocked = true;
+        blockReason = "its primary lookup column was not created on the target.";
+      }
+    }
+    if (!blocked && LOOKUP_TYPES.has(f.type)) {
+      if (f.isSelfLookup) {
+        refs.lookupListId = { self: true };
+      } else {
+        const mappedValue = lookupMapGet(lookupMap, f.lookupList) ?? lookupMapGet(lookupMap, f.lookupListId) ?? f.lookupList;
+        if (isGuidLike(mappedValue)) {
+          refs.lookupListId = { id: cleanGuid(mappedValue) };
+        } else {
+          const wanted = String(mappedValue || "").toLowerCase();
+          const target = (probe.targetLists || []).find((l) => String(l.title || "").toLowerCase() === wanted);
+          if (!target) {
+            if (missingLookupPolicy === "text") {
+              asText = true;
+              warnings.push(`Lookup \u2018${f.internalName}\u2019 target \u2018${mappedValue}\u2019 is missing on the target \u2014 created as a single line of text (policy: text; a re-run cannot upgrade it).`);
+            } else {
+              steps.push(step(id, "field.create", `Skip column \u2018${f.displayName}\u2019 (${f.internalName})`, {
+                dependsOn: [...ctStepIds, "settings"],
+                payload: { field: f, options: fieldOptions },
+                status: "skipped",
+                error: ""
+              }));
+              steps[steps.length - 1].skipReason = "lookup-target-missing";
+              continue;
+            }
+          } else {
+            refs.lookupListId = { list: target.title };
+          }
+        }
+      }
+    }
+    steps.push(step(id, "field.create", `${blocked ? "Blocked" : "Add"} ${f.type} column \u2018${f.displayName}\u2019 (${f.internalName})${asText ? " as text" : ""}`, {
+      dependsOn: [...ctStepIds, "settings"],
+      payload: { field: f, asText, options: fieldOptions },
+      refs,
+      status: blocked ? "blocked" : "planned",
+      error: blockReason
+    }));
+    if (!blocked) createdInternalNames.add(f.internalName);
+    if (!blocked && !asText) {
+      pushMergeStep(steps, mergeStepIds, f, id, fieldMergePayload(f, warnings));
+    }
+  }
+  const titleField = d.fields.find((f) => f.internalName === "Title");
+  if (titleField && (titleField.displayName !== "Title" || titleField.required === false)) {
+    steps.push(step("title", "field.base", `Set the Title column\u2019s display name and required flag`, {
+      dependsOn: [...fieldStepIds, ...mergeStepIds, "settings"],
+      payload: { displayName: titleField.displayName, required: titleField.required },
+      optional: true
+    }));
+  }
+  const viewStepIds = [];
+  for (const v of d.views.filter((view) => !view.hidden)) {
+    const id = `view:${v.title}`;
+    viewStepIds.push(id);
+    const targetViews = probe.existingViews || [];
+    const existingView = targetViews.find((ev) => String(ev.title).toLowerCase() === String(v.title).toLowerCase()) || (v.defaultView ? targetViews.find((ev) => ev.defaultView) : null) || null;
+    const wanted = v.fields.filter((name) => createdInternalNames.has(name) || existingFields.some((ef) => ef.internalName === name) || baseFieldNames.has(name));
+    const missing = v.fields.filter((name) => !wanted.includes(name));
+    if (missing.length) {
+      warnings.push(`View \u2018${v.title}\u2019: columns not on the target were left out: ${missing.join(", ")}.`);
+    }
+    steps.push(step(id, "view.upsert", `View \u2018${v.title}\u2019 (${wanted.length} column${wanted.length === 1 ? "" : "s"})`, {
+      dependsOn: ["title", ...fieldStepIds, ...mergeStepIds].filter((depId) => steps.some((s) => s.id === depId)),
+      payload: {
+        title: v.title,
+        viewId: existingView?.id || null,
+        fields: wanted,
+        viewQuery: v.viewQuery,
+        rowLimit: v.rowLimit,
+        paged: v.paged,
+        defaultView: v.defaultView,
+        customFormatter: v.customFormatter,
+        jsLink: v.jsLink
+      }
+    }));
+  }
+  if (d.list.validationFormula) {
+    steps.push(step("validation", "list.validation", "Apply the list validation formula", {
+      dependsOn: viewStepIds.length ? viewStepIds : ["settings"],
+      payload: { validationFormula: d.list.validationFormula, validationMessage: d.list.validationMessage },
+      optional: true
+    }));
+  }
+  return { title, targetWebUrl: options.targetWebUrl || "", existingListId: existing?.id || null, steps, warnings };
+}
+
+// ../src/workbench/list-schema-capture.js
+var guidPath = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var cleanGuid2 = (v) => String(v || "").replace(/[{}]/g, "").toLowerCase();
+async function resolveLookupTitles(client2, guids, selfListId) {
+  const map = /* @__PURE__ */ new Map();
+  const selfId = selfListId ? cleanGuid2(selfListId) : null;
+  for (const raw of guids) {
+    const id = cleanGuid2(raw);
+    if (!id || map.has(id)) continue;
+    if (id === selfId) {
+      map.set(id, null);
+      continue;
+    }
+    try {
+      const target = await client2.get(guidPath(id), { select: "Title" });
+      map.set(id, target?.Title ?? null);
+    } catch {
+      map.set(id, null);
+    }
+  }
+  return map;
+}
+async function captureListSchema(client2, listId, { includeHidden = false } = {}) {
+  const warnings = [];
+  const web = await client2.get("web", { select: ["Id", "Title", "Url", "ServerRelativeUrl", "Language"] });
+  const list2 = await client2.get(guidPath(listId), { expand: "RootFolder" });
+  const { items: rawFields } = await client2.getAll(
+    guidPath(listId, "/fields"),
+    includeHidden ? {} : { filter: "Hidden eq false" }
+  );
+  const lookupGuids = [...new Set(
+    rawFields.filter((f) => LOOKUP_TYPES.has(f.TypeAsString)).map((f) => f.LookupList).filter(Boolean)
+  )];
+  const lookupTitles = await resolveLookupTitles(client2, lookupGuids, list2.Id);
+  const listIdClean = cleanGuid2(list2.Id);
+  const unreadable = /* @__PURE__ */ new Set();
+  const lookupTitleById = (guid) => {
+    const id = cleanGuid2(guid);
+    if (id === listIdClean) return list2.Title;
+    const title = lookupTitles.get(id);
+    if (title == null && lookupTitles.has(id) && !unreadable.has(id)) {
+      unreadable.add(id);
+      warnings.push(`Lookup target list ${guid} could not be read; it will need a lookupMap entry.`);
+    }
+    return title ?? null;
+  };
+  const fields = rawFields.map((raw) => normalizeField(raw, { listId: list2.Id, lookupTitleById }));
+  for (const f of fields) {
+    if (f.custom && TAXONOMY_TYPES.has(f.type)) {
+      warnings.push(`Managed metadata column \u201C${f.internalName}\u201D cannot be recreated automatically (needs a term-set binding).`);
+    }
+  }
+  let rawViews;
+  try {
+    ({ items: rawViews } = await client2.getAll(
+      guidPath(listId, "/views"),
+      { filter: "PersonalView eq false", expand: "ViewFields" }
+    ));
+  } catch (err) {
+    if (isDeniedRead(err) || isExpiredSession(err)) throw err;
+    ({ items: rawViews } = await client2.getAll(
+      guidPath(listId, "/views"),
+      { filter: "PersonalView eq false" }
+    ));
+  }
+  const views = [];
+  for (const raw of rawViews) {
+    let names = raw.ViewFields?.Items?.results ?? raw.ViewFields?.Items ?? null;
+    if (!Array.isArray(names)) {
+      try {
+        const vf = await client2.get(guidPath(listId, `/views(guid'${raw.Id}')/viewfields`));
+        names = vf?.Items?.results ?? vf?.Items ?? [];
+      } catch (err) {
+        warnings.push(`View \u201C${raw.Title}\u201D: fields could not be read (${err?.message || err}).`);
+        names = [];
+      }
+    }
+    views.push(normalizeView(raw, names));
+  }
+  let contentTypes = [];
+  try {
+    const { items: rawCts } = await client2.getAll(guidPath(listId, "/contenttypes"), { expand: "FieldLinks" });
+    contentTypes = rawCts.map((raw) => {
+      const links = raw.FieldLinks?.Items?.results ?? raw.FieldLinks?.Items ?? [];
+      const fieldLinks = links.map((l) => ({ id: l.Id, name: l.Name, required: !!l.Required, hidden: !!l.Hidden }));
+      return normalizeContentType(raw, fieldLinks);
+    });
+  } catch (err) {
+    warnings.push(`Content types could not be read (${err?.message || err}).`);
+  }
+  const source = {
+    siteUrl: client2.webUrl(),
+    listTitle: list2.Title,
+    listId: listIdClean,
+    rootFolder: list2.RootFolder?.ServerRelativeUrl ?? null,
+    itemCount: list2.ItemCount ?? null,
+    webId: web.Id,
+    webTitle: web.Title,
+    language: web.Language,
+    baseType: list2.BaseType,
+    entityTypeName: list2.EntityTypeName,
+    rootFolderName: list2.RootFolder?.Name ?? null
+  };
+  const normalizedList = normalizeList(list2);
+  normalizedList.contentTypeOrder = contentTypes.filter((ct) => !ct.hidden).map((ct) => ct.id);
+  const doc = buildSchemaDoc({
+    source,
+    list: normalizedList,
+    fields,
+    views,
+    contentTypes,
+    warnings,
+    generatorBuild: APP_BUILD_INFO.build
+  });
+  return { doc, raw: { web, list: list2, fields: rawFields, views: rawViews } };
+}
+
+// ../src/workbench/list-schema-script.js
+var TEMPLATE_NAMES = { 100: "GenericList", 101: "DocumentLibrary" };
+function planFor(doc, opts = {}) {
+  const lookupMap = opts.lookupMap || {};
+  const assumed = [...new Set((doc?.fields || []).filter((f) => f.lookupList && !f.isSelfLookup).map((f) => lookupMapGet(lookupMap, f.lookupList) ?? lookupMapGet(lookupMap, f.lookupListId) ?? f.lookupList))].map((title) => ({ title }));
+  const assumedContentTypes = [...new Set((doc?.contentTypes || []).map((ct) => ct.parentId || parentContentTypeId(ct.id)).filter((parentId) => !isBuiltinParent(parentId)))].map((id) => ({ id }));
+  return buildApplyPlan(doc, {
+    title: opts.title,
+    description: opts.description,
+    lookupMap,
+    missingLookup: opts.missingLookup
+  }, opts.probe || { targetLists: assumed, availableContentTypes: assumedContentTypes });
+}
+var isDone = (step2) => !["skipped", "failed", "blocked"].includes(step2.status);
+var LIST_TOKEN = "{lookuplist}";
+var PRIMARY_TOKEN = "{primaryfield}";
+function fieldXml(step2) {
+  const f = step2.payload.field;
+  if (step2.payload.asText) return textFallbackXml(f);
+  const refs = step2.refs || {};
+  return scrubSchemaXml(f.schemaXml, {
+    fieldType: f.type,
+    lookupListId: refs.lookupListId ? "lookuplist" : null,
+    primaryFieldId: refs.primaryFieldId ? "primaryfield" : null
+  });
+}
+var FIELD_OPTIONS = 8;
+var psEsc = (s) => String(s ?? "").replaceAll("'", "''");
+var psLit = (s) => `'${psEsc(s)}'`;
+function psCsomValue(v) {
+  if (typeof v === "boolean") return v ? "$true" : "$false";
+  if (typeof v === "number") return String(v);
+  return psLit(v);
+}
+function psHashtable(obj) {
+  const parts = Object.entries(obj).map(([k, v]) => {
+    if (typeof v === "boolean") return `${k}=$${v}`;
+    if (typeof v === "number") return `${k}=${v}`;
+    return `${k}=${psLit(v)}`;
+  });
+  return `@{ ${parts.join("; ")} }`;
+}
+var psArray = (arr) => `@(${(arr || []).map((s) => psLit(s)).join(", ")})`;
+function pushCsomBlock(lines, plan, props) {
+  const entries = Object.entries(props).filter(([, v]) => v != null);
+  if (!entries.length) return;
+  lines.push(`$l = Get-PnPList -Identity ${psLit(plan.title)}`);
+  for (const [k, v] of entries) lines.push(`$l.${k} = ${psCsomValue(v)}`);
+  lines.push("$l.Update()");
+  lines.push("Invoke-PnPQuery");
+}
+function toPnpPowerShellProvisioning(doc, opts = {}) {
+  const plan = planFor(doc, opts);
+  const connect = `Connect-PnPOnline -Url "${opts.targetWebUrl || "https://tenant.sharepoint.com/sites/yoursite"}" -Interactive`;
+  const lines = ["# PnP.PowerShell provisioning", `# ${plan.title}`, connect, `$list = ${psLit(plan.title)}`, ""];
+  for (const step2 of plan.steps) {
+    if (!isDone(step2)) {
+      lines.push(`# SKIP ${step2.label}${step2.error ? ` \u2014 ${step2.error}` : ""}`);
+      continue;
+    }
+    switch (step2.kind) {
+      case "list.create": {
+        const template = TEMPLATE_NAMES[step2.payload.baseTemplate] || step2.payload.baseTemplate;
+        lines.push(`New-PnPList -Title ${psLit(step2.payload.title)} -Template ${template}${step2.payload.contentTypesEnabled ? " -EnableContentTypes" : ""}`);
+        break;
+      }
+      case "list.adopt":
+        lines.push(`# Using existing list "${step2.payload.title}"`);
+        break;
+      case "list.settings":
+        pushCsomBlock(lines, plan, { ...step2.payload.groupA, ...step2.payload.groupB });
+        break;
+      case "ct.attach":
+        lines.push(`Add-PnPContentTypeToList -List ${psLit(plan.title)} -ContentType ${psLit(step2.payload.contentTypeId)}`);
+        break;
+      case "field.create": {
+        let xmlExpr = psLit(fieldXml(step2));
+        const refs = step2.refs || {};
+        if (refs.lookupListId) {
+          const listIdentity = refs.lookupListId.self ? plan.title : refs.lookupListId.id || refs.lookupListId.list;
+          xmlExpr = `(${xmlExpr}).Replace('${LIST_TOKEN}', ('{' + (Get-PnPList -Identity ${psLit(listIdentity)}).Id + '}'))`;
+        }
+        if (refs.primaryFieldId) {
+          xmlExpr = `(${xmlExpr}).Replace('${PRIMARY_TOKEN}', ('{' + (Get-PnPField -List ${psLit(plan.title)} -Identity ${psLit(refs.primaryFieldId.field)}).Id + '}'))`;
+        }
+        lines.push(`Add-PnPFieldFromXml -List ${psLit(plan.title)} -FieldXml ${xmlExpr}`);
+        break;
+      }
+      case "field.merge":
+        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step2.payload.internalName)} -Values ${psHashtable(step2.payload.merges)}`);
+        break;
+      case "field.base":
+        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity 'Title' -Values ${psHashtable({ Title: step2.payload.displayName, Required: step2.payload.required })}`);
+        break;
+      case "view.upsert": {
+        const titleLit = psLit(step2.payload.title);
+        lines.push(`$v = Get-PnPView -List $list -Identity ${titleLit} -ErrorAction SilentlyContinue`);
+        if (step2.payload.defaultView) {
+          lines.push("if (-not $v) { $v = Get-PnPView -List $list | Where-Object DefaultView }");
+        }
+        lines.push("if ($v) {");
+        lines.push(`  Set-PnPView -List $list -Identity $v -Fields ${psArray(step2.payload.fields)} -Values ${psHashtable({ ViewQuery: step2.payload.viewQuery, RowLimit: step2.payload.rowLimit, Paged: step2.payload.paged })}`);
+        lines.push("} else {");
+        lines.push(`  Add-PnPView -List $list -Title ${titleLit} -Fields ${psArray(step2.payload.fields)} -Query ${psLit(step2.payload.viewQuery)} -RowLimit ${step2.payload.rowLimit}${step2.payload.paged ? " -Paged" : ""} -SetAsDefault:$${step2.payload.defaultView ? "true" : "false"}`);
+        lines.push("}");
+        break;
+      }
+      case "list.validation":
+        pushCsomBlock(lines, plan, {
+          ValidationFormula: step2.payload.validationFormula,
+          ValidationMessage: step2.payload.validationMessage
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return lines.join("\n");
+}
+function toPnpjs2Provisioning(doc, opts = {}) {
+  const plan = planFor(doc, opts);
+  const lines = [
+    "// PnPjs 2.x \u2014 paste into the DCSPad JS pane (pnpjs2 framework enabled)",
+    `// ${plan.title}`,
+    ""
+  ];
+  for (const step2 of plan.steps) {
+    if (!isDone(step2)) {
+      lines.push(`// SKIP ${step2.label}${step2.error ? ` \u2014 ${step2.error}` : ""}`);
+      continue;
+    }
+    switch (step2.kind) {
+      case "list.create":
+        lines.push(`const newList = (await sp.web.lists.add(${JSON.stringify(step2.payload.title)}, ${JSON.stringify(step2.payload.description || "")}, ${step2.payload.baseTemplate}, ${step2.payload.contentTypesEnabled})).list;`);
+        lines.push('const newListId = (await newList.select("Id")()).Id;');
+        break;
+      case "list.adopt":
+        lines.push(`const newList = sp.web.lists.getById(${JSON.stringify(step2.payload.listId)});`);
+        lines.push(`const newListId = ${JSON.stringify(step2.payload.listId)};`);
+        break;
+      case "list.settings": {
+        const settings = { ...step2.payload.groupA, ...step2.payload.groupB };
+        if (Object.keys(settings).length) lines.push(`await newList.update(${JSON.stringify(settings, null, 2)});`);
+        break;
+      }
+      case "ct.attach":
+        lines.push(`await newList.contentTypes.addAvailableContentType(${JSON.stringify(step2.payload.contentTypeId)});`);
+        break;
+      case "field.create": {
+        const refs = step2.refs || {};
+        let xmlExpr = JSON.stringify(fieldXml(step2));
+        const pre = [];
+        if (refs.lookupListId) {
+          if (refs.lookupListId.self) {
+            pre.push("  const lookupId = newListId;");
+          } else if (refs.lookupListId.id) {
+            pre.push(`  const lookupId = ${JSON.stringify(refs.lookupListId.id)};`);
+          } else {
+            pre.push(`  const lookupId = (await sp.web.lists.getByTitle(${JSON.stringify(refs.lookupListId.list)}).select("Id")()).Id;`);
+          }
+          xmlExpr += `.replace(${JSON.stringify(LIST_TOKEN)}, \`{\${lookupId}}\`)`;
+        }
+        if (refs.primaryFieldId) {
+          pre.push(`  const primaryId = (await newList.fields.getByInternalNameOrTitle(${JSON.stringify(refs.primaryFieldId.field)}).select("Id")()).Id;`);
+          xmlExpr += `.replace(${JSON.stringify(PRIMARY_TOKEN)}, \`{\${primaryId}}\`)`;
+        }
+        lines.push(
+          "{",
+          ...pre,
+          `  await newList.fields.createFieldAsXml({ SchemaXml: ${xmlExpr}, Options: ${step2.payload.options ?? FIELD_OPTIONS} });`,
+          "}"
+        );
+        break;
+      }
+      case "field.merge":
+        lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step2.payload.internalName)}).update(${JSON.stringify(step2.payload.merges)});`);
+        break;
+      case "field.base":
+        lines.push(`await newList.fields.getByInternalNameOrTitle("Title").update(${JSON.stringify({ Title: step2.payload.displayName, Required: step2.payload.required })});`);
+        break;
+      case "view.upsert": {
+        const titleJson = JSON.stringify(step2.payload.title);
+        const settingsJson = JSON.stringify({
+          ViewQuery: step2.payload.viewQuery,
+          RowLimit: step2.payload.rowLimit,
+          Paged: step2.payload.paged
+        });
+        lines.push("{");
+        lines.push("  let existing = null;");
+        lines.push(`  try { existing = await newList.views.getByTitle(${titleJson})(); } catch { existing = null; }`);
+        if (step2.payload.defaultView) {
+          lines.push("  if (!existing) existing = await newList.defaultView();");
+        }
+        lines.push("  let view;");
+        lines.push("  if (existing) {");
+        lines.push("    view = newList.views.getByTitle(existing.Title);");
+        lines.push(`    await view.update(${settingsJson});`);
+        lines.push("  } else {");
+        lines.push(`    view = (await newList.views.add(${titleJson}, false, ${settingsJson})).view;`);
+        lines.push("  }");
+        lines.push("  await view.fields.removeAll();");
+        for (const name of step2.payload.fields) lines.push(`  await view.fields.add(${JSON.stringify(name)});`);
+        if (step2.payload.defaultView) {
+          lines.push("  await view.update({ DefaultView: true });");
+        }
+        lines.push("}");
+        break;
+      }
+      case "list.validation":
+        lines.push(`await newList.update(${JSON.stringify({
+          ValidationFormula: step2.payload.validationFormula,
+          ValidationMessage: step2.payload.validationMessage
+        })});`);
+        break;
+      default:
+        break;
+    }
+  }
+  return lines.join("\n");
+}
+
 // ../src/workbench/views/lists.js
 var BASE_TEMPLATE_NAMES = {
   100: "Generic list",
@@ -2764,7 +4785,7 @@ var el4 = (tag, cls, text) => {
   if (text !== void 0) n.textContent = text;
   return n;
 };
-var guidPath = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function parseItemsQuery(text) {
   const out = { filter: "", orderby: "", error: "" };
   const raw = String(text || "").trim().replace(/^\?/, "");
@@ -2807,8 +4828,10 @@ function parseItemsQuery(text) {
   }
   return out;
 }
-function createListsView({ client: client2, navigate }) {
+function createListsView({ client: client2, navigate, updateRoute, inspectSite: inspectSite2, createClient }) {
   const root = el4("section", "wb-view wb-view-lists");
+  void inspectSite2;
+  void createClient;
   const webOrigin = () => {
     try {
       return new URL(client2.webUrl()).origin;
@@ -3005,8 +5028,8 @@ function createListsView({ client: client2, navigate }) {
       let query = null;
       try {
         const [fieldsResult, { items: views }] = await Promise.all([
-          cached2(listId, "fields", () => client2.getAll(guidPath(listId, "/fields"), { select: FIELD_SELECT })),
-          cached2(listId, "views", () => client2.getAll(guidPath(listId, "/views"), { select: VIEW_SELECT }))
+          cached2(listId, "fields", () => client2.getAll(guidPath2(listId, "/fields"), { select: FIELD_SELECT })),
+          cached2(listId, "views", () => client2.getAll(guidPath2(listId, "/views"), { select: VIEW_SELECT }))
         ]);
         fields = fieldsResult.items;
         if (!viewsFilled) {
@@ -3022,14 +5045,14 @@ function createListsView({ client: client2, navigate }) {
         }
         let viewTitle = "";
         if (viewSel.value) {
-          const vf = await cached2(listId, `viewfields::${viewSel.value}`, () => client2.get(guidPath(listId, `/views(guid'${viewSel.value}')/viewfields`)));
+          const vf = await cached2(listId, `viewfields::${viewSel.value}`, () => client2.get(guidPath2(listId, `/views(guid'${viewSel.value}')/viewfields`)));
           viewFieldNames = vf?.Items?.results || vf?.Items || [];
           viewTitle = views.find((v) => v.Id === viewSel.value)?.Title || "";
         }
         const hasAttachments = fields.some((f) => f.TypeAsString === "Attachments");
         const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
         const query2 = {
-          path: guidPath(listId, "/items"),
+          path: guidPath2(listId, "/items"),
           options: {
             select: ["*", ...expand],
             expand,
@@ -3136,6 +5159,185 @@ function createListsView({ client: client2, navigate }) {
     });
     reload();
   }
+  function fieldNote(f, fields) {
+    if (!f.custom) return "system column \u2014 not copied";
+    if (TAXONOMY_TYPES.has(f.type)) return "managed metadata \u2014 not recreated";
+    if (f.isDependentLookup) {
+      const primary = fields.find((p) => p.id === f.primaryFieldId);
+      return `dependent lookup of ${primary?.displayName || primary?.internalName || "a primary column"}`;
+    }
+    if (f.isSelfLookup) return "lookup to this list \u2014 rebinds to the copy";
+    return "";
+  }
+  function schemaChip(cls, text, title) {
+    const chip = el4("span", `wb-info-chip ${cls}`, text);
+    if (title) chip.title = title;
+    return chip;
+  }
+  function copyableCell(text) {
+    const span = el4("span", "sp-copy", text);
+    span.title = "Click to copy";
+    span.addEventListener("click", () => copyText(text, span));
+    return span;
+  }
+  function buildSettingsSection(doc) {
+    const section = el4("div", "wb-schema-section");
+    section.append(el4("h3", "", "Settings"));
+    const table2 = el4("table", "wb-table wb-schema-settings");
+    const tbody = el4("tbody");
+    const rows = [
+      ["Description", doc.list.description || "\u2014"],
+      ["Base template", `${BASE_TEMPLATE_NAMES[doc.list.baseTemplate] || "Template"} (${doc.list.baseTemplate})`],
+      ["Versioning", doc.list.enableVersioning ? `on (major limit ${doc.list.majorVersionLimit ?? "\u2014"})` : "off"],
+      ["Content types", doc.list.contentTypesEnabled ? "on" : "off"],
+      ["Attachments", doc.list.enableAttachments ? "on" : "off"],
+      ["Folder creation", doc.list.enableFolderCreation ? "on" : "off"],
+      ["Moderation", doc.list.enableModeration ? "on" : "off"],
+      ["Force checkout", doc.list.forceCheckout ? "on" : "off"],
+      ["Validation formula", doc.list.validationFormula || "\u2014"],
+      ["On Quick Launch", doc.list.onQuickLaunch ? "yes" : "no"]
+    ];
+    for (const [label, value] of rows) {
+      const tr = el4("tr");
+      tr.append(el4("td", "", label));
+      const td = el4("td");
+      td.append(copyableCell(String(value)));
+      tr.append(td);
+      tbody.append(tr);
+    }
+    table2.append(tbody);
+    section.append(table2);
+    return section;
+  }
+  function buildFieldsSection(doc) {
+    const section = el4("div", "wb-schema-section");
+    section.append(el4("h3", "", "Fields"));
+    const fieldsGrid = createGrid({
+      columns: [
+        { key: "displayName", label: "Title" },
+        { key: "internalName", label: "Internal name", mono: true, copyable: true },
+        { key: "type", label: "Type" },
+        { key: "custom", label: "Custom" },
+        { key: "required", label: "Required" },
+        { key: "indexed", label: "Indexed" },
+        { key: "lookupList", label: "Lookup target", value: (f) => f.lookupList || "" },
+        { key: "note", label: "Note", value: (f) => fieldNote(f, doc.fields) }
+      ],
+      rowKey: "internalName",
+      emptyText: "No fields.",
+      filterPlaceholder: "Filter fields\u2026"
+    });
+    fieldsGrid.setRows(doc.fields);
+    section.append(fieldsGrid.el);
+    return section;
+  }
+  function buildViewsSection(doc) {
+    const section = el4("div", "wb-schema-section");
+    section.append(el4("h3", "", "Views"));
+    const viewsGrid = createGrid({
+      columns: [
+        { key: "title", label: "Title" },
+        { key: "defaultView", label: "Default" },
+        { key: "columns", label: "Columns", value: (v) => (v.fields || []).length, num: true },
+        { key: "rowLimit", label: "Row limit", num: true },
+        { key: "paged", label: "Paged" },
+        { key: "customFormatter", label: "Formatting", value: (v) => v.customFormatter ? "yes" : "" },
+        { key: "viewQuery", label: "CAML query", mono: true, copyable: true }
+      ],
+      rowKey: "title",
+      emptyText: "No views.",
+      filterPlaceholder: "Filter views\u2026"
+    });
+    viewsGrid.setRows(doc.views);
+    section.append(viewsGrid.el);
+    return section;
+  }
+  function buildContentTypesSection(doc) {
+    const section = el4("div", "wb-schema-section");
+    section.append(el4("h3", "", "Content types"));
+    if (!doc.list.contentTypesEnabled) {
+      section.append(el4("p", "wb-schema-note", "Content types are exported for reference \u2014 they are not recreated unless enabled on the target."));
+    }
+    const ctGrid = createGrid({
+      columns: [
+        { key: "name", label: "Name" },
+        { key: "id", label: "Id", mono: true, copyable: true },
+        { key: "group", label: "Group" },
+        { key: "sealed", label: "Sealed" }
+      ],
+      rowKey: "id",
+      emptyText: "No content types.",
+      filterPlaceholder: "Filter content types\u2026"
+    });
+    ctGrid.setRows(doc.contentTypes);
+    section.append(ctGrid.el);
+    return section;
+  }
+  function buildWarningsSection(doc) {
+    const section = el4("div", "wb-schema-section");
+    section.append(el4("h3", "", "Warnings"));
+    const list2 = el4("ul", "wb-grid-notice");
+    for (const w of doc.warnings) list2.append(el4("li", "", w));
+    section.append(list2);
+    return section;
+  }
+  function openCopy(doc) {
+    void doc;
+  }
+  function renderSchemaPane(doc, listTitle) {
+    const summary = schemaSummary(doc);
+    const stem = fileStem(listTitle);
+    const head2 = el4("div", "wb-schema-head");
+    const chips = el4("div", "wb-schema-chips");
+    chips.append(
+      schemaChip("wb-schema-kind", summary.kind, `BaseTemplate ${doc.list.baseTemplate}`),
+      schemaChip("wb-schema-fields", summary.fieldsText, `${doc.fields.length} total fields, ${doc.fields.filter((f) => f.custom).length} custom`),
+      schemaChip("wb-schema-views", summary.viewsText),
+      schemaChip("wb-schema-cts", summary.contentTypesText, doc.list.contentTypesEnabled ? "Content types are enabled on this list." : "Content types are not enabled on this list."),
+      schemaChip("wb-schema-versioning", summary.versioningText)
+    );
+    if (summary.isLibrary) {
+      chips.append(schemaChip(
+        "wb-schema-libkind",
+        "document library",
+        "Copying a document library arrives in stage 2 \u2014 export works now."
+      ));
+    }
+    const actions = el4("span", "wb-schema-actions");
+    actions.append(createMenuButton("Export \u25BE", "Export this list\u2019s schema", [
+      ["Download schema .json", () => downloadText(`schema-${stem}.json`, JSON.stringify(doc, null, 2), "application/json")],
+      ["Copy schema JSON", (btn) => copyText(JSON.stringify(doc, null, 2), btn)],
+      ["Copy as PnP.PowerShell (provision)", (btn) => copyText(toPnpPowerShellProvisioning(doc, { targetWebUrl: client2.webUrl() }), btn)],
+      ["Copy as PnPjs 2 (provision)", (btn) => copyText(toPnpjs2Provisioning(doc, {}), btn)]
+    ]));
+    const copyBtn = el4("button", "btn btn-xs wb-schema-copy", "Copy to\u2026");
+    copyBtn.type = "button";
+    const gated = doc.list.baseTemplate !== 100;
+    copyBtn.disabled = gated;
+    copyBtn.title = !gated ? "Create a new list from this schema, on this site or another one." : summary.isLibrary ? "Copying a document library arrives in stage 2 \u2014 export works now." : `Only generic lists can be copied \u2014 this is a ${summary.kind.toLowerCase()}. Export works now.`;
+    copyBtn.addEventListener("click", () => openCopy(doc));
+    actions.append(copyBtn);
+    head2.append(chips, actions);
+    const sections = el4("div", "wb-schema-sections");
+    sections.append(buildSettingsSection(doc));
+    sections.append(buildFieldsSection(doc));
+    sections.append(buildViewsSection(doc));
+    if (doc.contentTypes.length) sections.append(buildContentTypesSection(doc));
+    if (doc.warnings.length) sections.append(buildWarningsSection(doc));
+    const root2 = el4("div", "wb-schema");
+    root2.append(head2, sections);
+    return root2;
+  }
+  function buildSchemaPane(wrap, listId, listTitle) {
+    const status = el4("div", "wb-grid-status", "Reading the list schema\u2026");
+    wrap.append(status);
+    cached2(listId, "schema", () => captureListSchema(client2, listId)).then(({ doc }) => {
+      status.remove();
+      wrap.append(renderSchemaPane(doc, listTitle));
+    }).catch((err) => {
+      showFailure(status, err, "this list\u2019s schema");
+    });
+  }
   const TABS = [
     {
       id: "fields",
@@ -3153,7 +5355,7 @@ function createListsView({ client: client2, navigate }) {
           { key: "Group", label: "Group" }
         ],
         exportName: `fields-${fileStem(title)}`,
-        query: { path: guidPath(listId, "/fields"), options: { select: FIELD_SELECT } }
+        query: { path: guidPath2(listId, "/fields"), options: { select: FIELD_SELECT } }
       })
     },
     {
@@ -3170,7 +5372,7 @@ function createListsView({ client: client2, navigate }) {
           { key: "ViewQuery", label: "CAML query", mono: true, copyable: true }
         ],
         exportName: `views-${fileStem(title)}`,
-        query: { path: guidPath(listId, "/views"), options: { select: VIEW_SELECT } }
+        query: { path: guidPath2(listId, "/views"), options: { select: VIEW_SELECT } }
       })
     },
     {
@@ -3187,9 +5389,10 @@ function createListsView({ client: client2, navigate }) {
           { key: "Description", label: "Description" }
         ],
         exportName: `contenttypes-${fileStem(title)}`,
-        query: { path: guidPath(listId, "/contenttypes"), options: { select: CT_SELECT } }
+        query: { path: guidPath2(listId, "/contenttypes"), options: { select: CT_SELECT } }
       })
     },
+    { id: "schema", label: "Schema" },
     {
       id: "permissions",
       label: "Permissions",
@@ -3206,7 +5409,7 @@ function createListsView({ client: client2, navigate }) {
         ],
         exportName: `permissions-${fileStem(title)}`,
         query: {
-          path: guidPath(listId, "/roleassignments"),
+          path: guidPath2(listId, "/roleassignments"),
           options: {
             expand: ["Member", "RoleDefinitionBindings"],
             select: [
@@ -3256,6 +5459,7 @@ function createListsView({ client: client2, navigate }) {
       }
       body.textContent = "";
       body.append(pane(tab));
+      updateRoute?.({ tab: tab.id });
     }
     function pane(tab) {
       if (panes.has(tab.id)) return panes.get(tab.id);
@@ -3265,10 +5469,14 @@ function createListsView({ client: client2, navigate }) {
         buildItemsPane(wrap, listId, route.listTitle || "List");
         return wrap;
       }
+      if (tab.id === "schema") {
+        buildSchemaPane(wrap, listId, route.listTitle || "List");
+        return wrap;
+      }
       if (tab.id === "raw") {
         const status = el4("div", "wb-grid-status", "Loading raw list entity\u2026");
         wrap.append(status);
-        cached2(listId, "raw", () => client2.get(guidPath(listId))).then((json) => {
+        cached2(listId, "raw", () => client2.get(guidPath2(listId))).then((json) => {
           status.remove();
           const node = toNode(json, 0, { maxDepth: 8, maxItems: 250 });
           const inspector = el4("div", "wb-raw");
@@ -3314,768 +5522,6 @@ function createListsView({ client: client2, navigate }) {
     }
   }
   return { el: root, load: load2, grid };
-}
-
-// ../src/sp-files.js
-var DIGEST_SAFETY_MS = 6e4;
-var LIBRARY_GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-var CHECK_IN_COMMENT = "Saved from DCSPad";
-var CHECK_OUT_TYPE_NONE = 2;
-function isCheckedOut(checkOutType) {
-  const type = Number(checkOutType ?? CHECK_OUT_TYPE_NONE);
-  return Number.isFinite(type) && type !== CHECK_OUT_TYPE_NONE;
-}
-function isCheckedOutByCurrentUser(user2, pageContext = {}, { sameWeb = true } = {}) {
-  if (!user2) return false;
-  const login = String(pageContext?.userLoginName || "").trim().toLowerCase();
-  const claim = String(user2.LoginName || "").trim().toLowerCase();
-  if (login && claim && (login === claim || claim.endsWith(`|${login}`) || login.endsWith(`|${claim}`))) {
-    return true;
-  }
-  const email = String(pageContext?.userEmail || "").trim().toLowerCase();
-  const userEmail = String(user2.Email || user2.UserPrincipalName || "").trim().toLowerCase();
-  if (email && userEmail) return email === userEmail;
-  const id = Number(pageContext?.userId);
-  if (sameWeb && Number.isFinite(id) && id > 0) return id === Number(user2.Id);
-  return false;
-}
-var FILE_METADATA_SPECS = Object.freeze([
-  { key: "title", label: "Title", internalName: "Title", types: ["Text"] },
-  { key: "description", label: "Description", internalName: "_ExtendedDescription", types: ["Note", "Text"] },
-  { key: "docVersion", label: "DocVersion", internalName: "DocVersion", types: ["Text"] }
-]);
-function normalizedPath(value) {
-  let path = String(value || "").trim().replaceAll("\\", "/");
-  if (!path.startsWith("/")) path = `/${path}`;
-  path = path.replace(/\/{2,}/g, "/");
-  if (path.length > 1) path = path.replace(/\/+$/, "");
-  return path;
-}
-function pathFromWebUrl(webUrl) {
-  try {
-    return normalizedPath(decodeURIComponent(new URL(webUrl).pathname));
-  } catch {
-    return "/";
-  }
-}
-function browserTypeForFileName(fileName) {
-  const name = String(fileName || "");
-  if (/\.html?$/i.test(name)) return "html";
-  if (/\.(?:md|markdown)$/i.test(name)) return "markdown";
-  if (/\.css$/i.test(name)) return "css";
-  if (/\.js$/i.test(name)) return "javascript";
-  if (/\.json$/i.test(name)) return "json";
-  if (/\.csv$/i.test(name)) return "csv";
-  if (/\.txt$/i.test(name)) return "text";
-  return "";
-}
-function createSpFilesClient({
-  fetchImpl = (...args) => fetch(...args),
-  getContext = getSpContext
-} = {}) {
-  const digestCache = /* @__PURE__ */ new Map();
-  function context({ refresh = false } = {}) {
-    const ctx2 = getContext({ refresh });
-    if (!ctx2?.live || !ctx2.pageContext?.webAbsoluteUrl) {
-      throw new SpFileError(
-        "SharePoint file transfer requires an SP: Live context.",
-        { code: "not-live" }
-      );
-    }
-    return ctx2;
-  }
-  function webInfo(targetWebUrl = "") {
-    const ctx2 = context({ refresh: true });
-    const hostWebUrl = ctx2.pageContext.webAbsoluteUrl.replace(/\/+$/, "");
-    let webUrl = hostWebUrl;
-    if (targetWebUrl) {
-      try {
-        const candidate = new URL(String(targetWebUrl).trim(), hostWebUrl);
-        if (!/^https?:$/.test(candidate.protocol) || candidate.origin !== new URL(hostWebUrl).origin) {
-          throw new Error("origin");
-        }
-        candidate.hash = "";
-        candidate.search = "";
-        webUrl = candidate.href.replace(/\/+$/, "");
-      } catch {
-        throw new SpFileError(
-          "Enter a SharePoint site URL on this tenant, such as /sites/ProjectName.",
-          { code: "invalid-web-url" }
-        );
-      }
-    }
-    const rootPath = normalizedPath(
-      webUrl === hostWebUrl && ctx2.pageContext.webServerRelativeUrl ? ctx2.pageContext.webServerRelativeUrl : pathFromWebUrl(webUrl)
-    );
-    return { ctx: ctx2, webUrl, rootPath, hostWebUrl };
-  }
-  function checkedPath(path, rootPath) {
-    const normalized = normalizedPath(path || rootPath);
-    if (rootPath !== "/" && normalized !== rootPath && !normalized.startsWith(`${rootPath}/`)) {
-      throw new SpFileError(
-        "That path is outside the current SharePoint web.",
-        { code: "outside-web" }
-      );
-    }
-    return normalized;
-  }
-  async function request(url, options = {}) {
-    try {
-      return await fetchImpl(url, {
-        credentials: "same-origin",
-        ...options
-      });
-    } catch (cause) {
-      throw new SpFileError(
-        `Could not reach SharePoint (${cause.message || cause}).`,
-        { code: "network", cause }
-      );
-    }
-  }
-  async function fetchContextInfo(targetWebUrl = "") {
-    const requested = webInfo(targetWebUrl);
-    const { webUrl } = requested;
-    const response = await request(`${webUrl}/_api/contextinfo`, {
-      method: "POST",
-      headers: { Accept: ACCEPT_JSON }
-    });
-    await requireOk(response, "Could not obtain SharePoint request context", "context");
-    const info = unwrapJson(await response.json()) || {};
-    const value = info.FormDigestValue || info.formDigestValue;
-    if (!value) {
-      throw new SpFileError(
-        "SharePoint contextinfo did not return a request digest.",
-        { code: "context" }
-      );
-    }
-    const timeoutSeconds = Number(info.FormDigestTimeoutSeconds || info.formDigestTimeoutSeconds) || 1800;
-    const canonicalWebUrl = webInfo(
-      info.WebFullUrl || info.webFullUrl || webUrl
-    ).webUrl;
-    const cached2 = {
-      value,
-      expiresAt: Date.now() + timeoutSeconds * 1e3,
-      webFullUrl: canonicalWebUrl,
-      siteFullUrl: info.SiteFullUrl || info.siteFullUrl || ""
-    };
-    digestCache.set(webUrl.toLowerCase(), cached2);
-    digestCache.set(canonicalWebUrl.toLowerCase(), cached2);
-    return {
-      ...cached2,
-      webUrl: canonicalWebUrl,
-      rootPath: pathFromWebUrl(canonicalWebUrl)
-    };
-  }
-  async function connectWeb(targetWebUrl = "") {
-    const info = await fetchContextInfo(targetWebUrl);
-    return {
-      webUrl: info.webUrl,
-      rootPath: info.rootPath,
-      siteFullUrl: info.siteFullUrl
-    };
-  }
-  async function getDigest2({ force = false, webUrl: targetWebUrl = "" } = {}) {
-    const target = webInfo(targetWebUrl);
-    const cacheKey = target.webUrl.toLowerCase();
-    const cached2 = digestCache.get(cacheKey);
-    if (!force && cached2?.expiresAt - DIGEST_SAFETY_MS > Date.now()) {
-      return cached2.value;
-    }
-    if (!force && !cached2 && target.webUrl === target.hostWebUrl) {
-      const ctx2 = context({ refresh: true });
-      const value = ctx2.pageContext.formDigestValue;
-      const timeoutSeconds = Number(ctx2.pageContext.formDigestTimeoutSeconds) || 0;
-      if (value && !ctx2.pageContext.isDcsPadMock && timeoutSeconds > 0) {
-        const pageDigest = {
-          value,
-          expiresAt: (ctx2.capturedAt || Date.now()) + timeoutSeconds * 1e3,
-          webFullUrl: ctx2.pageContext.webAbsoluteUrl,
-          siteFullUrl: ctx2.pageContext.siteAbsoluteUrl || ""
-        };
-        digestCache.set(cacheKey, pageDigest);
-        if (pageDigest.expiresAt - DIGEST_SAFETY_MS > Date.now()) return value;
-      }
-    }
-    return (await fetchContextInfo(target.webUrl)).value;
-  }
-  async function listFolder(serverRelativePath, { webUrl: targetWebUrl = "", purpose = "code", additionalTypes = [] } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/Length,Files/TimeLastModified&$expand=Folders,Files`;
-    const response = await request(endpoint, {
-      headers: { Accept: ACCEPT_JSON }
-    });
-    await requireOk(response, "Could not list the SharePoint folder", "list");
-    const data = unwrapJson(await response.json()) || {};
-    const folders = resultArray(data.Folders).map((item2) => ({
-      kind: "folder",
-      name: String(item2.Name || ""),
-      serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath)
-    })).filter((item2) => item2.name).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
-    const files = resultArray(data.Files).map((item2) => {
-      const fileType = fileTypeForFileName(item2.Name, additionalTypes);
-      return {
-        kind: "file",
-        name: String(item2.Name || ""),
-        pane: fileType?.pane || "",
-        fileType,
-        browserType: browserTypeForFileName(item2.Name),
-        serverRelativeUrl: checkedPath(item2.ServerRelativeUrl, rootPath),
-        length: Number(item2.Length) || 0,
-        modified: item2.TimeLastModified || ""
-      };
-    }).filter((item2) => item2.name && (purpose === "browser" ? item2.browserType : item2.fileType)).sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base" }));
-    return {
-      path: checkedPath(data.ServerRelativeUrl || path, rootPath),
-      rootPath,
-      folders,
-      files
-    };
-  }
-  async function readTextFile(serverRelativePath, { webUrl: targetWebUrl = "", additionalTypes = [] } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    const fileType = fileTypeForFileName(path, additionalTypes);
-    if (!fileType) {
-      throw new SpFileError(
-        "That file type is not supported for SharePoint import.",
-        { code: "unsupported-file" }
-      );
-    }
-    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/$value`;
-    const response = await request(endpoint);
-    await requireOk(response, "Could not download the SharePoint file", "read");
-    const length = Number(response.headers.get("content-length")) || 0;
-    if (length > MAX_IMPORT_BYTES) {
-      throw new SpFileError(
-        "The selected SharePoint file is larger than the 5 MB import limit.",
-        { code: "too-large" }
-      );
-    }
-    const text = await response.text();
-    if (new Blob([text]).size > MAX_IMPORT_BYTES) {
-      throw new SpFileError(
-        "The selected SharePoint file is larger than the 5 MB import limit.",
-        { code: "too-large" }
-      );
-    }
-    return {
-      fileName: path.slice(path.lastIndexOf("/") + 1),
-      pane: fileType.pane,
-      fileType,
-      text,
-      serverRelativeUrl: path
-    };
-  }
-  async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx: ctx2 }) {
-    const state2 = {
-      required: false,
-      known: false,
-      checkedOut: false,
-      checkedOutByCurrentUser: false,
-      checkedOutBy: "",
-      reason: ""
-    };
-    try {
-      const policyResponse = await request(
-        `${webUrl}/_api/web/lists(guid'${libraryId}')?$select=ForceCheckout`,
-        { headers: { Accept: ACCEPT_JSON } }
-      );
-      await requireOk(
-        policyResponse,
-        "Could not read the destination library check-out policy",
-        "checkout-policy"
-      );
-      const list2 = unwrapJson(await policyResponse.json()) || {};
-      state2.required = Boolean(list2.ForceCheckout ?? list2.forceCheckout);
-      state2.known = true;
-      if (!filePath) return state2;
-      const path = checkedPath(filePath, rootPath);
-      const fileResponse = await request(
-        `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType,CheckedOutByUser/Id,CheckedOutByUser/Title,CheckedOutByUser/LoginName,CheckedOutByUser/Email&$expand=CheckedOutByUser`,
-        { headers: { Accept: ACCEPT_JSON } }
-      );
-      await requireOk(
-        fileResponse,
-        "Could not read the destination file check-out state",
-        "checkout-state"
-      );
-      const file = unwrapJson(await fileResponse.json()) || {};
-      state2.checkedOut = isCheckedOut(file.CheckOutType ?? file.checkOutType);
-      if (state2.checkedOut) {
-        const user2 = file.CheckedOutByUser || file.checkedOutByUser || null;
-        state2.checkedOutBy = String(user2?.Title || user2?.LoginName || "").trim();
-        state2.checkedOutByCurrentUser = isCheckedOutByCurrentUser(
-          user2,
-          ctx2?.pageContext,
-          { sameWeb: webUrl === hostWebUrl }
-        );
-      }
-    } catch (error) {
-      state2.known = false;
-      state2.reason = String(error?.message || error);
-    }
-    return state2;
-  }
-  async function postFileMethod(webUrl, path, method, fallback, code) {
-    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/${method}`;
-    const attempt = async (forceDigest) => {
-      const digest = await getDigest2({ force: forceDigest, webUrl });
-      return request(endpoint, {
-        method: "POST",
-        headers: { Accept: ACCEPT_JSON, "X-RequestDigest": digest }
-      });
-    };
-    let response = await attempt(false);
-    if (response.status === 403) response = await attempt(true);
-    await requireOk(response, fallback, code);
-  }
-  async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    await postFileMethod(
-      webUrl,
-      path,
-      "CheckOut()",
-      "Could not check out the SharePoint file",
-      "checkout"
-    );
-    return { serverRelativeUrl: path };
-  }
-  async function checkInFile(serverRelativePath, { comment = "", checkInType = 0, webUrl: targetWebUrl = "" } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    const stateResponse = await request(
-      `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')?$select=CheckOutType`,
-      { headers: { Accept: ACCEPT_JSON } }
-    );
-    await requireOk(
-      stateResponse,
-      "Could not read the file check-out state",
-      "checkout-state"
-    );
-    const file = unwrapJson(await stateResponse.json()) || {};
-    if (!isCheckedOut(file.CheckOutType ?? file.checkOutType)) {
-      return { serverRelativeUrl: path, checkedIn: false };
-    }
-    const type = [0, 1, 2].includes(Number(checkInType)) ? Number(checkInType) : 0;
-    const safeComment = String(comment || "").slice(0, 1023);
-    await postFileMethod(
-      webUrl,
-      path,
-      `CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=${type})`,
-      "Could not check in the SharePoint file",
-      "checkin"
-    );
-    return { serverRelativeUrl: path, checkedIn: true };
-  }
-  async function undoCheckOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    await postFileMethod(
-      webUrl,
-      path,
-      "UndoCheckOut()",
-      "Could not discard the check-out",
-      "checkout-undo"
-    );
-    return { serverRelativeUrl: path };
-  }
-  async function inspectFileMetadata(folderPath, { filePath = "", webUrl: targetWebUrl = "" } = {}) {
-    const { ctx: ctx2, webUrl, rootPath, hostWebUrl } = webInfo(targetWebUrl);
-    const folder = checkedPath(folderPath, rootPath);
-    const libraryEndpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')?$select=ListItemAllFields/ParentList/Id&$expand=ListItemAllFields,ListItemAllFields/ParentList`;
-    const libraryResponse = await request(libraryEndpoint, {
-      headers: { Accept: ACCEPT_JSON }
-    });
-    const libraryData = libraryResponse.ok ? unwrapJson(await libraryResponse.json()) || {} : {};
-    let libraryId = String(
-      libraryData.ListItemAllFields?.ParentList?.Id || libraryData.ListItemAllFields?.ParentList?.ID || ""
-    ).replace(/[{}]/g, "").trim();
-    if (!LIBRARY_GUID.test(libraryId)) {
-      const rootLibraryEndpoint = `${webUrl}/_api/web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folder)}'&$select=Id`;
-      const rootLibraryResponse = await request(rootLibraryEndpoint, {
-        headers: { Accept: ACCEPT_JSON }
-      });
-      await requireOk(
-        rootLibraryResponse,
-        "Could not resolve the destination SharePoint library",
-        "metadata-library"
-      );
-      const rootLibraryData = unwrapJson(await rootLibraryResponse.json()) || {};
-      libraryId = String(rootLibraryData.Id || rootLibraryData.ID || "").replace(/[{}]/g, "").trim();
-    }
-    if (!LIBRARY_GUID.test(libraryId)) {
-      throw new SpFileError(
-        "SharePoint did not identify the destination document library.",
-        { code: "metadata-library" }
-      );
-    }
-    const checkout = await checkOutState({
-      webUrl,
-      hostWebUrl,
-      rootPath,
-      libraryId,
-      filePath,
-      ctx: ctx2
-    });
-    try {
-      return {
-        fields: await inspectFields(webUrl, rootPath, libraryId, filePath),
-        checkout
-      };
-    } catch (error) {
-      if (error && typeof error === "object") error.checkout = checkout;
-      throw error;
-    }
-  }
-  async function inspectFields(webUrl, rootPath, libraryId, filePath) {
-    const fieldsEndpoint = `${webUrl}/_api/web/lists(guid'${libraryId}')/Fields?$select=InternalName,EntityPropertyName,Title,TypeAsString,ReadOnlyField,Hidden`;
-    const fieldsResponse = await request(fieldsEndpoint, {
-      headers: { Accept: ACCEPT_JSON }
-    });
-    await requireOk(
-      fieldsResponse,
-      "Could not inspect the destination library metadata fields",
-      "metadata-fields"
-    );
-    const fieldsData = unwrapJson(await fieldsResponse.json()) || {};
-    const libraryFields = resultArray(fieldsData.value || fieldsData);
-    const fields = {};
-    for (const spec of FILE_METADATA_SPECS) {
-      const match = libraryFields.find((field2) => String(field2.InternalName || "").toLowerCase() === spec.internalName.toLowerCase());
-      let reason = "";
-      if (!match) reason = `${spec.internalName} is not available in this library.`;
-      else if (match.ReadOnlyField) reason = `${spec.internalName} is read-only.`;
-      else if (match.Hidden) reason = `${spec.internalName} is hidden in this library.`;
-      else if (!spec.types.includes(String(match.TypeAsString || ""))) {
-        reason = `${spec.internalName} is not a supported text field.`;
-      }
-      fields[spec.key] = {
-        label: spec.label,
-        internalName: match?.InternalName || spec.internalName,
-        entityPropertyName: match?.EntityPropertyName || match?.InternalName || spec.internalName,
-        available: !reason,
-        reason,
-        value: ""
-      };
-    }
-    if (filePath) {
-      const path = checkedPath(filePath, rootPath);
-      const selected = Object.values(fields).filter((field2) => field2.available).map((field2) => field2.entityPropertyName);
-      if (selected.length) {
-        const valuesEndpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields?$select=${selected.map(encodeURIComponent).join(",")}`;
-        const valuesResponse = await request(valuesEndpoint, {
-          headers: { Accept: ACCEPT_JSON }
-        });
-        await requireOk(
-          valuesResponse,
-          "Could not read the destination file metadata",
-          "metadata-read"
-        );
-        const values = unwrapJson(await valuesResponse.json()) || {};
-        for (const field2 of Object.values(fields)) {
-          if (field2.available) {
-            field2.value = String(
-              values[field2.entityPropertyName] ?? values[field2.internalName] ?? ""
-            );
-          }
-        }
-      }
-    }
-    return fields;
-  }
-  async function writeFileMetadata(serverRelativePath, fields, values, { webUrl: targetWebUrl = "" } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const path = checkedPath(serverRelativePath, rootPath);
-    const formValues = Object.entries(fields || {}).filter(([key2, field2]) => field2?.available && Object.hasOwn(values || {}, key2)).map(([key2, field2]) => ({
-      FieldName: field2.internalName,
-      FieldValue: String(values[key2] ?? "")
-    }));
-    if (!formValues.length) return { updated: [] };
-    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/ListItemAllFields/ValidateUpdateListItem`;
-    const update = async (forceDigest) => {
-      const digest = await getDigest2({ force: forceDigest, webUrl });
-      return request(endpoint, {
-        method: "POST",
-        headers: {
-          Accept: ACCEPT_JSON,
-          "Content-Type": "application/json;odata=nometadata",
-          "X-RequestDigest": digest
-        },
-        // bNewDocumentUpdate makes this the tail of the upload rather than a
-        // new version — and on a checked-out file SharePoint checks it in as
-        // part of the update, recording checkInComment.
-        body: JSON.stringify({
-          formValues,
-          bNewDocumentUpdate: true,
-          checkInComment: CHECK_IN_COMMENT
-        })
-      });
-    };
-    let response = await update(false);
-    if (response.status === 403) response = await update(true);
-    await requireOk(response, "Could not save the SharePoint file metadata", "metadata-write");
-    const data = unwrapJson(await response.json()) || {};
-    const results = resultArray(data.value || data.ValidateUpdateListItem || data);
-    const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
-    if (failures.length) {
-      const detail = failures.map((result) => `${result.FieldName || "Field"}: ${result.ErrorMessage || "SharePoint rejected the value."}`).join(" ");
-      throw new SpFileError(
-        `SharePoint rejected the file metadata. ${detail}`,
-        { code: "metadata-write" }
-      );
-    }
-    return { updated: formValues.map((value) => value.FieldName) };
-  }
-  async function writeTextFile(folderPath, fileName, text, { overwrite = false, webUrl: targetWebUrl = "" } = {}) {
-    const { webUrl, rootPath } = webInfo(targetWebUrl);
-    const folder = checkedPath(folderPath, rootPath);
-    const safeName = String(fileName || "").trim();
-    if (!safeName || safeName === "." || safeName === ".." || /[\\/]/.test(safeName)) {
-      throw new SpFileError(
-        "Enter a file name without folder separators.",
-        { code: "invalid-name" }
-      );
-    }
-    const endpoint = `${webUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')/Files/AddUsingPath(decodedUrl='${odataPathLiteral(safeName)}',overwrite=${overwrite ? "true" : "false"})`;
-    const upload = async (forceDigest) => {
-      const digest = await getDigest2({ force: forceDigest, webUrl });
-      return request(endpoint, {
-        method: "POST",
-        headers: {
-          Accept: ACCEPT_JSON,
-          "Content-Type": "text/plain; charset=utf-8",
-          "X-RequestDigest": digest
-        },
-        body: text
-      });
-    };
-    let response = await upload(false);
-    if (response.status === 403) response = await upload(true);
-    await requireOk(response, "Could not upload the SharePoint file", "write");
-    let result = {};
-    try {
-      result = unwrapJson(await response.json()) || {};
-    } catch {
-    }
-    return {
-      fileName: safeName,
-      serverRelativeUrl: result.ServerRelativeUrl || `${folder.replace(/\/$/, "")}/${safeName}`,
-      // SP.File as returned by the upload: a new file in a ForceCheckout
-      // library is born checked out. Undefined when the server doesn't say.
-      checkOutType: result.CheckOutType
-    };
-  }
-  return {
-    webInfo,
-    connectWeb,
-    getDigest: getDigest2,
-    listFolder,
-    readTextFile,
-    checkOutFile,
-    checkInFile,
-    undoCheckOutFile,
-    inspectFileMetadata,
-    writeFileMetadata,
-    writeTextFile
-  };
-}
-var defaultClient = createSpFilesClient();
-var getDigest = (options) => defaultClient.getDigest(options);
-
-// ../src/workbench/sp-write.js
-var MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-function defaultMockWriter(url, body, contentType) {
-  const writes = globalThis.__DCSPAD_WB_WRITES__ ||= [];
-  writes.push({ url, body, contentType });
-  const lower = String(url).toLowerCase();
-  if (lower.includes("validateupdatelistitem")) {
-    let formValues = [];
-    try {
-      formValues = JSON.parse(body)?.formValues || [];
-    } catch {
-    }
-    return {
-      value: formValues.map((fv) => ({
-        FieldName: fv.FieldName,
-        HasException: false,
-        ErrorMessage: null
-      }))
-    };
-  }
-  if (lower.includes("addusingpath")) {
-    const name = /addusingpath\(decodedurl='([^']*)'/.exec(lower)?.[1] || "file";
-    const folder = /getfolderbyserverrelativepath\(decodedurl='([^']*)'/.exec(lower)?.[1] || "";
-    return { ServerRelativeUrl: `${decodeURIComponent(folder)}/${decodeURIComponent(name)}` };
-  }
-  return { ok: true };
-}
-function createSpWriteClient({
-  client: client2,
-  // the workbench sp-rest client
-  fetchImpl = (...args) => fetch(...args),
-  mockWriter = null
-} = {}) {
-  const isMock = () => !client2.context().live;
-  async function post(url, { body, contentType = "application/json;odata=nometadata" } = {}, {
-    fallback = "SharePoint write failed",
-    code = "write"
-  } = {}) {
-    if (isMock()) {
-      return structuredClone((mockWriter || defaultMockWriter)(url, body, contentType));
-    }
-    const attempt = async (forceDigest) => {
-      const digest = await getDigest({ force: forceDigest, webUrl: client2.webUrl() });
-      try {
-        return await fetchImpl(url, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            Accept: ACCEPT_JSON,
-            "Content-Type": contentType,
-            "X-RequestDigest": digest
-          },
-          body
-        });
-      } catch (cause) {
-        throw new SpFileError(
-          `Could not reach SharePoint (${cause.message || cause}).`,
-          { code: "network", cause }
-        );
-      }
-    };
-    let response = await attempt(false);
-    if (response.status === 403) response = await attempt(true);
-    await requireOk(response, fallback, code);
-    try {
-      return unwrapJson(await response.json()) || {};
-    } catch {
-      return {};
-    }
-  }
-  async function validateUpdateListItem(pathKind, formValues, { newDocumentUpdate = false, checkInComment = "" } = {}) {
-    if (!Array.isArray(formValues) || !formValues.length) return { updated: [] };
-    const base = `${client2.webUrl()}/_api/web`;
-    const endpoint = pathKind.fileServerRelativeUrl ? `${base}/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(pathKind.fileServerRelativeUrl)}')/ListItemAllFields/ValidateUpdateListItem` : `${base}/lists(guid'${pathKind.listId}')/items(${Number(pathKind.itemId)})/ValidateUpdateListItem`;
-    const data = await post(endpoint, {
-      // With bNewDocumentUpdate SharePoint checks a checked-out file in as
-      // part of the update; checkInComment is what it records when it does.
-      body: JSON.stringify({
-        formValues,
-        bNewDocumentUpdate: Boolean(newDocumentUpdate),
-        ...newDocumentUpdate && checkInComment ? { checkInComment } : {}
-      })
-    }, { fallback: "Could not save the item metadata", code: "metadata-write" });
-    const results = resultArray(data.value || data.ValidateUpdateListItem || data);
-    const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || "").trim());
-    if (failures.length) {
-      const fieldErrors = {};
-      for (const failure of failures) {
-        fieldErrors[failure.FieldName || ""] = failure.ErrorMessage || "SharePoint rejected the value.";
-      }
-      const detail = failures.map((f) => `${f.FieldName || "Field"}: ${f.ErrorMessage || "SharePoint rejected the value."}`).join(" ");
-      const err = new SpFileError(
-        `SharePoint rejected the metadata. ${detail}`,
-        { code: "metadata-write" }
-      );
-      err.fieldErrors = fieldErrors;
-      throw err;
-    }
-    return { updated: formValues.map((fv) => fv.FieldName) };
-  }
-  async function uploadFile(folderServerRelativeUrl, fileName, data, { overwrite = false } = {}) {
-    const safeName = String(fileName || "").trim();
-    if (!safeName || safeName === "." || safeName === ".." || /[\\/]/.test(safeName)) {
-      throw new SpFileError(
-        "Enter a file name without folder separators.",
-        { code: "invalid-name" }
-      );
-    }
-    const size = data?.byteLength ?? data?.size ?? (typeof data === "string" ? data.length : 0);
-    if (size > MAX_UPLOAD_BYTES) {
-      throw new SpFileError(
-        `The file is larger than the ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB upload limit.`,
-        { code: "too-large" }
-      );
-    }
-    const folder = String(folderServerRelativeUrl || "/").replace(/\/+$/, "") || "/";
-    const endpoint = `${client2.webUrl()}/_api/web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folder)}')/Files/AddUsingPath(decodedUrl='${odataPathLiteral(safeName)}',overwrite=${overwrite ? "true" : "false"})`;
-    const result = await post(endpoint, {
-      body: data,
-      contentType: "application/octet-stream"
-    }, { fallback: "Could not upload the file", code: "write" });
-    return {
-      fileName: safeName,
-      serverRelativeUrl: result.ServerRelativeUrl || `${folder === "/" ? "" : folder}/${safeName}`,
-      // SP.File as returned by the upload: a new file in a ForceCheckout
-      // library is born checked out, and an overwrite leaves a check-out
-      // standing. Undefined when the server (or the mock) doesn't say.
-      checkOutType: result.CheckOutType
-    };
-  }
-  async function checkOutFile(fileServerRelativeUrl) {
-    const endpoint = `${client2.webUrl()}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')/CheckOut()`;
-    await post(
-      endpoint,
-      { body: "" },
-      { fallback: "Could not check out the file", code: "checkout" }
-    );
-    return { serverRelativeUrl: fileServerRelativeUrl };
-  }
-  async function checkInFile(fileServerRelativeUrl, { comment = "" } = {}) {
-    const file = `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(fileServerRelativeUrl)}')`;
-    if (!isMock()) {
-      const state2 = await client2.get(file, { select: "CheckOutType" });
-      if (!isCheckedOut(state2?.CheckOutType)) {
-        return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: false };
-      }
-    }
-    const safeComment = String(comment || "").slice(0, 1023);
-    await post(
-      `${client2.webUrl()}/_api/${file}/CheckIn(comment='${odataPathLiteral(safeComment)}',checkintype=0)`,
-      { body: "" },
-      { fallback: "Could not check in the file", code: "checkin" }
-    );
-    return { serverRelativeUrl: fileServerRelativeUrl, checkedIn: true };
-  }
-  async function createFolder(parentServerRelativeUrl, name) {
-    const clean = String(name || "").trim();
-    if (!clean || /["*:<>?/\\|]/.test(clean) || clean.startsWith(".") || clean.endsWith(".")) {
-      throw new SpFileError(
-        'Folder names cannot contain " * : < > ? / \\ | or start or end with a dot.',
-        { code: "invalid-name" }
-      );
-    }
-    if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)(\..*)?$/i.test(clean) || /_vti_/i.test(clean)) {
-      throw new SpFileError(
-        "That folder name is reserved by SharePoint.",
-        { code: "invalid-name" }
-      );
-    }
-    const parent = String(parentServerRelativeUrl || "/").replace(/\/+$/, "") || "";
-    const path = `${parent}/${clean}`;
-    const endpoint = `${client2.webUrl()}/_api/web/Folders/AddUsingPath(decodedUrl='${odataPathLiteral(path)}')`;
-    await post(
-      endpoint,
-      { body: "" },
-      { fallback: "Could not create the folder", code: "write" }
-    );
-    return { name: clean, serverRelativeUrl: path };
-  }
-  async function postJson(path, body = {}, { fallback = "SharePoint write failed", code = "write" } = {}) {
-    const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
-    return post(url, { body: JSON.stringify(body) }, { fallback, code });
-  }
-  return {
-    validateUpdateListItem,
-    uploadFile,
-    checkOutFile,
-    checkInFile,
-    createFolder,
-    postJson,
-    isMock
-  };
 }
 
 // ../src/workbench/views/security.js
@@ -5061,7 +6507,7 @@ function createQueryView({ client: client2 }) {
   let rawMode = false;
   let loadedForWeb = "";
   const fieldByName = (name) => fields.find((f) => f.InternalName === name);
-  const guidPath3 = (listId) => `web/lists(guid'${listId}')/items`;
+  const guidPath4 = (listId) => `web/lists(guid'${listId}')/items`;
   function pickedListId() {
     return listSelect.value === "::endpoint" ? "" : listSelect.value;
   }
@@ -5142,7 +6588,7 @@ function createQueryView({ client: client2 }) {
     }
     const top = Math.min(Math.max(Number(topInput.value) || DEFAULT_TOP, 1), MAX_TOP);
     options.top = top;
-    const path = listId ? guidPath3(listId) : String(endpointInput.value || "").trim().replace(/^\/+/, "");
+    const path = listId ? guidPath4(listId) : String(endpointInput.value || "").trim().replace(/^\/+/, "");
     if (!path) return null;
     return { path, options, webUrl: client2.webUrl() };
   }
@@ -6452,7 +7898,7 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
     return encodeURIComponent(segment);
   }
 }).join("/");
-var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var guidPath3 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function reducedChip(lost, where, because = "") {
   const chip = el11("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
   chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read.` + (because ? `
@@ -6711,7 +8157,7 @@ ${current.rootPath}` : "");
       if (!grid) {
         const plan = await queryPlan(sitePages);
         const paging = { orderby: "FileLeafRef", top: 5e3 };
-        const query = { path: guidPath2(sitePages.listId, "/items") };
+        const query = { path: guidPath3(sitePages.listId, "/items") };
         const descriptor = {
           ...query,
           options: { ...plan.gridShapes[0].options, ...paging },
@@ -6803,7 +8249,7 @@ ${current.rootPath}` : "");
   }
   function pageItem(listId, pageId, shapes) {
     const key2 = `${listId}:${pageId}`;
-    const path = guidPath2(listId, `/items(${pageId})`);
+    const path = guidPath3(listId, `/items(${pageId})`);
     if (!detailCache.has(key2)) {
       detailCache.set(
         key2,
@@ -6833,7 +8279,7 @@ ${current.rootPath}` : "");
   }
   function listFields(listId) {
     if (!fieldsPromise) {
-      fieldsPromise = client2.getAll(guidPath2(listId, "/fields"), { select: FIELD_SELECT3 }).then(({ items }) => items).catch((err) => {
+      fieldsPromise = client2.getAll(guidPath3(listId, "/fields"), { select: FIELD_SELECT3 }).then(({ items }) => items).catch((err) => {
         fieldsPromise = null;
         throw err;
       });
@@ -6988,14 +8434,14 @@ ${p.html}`).join("\n\n")
       let item2;
       let itemAsText = {};
       try {
-        item2 = await client2.get(guidPath2(listId, `/items(${pageId})`), {
+        item2 = await client2.get(guidPath3(listId, `/items(${pageId})`), {
           expand: "FieldValuesAsText"
         });
         itemAsText = item2.FieldValuesAsText || {};
       } catch {
-        item2 = await client2.get(guidPath2(listId, `/items(${pageId})`));
+        item2 = await client2.get(guidPath3(listId, `/items(${pageId})`));
         try {
-          itemAsText = await client2.get(guidPath2(listId, `/items(${pageId})/FieldValuesAsText`));
+          itemAsText = await client2.get(guidPath3(listId, `/items(${pageId})/FieldValuesAsText`));
         } catch {
           itemAsText = {};
         }
@@ -8301,7 +9747,14 @@ var client = createSpRestClient({
 var shell = createShell({
   mount: document.getElementById("wb-main"),
   // inspectSite is a hoisted declaration below; views get a late-bound ref.
-  deps: { client, inspectSite: (url) => inspectSite(url) },
+  // createClient hands a view its own independent REST client (a *second*
+  // web connection, e.g. the Schema tab's "Copy to…" target) without
+  // disturbing the shell's own client or importing mock-data.js directly.
+  deps: {
+    client,
+    inspectSite: (url) => inspectSite(url),
+    createClient: () => createSpRestClient({ mockResolver: ctx.live ? null : mockResolver })
+  },
   views: [
     // Nav order and grouping are Joe's spec (2026-07-31): identity first,
     // then content, then query, then jump-off/diagnostic sections.
