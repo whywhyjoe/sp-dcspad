@@ -670,6 +670,500 @@ await check('live: a denied fields read states the Schema tab in the neutral reg
   return cls.includes('wb-denied') && !cls.includes('wb-error');
 });
 
+// ---- Mock: the apply executor on /sites/target (slice 2a) ------------------
+// Own page: a target client + spWrite built directly (createSpRestClient /
+// createSpWriteClient / mockResolver / mockWriter), not through the UI (the
+// dialog is slice 2b). writerState (mock-data.js) is a module-level
+// singleton, so it persists across these sequential checks within this one
+// page — the dry-run check must run before the create so probeTarget still
+// finds no 'Requests' list on /sites/target.
+
+const applyPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await applyPage.goto(WB_URL);
+await applyPage.waitForSelector('.wb-home-cards');
+
+await check('apply-mock: a dry run touches nothing', () =>
+  applyPage.evaluate(async () => {
+    globalThis.__DCSPAD_WB_WRITES__ = [];
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { mockResolver, mockWriter } = await import('/src/workbench/mock-data.js');
+    const { captureListSchema } = await import('/src/workbench/list-schema-capture.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+
+    const source = createSpRestClient({ mockResolver });
+    await source.connectWeb('/sites/schema');
+    const { items: srcLists } = await source.getAll('web/lists', { select: ['Id', 'Title'] });
+    const requestsId = srcLists.find((l) => l.Title === 'Requests').Id;
+    const { doc } = await captureListSchema(source, requestsId);
+    window.__LSA_DOC__ = doc;
+
+    const target = createSpRestClient({ mockResolver });
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target, mockWriter });
+
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'Requests', dryRun: true } });
+    const writes = globalThis.__DCSPAD_WB_WRITES__ || [];
+    return report.dryRun === true && report.steps.length > 10 && writes.length === 0;
+  }));
+
+// The Requests doc carries one taxonomy column (RequestCategory) that always
+// fails (managed metadata is never recreated) and one lookup (Region) with no
+// target on /sites/target. Neither may cost the list its views or its
+// validation formula: views and validation depend on the list alone.
+await check('apply-mock: a Create run writes list → settings → content types → fields (tier order, Options bit 8) → views → validation last; one failed taxonomy column blocks nothing', () =>
+  applyPage.evaluate(async () => {
+    globalThis.__DCSPAD_WB_WRITES__ = [];
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { mockResolver, mockWriter } = await import('/src/workbench/mock-data.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const { fieldTier } = await import('/src/workbench/list-schema.js');
+    const doc = window.__LSA_DOC__;
+
+    const target = createSpRestClient({ mockResolver });
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target, mockWriter });
+
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'Requests' } });
+    window.__LSA_REPORT__ = report;
+    window.__LSA_TARGET__ = target;
+
+    const writes = globalThis.__DCSPAD_WB_WRITES__ || [];
+    const lower = (w) => w.url.toLowerCase();
+    const method = (w) => w.headers?.['X-HTTP-Method'] || w.headers?.['x-http-method'] || '';
+    const listCreateIdx = writes.findIndex((w) => /\/web\/lists$/.test(lower(w)) && !method(w));
+    const settingsIdx = writes.findIndex((w, i) => i > listCreateIdx && method(w) === 'MERGE'
+      && /lists\(guid'[0-9a-f-]+'\)$/.test(lower(w)));
+    const ctIdx = writes.findIndex((w) => lower(w).includes('addavailablecontenttype'));
+    const fieldWrites = writes.filter((w) => lower(w).includes('createfieldasxml'));
+    const firstFieldIdx = writes.findIndex((w) => lower(w).includes('createfieldasxml'));
+    const lastWrite = writes[writes.length - 1];
+    const validationLast = method(lastWrite) === 'MERGE'
+      && JSON.parse(lastWrite.body || '{}').ValidationFormula !== undefined;
+    const lastFieldIdx = writes.map((w) => lower(w).includes('createfieldasxml')).lastIndexOf(true);
+    const firstViewIdx = writes.findIndex((w) => /\/views/.test(lower(w)));
+    const optionsHaveBit8 = fieldWrites.every((w) => (JSON.parse(w.body).parameters.Options & 8) === 8);
+    // Tier order (plain → lookup → dependent → calculated) must be
+    // non-decreasing across the created-field write sequence.
+    const tiersInOrder = fieldWrites.every((w, i) => {
+      if (i === 0) return true;
+      const name = /Name="([^"]*)"/.exec(JSON.parse(w.body).parameters.SchemaXml)?.[1];
+      const prevName = /Name="([^"]*)"/.exec(JSON.parse(fieldWrites[i - 1].body).parameters.SchemaXml)?.[1];
+      const f = doc.fields.find((x) => x.internalName === name);
+      const prevF = doc.fields.find((x) => x.internalName === prevName);
+      return !f || !prevF || fieldTier(f) >= fieldTier(prevF);
+    });
+
+    const categoryStep = report.steps.find((s) => s.id === 'field:RequestCategory');
+    const regionStep = report.steps.find((s) => s.id === 'field:Region');
+    const viewSteps = report.steps.filter((s) => s.kind === 'view.upsert');
+    const validationStep = report.steps.find((s) => s.kind === 'list.validation');
+
+    return report.created === true
+      && report.listId
+      && report.fields.added === 13 && report.fields.skipped === 1 && report.fields.failed.length === 1
+      && categoryStep.status === 'failed' && regionStep.status === 'skipped'
+      && report.contentTypes.attached === 1
+      && listCreateIdx === 0
+      && settingsIdx === 1
+      && ctIdx > settingsIdx
+      && firstFieldIdx > ctIdx
+      && optionsHaveBit8 && tiersInOrder
+      && viewSteps.length > 0 && viewSteps.every((s) => s.status === 'done')
+      && report.views.added + report.views.updated === viewSteps.length
+      && firstViewIdx > lastFieldIdx
+      && validationStep.status === 'done' && validationLast;
+  }));
+
+await check('apply-mock: the created list is resolvable by the target client afterwards', () =>
+  applyPage.evaluate(async () => {
+    const target = window.__LSA_TARGET__;
+    const report = window.__LSA_REPORT__;
+    const { items } = await target.getAll('web/lists', { select: ['Id', 'Title'] });
+    const found = items.find((l) => l.Title === 'Requests');
+    if (!found || found.Id !== report.listId) return false;
+    const { items: fields } = await target.getAll(`web/lists(guid'${found.Id}')/fields`);
+    return fields.length > 20;   // base columns + the created custom fields
+  }));
+
+await applyPage.close();
+
+// ---- Stubbed live: the apply executor's write shapes and ordering ---------
+
+const LIST_ID = 'bbbbbbbb-1111-4000-8000-000000000001';
+const REGIONS_ID = 'bbbbbbbb-1111-4000-8000-000000000002';
+const CT_PARENT = '0x0100442912F2B6C7409A8FF25CE5504F1FD';
+
+const liveApply = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await liveApply.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+
+const applyPosts = [];   // { url, method, ifMatch, digest, body, order }
+const contextInfoUrls = [];
+const applyFlags = { failField: null, throttleField: null, expireOnField: null };
+let applyCallSeq = 0;
+
+await liveApply.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  const httpMethod = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
+  const digest = request.headers()['x-requestdigest'] || '';
+  const ifMatch = request.headers()['if-match'] || '';
+
+  if (url.includes('/_api/contextinfo')) {
+    contextInfoUrls.push(url);
+    return route.fulfill({
+      json: { FormDigestValue: 'WB-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+
+  if (httpMethod === 'GET') {
+    if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+      const base = url.slice(0, url.indexOf('/_api/'));
+      let rel = '/';
+      try { rel = new URL(base).pathname || '/'; } catch { /* keep '/' */ }
+      return route.fulfill({ json: { Id: 'web-id', Title: 'Target Web', Url: base, ServerRelativeUrl: rel } });
+    }
+    if (url.includes('/GetList(@listUrl)')) {
+      return route.fulfill({ status: 404, json: { 'odata.error': { message: { value: 'List not found.' } } } });
+    }
+    if (url.includes('/availablecontenttypes')) {
+      return route.fulfill({ json: { value: [{ StringId: CT_PARENT, Name: 'Request', Group: 'Custom' }] } });
+    }
+    if (url.includes(`lists(guid'${LIST_ID}')/fields`)) {
+      return route.fulfill({ json: { value: [
+        { Id: 'fid-title', InternalName: 'Title', Title: 'Title', TypeAsString: 'Text', Hidden: false, ReadOnlyField: false },
+        { Id: 'fid-linktitle', InternalName: 'LinkTitle', Title: 'Title', TypeAsString: 'Computed', Hidden: false, ReadOnlyField: true },
+        { Id: 'fid-budget', InternalName: 'Budget', Title: 'Budget', TypeAsString: 'Number', Hidden: false, ReadOnlyField: false },
+        { Id: 'fid-region', InternalName: 'Region', Title: 'Region', TypeAsString: 'Lookup', Hidden: false, ReadOnlyField: false },
+      ] } });
+    }
+    if (url.includes('/viewfields') && url.includes(`lists(guid'${LIST_ID}')`)) {
+      return route.fulfill({ json: { Items: [] } });
+    }
+    if (/\/web\/lists(\?|$)/.test(url) && !url.includes("lists(guid'")) {
+      return route.fulfill({ json: { value: [
+        { Id: REGIONS_ID, Title: 'Regions', BaseTemplate: 100, ContentTypesEnabled: false, RootFolder: { ServerRelativeUrl: '/sites/target/Lists/Regions' } },
+      ] } });
+    }
+    return route.fulfill({ json: { value: [] } });
+  }
+
+  const record = () => {
+    const entry = { url, method: xHttpMethod || httpMethod, ifMatch, digest, body: request.postData() || '', order: ++applyCallSeq };
+    applyPosts.push(entry);
+    return entry;
+  };
+
+  if (/\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    record();
+    return route.fulfill({ json: {
+      Id: LIST_ID, Title: JSON.parse(request.postData() || '{}').Title,
+      RootFolder: { ServerRelativeUrl: '/sites/target/Lists/LiveTarget' },
+    } });
+  }
+
+  if (url.includes('createfieldasxml')) {
+    const parsed = JSON.parse(request.postData() || '{}');
+    const xml = parsed?.parameters?.SchemaXml || '';
+    const name = /Name="([^"]*)"/.exec(xml)?.[1] || '';
+    record();
+    if (applyFlags.expireOnField && name === applyFlags.expireOnField) {
+      applyFlags.expireOnField = null;
+      return route.fulfill({ status: 401, json: { 'odata.error': { message: { value: 'The security token is expired.' } } } });
+    }
+    if (applyFlags.throttleField && name === applyFlags.throttleField) {
+      applyFlags.throttleField = null;
+      return route.fulfill({ status: 429, headers: { 'Retry-After': '0' }, json: {} });
+    }
+    if (applyFlags.failField && name === applyFlags.failField) {
+      return route.fulfill({ status: 400, json: { 'odata.error': { message: { value: `SharePoint could not create the column '${name}'.` } } } });
+    }
+    return route.fulfill({ json: { Id: `fid-${name.toLowerCase()}`, InternalName: name } });
+  }
+
+  if (url.toLowerCase().includes('addavailablecontenttype')) {
+    record();
+    return route.fulfill({ json: {} });
+  }
+
+  if (/\/views$/.test(url) && !xHttpMethod) {
+    record();
+    return route.fulfill({ json: { Id: 'view-1', Title: JSON.parse(request.postData() || '{}').Title } });
+  }
+
+  if (url.includes('removeallviewfields') || url.includes('addviewfield')) {
+    record();
+    return route.fulfill({ json: {} });
+  }
+
+  record();
+  return route.fulfill({ json: {} });
+});
+
+await liveApply.goto(WB_URL);
+await liveApply.waitForSelector('.wb-home-cards');
+
+await check('live-apply: a create run posts web/lists with the digest, settings MERGE with if-match *, tiered createfieldasxml (Options bit 8, scrubbed XML), field merges, ct attach before fields, views, and validation last', () =>
+  liveApply.evaluate(async (LIST_ID_) => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc, parentContentTypeId } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+
+    const parent = '0x0100442912F2B6C7409A8FF25CE5504F1FD';
+    const listCtId = `${parent}00${'d'.repeat(32)}`;
+    const doc = buildSchemaDoc({
+      list: {
+        title: 'LiveTarget', baseTemplate: 100, contentTypesEnabled: true, enableVersioning: true,
+        validationFormula: '=[Budget]>0', validationMessage: 'Must be positive',
+      },
+      fields: [
+        { internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true, required: true },
+        {
+          internalName: 'Budget', displayName: 'Budget', type: 'Number', custom: true,
+          indexed: true, enforceUniqueValues: true,
+          schemaXml: '<Field ID="{aaa}" SourceID="{bbb}" Name="Budget" Type="Number" DisplayName="Budget" Indexed="TRUE" EnforceUniqueValues="TRUE" />',
+        },
+        {
+          internalName: 'Region', displayName: 'Region', type: 'Lookup', custom: true, lookupList: 'Regions',
+          schemaXml: '<Field ID="{ccc}" Name="Region" Type="Lookup" DisplayName="Region" List="{oldguid}" ShowField="Title" />',
+        },
+      ],
+      views: [{ title: 'All Items', hidden: false, defaultView: true, fields: ['Title', 'Budget'], rowLimit: 30, paged: true, viewQuery: '' }],
+      contentTypes: [{ id: listCtId, name: 'Request', parentId: parentContentTypeId(listCtId) }],
+    });
+
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target });
+
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'LiveTarget' } });
+    window.__LSA_LIVE_REPORT__ = report;
+    window.__LSA_LIVE_TARGET__ = target;
+    window.__LSA_LIVE_SPWRITE__ = spWrite;
+    window.__LSA_LIVE_DOC__ = doc;
+    return { created: report.created, listId: report.listId, validationApplied: report.validation.applied };
+  }, LIST_ID).then((r) => r.created === true && r.listId === LIST_ID && r.validationApplied === true));
+
+await check('live-apply: web/lists carries the digest header, and settings MERGE follows it with if-match *', () => {
+  const listCreate = applyPosts.find((p) => /\/web\/lists$/.test(p.url) && p.method === 'POST');
+  const settings = applyPosts.find((p) => p.order > listCreate.order && p.method === 'MERGE'
+    && new RegExp(`lists\\(guid'${LIST_ID}'\\)$`).test(p.url));
+  return !!listCreate && listCreate.digest === 'WB-DIGEST'
+    && !!settings && settings.ifMatch === '*' && settings.order > listCreate.order;
+});
+
+await check('live-apply: createfieldasxml bodies carry Options bit 8 and scrubbed XML with no ID=/SourceID=, in tier order', () => {
+  const fieldPosts = applyPosts.filter((p) => p.url.includes('createfieldasxml'));
+  const bodies = fieldPosts.map((p) => JSON.parse(p.body));
+  const namesInOrder = bodies.map((b) => /Name="([^"]*)"/.exec(b.parameters.SchemaXml)?.[1]);
+  return fieldPosts.length === 2
+    && bodies.every((b) => (b.parameters.Options & 8) === 8)
+    && bodies.every((b) => !b.parameters.SchemaXml.includes('ID=') && !b.parameters.SchemaXml.includes('SourceID='))
+    && namesInOrder.join(',') === 'Budget,Region';   // plain before lookup
+});
+
+await check('live-apply: Indexed then EnforceUniqueValues MERGE onto the new field, right after its create', () => {
+  const budgetCreate = applyPosts.find((p) => p.url.includes('createfieldasxml')
+    && JSON.parse(p.body).parameters.SchemaXml.includes('Name="Budget"'));
+  const fieldMerges = applyPosts.filter((p) => p.method === 'MERGE' && /\/fields\(guid'/.test(p.url)
+    && p.order > budgetCreate.order)
+    .sort((a, b) => a.order - b.order);
+  const keys = fieldMerges.slice(0, 2).map((p) => Object.keys(JSON.parse(p.body))[0]);
+  return keys[0] === 'Indexed' && keys[1] === 'EnforceUniqueValues';
+});
+
+await check('live-apply: addavailablecontenttype posts before any createfieldasxml', () => {
+  const ct = applyPosts.find((p) => p.url.toLowerCase().includes('addavailablecontenttype'));
+  const firstField = applyPosts.find((p) => p.url.includes('createfieldasxml'));
+  return !!ct && !!firstField && ct.order < firstField.order;
+});
+
+await check('live-apply: the view posts POST → removeallviewfields → addviewfield×2, and validation MERGE is the final post', () => {
+  const viewPost = applyPosts.find((p) => /\/views$/.test(p.url) && p.method === 'POST');
+  const removeAll = applyPosts.find((p) => p.url.includes('removeallviewfields'));
+  const addFields = applyPosts.filter((p) => p.url.includes('addviewfield'));
+  const last = applyPosts[applyPosts.length - 1];
+  const lastBody = JSON.parse(last.body || '{}');
+  return !!viewPost && !!removeAll && addFields.length === 2
+    && viewPost.order < removeAll.order && removeAll.order < addFields[0].order
+    && lastBody.ValidationFormula === '=[Budget]>0';
+});
+
+await liveApply.evaluate(async () => {
+  const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+  const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+  const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+  const doc = buildSchemaDoc({
+    list: { title: 'FailFieldTarget', baseTemplate: 100, contentTypesEnabled: false },
+    fields: [
+      { internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true },
+      {
+        internalName: 'BudgetF', displayName: 'BudgetF', type: 'Number', custom: true,
+        schemaXml: '<Field Name="BudgetF" Type="Number" DisplayName="BudgetF" />',
+      },
+      {
+        internalName: 'RegionX', displayName: 'RegionX', type: 'Lookup', custom: true, lookupList: 'Regions',
+        schemaXml: '<Field Name="RegionX" Type="Lookup" DisplayName="RegionX" List="{oldguid}" ShowField="Title" />',
+      },
+    ],
+    views: [],
+  });
+  const target = createSpRestClient({});
+  await target.connectWeb('/sites/target');
+  const spWrite = createSpWriteClient({ client: target });
+  window.__LSA_RETRY_DOC__ = doc;
+  window.__LSA_RETRY_TARGET__ = target;
+  window.__LSA_RETRY_SPWRITE__ = spWrite;
+});
+
+await check('live-apply: a failing createfieldasxml for one field does not abort the run and is named in the report', async () => {
+  applyFlags.failField = 'RegionX';
+  const result = await liveApply.evaluate(async () => {
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = window.__LSA_RETRY_DOC__;
+    const target = window.__LSA_RETRY_TARGET__;
+    const spWrite = window.__LSA_RETRY_SPWRITE__;
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'FailFieldTarget' } });
+    window.__LSA_RETRY_REPORT__ = report;
+    return {
+      created: report.created, aborted: report.aborted,
+      budgetAdded: report.fields.added, failedNames: report.fields.failed.map((f) => f.internalName),
+    };
+  });
+  applyFlags.failField = null;
+  return result.created === true && result.aborted === '' && result.budgetAdded === 1
+    && result.failedNames.join(',') === 'RegionX';
+});
+
+await check('live-apply: retrying posts exactly one createfieldasxml and no second web/lists', async () => {
+  const listCreatesBefore = applyPosts.filter((p) => /\/web\/lists$/.test(p.url) && p.method === 'POST').length;
+  const regionCreatesBefore = applyPosts.filter((p) => p.url.includes('createfieldasxml')
+    && JSON.parse(p.body).parameters.SchemaXml.includes('Name="RegionX"')).length;
+
+  const evalResult = await liveApply.evaluate(async () => {
+    const { retryPlan } = await import('/src/workbench/list-schema.js');
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const report = window.__LSA_RETRY_REPORT__;
+    const target = window.__LSA_RETRY_TARGET__;
+    const spWrite = window.__LSA_RETRY_SPWRITE__;
+    const plan = retryPlan(report);
+    const retryReport = await runPlan(plan, { client: target, spWrite });
+    return {
+      stepCount: plan.steps.length, stepKind: plan.steps[0]?.kind,
+      added: retryReport.fields.added, failed: retryReport.fields.failed.length,
+    };
+  });
+
+  const listCreatesAfter = applyPosts.filter((p) => /\/web\/lists$/.test(p.url) && p.method === 'POST').length;
+  const regionCreatesAfter = applyPosts.filter((p) => p.url.includes('createfieldasxml')
+    && JSON.parse(p.body).parameters.SchemaXml.includes('Name="RegionX"')).length;
+
+  return evalResult.stepCount === 1 && evalResult.stepKind === 'field.create'
+    && evalResult.added === 1 && evalResult.failed === 0
+    && listCreatesAfter === listCreatesBefore
+    && regionCreatesAfter === regionCreatesBefore + 1;
+});
+
+await check('live-apply: one 429 is retried (Retry-After: 0)', async () => {
+  applyFlags.throttleField = 'BudgetT';
+  const before = applyPosts.filter((p) => p.url.includes('createfieldasxml')
+    && JSON.parse(p.body).parameters.SchemaXml.includes('Name="BudgetT"')).length;
+  const added = await liveApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'ThrottleTarget', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [{
+        internalName: 'BudgetT', displayName: 'BudgetT', type: 'Number', custom: true,
+        schemaXml: '<Field Name="BudgetT" Type="Number" DisplayName="BudgetT" />',
+      }],
+      views: [],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'ThrottleTarget' } });
+    return report.fields.added;
+  });
+  const after = applyPosts.filter((p) => p.url.includes('createfieldasxml')
+    && JSON.parse(p.body).parameters.SchemaXml.includes('Name="BudgetT"')).length;
+  // Two POSTs recorded for the one field (the 429 attempt plus sp-write's
+  // own built-in retry), but only one field counted as added.
+  return added === 1 && after === before + 2;
+});
+
+await check('live-apply: a cross-web run fetches /sites/target/_api/contextinfo and writes only under /sites/target/_api/', () =>
+  contextInfoUrls.length > 0 && contextInfoUrls.every((u) => u.includes('/sites/target/_api/contextinfo'))
+  && applyPosts.length > 0 && applyPosts.every((p) => p.url.includes('/sites/target/_api/')));
+
+await check('live-apply: a resumed (adopt) run posts no web/lists and MERGEs only EnableAttachments/EnableFolderCreation for settings', async () => {
+  const listCreatesBefore = applyPosts.filter((p) => /\/web\/lists$/.test(p.url) && p.method === 'POST').length;
+  const r = await liveApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: {
+        title: 'LiveTarget', baseTemplate: 100, enableVersioning: true,
+        enableAttachments: true, enableFolderCreation: true,
+      },
+      fields: [], views: [],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target });
+    const plan = buildApplyPlan(doc, { title: 'LiveTarget', existing: 'resume' }, {
+      existingList: { id: 'bbbbbbbb-1111-4000-8000-000000000001', title: 'LiveTarget' },
+      targetLists: [{ title: 'LiveTarget' }],
+    });
+    const report = await runPlan(plan, { client: target, spWrite });
+    return { settingsApplied: report.settings.applied, settingsFailed: report.settings.failed };
+  });
+  const listCreatesAfter = applyPosts.filter((p) => /\/web\/lists$/.test(p.url) && p.method === 'POST').length;
+  return r.settingsApplied.slice().sort().join(',') === 'EnableAttachments,EnableFolderCreation'
+    && r.settingsFailed.length === 0
+    && listCreatesAfter === listCreatesBefore;
+});
+
+await check('live-apply: a 401 mid-run aborts with report.aborted === "auth"', () => {
+  applyFlags.expireOnField = 'Region2';
+  return liveApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'AuthTarget', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [
+        {
+          internalName: 'Budget2', displayName: 'Budget2', type: 'Number', custom: true,
+          schemaXml: '<Field Name="Budget2" Type="Number" DisplayName="Budget2" />',
+        },
+        {
+          internalName: 'Region2', displayName: 'Region2', type: 'Number', custom: true,
+          schemaXml: '<Field Name="Region2" Type="Number" DisplayName="Region2" />',
+        },
+      ],
+      views: [],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'AuthTarget' } });
+    return { aborted: report.aborted, budget2: report.steps.find((s) => s.id === 'field:Budget2')?.status };
+  }).then((r) => r.aborted === 'auth' && r.budget2 === 'done');
+});
+
+await liveApply.close();
+
 await page.close();
 await schemaPage.close();
 await live.close();

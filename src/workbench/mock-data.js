@@ -310,16 +310,43 @@ function xmlAttr(xml, name) {
 let mockWriteSeq = 0;
 const nextMockId = (prefix) => `${prefix}${String(++mockWriteSeq).padStart(8, '0')}`;
 
+// A list born via the stateful mock writer needs SharePoint's own base
+// columns present immediately — the apply executor's post-create
+// fields.probe (and any UI opening the new list right after) reads them
+// unfiltered, same as a real tenant would answer.
+function baseFieldRow(internalName, title, type, extra = {}) {
+  return {
+    Id: nextMockId('bf'), InternalName: internalName, Title: title, TypeAsString: type,
+    FromBaseType: true, CanBeDeleted: false, Hidden: false, ReadOnlyField: false, ...extra,
+  };
+}
+function baseFieldRows() {
+  return [
+    baseFieldRow('Title', 'Title', 'Text'),
+    baseFieldRow('ID', 'ID', 'Counter', { ReadOnlyField: true }),
+    baseFieldRow('LinkTitle', 'Title', 'Computed'),
+    baseFieldRow('LinkTitleNoMenu', 'Title', 'Computed', { Hidden: true }),
+    baseFieldRow('Attachments', 'Attachments', 'Attachments', { Hidden: true }),
+    baseFieldRow('ContentType', 'Content Type', 'Computed', { Hidden: true }),
+    baseFieldRow('Created', 'Created', 'DateTime', { ReadOnlyField: true }),
+    baseFieldRow('Modified', 'Modified', 'DateTime', { ReadOnlyField: true }),
+    baseFieldRow('Author', 'Created By', 'User', { ReadOnlyField: true }),
+    baseFieldRow('Editor', 'Modified By', 'User', { ReadOnlyField: true }),
+  ];
+}
+
 // mockWriter(url, body, contentType, headers) — the shape createSpWriteClient
 // calls (sp-write.js). Falls back to sp-write's own defaultMockWriter for
 // anything it doesn't recognize, so ValidateUpdateListItem/AddUsingPath/etc.
-// used elsewhere in the Workbench keep working unmodified.
+// used elsewhere in the Workbench keep working unmodified. Every handled
+// branch records its own write exactly once via record() below — falling
+// through to defaultMockWriter records once more, there — so a call is
+// never double-counted in __DCSPAD_WB_WRITES__.
 export function mockWriter(url, body, contentType, headers = {}) {
-  const writes = (globalThis.__DCSPAD_WB_WRITES__ ||= []);
-  writes.push({ url, body, contentType, headers });
   const webBase = webBaseOf(url);
   const path = String(url).slice(String(url).indexOf('/_api/') + 6).toLowerCase();
   const method = headers?.['X-HTTP-Method'] || headers?.['x-http-method'] || '';
+  const record = () => { (globalThis.__DCSPAD_WB_WRITES__ ||= []).push({ url, body, contentType, headers }); };
 
   if (/^web\/lists$/.test(path) && !method) {
     let data = {};
@@ -333,14 +360,61 @@ export function mockWriter(url, body, contentType, headers = {}) {
       ContentTypesEnabled: !!data.ContentTypesEnabled, RootFolder: { ServerRelativeUrl: rootUrl },
     };
     writerState.lists.set(`${webBase}::${String(data.Title || '').toLowerCase()}`, entry);
-    writerState.fields.set(id, new Map());
-    writerState.views.set(id, new Map());
+    const fields = new Map();
+    for (const row of baseFieldRows()) fields.set(row.InternalName, row);
+    writerState.fields.set(id, fields);
+    const views = new Map();
+    const viewId = nextMockId('vv00');
+    views.set(viewId, { Id: viewId, Title: 'All Items', fields: ['LinkTitle'], defaultView: true });
+    writerState.views.set(id, views);
     writerState.contentTypes.set(id, new Set());
+    record();
     return { Id: id, Title: entry.Title, RootFolder: entry.RootFolder };
   }
 
   const listIdMatch = /lists\(guid'([0-9a-f-]+)'\)/i.exec(path);
   const listId = listIdMatch?.[1];
+
+  // MERGE on the list itself, a field, or a view updates the registry so a
+  // follow-up probe (or the executor's own re-read before the view steps)
+  // sees what changed — scoped to what a follow-up read actually surfaces:
+  // Title (list/view), Indexed/EnforceUniqueValues (field), DefaultView
+  // (view). Settings/validation MERGEs still record but have no
+  // registry-visible field to update.
+  if (listId && method === 'MERGE') {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    if (new RegExp(`^web/lists\\(guid'${listId}'\\)$`).test(path)) {
+      const entry = [...writerState.lists.values()].find((l) => l.Id === listId);
+      if (entry && data.Title !== undefined) entry.Title = data.Title;
+      record();
+      return {};
+    }
+    const fieldMerge = new RegExp(`^web/lists\\(guid'${listId}'\\)/fields\\(guid'([0-9a-f-]+)'\\)$`).exec(path);
+    if (fieldMerge) {
+      const fields = writerState.fields.get(listId);
+      const field = fields && [...fields.values()].find((f) => f.Id === fieldMerge[1]);
+      if (field) {
+        if (data.Indexed !== undefined) field.Indexed = !!data.Indexed;
+        if (data.EnforceUniqueValues !== undefined) field.EnforceUniqueValues = !!data.EnforceUniqueValues;
+        if (data.Title !== undefined) field.Title = data.Title;
+      }
+      record();
+      return {};
+    }
+    const viewMergeMatch = new RegExp(`^web/lists\\(guid'${listId}'\\)/views\\(guid'([0-9a-f-]+)'\\)$`).exec(path);
+    if (viewMergeMatch) {
+      const view = writerState.views.get(listId)?.get(viewMergeMatch[1]);
+      if (view) {
+        if (data.Title !== undefined) view.Title = data.Title;
+        if (data.DefaultView !== undefined) view.defaultView = !!data.DefaultView;
+      }
+      record();
+      return {};
+    }
+    record();
+    return {};
+  }
 
   if (listId && path.includes('createfieldasxml')) {
     let data = {};
@@ -359,6 +433,7 @@ export function mockWriter(url, body, contentType, headers = {}) {
     const id = nextMockId('ff00');
     fields.set(internalName, { Id: id, InternalName: internalName, Title: displayName, TypeAsString: type });
     writerState.fields.set(listId, fields);
+    record();
     return { Id: id, InternalName: internalName };
   }
 
@@ -368,6 +443,7 @@ export function mockWriter(url, body, contentType, headers = {}) {
     const cts = writerState.contentTypes.get(listId) || new Set();
     cts.add(data.contentTypeId);
     writerState.contentTypes.set(listId, cts);
+    record();
     return {};
   }
 
@@ -376,8 +452,9 @@ export function mockWriter(url, body, contentType, headers = {}) {
     try { data = JSON.parse(body); } catch { /* keep {} */ }
     const id = nextMockId('vv00');
     const views = writerState.views.get(listId) || new Map();
-    views.set(id, { Id: id, Title: data.Title, fields: [] });
+    views.set(id, { Id: id, Title: data.Title, fields: [], defaultView: !!data.DefaultView });
     writerState.views.set(listId, views);
+    record();
     return { Id: id, Title: data.Title };
   }
 
@@ -385,17 +462,20 @@ export function mockWriter(url, body, contentType, headers = {}) {
   if (listId && viewMatch && path.includes('removeallviewfields')) {
     const view = writerState.views.get(listId)?.get(viewMatch[1]);
     if (view) view.fields = [];
+    record();
     return {};
   }
   const addViewField = /addviewfield\('([^']*)'\)/i.exec(path);
   if (listId && viewMatch && addViewField) {
     const view = writerState.views.get(listId)?.get(viewMatch[1]);
     if (view) view.fields.push(decodeURIComponent(addViewField[1]));
+    record();
     return {};
   }
 
-  // Everything else (settings/validation MERGE, and anything not touched by
-  // the schema feature) falls back to the pad's own default mock behavior.
+  // Everything else (validation MERGE with no registry-visible effect, and
+  // anything not touched by the schema feature) falls back to the pad's own
+  // default mock behavior, which records the write itself.
   return defaultMockWriter(url, body, contentType, headers);
 }
 
@@ -1046,7 +1126,7 @@ export function mockResolver(rawUrl) {
       if (dyn) {
         return {
           value: [...dyn.values()].map((v) => ({
-            Id: v.Id, Title: v.Title, DefaultView: false, PersonalView: false, Hidden: false,
+            Id: v.Id, Title: v.Title, DefaultView: !!v.defaultView, PersonalView: false, Hidden: false,
             RowLimit: 30, Paged: true, ViewQuery: '', ViewFields: { Items: v.fields },
           })),
         };

@@ -549,7 +549,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
       ctStepIds.push(id);
       const isAvailable = available.has(parentId);
       steps.push(step(id, 'ct.attach', `Attach content type ‘${ct.name}’`, {
-        dependsOn: ['settings'],
+        dependsOn: ['list'],
         payload: { contentTypeId: parentId, name: ct.name },
         refs: { listId: { self: true } },
         optional: true,
@@ -588,7 +588,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
     if (present) {
       const same = present.typeAsString === f.type;
       steps.push(step(id, 'field.create', `Column ‘${f.displayName}’ (${f.internalName})`, {
-        dependsOn: [...ctStepIds, 'settings'],
+        dependsOn: ['list', ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: same ? 'skipped' : 'failed',
         error: same ? '' : `exists on the target as ${present.typeAsString}, source is ${f.type} — values will not import.`,
@@ -604,7 +604,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
       && String(ef.title || '').toLowerCase() === String(f.displayName || '').toLowerCase());
     if (titleTaken) {
       steps.push(step(id, 'field.create', `Column ‘${f.displayName}’ (${f.internalName})`, {
-        dependsOn: [...ctStepIds, 'settings'],
+        dependsOn: ['list', ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: 'failed',
         error: `a different column already uses the display name ‘${f.displayName}’.`,
@@ -613,7 +613,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
     }
     if (TAXONOMY_TYPES.has(f.type)) {
       steps.push(step(id, 'field.create', `Column ‘${f.displayName}’ (${f.internalName})`, {
-        dependsOn: [...ctStepIds, 'settings'],
+        dependsOn: ['list', ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: 'failed',
         error: 'managed metadata columns are not recreated automatically.',
@@ -661,7 +661,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
               warnings.push(`Lookup ‘${f.internalName}’ target ‘${mappedValue}’ is missing on the target — created as a single line of text (policy: text; a re-run cannot upgrade it).`);
             } else {
               steps.push(step(id, 'field.create', `Skip column ‘${f.displayName}’ (${f.internalName})`, {
-                dependsOn: [...ctStepIds, 'settings'],
+                dependsOn: ['list', ...ctStepIds],
                 payload: { field: f, options: fieldOptions },
                 status: 'skipped',
                 error: '',
@@ -677,7 +677,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
     }
 
     steps.push(step(id, 'field.create', `${blocked ? 'Blocked' : 'Add'} ${f.type} column ‘${f.displayName}’ (${f.internalName})${asText ? ' as text' : ''}`, {
-      dependsOn: [...ctStepIds, 'settings'],
+      dependsOn: ['list', ...ctStepIds],
       payload: { field: f, asText, options: fieldOptions },
       refs,
       status: blocked ? 'blocked' : 'planned',
@@ -694,17 +694,15 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
   const titleField = d.fields.find((f) => f.internalName === 'Title');
   if (titleField && (titleField.displayName !== 'Title' || titleField.required === false)) {
     steps.push(step('title', 'field.base', `Set the Title column’s display name and required flag`, {
-      dependsOn: [...fieldStepIds, ...mergeStepIds, 'settings'],
+      dependsOn: ['list'],
       payload: { displayName: titleField.displayName, required: titleField.required },
       optional: true,
     }));
   }
 
   // ---- views -------------------------------------------------------------
-  const viewStepIds = [];
   for (const v of d.views.filter((view) => !view.hidden)) {
     const id = `view:${v.title}`;
-    viewStepIds.push(id);
     // Title match first; the source's default view also matches the target's
     // own default view, which carries a localized title ("Alle Elemente").
     const targetViews = probe.existingViews || [];
@@ -719,7 +717,10 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
       warnings.push(`View ‘${v.title}’: columns not on the target were left out: ${missing.join(', ')}.`);
     }
     steps.push(step(id, 'view.upsert', `View ‘${v.title}’ (${wanted.length} column${wanted.length === 1 ? '' : 's'})`, {
-      dependsOn: ['title', ...fieldStepIds, ...mergeStepIds].filter((depId) => steps.some((s) => s.id === depId)),
+      // Only the list: a view that names a column which failed to create
+      // simply leaves it out (warned above). Depending on every field step
+      // let one managed-metadata column block every view on the list.
+      dependsOn: ['list'],
       payload: {
         title: v.title, viewId: existingView?.id || null, fields: wanted,
         viewQuery: v.viewQuery, rowLimit: v.rowLimit, paged: v.paged,
@@ -731,7 +732,9 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
   // ---- list-level validation formula (last: it can reference any column) -
   if (d.list.validationFormula) {
     steps.push(step('validation', 'list.validation', 'Apply the list validation formula', {
-      dependsOn: viewStepIds.length ? viewStepIds : ['settings'],
+      // Ordered last so every column the formula names exists; a formula
+      // over a column that failed is refused by SharePoint on its own merits.
+      dependsOn: ['list'],
       payload: { validationFormula: d.list.validationFormula, validationMessage: d.list.validationMessage },
       optional: true,
     }));

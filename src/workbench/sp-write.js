@@ -242,12 +242,17 @@ export function createSpWriteClient({
   }
 
   // Generic JSON POST against a /_api-relative path (group membership ops
-  // and other small writes). Returns the parsed response body.
+  // and other small writes). Returns the parsed response body. `contentType`
+  // is an escape hatch for the schema executor's verbose-odata fallback
+  // (list-schema-apply.js) — every other caller leaves it unset and gets
+  // post()'s own nometadata default.
   async function postJson(path, body = {}, {
-    fallback = 'SharePoint write failed', code = 'write', headers = {},
+    fallback = 'SharePoint write failed', code = 'write', headers = {}, contentType,
   } = {}) {
     const url = `${client.webUrl()}/_api/${String(path).replace(/^\/+/, '')}`;
-    return post(url, { body: JSON.stringify(body), headers }, { fallback, code });
+    return post(url, {
+      body: JSON.stringify(body), headers, ...(contentType ? { contentType } : {}),
+    }, { fallback, code });
   }
 
   // SharePoint's REST MERGE: a POST carrying X-HTTP-Method: MERGE and
@@ -256,12 +261,13 @@ export function createSpWriteClient({
   // properties) so a plan step never has to know which properties want a
   // full PUT versus a merge; on SharePoint everything here is a merge.
   async function mergeJson(path, body = {}, {
-    fallback = 'SharePoint write failed', code = 'write', headers = {},
+    fallback = 'SharePoint write failed', code = 'write', headers = {}, contentType,
   } = {}) {
     const url = `${client.webUrl()}/_api/${String(path).replace(/^\/+/, '')}`;
     return post(url, {
       body: JSON.stringify(body),
       headers: { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*', ...headers },
+      ...(contentType ? { contentType } : {}),
     }, { fallback, code });
   }
 
