@@ -48,6 +48,23 @@ export async function captureListSchema(client, listId, { includeHidden = false 
   // OnQuickLaunch, ListExperienceOptions…) is exactly the heterogeneous case
   // this capture is unprojected for.
   const list = await client.get(guidPath(listId), { expand: 'RootFolder' });
+  // SharePoint leaves a few SP.List properties out of the default payload
+  // (verified live): they only come back when named. One tolerant read for
+  // the set; if the tenant rejects the set, try each alone and keep what
+  // answers. A property that never answers stays at its doc default.
+  const NAMED_ONLY = ['ValidationFormula', 'ValidationMessage', 'OnQuickLaunch', 'ReadSecurity', 'WriteSecurity'];
+  const missing = NAMED_ONLY.filter((k) => !(k in list));
+  if (missing.length) {
+    try {
+      Object.assign(list, await client.get(guidPath(listId), { select: missing }));
+    } catch (err) {
+      if (isDeniedRead(err) || isExpiredSession(err)) throw err;
+      for (const key of missing) {
+        try { Object.assign(list, await client.get(guidPath(listId), { select: [key] })); }
+        catch { /* not on this tenant — keep the default */ }
+      }
+    }
+  }
 
   const { items: rawFields } = await client.getAll(
     guidPath(listId, '/fields'),

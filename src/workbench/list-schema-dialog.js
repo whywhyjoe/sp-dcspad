@@ -6,8 +6,10 @@
 // Workbench instead of inventing new vocabulary. The dialog itself does no
 // planning or writing: Dry run calls probeTarget()+buildApplyPlan() (reads
 // only) to render the same Plan the Create button then hands to runPlan().
-// Retry re-plans only the failed steps (retryPlan) and folds their results
-// back into the report already on screen.
+// Retry re-probes the target and rebuilds a full resume plan bound to the
+// list this run created or adopted — buildApplyPlan's own resume/adopt path
+// (idempotent: existing columns skip but still merge, views upsert) does
+// the work, so retry is just another run of the same planner in resume mode.
 //
 // The shell client (`client`) and the view that opened this dialog are
 // never touched here — a second, independent client (`createClient()`) is
@@ -15,7 +17,7 @@
 // never flips "inspecting" onto the source view's status line.
 
 import {
-  normalizeSchemaDoc, SCHEMA_KIND, defaultTargetTitle, buildApplyPlan, retryPlan,
+  normalizeSchemaDoc, SCHEMA_KIND, defaultTargetTitle, buildApplyPlan,
   buildApplyReport, parentContentTypeId, isBuiltinParent, LOOKUP_TYPES,
 } from './list-schema.js';
 import { probeTarget } from './list-schema-capture.js';
@@ -64,45 +66,12 @@ function stepLine(step) {
   return step.error ? `${step.label} — ${step.error}` : step.label;
 }
 
-// Fold a retry report's (small, failed-steps-only) results back onto the
-// displayed report: steps replaced by id, counters re-tallied from the
-// merged step list so a second retry still reports honest totals.
-function mergeRetryReport(base, retry) {
-  const merged = { ...base };
-  merged.steps = base.steps.map((s) => retry.steps.find((r) => r.id === s.id) || s);
-  merged.fields = { added: 0, skipped: 0, failed: [] };
-  merged.views = { added: 0, updated: 0, failed: [] };
-  merged.contentTypes = { attached: 0, skipped: 0, failed: 0 };
-  merged.validation = { applied: false, error: '' };
-  for (const s of merged.steps) {
-    if (s.kind === 'field.create') {
-      if (s.status === 'done') merged.fields.added++;
-      else if (s.status === 'skipped') merged.fields.skipped++;
-      else if (s.status === 'failed') {
-        merged.fields.failed.push({ internalName: s.payload?.field?.internalName, error: s.error });
-      }
-    } else if (s.kind === 'view.upsert') {
-      if (s.status === 'done') { if (s.result?.created) merged.views.added++; else merged.views.updated++; }
-      else if (s.status === 'failed') merged.views.failed.push({ title: s.payload?.title, error: s.error });
-    } else if (s.kind === 'ct.attach') {
-      if (s.status === 'done') merged.contentTypes.attached++;
-      else if (s.status === 'failed') merged.contentTypes.failed++;
-      else if (s.status === 'skipped') merged.contentTypes.skipped++;
-    } else if (s.kind === 'list.validation') {
-      merged.validation.applied = s.status === 'done';
-      if (s.status === 'failed') merged.validation.error = s.error;
-    }
-  }
-  merged.warnings = [...(base.warnings || []), ...(retry.warnings || [])];
-  merged.aborted = retry.aborted || '';
-  merged.listId = base.listId || retry.listId;
-  merged.created = base.created || retry.created;
-  merged.rootFolder = base.rootFolder || retry.rootFolder;
-  return merged;
-}
-
 function buildHeadline(report, { isMock }) {
   if (report.aborted === 'auth') return EXPIRED_SESSION_NOTE;
+  if (report.aborted === 'probe') {
+    const msg = report.warnings?.[report.warnings.length - 1] || 'a read failed';
+    return `The run stopped: ${msg} — Retry resumes from the list as it is now.`;
+  }
   const failed = report.steps.filter((s) => s.status === 'failed').length;
   const retryable = report.steps.filter((s) => s.status === 'failed' && !s.final).length;
   let headline;
@@ -136,6 +105,12 @@ export function openSchemaApplyDialog({
 
     let probe = { targetLists: [], existingList: null, existingFields: [], existingViews: [], existingContentTypeIds: [], availableContentTypes: null };
     let connected = false;
+    // The raw target-input value `connect()` last succeeded against — a
+    // stand-in for "is the input still what we're connected to", checked
+    // with the same canonUrl() on both sides so it survives a trailing
+    // slash without ever comparing a relative typed value to an absolute
+    // resolved one.
+    let connectedInputValue = null;
     let existingPolicy = 'new';   // 'new' | 'resume'
     let phase = 'form';           // 'form' | 'running' | 'report'
     let listExists = false;
@@ -143,6 +118,10 @@ export function openSchemaApplyDialog({
     let liById = new Map();
     let abortController = null;
     let titleTouched = false;
+    // The (web, colliding-list-id) pair the existing-target policy/consent
+    // were last shown for — reset whenever it changes so consent given for
+    // one list can never silently carry over onto a different one.
+    let lastCollisionKey = null;
 
     // ---- shell ------------------------------------------------------------
     const dialog = el('dialog', 'app-dialog sp-metadata-dialog wb-schema-dialog');
@@ -362,6 +341,17 @@ export function openSchemaApplyDialog({
         && cleanId(probe.existingList.id) === cleanId(d.source?.listId);
     }
 
+    // Planner refusals (list-schema.js buildApplyPlan) worth showing before
+    // the user ever clicks Dry run/Create — both are static facts of the
+    // doc/probe, not something a write attempt is needed to discover.
+    function baseTypeMismatch() {
+      return Boolean(probe.existingList) && probe.existingList.baseTemplate != null
+        && Number(probe.existingList.baseTemplate) !== Number(d.list.baseTemplate);
+    }
+    function eligible() {
+      return Number(d.list.baseTemplate) === 100 && !baseTypeMismatch();
+    }
+
     function updateTitleStatus() {
       if (!probe.existingList) {
         titleStatus.textContent = connected ? 'Available' : '';
@@ -377,9 +367,22 @@ export function openSchemaApplyDialog({
     }
 
     function updateExistingSection() {
+      // The consent/policy is only ever meant for the ONE (web, list)
+      // collision it was shown for — the target web changing, the colliding
+      // list changing (even under the same title, on a different web), or
+      // the title simply no longer colliding must all reset it, never carry
+      // a checked box onto a list nobody consented to touch.
+      const collisionKey = probe.existingList
+        ? `${canonUrl(targetClient.webUrl())}::${cleanId(probe.existingList.id)}` : null;
+      if (collisionKey !== lastCollisionKey) {
+        lastCollisionKey = collisionKey;
+        existingPolicy = 'new';
+        newTitleRadio.checked = true;
+        gateBox.checked = false;
+      }
       const show = Boolean(probe.existingList) && !sameAsSource();
       existingSection.hidden = !show;
-      if (!show) { existingPolicy = 'new'; newTitleRadio.checked = true; gateRow.hidden = true; return; }
+      if (!show) { gateRow.hidden = true; return; }
       gateLabel.textContent = `I understand this changes ‘${probe.existingList.title}’: missing columns and `
         + 'views are added, views with the same title have their columns rebuilt, and attachments or folders '
         + 'are switched on if the source needs them. Nothing is deleted.';
@@ -452,11 +455,17 @@ export function openSchemaApplyDialog({
     }
 
     function canDryRun() {
-      return connected && Boolean(titleInput.value.trim()) && !sameAsSource()
+      return eligible() && connected && Boolean(titleInput.value.trim()) && !sameAsSource()
         && (!probe.existingList || existingPolicy === 'resume');
     }
     function canCreate() {
-      return canDryRun() && (!probe.existingList || gateBox.checked);
+      return canDryRun() && (!probe.existingList || gateBox.checked)
+        // Belt and suspenders alongside the input listener below (which
+        // already drops `connected` the instant the field is edited): Create
+        // only fires against the site the connected client actually points
+        // at, compared the same way on both sides so a typed relative path
+        // and its resolved absolute form don't spuriously disagree.
+        && connectedInputValue !== null && canonUrl(connectedInputValue) === canonUrl(targetInput.value);
     }
 
     function refreshGate() {
@@ -473,11 +482,20 @@ export function openSchemaApplyDialog({
         showError(err.message || String(err));
         return;
       }
-      showError('');
       updateTitleStatus();
       updateExistingSection();
       renderLookupRows();
       renderContentTypes();
+      // Planner refusals (list-schema.js) that are already knowable from the
+      // doc and this probe — shown up front, in the loud register, instead
+      // of waiting for a Dry run/Create click to discover them.
+      if (baseTypeMismatch()) {
+        showError(`‘${probe.existingList.title}’ already exists on the target as a different type of list — it can’t be used for this schema.`);
+      } else if (Number(d.list.baseTemplate) !== 100) {
+        showError('Only generic lists can be created in this stage — document libraries arrive in stage 2.');
+      } else {
+        showError('');
+      }
       refreshGate();
     }
 
@@ -486,6 +504,8 @@ export function openSchemaApplyDialog({
       targetStatus.hidden = true;
       connectBtn.disabled = true;
       connected = false;
+      connectedInputValue = null;
+      refreshGate();
       try {
         await targetClient.connectWeb(rawUrl);
       } catch (err) {
@@ -499,6 +519,7 @@ export function openSchemaApplyDialog({
       }
       connectBtn.disabled = false;
       connected = true;
+      connectedInputValue = rawUrl;
       let initial;
       try {
         initial = await probeTarget(targetClient, { title: '', doc: d });
@@ -513,6 +534,19 @@ export function openSchemaApplyDialog({
     }
 
     connectBtn.addEventListener('click', () => connect(targetInput.value));
+    // Editing the target site invalidates whatever we last connected/probed
+    // — Dry run and Create must not run against a site the input no longer
+    // names. This is deliberately synchronous (no debounce): the moment the
+    // field changes, the buttons go dark until Connect is clicked again.
+    targetInput.addEventListener('input', () => {
+      connected = false;
+      connectedInputValue = null;
+      probe = { targetLists: [], existingList: null, existingFields: [], existingViews: [], existingContentTypeIds: [], availableContentTypes: null };
+      targetStatus.textContent = 'Connect to check this site.';
+      targetStatus.hidden = false;
+      updateTitleStatus();
+      refreshGate();
+    });
     let titleDebounce = null;
     titleInput.addEventListener('input', () => {
       titleTouched = true;
@@ -645,25 +679,80 @@ export function openSchemaApplyDialog({
       listExists = false;
       abortController = new AbortController();
       currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
-      const report = await runPlan(plan, currentCtx);
-      lastReport = report;
-      renderReport(report);
-      setPhase('report');
+      try {
+        const report = await runPlan(plan, currentCtx);
+        lastReport = report;
+        renderReport(report);
+        setPhase('report');
+      } catch (err) {
+        // runPlan itself shouldn't reject (read failures between steps
+        // report.aborted instead — see list-schema-apply.js) but a caller
+        // callback (onStep → handleStep, driving this very UI) still could.
+        // Either way, a rejection here must never strand the dialog in
+        // 'running' — where Close and Cancel are both inert — so it falls
+        // back to the form with the failure stated loud.
+        setPhase('form');
+        showError(err.message || String(err));
+        dryRunBtn.disabled = false;
+        createBtn.disabled = false;
+      }
     }
 
+    // Retry re-probes the target by title and rebuilds a full resume plan
+    // bound to the list this run created or adopted — never just the
+    // previously-failed steps. Resume is idempotent (buildApplyPlan): an
+    // existing same-type column is skipped but still gets its merges, a
+    // same-title view is upserted with its columns rebuilt, and the
+    // validation formula is re-applied — so re-running the whole plan
+    // costs nothing for what already succeeded and gives every failure
+    // (including ones outside the small failed-steps set, like a settings
+    // MERGE) another chance. If the report thinks a list exists but the
+    // target no longer has it under that title, the retry refuses outright
+    // — it must never fall through to creating a second one.
     async function runRetry() {
       if (!lastReport) return;
-      const plan = retryPlan(lastReport);
+      showError('');
+      retryBtn.disabled = true;
+      let plan;
+      try {
+        const resumeProbe = await probeTarget(targetClient, { title: lastReport.title, doc: d });
+        if (resumeProbe.existingList) {
+          plan = buildApplyPlan(
+            d,
+            { ...buildOptions(), title: resumeProbe.existingList.title, existing: 'resume' },
+            resumeProbe,
+          );
+        } else if (lastReport.listId) {
+          showError(`The list ‘${lastReport.title}’ could not be found on the target anymore — retry cannot continue.`);
+          retryBtn.disabled = false;
+          return;
+        } else {
+          plan = buildApplyPlan(d, { ...buildOptions(), title: lastReport.title }, resumeProbe);
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+        retryBtn.disabled = false;
+        return;
+      }
       setPhase('running');
-      planHeading.textContent = 'Retrying the failed steps…';
+      planHeading.textContent = 'Retrying — resuming from the list as it is now…';
       buildStepsList(plan.steps);
       listExists = Boolean(plan.existingListId);
       abortController = new AbortController();
       currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
-      const retryReport = await runPlan(plan, currentCtx);
-      lastReport = mergeRetryReport(lastReport, retryReport);
-      renderReport(lastReport);
-      setPhase('report');
+      try {
+        lastReport = await runPlan(plan, currentCtx);
+      } catch (err) {
+        // lastReport is left as it was — still the previous (unchanged)
+        // report — so re-rendering it below restores the right buttons
+        // (Retry included) instead of setPhase's own blanket
+        // `retryBtn.hidden = true` sticking around unrendered.
+        showError(err.message || String(err));
+      } finally {
+        setPhase('report');
+        renderReport(lastReport);
+        retryBtn.disabled = false;
+      }
     }
 
     function renderReportCounts(report) {
@@ -742,7 +831,8 @@ export function openSchemaApplyDialog({
       renderReportFailed(report);
       renderReportWarnings(report);
       renderReportLinks(report);
-      retryBtn.hidden = !report.steps.some((s) => s.status === 'failed' && !s.final);
+      retryBtn.hidden = !(report.steps.some((s) => s.status === 'failed' && !s.final)
+        || (report.aborted === 'probe' && Boolean(report.listId)));
       downloadBtn.hidden = false;
     }
 

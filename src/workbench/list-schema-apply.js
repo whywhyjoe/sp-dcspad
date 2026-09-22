@@ -35,7 +35,13 @@ async function writeJson(spWrite, method, path, body, entityType, opts = {}) {
     return await spWrite[method](path, body, opts);
   } catch (err) {
     if (!needsVerboseRetry(err)) throw err;
-    const verboseBody = { __metadata: { type: entityType }, ...body };
+    // SP.XmlSchemaFieldCreationInformation is the one creation-info entity
+    // in this module: its __metadata belongs INSIDE body.parameters (that's
+    // where SharePoint's verbose odata reader looks for a creation-info
+    // type), not at the body's own top level like every other entity here.
+    const verboseBody = entityType === 'SP.XmlSchemaFieldCreationInformation'
+      ? { ...body, parameters: { __metadata: { type: entityType }, ...(body.parameters || {}) } }
+      : { __metadata: { type: entityType }, ...body };
     return spWrite[method](path, verboseBody, { ...opts, contentType: 'application/json;odata=verbose' });
   }
 }
@@ -68,9 +74,46 @@ async function readTargetListsByTitle(ctx) {
   return map;
 }
 
+async function readTargetViews(ctx) {
+  const { items } = await ctx.client.getAll(listPath(ctx.listId, '/views'), {
+    select: ['Id', 'Title', 'DefaultView'],
+  });
+  return items.map((v) => ({ id: v.Id, title: v.Title, defaultView: !!v.DefaultView }));
+}
+
 function seedFieldIdMap(ctx) {
   for (const f of ctx.targetFields || []) {
     if (!(f.internalName in ctx.fieldIdMap)) ctx.fieldIdMap[f.internalName] = f.id;
+  }
+}
+
+// The full between-step re-read: fields, lists-by-title, and views. Used at
+// every point the executor needs the target's live ground truth — priming a
+// retry/resume, right after the list is created or adopted, and again right
+// before the first view step.
+async function readTargetState(ctx) {
+  ctx.targetFields = await readTargetFields(ctx);
+  seedFieldIdMap(ctx);
+  ctx.targetListsByTitle = await readTargetListsByTitle(ctx);
+  ctx.targetViews = await readTargetViews(ctx);
+}
+
+// Reads the executor takes BETWEEN steps are never a write, but a failure
+// here is still a run-stopping fact: a 401 aborts cleanly (report.aborted =
+// 'auth'); anything else aborts as a probe failure (report.aborted =
+// 'probe', the message recorded as a warning) rather than guessing from
+// stale data. Returns true when `fn` succeeded; on false the caller must
+// stop and return the report immediately — every step it hasn't reached
+// yet stays 'planned'.
+async function safeRead(ctx, report, fn) {
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    if (isExpiredSession(err)) { report.aborted = 'auth'; return false; }
+    report.aborted = 'probe';
+    report.warnings.push(err?.message || String(err));
+    return false;
   }
 }
 
@@ -125,8 +168,21 @@ async function runListCreate(step, ctx, report) {
   report.listId = data.Id;
   report.created = true;
   report.rootFolder = data.RootFolder?.ServerRelativeUrl || '';
+  // The list step is DONE the moment POST web/lists answers with an Id —
+  // everything past this point is a separate concern. Renaming off the
+  // URL-safe title back to the one the user chose is a nicety, not part of
+  // list creation: a rejected MERGE here is a warning (the list exists,
+  // just under its URL name), never a reason to fail the step that already
+  // succeeded.
   if (urlName) {
-    await writeJson(ctx.spWrite, 'mergeJson', listPath(data.Id), { Title: title }, 'SP.List', {});
+    try {
+      await writeJson(ctx.spWrite, 'mergeJson', listPath(data.Id), { Title: title }, 'SP.List', {});
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      report.warnings.push(
+        `The list was created under the URL name ‘${urlName}’ — renaming its title to ‘${title}’ failed (${err.message || err}).`,
+      );
+    }
   }
   return data;
 }
@@ -258,9 +314,21 @@ async function runFieldBase(step, ctx) {
 async function runViewUpsert(step, ctx, report) {
   const {
     title, viewId: matchedViewId, fields: wanted, viewQuery, rowLimit, paged, defaultView,
-    customFormatter, jsLink,
+    customFormatter, jsLink, viewTypeKind, scope, aggregations, aggregationsStatus,
+    tabularView, mobileView, mobileDefaultView, includeRootFolder, viewData, viewJoins,
   } = step.payload;
   let viewId = matchedViewId;
+  // The plan-time probe cannot see a view SharePoint creates as part of
+  // list.create itself (its own default "All Items", born after the probe
+  // ran) — match the live re-read (ctx.targetViews) by title, falling back
+  // to the target's own default view when the source view is itself the
+  // default, so this upserts that view instead of posting a duplicate.
+  if (!viewId) {
+    const targetViews = ctx.targetViews || [];
+    const found = targetViews.find((tv) => String(tv.title).toLowerCase() === String(title).toLowerCase())
+      || (defaultView ? targetViews.find((tv) => tv.defaultView) : null);
+    if (found) viewId = found.id;
+  }
   let created = false;
 
   if (viewId) {
@@ -270,10 +338,15 @@ async function runViewUpsert(step, ctx, report) {
       { ViewQuery: viewQuery || '', RowLimit: rowLimit ?? 30, Paged: paged !== false },
       'SP.View', { fallback: `Could not update the view ‘${title}’`, code: 'write' });
   } else {
-    const data = await writeJson(ctx.spWrite, 'postJson', `${listPath(ctx.listId)}/views`, {
+    const body = {
       Title: title, PersonalView: false, ViewQuery: viewQuery || '', RowLimit: rowLimit ?? 30,
       Paged: paged !== false, DefaultView: false,
-    }, 'SP.View', { fallback: `Could not create the view ‘${title}’`, code: 'write' });
+    };
+    // ViewTypeKind only when it says something HTML (1) doesn't already —
+    // some tenants reject an explicit 1, and null means "not captured".
+    if (viewTypeKind != null && viewTypeKind !== 1) body.ViewTypeKind = viewTypeKind;
+    const data = await writeJson(ctx.spWrite, 'postJson', `${listPath(ctx.listId)}/views`, body,
+      'SP.View', { fallback: `Could not create the view ‘${title}’`, code: 'write' });
     viewId = data.Id;
     created = true;
   }
@@ -316,6 +389,29 @@ async function runViewUpsert(step, ctx, report) {
       }
     } catch { /* best effort restore */ }
     throw err;
+  }
+
+  // One optional MERGE for the non-default view properties, sent after the
+  // columns are settled so a rejection here never costs the view its
+  // fields — only properties that differ from SharePoint's own default are
+  // sent, and a rejection is a warning, never a failed step.
+  const propsMerge = {};
+  if (scope != null && scope !== 0) propsMerge.Scope = scope;
+  if (aggregations) propsMerge.Aggregations = aggregations;
+  if (aggregationsStatus) propsMerge.AggregationsStatus = aggregationsStatus;
+  if (viewData) propsMerge.ViewData = viewData;
+  if (viewJoins) propsMerge.ViewJoins = viewJoins;
+  if (tabularView === false) propsMerge.TabularView = false;
+  if (mobileView === true) propsMerge.MobileView = true;
+  if (mobileDefaultView === true) propsMerge.MobileDefaultView = true;
+  if (includeRootFolder === true) propsMerge.IncludeRootFolder = true;
+  if (Object.keys(propsMerge).length) {
+    try {
+      await writeJson(ctx.spWrite, 'mergeJson', `${listPath(ctx.listId)}/views(guid'${viewId}')`, propsMerge, 'SP.View', {});
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      report.warnings.push(`View ‘${title}’: some view properties were not applied — ${err.message}`);
+    }
   }
 
   const optionalMerge = async (body, label) => {
@@ -410,6 +506,7 @@ export async function runPlan(plan, ctx = {}) {
   ctx.fieldIdMap = ctx.fieldIdMap || {};
   ctx.targetFields = ctx.targetFields || [];
   ctx.targetListsByTitle = ctx.targetListsByTitle || null;
+  ctx.targetViews = ctx.targetViews || [];
 
   const report = newReport(plan);
   const steps = report.steps;
@@ -418,11 +515,12 @@ export async function runPlan(plan, ctx = {}) {
 
   // A retry (or a resumed/adopted list) already has a listId before the
   // loop starts — prime the reads once here instead of waiting for a
-  // list.create/list.adopt step that may not exist in this plan.
+  // list.create/list.adopt step that may not exist in this plan. A read
+  // failure here (a 401, or anything else) means nothing that follows can
+  // be trusted, so the run stops before touching a single step.
   if (ctx.listId && !ctx.targetFields.length) {
-    ctx.targetFields = await readTargetFields(ctx);
-    seedFieldIdMap(ctx);
-    ctx.targetListsByTitle = await readTargetListsByTitle(ctx);
+    const ok = await safeRead(ctx, report, () => readTargetState(ctx));
+    if (!ok) return report;
   }
   let fieldsRereadForViews = false;
 
@@ -450,10 +548,19 @@ export async function runPlan(plan, ctx = {}) {
       continue;
     }
 
+    // The pre-view field/view re-read must succeed before any view step
+    // runs — a stale field set could add a view column that doesn't
+    // actually exist on the target (or miss one that does), so a failure
+    // here stops the run rather than falling back to what the plan-time
+    // probe guessed. `s` is still 'planned' at this point, same as
+    // everything after it.
     if (s.kind === 'view.upsert' && !fieldsRereadForViews) {
       fieldsRereadForViews = true;
-      try { ctx.targetFields = await readTargetFields(ctx); }
-      catch { /* best effort — a real problem still surfaces from the view step's own calls */ }
+      const ok = await safeRead(ctx, report, async () => {
+        ctx.targetFields = await readTargetFields(ctx);
+        ctx.targetViews = await readTargetViews(ctx);
+      });
+      if (!ok) return report;
     }
 
     s.status = 'running';
@@ -466,11 +573,6 @@ export async function runPlan(plan, ctx = {}) {
       const result = await runner(s, ctx, report);
       s.status = 'done';
       s.result = result ?? null;
-      if (s.kind === 'list.create' || s.kind === 'list.adopt') {
-        ctx.targetFields = await readTargetFields(ctx);
-        seedFieldIdMap(ctx);
-        ctx.targetListsByTitle = await readTargetListsByTitle(ctx);
-      }
     } catch (err) {
       // A dependency that is missing only at run time (a dependent lookup's
       // primary has no id) is the same fact the planner calls 'blocked'.
@@ -488,6 +590,17 @@ export async function runPlan(plan, ctx = {}) {
     tallyStep(s, report);
     ctx.onStep?.(s, i, total);
     if (aborted) break;
+
+    // The list now exists (or was adopted) — everything after this depends
+    // on what's really on the target, not what the plan-time probe guessed.
+    // Re-read it OUTSIDE the write's own try/catch, so a read failure here
+    // aborts the run cleanly instead of being blamed on the list.create/
+    // list.adopt step that actually succeeded (see the commit-boundary note
+    // in runListCreate — the same principle, for reads instead of writes).
+    if (s.status === 'done' && (s.kind === 'list.create' || s.kind === 'list.adopt')) {
+      const ok = await safeRead(ctx, report, () => readTargetState(ctx));
+      if (!ok) return report;
+    }
   }
 
   return report;

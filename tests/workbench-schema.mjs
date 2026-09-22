@@ -295,6 +295,45 @@ await check('pure: the PnPjs script compiles with two views and lookups, and bin
       && ps.includes("Get-PnPList -Identity 'Clients'") && ps.includes("Get-PnPField -List 'Requests' -Identity 'Client'");
   }));
 
+await check('pure: settingsPayload never sends Description — list.create already supplies it and adopt must not change it', () =>
+  page.evaluate(async () => {
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'Requests', baseTemplate: 100, description: 'Has a description' },
+      fields: [], views: [],
+    });
+    const fresh = buildApplyPlan(doc, { title: 'Requests' }, { existingList: null, existingFields: [] });
+    const freshSettings = fresh.steps.find((s) => s.id === 'settings').payload.groupA;
+    const adopted = buildApplyPlan(doc, { title: 'Requests', existing: 'resume' },
+      { existingList: { id: 'x', title: 'Requests' }, targetLists: [{ title: 'Requests' }] });
+    const adoptSettings = adopted.steps.find((s) => s.id === 'settings').payload.groupA;
+    return !('Description' in freshSettings) && !('Description' in adoptSettings);
+  }));
+
+await check('pure: buildApplyPlan refuses a document-library doc (unsupported-template) and a same-title base-type mismatch (base-type-mismatch)', () =>
+  page.evaluate(async () => {
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const libDoc = buildSchemaDoc({ list: { title: 'Documents', baseTemplate: 101 }, fields: [], views: [] });
+    let libCode = null;
+    try { buildApplyPlan(libDoc, { title: 'Documents' }, {}); } catch (e) { libCode = e.code; }
+
+    const genericDoc = buildSchemaDoc({ list: { title: 'Requests', baseTemplate: 100 }, fields: [], views: [] });
+    let mismatchCode = null;
+    try {
+      buildApplyPlan(genericDoc, { title: 'Requests' }, {
+        existingList: { id: 'x', title: 'Requests', baseTemplate: 101 },
+      });
+    } catch (e) { mismatchCode = e.code; }
+    // A hand-built probe that never carries baseTemplate at all (as several
+    // other pure fixtures in this file do) must not be treated as a
+    // mismatch — the check is opt-in on the probe actually saying so.
+    const noTemplateInProbe = buildApplyPlan(genericDoc, { title: 'Requests', existing: 'resume' },
+      { existingList: { id: 'x', title: 'Requests' }, targetLists: [{ title: 'Requests' }] });
+
+    return libCode === 'unsupported-template' && mismatchCode === 'base-type-mismatch'
+      && noTemplateInProbe.steps[0].kind === 'list.adopt';
+  }));
+
 await check('pure: adopting reconciles only attachments/folders, nulls never reach a MERGE, and a dependent lookup on a failed primary is blocked', () =>
   page.evaluate(async () => {
     const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
@@ -831,6 +870,35 @@ await check('apply-mock: the created list is resolvable by the target client aft
     return fields.length > 20;   // base columns + the created custom fields
   }));
 
+// A fresh POST web/lists list is born with SharePoint's own default "All
+// Items" view already on it (the mock writer seeds exactly that) — the
+// plan-time probe ran before the list existed and so never saw it, but the
+// executor's live between-step re-read (ctx.targetViews) must still find it
+// and upsert into it instead of posting a duplicate.
+await check('apply-mock: a fresh create matches the list’s own already-seeded default "All Items" view by the live re-read — no second POST to …/views, and the report counts it updated', () =>
+  applyPage.evaluate(async () => {
+    globalThis.__DCSPAD_WB_WRITES__ = [];
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { mockResolver, mockWriter } = await import('/src/workbench/mock-data.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'DefaultViewMatch', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [],
+      views: [{ title: 'All Items', hidden: false, defaultView: true, fields: [], rowLimit: 30, paged: true, viewQuery: '' }],
+    });
+    const target = createSpRestClient({ mockResolver });
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target, mockWriter });
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'DefaultViewMatch' } });
+    const writes = globalThis.__DCSPAD_WB_WRITES__ || [];
+    const viewPost = writes.find((w) => /\/views$/.test(w.url) && !(w.headers?.['X-HTTP-Method'] || w.headers?.['x-http-method']));
+    const viewStep = report.steps.find((s) => s.kind === 'view.upsert');
+    return !viewPost && viewStep.status === 'done' && viewStep.result?.created === false
+      && report.views.updated === 1 && report.views.added === 0;
+  }));
+
 await applyPage.close();
 
 // ---- Stubbed live: the apply executor's write shapes and ordering ---------
@@ -1038,6 +1106,37 @@ await check('live-apply: the view posts POST → removeallviewfields → addview
     && lastBody.ValidationFormula === '=[Budget]>0';
 });
 
+await check('live-apply: a view with viewTypeKind 2 is POSTed with ViewTypeKind, and its Scope lands in the post-columns MERGE', async () => {
+  const result = await liveApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'ViewKindTarget', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [{ internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true }],
+      views: [{
+        title: 'Gallery View', hidden: false, fields: ['Title'], rowLimit: 30, paged: true, viewQuery: '',
+        viewTypeKind: 2, scope: 1,
+      }],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/target');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'ViewKindTarget' } });
+    return { created: report.created, viewStatus: report.steps.find((s) => s.kind === 'view.upsert')?.status };
+  });
+  const viewPost = applyPosts.find((p) => /\/views$/.test(p.url) && p.method === 'POST'
+    && JSON.parse(p.body || '{}').Title === 'Gallery View');
+  const scopeMerge = viewPost && applyPosts.find((p) => p.order > viewPost.order && p.method === 'MERGE'
+    && /\/views\(guid'/.test(p.url) && (() => {
+      try { return JSON.parse(p.body || '{}').Scope === 1; } catch { return false; }
+    })());
+  const viewCreateBody = viewPost ? JSON.parse(viewPost.body) : {};
+  return result.created === true && result.viewStatus === 'done'
+    && viewCreateBody.ViewTypeKind === 2 && Boolean(scopeMerge);
+});
+
 await liveApply.evaluate(async () => {
   const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
   const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
@@ -1208,6 +1307,521 @@ await check('live-apply: a 401 mid-run aborts with report.aborted === "auth"', (
 
 await liveApply.close();
 
+// ---- Stubbed live: capture's named-only ValidationFormula/etc read --------
+// A dedicated page/list id so the default (unprojected) list payload can be
+// built by hand without them, exactly like the tenant this was verified
+// against — the earlier `live` page's LIVE_LIST_ID fixture predates this
+// follow-up read and doesn't stub it at all.
+
+const NAMED_ONLY_LIST_ID = '44444444-0000-4000-8000-000000000001';
+const namedOnlyReads = [];
+
+const namedOnlyPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await namedOnlyPage.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+await namedOnlyPage.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  namedOnlyReads.push(url);
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'NO-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+    const base = url.slice(0, url.indexOf('/_api/'));
+    return route.fulfill({ json: { Id: 'web-id', Title: 'NamedOnly Web', Url: base, ServerRelativeUrl: '/' } });
+  }
+  if (url.includes(`lists(guid'${NAMED_ONLY_LIST_ID}')`) && url.includes('$expand=RootFolder')) {
+    // The default, unprojected payload — this tenant leaves the NAMED_ONLY
+    // set off it entirely (verified live; see list-schema-capture.js).
+    return route.fulfill({ json: {
+      Id: NAMED_ONLY_LIST_ID, Title: 'NamedOnlyList', BaseTemplate: 100, BaseType: 0, ItemCount: 0,
+      RootFolder: { ServerRelativeUrl: '/Lists/NamedOnlyList' }, ContentTypesEnabled: false,
+      EnableVersioning: false, EnableAttachments: true,
+    } });
+  }
+  if (url.includes(`lists(guid'${NAMED_ONLY_LIST_ID}')`) && url.includes('$select=') && url.includes('ValidationFormula')) {
+    return route.fulfill({ json: {
+      ValidationFormula: '=[Budget]>0', ValidationMessage: 'Must be positive',
+      OnQuickLaunch: true, ReadSecurity: 2, WriteSecurity: 4,
+    } });
+  }
+  if (url.includes(`lists(guid'${NAMED_ONLY_LIST_ID}')/fields`)
+    || url.includes(`lists(guid'${NAMED_ONLY_LIST_ID}')/views`)
+    || url.includes(`lists(guid'${NAMED_ONLY_LIST_ID}')/contenttypes`)) {
+    return route.fulfill({ json: { value: [] } });
+  }
+  return route.fulfill({ json: { value: [] } });
+});
+await namedOnlyPage.goto(WB_URL);
+await namedOnlyPage.waitForSelector('.wb-home-cards');
+
+await check('live: capture issues the named-only $select read for ValidationFormula/etc when the default list payload lacks them, and the doc carries the values', async () => {
+  const doc = await namedOnlyPage.evaluate(async (listId) => {
+    const { captureListSchema } = await import('/src/workbench/list-schema-capture.js');
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const client = createSpRestClient({});
+    await client.connectWeb('/sites/namedonly');
+    const { doc: d } = await captureListSchema(client, listId);
+    return d;
+  }, NAMED_ONLY_LIST_ID);
+  const followUp = namedOnlyReads.find((u) => u.includes(`lists(guid'${NAMED_ONLY_LIST_ID}')`)
+    && u.includes('$select=') && u.includes('ValidationFormula') && u.includes('OnQuickLaunch'));
+  return doc.list.validationFormula === '=[Budget]>0' && doc.list.validationMessage === 'Must be positive'
+    && doc.list.onQuickLaunch === true && doc.list.readSecurity === 2 && doc.list.writeSecurity === 4
+    && Boolean(followUp);
+});
+
+await namedOnlyPage.close();
+
+// ---- Stubbed live: the commit boundary (urlName rename never fails the list step) ----
+
+const urlNameApply = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await urlNameApply.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+await urlNameApply.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  const httpMethod = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'U-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (httpMethod === 'GET') {
+    if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+      const base = url.slice(0, url.indexOf('/_api/'));
+      return route.fulfill({ json: { Id: 'web-id', Title: 'UrlName Web', Url: base, ServerRelativeUrl: '/' } });
+    }
+    if (url.includes('/GetList(@listUrl)')) {
+      return route.fulfill({ status: 404, json: { 'odata.error': { message: { value: 'List not found.' } } } });
+    }
+    return route.fulfill({ json: { value: [] } });
+  }
+  if (/\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    return route.fulfill({ json: {
+      Id: 'urlname-list-id', Title: JSON.parse(request.postData() || '{}').Title,
+      RootFolder: { ServerRelativeUrl: '/Lists/UrlSafeName' },
+    } });
+  }
+  if (xHttpMethod === 'MERGE' && /lists\(guid'urlname-list-id'\)$/.test(url)) {
+    let data = {};
+    try { data = JSON.parse(request.postData() || '{}'); } catch { /* keep {} */ }
+    const keys = Object.keys(data);
+    // Only the urlName→title rename (a lone Title key) fails on this
+    // tenant; the settings MERGE (many keys at once) succeeds normally.
+    if (keys.length === 1 && keys[0] === 'Title') {
+      return route.fulfill({
+        status: 400,
+        json: { 'odata.error': { message: { value: 'A list, survey, discussion board, or document library with the specified title already exists.' } } },
+      });
+    }
+    return route.fulfill({ json: {} });
+  }
+  return route.fulfill({ json: {} });
+});
+await urlNameApply.goto(WB_URL);
+await urlNameApply.waitForSelector('.wb-home-cards');
+
+await check('live-apply: a failing urlName→title rename MERGE leaves the list step "done", with a warning, never "failed"', () =>
+  urlNameApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'My List With Spaces', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [], views: [],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/urlname');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await applyListSchema({
+      doc, client: target, spWrite,
+      options: { title: 'My List With Spaces', urlName: 'MyListWithSpaces' },
+    });
+    const listStep = report.steps.find((s) => s.id === 'list');
+    return listStep.status === 'done' && report.created === true && report.listId === 'urlname-list-id'
+      && report.warnings.some((w) => w.includes('MyListWithSpaces') && w.includes('My List With Spaces'));
+  }));
+
+await urlNameApply.close();
+
+// ---- Stubbed live: verbose-odata retry nests __metadata correctly ---------
+
+const verboseApply = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await verboseApply.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+const verbosePosts = [];
+let verboseFieldFirstAttempt = true;
+await verboseApply.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  const httpMethod = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'V-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (httpMethod === 'GET') {
+    if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+      const base = url.slice(0, url.indexOf('/_api/'));
+      return route.fulfill({ json: { Id: 'web-id', Title: 'Verbose Web', Url: base, ServerRelativeUrl: '/' } });
+    }
+    if (url.includes('/GetList(@listUrl)')) {
+      return route.fulfill({ status: 404, json: { 'odata.error': { message: { value: 'List not found.' } } } });
+    }
+    return route.fulfill({ json: { value: [] } });
+  }
+  if (/\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    return route.fulfill({ json: {
+      Id: 'verbose-list-id', Title: JSON.parse(request.postData() || '{}').Title,
+      RootFolder: { ServerRelativeUrl: '/Lists/VerboseTarget' },
+    } });
+  }
+  if (url.includes('createfieldasxml')) {
+    verbosePosts.push({ body: request.postData() || '', contentType: request.headers()['content-type'] || '' });
+    if (verboseFieldFirstAttempt) {
+      verboseFieldFirstAttempt = false;
+      return route.fulfill({
+        status: 400,
+        json: { 'odata.error': { message: { value: 'The request could not be parsed as a valid entity of type SP.XmlSchemaFieldCreationInformation.' } } },
+      });
+    }
+    return route.fulfill({ json: { Id: 'fid-budget', InternalName: 'Budget' } });
+  }
+  return route.fulfill({ json: {} });
+});
+await verboseApply.goto(WB_URL);
+await verboseApply.waitForSelector('.wb-home-cards');
+
+await check('live-apply: a 400 naming SP.XmlSchemaFieldCreationInformation retries createfieldasxml verbose, with __metadata nested INSIDE parameters (not top-level)', async () => {
+  const r = await verboseApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'VerboseTarget', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [{
+        internalName: 'Budget', displayName: 'Budget', type: 'Number', custom: true,
+        schemaXml: '<Field Name="Budget" Type="Number" DisplayName="Budget" />',
+      }],
+      views: [],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/verbose');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'VerboseTarget' } });
+    return { added: report.fields.added, failed: report.fields.failed.length };
+  });
+  if (r.added !== 1 || r.failed !== 0 || verbosePosts.length !== 2) return false;
+  const retried = JSON.parse(verbosePosts[1].body);
+  return verbosePosts[1].contentType.includes('odata=verbose')
+    && retried.parameters?.__metadata?.type === 'SP.XmlSchemaFieldCreationInformation'
+    && retried.__metadata === undefined;
+});
+
+await verboseApply.close();
+
+// ---- Stubbed live: reads between steps abort cleanly (never reject) -------
+
+const PREFLIGHT_LIST_ID = 'preflight-list-id';
+const preflightPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await preflightPage.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+await preflightPage.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'P-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+    const base = url.slice(0, url.indexOf('/_api/'));
+    return route.fulfill({ json: { Id: 'web-id', Title: 'Preflight Web', Url: base, ServerRelativeUrl: '/' } });
+  }
+  if (url.includes(`lists(guid'${PREFLIGHT_LIST_ID}')/fields`)) {
+    return route.fulfill({ status: 401, json: { 'odata.error': { message: { value: 'The security token is expired.' } } } });
+  }
+  return route.fulfill({ json: { value: [] } });
+});
+await preflightPage.goto(WB_URL);
+await preflightPage.waitForSelector('.wb-home-cards');
+
+await check('live-apply: a 401 on the preflight fields read (priming a resumed run) returns report.aborted "auth" — runPlan never rejects', () =>
+  preflightPage.evaluate(async (listId) => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/preflight');
+    const plan = {
+      title: 'Preflight', targetWebUrl: target.webUrl(), existingListId: listId,
+      steps: [{
+        id: 'settings', kind: 'list.settings', label: 'Apply list settings', dependsOn: [],
+        payload: { groupA: {}, groupB: {} }, refs: {}, optional: false, status: 'planned', error: '', final: false, result: null,
+      }],
+      warnings: [],
+    };
+    let threw = false;
+    let report = null;
+    try { report = await runPlan(plan, { client: target }); } catch { threw = true; }
+    return !threw && report?.aborted === 'auth' && report.steps[0].status === 'planned';
+  }, PREFLIGHT_LIST_ID));
+
+await preflightPage.close();
+
+const PREVIEW_LIST_ID = 'preview-list-id';
+let preViewFieldsReadCount = 0;
+let preViewRemoveAllViewFieldsCalls = 0;
+const preViewPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await preViewPage.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+await preViewPage.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  const httpMethod = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'PV-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (httpMethod === 'GET') {
+    if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+      const base = url.slice(0, url.indexOf('/_api/'));
+      return route.fulfill({ json: { Id: 'web-id', Title: 'PreView Web', Url: base, ServerRelativeUrl: '/' } });
+    }
+    if (url.includes(`lists(guid'${PREVIEW_LIST_ID}')/fields`)) {
+      preViewFieldsReadCount++;
+      if (preViewFieldsReadCount === 1) {
+        return route.fulfill({ json: { value: [
+          { Id: 'f1', InternalName: 'Title', Title: 'Title', TypeAsString: 'Text', Hidden: false, ReadOnlyField: false },
+        ] } });
+      }
+      return route.fulfill({ status: 500, json: { 'odata.error': { message: { value: 'Internal Server Error.' } } } });
+    }
+    if (url.includes(`lists(guid'${PREVIEW_LIST_ID}')/views`)) {
+      return route.fulfill({ json: { value: [] } });
+    }
+    return route.fulfill({ json: { value: [] } });
+  }
+  if (/\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    return route.fulfill({ json: {
+      Id: PREVIEW_LIST_ID, Title: JSON.parse(request.postData() || '{}').Title,
+      RootFolder: { ServerRelativeUrl: '/Lists/PreView' },
+    } });
+  }
+  if (url.includes('removeallviewfields')) {
+    preViewRemoveAllViewFieldsCalls++;
+    return route.fulfill({ json: {} });
+  }
+  return route.fulfill({ json: {} });
+});
+await preViewPage.goto(WB_URL);
+await preViewPage.waitForSelector('.wb-home-cards');
+
+await check('live-apply: a 500 on the pre-view fields re-read posts no removeallviewfields, leaves the view step "planned", and returns report.aborted "probe"', async () => {
+  const r = await preViewPage.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'PreView', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [],
+      views: [{ title: 'All Items', hidden: false, fields: [], rowLimit: 30, paged: true, viewQuery: '' }],
+    });
+    const plan = buildApplyPlan(doc, { title: 'PreView' }, { existingList: null, existingFields: [], targetLists: [] });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/preview');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await runPlan(plan, { client: target, spWrite });
+    return {
+      aborted: report.aborted,
+      listStepStatus: report.steps.find((s) => s.id === 'list').status,
+      viewStepStatus: report.steps.find((s) => s.kind === 'view.upsert').status,
+    };
+  });
+  return r.aborted === 'probe' && r.listStepStatus === 'done' && r.viewStepStatus === 'planned'
+    && preViewRemoveAllViewFieldsCalls === 0;
+});
+
+await preViewPage.close();
+
+// ---- Stubbed live: the dialog's resume-based retry ------------------------
+// Mirrors exactly what list-schema-dialog.js's runRetry() now does
+// (probeTarget → buildApplyPlan in resume mode → runPlan), driven directly
+// rather than through the dialog UI, against a small stateful fixture kept
+// in Node (this route handler) so the second run sees what the first run
+// actually left behind.
+
+let rrCreatedList = null;
+let rrFields = [];
+let rrViews = [];
+let rrBudgetShouldFail = true;
+let rrWebListsPosts = 0;
+const rrAddViewFieldCalls = [];
+let rrIndexedMergeApplied = false;
+
+const retryResumePage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await retryResumePage.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+await retryResumePage.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  const httpMethod = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
+
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'RR-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (httpMethod === 'GET') {
+    if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+      const base = url.slice(0, url.indexOf('/_api/'));
+      return route.fulfill({ json: { Id: 'web-id', Title: 'RetryResume Web', Url: base, ServerRelativeUrl: '/' } });
+    }
+    if (url.includes('/GetList(@listUrl)')) {
+      return route.fulfill({ status: 404, json: { 'odata.error': { message: { value: 'List not found.' } } } });
+    }
+    if (rrCreatedList && url.includes(`lists(guid'${rrCreatedList.Id}')/fields`)) {
+      return route.fulfill({ json: { value: rrFields } });
+    }
+    if (rrCreatedList && url.includes(`lists(guid'${rrCreatedList.Id}')/views`) && !url.includes('viewfields')) {
+      return route.fulfill({ json: { value: rrViews } });
+    }
+    if (rrCreatedList && url.includes('/viewfields')) {
+      return route.fulfill({ json: { Items: [] } });
+    }
+    if (/\/web\/lists(\?|$)/.test(url) && !url.includes("lists(guid'")) {
+      return route.fulfill({ json: { value: rrCreatedList ? [rrCreatedList] : [] } });
+    }
+    return route.fulfill({ json: { value: [] } });
+  }
+
+  if (/\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    rrWebListsPosts++;
+    const data = JSON.parse(request.postData() || '{}');
+    rrCreatedList = {
+      Id: 'rr-list-id', Title: data.Title, BaseTemplate: data.BaseTemplate ?? 100,
+      ContentTypesEnabled: !!data.ContentTypesEnabled, RootFolder: { ServerRelativeUrl: '/Lists/RetryResume' },
+    };
+    rrFields = [{ Id: 'f-title', InternalName: 'Title', Title: 'Title', TypeAsString: 'Text', Hidden: false, ReadOnlyField: false }];
+    rrViews = [];
+    return route.fulfill({ json: { Id: rrCreatedList.Id, Title: rrCreatedList.Title, RootFolder: rrCreatedList.RootFolder } });
+  }
+
+  if (url.includes('createfieldasxml')) {
+    const parsed = JSON.parse(request.postData() || '{}');
+    const xml = parsed?.parameters?.SchemaXml || '';
+    const name = /Name="([^"]*)"/.exec(xml)?.[1] || '';
+    if (name === 'Budget' && rrBudgetShouldFail) {
+      rrBudgetShouldFail = false;   // fails exactly once — the retry succeeds
+      return route.fulfill({ status: 400, json: { 'odata.error': { message: { value: "SharePoint could not create the column 'Budget'." } } } });
+    }
+    const id = `fid-${name.toLowerCase()}`;
+    rrFields.push({ Id: id, InternalName: name, Title: name, TypeAsString: 'Number', Hidden: false, ReadOnlyField: false });
+    return route.fulfill({ json: { Id: id, InternalName: name } });
+  }
+
+  if (xHttpMethod === 'MERGE' && /\/fields\(guid'/.test(url)) {
+    let data = {};
+    try { data = JSON.parse(request.postData() || '{}'); } catch { /* keep {} */ }
+    if ('Indexed' in data) rrIndexedMergeApplied = true;
+    return route.fulfill({ json: {} });
+  }
+
+  if (/\/views$/.test(url) && !xHttpMethod) {
+    const data = JSON.parse(request.postData() || '{}');
+    const id = 'view-all-items';
+    rrViews.push({ Id: id, Title: data.Title, DefaultView: !!data.DefaultView });
+    return route.fulfill({ json: { Id: id, Title: data.Title } });
+  }
+
+  if (url.includes('addviewfield')) {
+    const m = /addviewfield\('([^']*)'\)/.exec(url);
+    if (m) rrAddViewFieldCalls.push(decodeURIComponent(m[1]));
+    return route.fulfill({ json: {} });
+  }
+  if (url.includes('removeallviewfields')) {
+    return route.fulfill({ json: {} });
+  }
+
+  return route.fulfill({ json: {} });
+});
+await retryResumePage.goto(WB_URL);
+await retryResumePage.waitForSelector('.wb-home-cards');
+
+await check('live-apply retry: resuming after a failed field POSTs no web/lists, re-creates the field, applies its Indexed merge, and rebuilds the view with the new column', async () => {
+  const first = await retryResumePage.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'RetryResume', baseTemplate: 100, contentTypesEnabled: false },
+      fields: [{
+        internalName: 'Budget', displayName: 'Budget', type: 'Number', custom: true, indexed: true,
+        schemaXml: '<Field Name="Budget" Type="Number" DisplayName="Budget" Indexed="TRUE" />',
+      }],
+      views: [{ title: 'All Items', hidden: false, fields: ['Budget'], rowLimit: 30, paged: true, viewQuery: '' }],
+    });
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/retryresume');
+    const spWrite = createSpWriteClient({ client: target });
+    const report = await applyListSchema({ doc, client: target, spWrite, options: { title: 'RetryResume' } });
+    window.__RR_DOC__ = doc;
+    window.__RR_REPORT__ = report;
+    return { created: report.created, budgetFailed: report.fields.failed.map((f) => f.internalName) };
+  });
+
+  const webListsPostsAfterFirst = rrWebListsPosts;
+
+  const second = await retryResumePage.evaluate(async () => {
+    const { probeTarget } = await import('/src/workbench/list-schema-capture.js');
+    const { buildApplyPlan } = await import('/src/workbench/list-schema.js');
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const doc = window.__RR_DOC__;
+    const prior = window.__RR_REPORT__;
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/retryresume');
+    const spWrite = createSpWriteClient({ client: target });
+    const resumeProbe = await probeTarget(target, { title: prior.title, doc });
+    const plan = buildApplyPlan(doc, { title: resumeProbe.existingList.title, existing: 'resume' }, resumeProbe);
+    const report = await runPlan(plan, { client: target, spWrite });
+    return {
+      adopted: report.adopted,
+      fieldsAdded: report.fields.added, fieldsFailed: report.fields.failed.length,
+      viewsUpdated: report.views.updated, viewsAdded: report.views.added,
+      firstStepKind: plan.steps[0]?.kind,
+    };
+  });
+
+  return first.created === true && first.budgetFailed.join(',') === 'Budget'
+    && second.firstStepKind === 'list.adopt'
+    && second.fieldsAdded === 1 && second.fieldsFailed === 0
+    && (second.viewsUpdated + second.viewsAdded) === 1
+    && rrWebListsPosts === webListsPostsAfterFirst
+    && rrIndexedMergeApplied === true
+    && rrAddViewFieldCalls.includes('Budget');
+});
+
+await retryResumePage.close();
+
 // ---- Mock UI: the apply dialog (slice 2b) ----------------------------------
 // Own page: opens the Schema tab's "Copy to…" and the all-lists grid's "New
 // from schema…" fresh, so it never inherits state from the read-only
@@ -1284,6 +1898,22 @@ await check('dialog: the text policy changes the Region plan line', async () => 
   return true;
 });
 
+await check('dialog: editing the target input after connect disables Create until Connect is clicked again', async () => {
+  const beforeDisabled = await dialogPage.locator('.wb-schema-create').isDisabled();
+  // A trivial edit (still names the same site) — the point is that the
+  // input changed at all, not that it now names somewhere else.
+  await dialogPage.fill('.wb-schema-target', '/sites/target/');
+  const afterEditDisabled = await dialogPage.locator('.wb-schema-create').isDisabled();
+  const dryRunDisabledToo = await dialogPage.locator('.wb-schema-dryrun').isDisabled();
+  const statusText = await dialogPage.locator('.wb-schema-target-status').textContent();
+  // Restore the connection so the next check (Create) still has one.
+  await dialogPage.fill('.wb-schema-target', '/sites/target');
+  await dialogPage.locator('.wb-schema-connect').click();
+  await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Requests');
+  return !beforeDisabled && afterEditDisabled && dryRunDisabledToo
+    && statusText.includes('Connect to check this site');
+});
+
 await check('dialog: Create records web/lists first and the validation MERGE last, and shows the mock-mode sentence with Cancel relabeled Close', async () => {
   await dialogPage.evaluate(() => { window.__DCSPAD_WB_WRITES__ = []; });
   await dialogPage.locator('.wb-schema-create').click();
@@ -1358,6 +1988,18 @@ await check('dialog: an existing title (Archive Requests) gates reconcile behind
   const createEnabled = await dialogPage.locator('.wb-schema-create').isEnabled();
   return createDisabledDefault && createStillDisabled && createEnabled && label.trim() === 'Add to existing list';
 });
+
+await check('dialog: consent resets when the colliding title changes from one existing list to another (Archive Requests → Clients)', async () => {
+  await dialogPage.fill('.wb-schema-title', 'Clients');
+  await dialogPage.waitForFunction(() =>
+    document.querySelector('.wb-schema-title-status')?.textContent.includes('Clients'));
+  const newRadioChecked = await dialogPage.locator('.wb-schema-existing input[value="new"]').isChecked();
+  const resumeRadioChecked = await dialogPage.locator('.wb-schema-existing input[value="resume"]').isChecked();
+  const gateHidden = await dialogPage.locator('.wb-schema-gate').isHidden();
+  const gateChecked = await dialogPage.locator('.wb-schema-gate input[type="checkbox"]').isChecked();
+  return newRadioChecked && !resumeRadioChecked && gateHidden && !gateChecked;
+});
+
 await dialogPage.locator('.wb-schema-close').click();
 await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
 

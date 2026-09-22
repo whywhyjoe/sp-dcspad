@@ -438,14 +438,16 @@ function settingsPayload(list, { reconcile = false } = {}) {
     OnQuickLaunch: list.onQuickLaunch,
     NoCrawl: list.noCrawl,
     DisableGridEditing: list.disableGridEditing,
-    Ordered: list.ordered,
+    // No Ordered: SP.List has no such REST property (a MERGE naming it is a
+    // 400, verified live) — `ordered` stays in the doc as capture-only.
     ReadSecurity: list.readSecurity,
     WriteSecurity: list.writeSecurity,
     ListExperienceOptions: list.listExperienceOptions,
     EnableRequestSignOff: list.enableRequestSignOff,
     ForceCheckout: list.forceCheckout,
   };
-  if (list.description) groupA.Description = list.description;
+  // No Description: list.create already sends the chosen description, and
+  // adopting an existing list must not change what's already there.
   const groupB = {};
   if (list.enableVersioning && list.majorVersionLimit) groupB.MajorVersionLimit = list.majorVersionLimit;
   if (list.enableVersioning && list.enableMinorVersions) {
@@ -505,9 +507,30 @@ function pushMergeStep(steps, mergeStepIds, f, dependsOnId, merges) {
 //          availableContentTypes, targetLists }
 export function buildApplyPlan(doc, options = {}, probe = {}) {
   const d = normalizeSchemaDoc(doc);
+  // Eligibility: stage 1a copies generic lists only — a document library (or
+  // any other template) is refused before any probe-dependent decision, so
+  // an imported library doc opens the dialog (it can still be inspected/
+  // exported) but never gets far enough to plan a write.
+  if (Number(d.list.baseTemplate) !== 100) {
+    throw new SpFileError(
+      'Only generic lists can be created in this stage — document libraries arrive in stage 2.',
+      { code: 'unsupported-template' },
+    );
+  }
   const warnings = [];
   const title = String(options.title || '').trim() || defaultTargetTitle(d, probe.targetLists || []);
   const existing = probe.existingList || null;
+  // A same-title collision whose baseTemplate doesn't match the doc's is not
+  // a title problem — it's a different kind of list, generic-vs-generic
+  // only. Checked before the 'fail'/'resume' branching below so it wins over
+  // both: the same list can't be adopted (columns and views mean nothing on
+  // a library) and "choose another title" doesn't fix a type mismatch.
+  if (existing && existing.baseTemplate != null && Number(existing.baseTemplate) !== Number(d.list.baseTemplate)) {
+    throw new SpFileError(
+      `‘${title}’ already exists on the target as a different type of list — its schema cannot be applied to it.`,
+      { code: 'base-type-mismatch' },
+    );
+  }
   const steps = [];
 
   if (existing) {
@@ -736,6 +759,10 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
         title: v.title, viewId: existingView?.id || null, fields: wanted,
         viewQuery: v.viewQuery, rowLimit: v.rowLimit, paged: v.paged,
         defaultView: v.defaultView, customFormatter: v.customFormatter, jsLink: v.jsLink,
+        viewTypeKind: v.viewTypeKind, scope: v.scope, aggregations: v.aggregations,
+        aggregationsStatus: v.aggregationsStatus, tabularView: v.tabularView,
+        mobileView: v.mobileView, mobileDefaultView: v.mobileDefaultView,
+        includeRootFolder: v.includeRootFolder, viewData: v.viewData, viewJoins: v.viewJoins,
       },
     }));
   }
