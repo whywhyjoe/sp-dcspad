@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "166" : "dev";
-var injectedRevision = true ? "3a7d6e39" : "";
+var injectedBuild = true ? "170-dirty" : "dev";
+var injectedRevision = true ? "e6b9fd1a-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1101,7 +1101,7 @@ function createSpWriteClient({
   client: client2,
   // the workbench sp-rest client
   fetchImpl = (...args) => fetch(...args),
-  mockWriter = null
+  mockWriter: mockWriter2 = null
 } = {}) {
   const isMock = () => !client2.context().live;
   async function post(url, { body, contentType = "application/json;odata=nometadata", headers = {} } = {}, {
@@ -1109,7 +1109,7 @@ function createSpWriteClient({
     code = "write"
   } = {}) {
     if (isMock()) {
-      return structuredClone((mockWriter || defaultMockWriter)(url, body, contentType, headers));
+      return structuredClone((mockWriter2 || defaultMockWriter)(url, body, contentType, headers));
     }
     const attempt = async (forceDigest) => {
       const digest = await getDigest({ force: forceDigest, webUrl: client2.webUrl() });
@@ -1258,20 +1258,27 @@ function createSpWriteClient({
   async function postJson(path, body = {}, {
     fallback = "SharePoint write failed",
     code = "write",
-    headers = {}
-  } = {}) {
-    const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
-    return post(url, { body: JSON.stringify(body), headers }, { fallback, code });
-  }
-  async function mergeJson(path, body = {}, {
-    fallback = "SharePoint write failed",
-    code = "write",
-    headers = {}
+    headers = {},
+    contentType
   } = {}) {
     const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
     return post(url, {
       body: JSON.stringify(body),
-      headers: { "X-HTTP-Method": "MERGE", "IF-MATCH": "*", ...headers }
+      headers,
+      ...contentType ? { contentType } : {}
+    }, { fallback, code });
+  }
+  async function mergeJson(path, body = {}, {
+    fallback = "SharePoint write failed",
+    code = "write",
+    headers = {},
+    contentType
+  } = {}) {
+    const url = `${client2.webUrl()}/_api/${String(path).replace(/^\/+/, "")}`;
+    return post(url, {
+      body: JSON.stringify(body),
+      headers: { "X-HTTP-Method": "MERGE", "IF-MATCH": "*", ...headers },
+      ...contentType ? { contentType } : {}
     }, { fallback, code });
   }
   return {
@@ -1480,6 +1487,7 @@ var fCategory = schemaField("Category", "RequestCategory", "TaxonomyFieldType", 
 var fContentType = schemaField("Content Type", "ContentType", "Computed", 12, { FromBaseType: true, CanBeDeleted: false, Hidden: true, ReadOnlyField: true });
 var fAttachmentsF = schemaField("Attachments", "Attachments", "Attachments", 23, { FromBaseType: true, CanBeDeleted: false, Hidden: true });
 var fAuthor = schemaField("Created By", "Author", "User", 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: "UserInfo" } });
+var fLinkTitle = schemaField("Title", "LinkTitle", "Computed", 12, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true });
 var SCHEMA_REQUESTS_FIELDS = [
   fRequestsTitle,
   fRequestsId,
@@ -1500,7 +1508,8 @@ var SCHEMA_REQUESTS_FIELDS = [
   fCategory,
   fContentType,
   fAttachmentsF,
-  fAuthor
+  fAuthor,
+  fLinkTitle
 ];
 var SCHEMA_REQUESTS_LIST = {
   Id: SCHEMA_REQUESTS_ID,
@@ -1612,6 +1621,182 @@ var writerState = {
   contentTypes: /* @__PURE__ */ new Map()
   // listId -> Set(parentId)
 };
+var webBaseOf = (url) => {
+  const s = String(url);
+  const i = s.indexOf("/_api/");
+  return i === -1 ? "" : s.slice(0, i).replace(/\/+$/, "");
+};
+function xmlAttr(xml, name) {
+  const m = new RegExp(`${name}="([^"]*)"`, "i").exec(String(xml || ""));
+  return m ? m[1] : "";
+}
+var mockWriteSeq = 0;
+var nextMockId = (prefix) => `${prefix}${String(++mockWriteSeq).padStart(8, "0")}`;
+function baseFieldRow(internalName, title, type, extra = {}) {
+  return {
+    Id: nextMockId("bf"),
+    InternalName: internalName,
+    Title: title,
+    TypeAsString: type,
+    FromBaseType: true,
+    CanBeDeleted: false,
+    Hidden: false,
+    ReadOnlyField: false,
+    ...extra
+  };
+}
+function baseFieldRows() {
+  return [
+    baseFieldRow("Title", "Title", "Text"),
+    baseFieldRow("ID", "ID", "Counter", { ReadOnlyField: true }),
+    baseFieldRow("LinkTitle", "Title", "Computed"),
+    baseFieldRow("LinkTitleNoMenu", "Title", "Computed", { Hidden: true }),
+    baseFieldRow("Attachments", "Attachments", "Attachments", { Hidden: true }),
+    baseFieldRow("ContentType", "Content Type", "Computed", { Hidden: true }),
+    baseFieldRow("Created", "Created", "DateTime", { ReadOnlyField: true }),
+    baseFieldRow("Modified", "Modified", "DateTime", { ReadOnlyField: true }),
+    baseFieldRow("Author", "Created By", "User", { ReadOnlyField: true }),
+    baseFieldRow("Editor", "Modified By", "User", { ReadOnlyField: true })
+  ];
+}
+function mockWriter(url, body, contentType, headers = {}) {
+  const webBase = webBaseOf(url);
+  const path = String(url).slice(String(url).indexOf("/_api/") + 6).toLowerCase();
+  const method = headers?.["X-HTTP-Method"] || headers?.["x-http-method"] || "";
+  const record = () => {
+    (globalThis.__DCSPAD_WB_WRITES__ ||= []).push({ url, body, contentType, headers });
+  };
+  if (/^web\/lists$/.test(path) && !method) {
+    let data = {};
+    try {
+      data = JSON.parse(body);
+    } catch {
+    }
+    const id = nextMockId("cc00");
+    let base = "";
+    try {
+      base = new URL(webBase).pathname.replace(/\/+$/, "");
+    } catch {
+    }
+    const rootUrl = `${base}/Lists/${String(data.Title || "List").replace(/\s+/g, "")}`;
+    const entry = {
+      Id: id,
+      Title: data.Title,
+      BaseTemplate: data.BaseTemplate ?? 100,
+      ContentTypesEnabled: !!data.ContentTypesEnabled,
+      RootFolder: { ServerRelativeUrl: rootUrl }
+    };
+    writerState.lists.set(`${webBase}::${String(data.Title || "").toLowerCase()}`, entry);
+    const fields = /* @__PURE__ */ new Map();
+    for (const row of baseFieldRows()) fields.set(row.InternalName, row);
+    writerState.fields.set(id, fields);
+    const views = /* @__PURE__ */ new Map();
+    const viewId = nextMockId("vv00");
+    views.set(viewId, { Id: viewId, Title: "All Items", fields: ["LinkTitle"], defaultView: true });
+    writerState.views.set(id, views);
+    writerState.contentTypes.set(id, /* @__PURE__ */ new Set());
+    record();
+    return { Id: id, Title: entry.Title, RootFolder: entry.RootFolder };
+  }
+  const listIdMatch = /lists\(guid'([0-9a-f-]+)'\)/i.exec(path);
+  const listId = listIdMatch?.[1];
+  if (listId && method === "MERGE") {
+    let data = {};
+    try {
+      data = JSON.parse(body);
+    } catch {
+    }
+    if (new RegExp(`^web/lists\\(guid'${listId}'\\)$`).test(path)) {
+      const entry = [...writerState.lists.values()].find((l) => l.Id === listId);
+      if (entry && data.Title !== void 0) entry.Title = data.Title;
+      record();
+      return {};
+    }
+    const fieldMerge = new RegExp(`^web/lists\\(guid'${listId}'\\)/fields\\(guid'([0-9a-f-]+)'\\)$`).exec(path);
+    if (fieldMerge) {
+      const fields = writerState.fields.get(listId);
+      const field2 = fields && [...fields.values()].find((f) => f.Id === fieldMerge[1]);
+      if (field2) {
+        if (data.Indexed !== void 0) field2.Indexed = !!data.Indexed;
+        if (data.EnforceUniqueValues !== void 0) field2.EnforceUniqueValues = !!data.EnforceUniqueValues;
+        if (data.Title !== void 0) field2.Title = data.Title;
+      }
+      record();
+      return {};
+    }
+    const viewMergeMatch = new RegExp(`^web/lists\\(guid'${listId}'\\)/views\\(guid'([0-9a-f-]+)'\\)$`).exec(path);
+    if (viewMergeMatch) {
+      const view = writerState.views.get(listId)?.get(viewMergeMatch[1]);
+      if (view) {
+        if (data.Title !== void 0) view.Title = data.Title;
+        if (data.DefaultView !== void 0) view.defaultView = !!data.DefaultView;
+      }
+      record();
+      return {};
+    }
+    record();
+    return {};
+  }
+  if (listId && path.includes("createfieldasxml")) {
+    let data = {};
+    try {
+      data = JSON.parse(body);
+    } catch {
+    }
+    const xml = data?.parameters?.SchemaXml || "";
+    const optionsBits = Number(data?.parameters?.Options) || 0;
+    let internalName = xmlAttr(xml, "Name") || xmlAttr(xml, "StaticName");
+    const displayName = xmlAttr(xml, "DisplayName") || internalName;
+    if (!(optionsBits & 8)) internalName = displayName.replace(/[^A-Za-z0-9]+/g, "_x0020_");
+    const type = xmlAttr(xml, "Type");
+    const fields = writerState.fields.get(listId) || /* @__PURE__ */ new Map();
+    const id = nextMockId("ff00");
+    fields.set(internalName, { Id: id, InternalName: internalName, Title: displayName, TypeAsString: type });
+    writerState.fields.set(listId, fields);
+    record();
+    return { Id: id, InternalName: internalName };
+  }
+  if (listId && path.includes("addavailablecontenttype")) {
+    let data = {};
+    try {
+      data = JSON.parse(body);
+    } catch {
+    }
+    const cts = writerState.contentTypes.get(listId) || /* @__PURE__ */ new Set();
+    cts.add(data.contentTypeId);
+    writerState.contentTypes.set(listId, cts);
+    record();
+    return {};
+  }
+  if (listId && /\/views$/.test(path) && !method) {
+    let data = {};
+    try {
+      data = JSON.parse(body);
+    } catch {
+    }
+    const id = nextMockId("vv00");
+    const views = writerState.views.get(listId) || /* @__PURE__ */ new Map();
+    views.set(id, { Id: id, Title: data.Title, fields: [], defaultView: !!data.DefaultView });
+    writerState.views.set(listId, views);
+    record();
+    return { Id: id, Title: data.Title };
+  }
+  const viewMatch = /views\(guid'([0-9a-f-]+)'\)/i.exec(path);
+  if (listId && viewMatch && path.includes("removeallviewfields")) {
+    const view = writerState.views.get(listId)?.get(viewMatch[1]);
+    if (view) view.fields = [];
+    record();
+    return {};
+  }
+  const addViewField = /addviewfield\('([^']*)'\)/i.exec(path);
+  if (listId && viewMatch && addViewField) {
+    const view = writerState.views.get(listId)?.get(viewMatch[1]);
+    if (view) view.fields.push(decodeURIComponent(addViewField[1]));
+    record();
+    return {};
+  }
+  return defaultMockWriter(url, body, contentType, headers);
+}
 var PROJECT_ITEMS = [
   item(1, "Intranet refresh", {
     ProjectStatus: "Active",
@@ -2174,7 +2359,7 @@ function mockResolver(rawUrl) {
           value: [...dyn.values()].map((v) => ({
             Id: v.Id,
             Title: v.Title,
-            DefaultView: false,
+            DefaultView: !!v.defaultView,
             PersonalView: false,
             Hidden: false,
             RowLimit: 30,
@@ -4079,9 +4264,10 @@ function step(id, kind, label, {
   refs = {},
   optional = false,
   status = "planned",
-  error = ""
+  error = "",
+  final = false
 } = {}) {
-  return { id, kind, label, dependsOn, payload, refs, optional, status, error, result: null };
+  return { id, kind, label, dependsOn, payload, refs, optional, status, error, final, result: null };
 }
 function isBuiltinParent(parentId) {
   return parentId === "0x01" || parentId === "0x0120" || parentId === "0x0101";
@@ -4102,14 +4288,14 @@ function settingsPayload(list2, { reconcile = false } = {}) {
     OnQuickLaunch: list2.onQuickLaunch,
     NoCrawl: list2.noCrawl,
     DisableGridEditing: list2.disableGridEditing,
-    Ordered: list2.ordered,
+    // No Ordered: SP.List has no such REST property (a MERGE naming it is a
+    // 400, verified live) — `ordered` stays in the doc as capture-only.
     ReadSecurity: list2.readSecurity,
     WriteSecurity: list2.writeSecurity,
     ListExperienceOptions: list2.listExperienceOptions,
     EnableRequestSignOff: list2.enableRequestSignOff,
     ForceCheckout: list2.forceCheckout
   };
-  if (list2.description) groupA.Description = list2.description;
   const groupB = {};
   if (list2.enableVersioning && list2.majorVersionLimit) groupB.MajorVersionLimit = list2.majorVersionLimit;
   if (list2.enableVersioning && list2.enableMinorVersions) {
@@ -4154,9 +4340,21 @@ function pushMergeStep(steps, mergeStepIds, f, dependsOnId, merges) {
 }
 function buildApplyPlan(doc, options = {}, probe = {}) {
   const d = normalizeSchemaDoc(doc);
+  if (Number(d.list.baseTemplate) !== 100) {
+    throw new SpFileError(
+      "Only generic lists can be created in this stage \u2014 document libraries arrive in stage 2.",
+      { code: "unsupported-template" }
+    );
+  }
   const warnings = [];
   const title = String(options.title || "").trim() || defaultTargetTitle(d, probe.targetLists || []);
   const existing = probe.existingList || null;
+  if (existing && existing.baseTemplate != null && Number(existing.baseTemplate) !== Number(d.list.baseTemplate)) {
+    throw new SpFileError(
+      `\u2018${title}\u2019 already exists on the target as a different type of list \u2014 its schema cannot be applied to it.`,
+      { code: "base-type-mismatch" }
+    );
+  }
   const steps = [];
   if (existing) {
     if ((options.existing || "fail") === "fail") {
@@ -4198,11 +4396,12 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
       ctStepIds.push(id);
       const isAvailable = available.has(parentId);
       steps.push(step(id, "ct.attach", `Attach content type \u2018${ct.name}\u2019`, {
-        dependsOn: ["settings"],
+        dependsOn: ["list"],
         payload: { contentTypeId: parentId, name: ct.name },
         refs: { listId: { self: true } },
         optional: true,
         status: isAvailable ? "planned" : "failed",
+        final: !isAvailable,
         error: isAvailable ? "" : `\u2018${ct.name}\u2019 is not available on the target web \u2014 publish the content type there first.`
       }));
     }
@@ -4223,9 +4422,10 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
     if (present) {
       const same = present.typeAsString === f.type;
       steps.push(step(id, "field.create", `Column \u2018${f.displayName}\u2019 (${f.internalName})`, {
-        dependsOn: [...ctStepIds, "settings"],
+        dependsOn: ["list", ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: same ? "skipped" : "failed",
+        final: !same,
         error: same ? "" : `exists on the target as ${present.typeAsString}, source is ${f.type} \u2014 values will not import.`
       }));
       if (same) {
@@ -4237,20 +4437,23 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
     const titleTaken = existingFields.some((ef) => ef.internalName !== f.internalName && String(ef.title || "").toLowerCase() === String(f.displayName || "").toLowerCase());
     if (titleTaken) {
       steps.push(step(id, "field.create", `Column \u2018${f.displayName}\u2019 (${f.internalName})`, {
-        dependsOn: [...ctStepIds, "settings"],
+        dependsOn: ["list", ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: "failed",
+        final: true,
         error: `a different column already uses the display name \u2018${f.displayName}\u2019.`
       }));
       continue;
     }
     if (TAXONOMY_TYPES.has(f.type)) {
-      steps.push(step(id, "field.create", `Column \u2018${f.displayName}\u2019 (${f.internalName})`, {
-        dependsOn: [...ctStepIds, "settings"],
+      steps.push(step(id, "field.create", `Skip column \u2018${f.displayName}\u2019 (${f.internalName}) \u2014 managed metadata is not recreated`, {
+        dependsOn: ["list", ...ctStepIds],
         payload: { field: f, options: fieldOptions },
-        status: "failed",
-        error: "managed metadata columns are not recreated automatically."
+        status: "skipped",
+        error: "",
+        final: true
       }));
+      steps[steps.length - 1].skipReason = "managed-metadata";
       continue;
     }
     const refs = {};
@@ -4281,8 +4484,8 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
               asText = true;
               warnings.push(`Lookup \u2018${f.internalName}\u2019 target \u2018${mappedValue}\u2019 is missing on the target \u2014 created as a single line of text (policy: text; a re-run cannot upgrade it).`);
             } else {
-              steps.push(step(id, "field.create", `Skip column \u2018${f.displayName}\u2019 (${f.internalName})`, {
-                dependsOn: [...ctStepIds, "settings"],
+              steps.push(step(id, "field.create", `Skip column \u2018${f.displayName}\u2019 (${f.internalName}) \u2014 lookup target \u2018${mappedValue}\u2019 is missing (policy: skip)`, {
+                dependsOn: ["list", ...ctStepIds],
                 payload: { field: f, options: fieldOptions },
                 status: "skipped",
                 error: ""
@@ -4297,7 +4500,7 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
       }
     }
     steps.push(step(id, "field.create", `${blocked ? "Blocked" : "Add"} ${f.type} column \u2018${f.displayName}\u2019 (${f.internalName})${asText ? " as text" : ""}`, {
-      dependsOn: [...ctStepIds, "settings"],
+      dependsOn: ["list", ...ctStepIds],
       payload: { field: f, asText, options: fieldOptions },
       refs,
       status: blocked ? "blocked" : "planned",
@@ -4311,15 +4514,13 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
   const titleField = d.fields.find((f) => f.internalName === "Title");
   if (titleField && (titleField.displayName !== "Title" || titleField.required === false)) {
     steps.push(step("title", "field.base", `Set the Title column\u2019s display name and required flag`, {
-      dependsOn: [...fieldStepIds, ...mergeStepIds, "settings"],
+      dependsOn: ["list"],
       payload: { displayName: titleField.displayName, required: titleField.required },
       optional: true
     }));
   }
-  const viewStepIds = [];
   for (const v of d.views.filter((view) => !view.hidden)) {
     const id = `view:${v.title}`;
-    viewStepIds.push(id);
     const targetViews = probe.existingViews || [];
     const existingView = targetViews.find((ev) => String(ev.title).toLowerCase() === String(v.title).toLowerCase()) || (v.defaultView ? targetViews.find((ev) => ev.defaultView) : null) || null;
     const wanted = v.fields.filter((name) => createdInternalNames.has(name) || existingFields.some((ef) => ef.internalName === name) || baseFieldNames.has(name));
@@ -4328,7 +4529,10 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
       warnings.push(`View \u2018${v.title}\u2019: columns not on the target were left out: ${missing.join(", ")}.`);
     }
     steps.push(step(id, "view.upsert", `View \u2018${v.title}\u2019 (${wanted.length} column${wanted.length === 1 ? "" : "s"})`, {
-      dependsOn: ["title", ...fieldStepIds, ...mergeStepIds].filter((depId) => steps.some((s) => s.id === depId)),
+      // Only the list: a view that names a column which failed to create
+      // simply leaves it out (warned above). Depending on every field step
+      // let one managed-metadata column block every view on the list.
+      dependsOn: ["list"],
       payload: {
         title: v.title,
         viewId: existingView?.id || null,
@@ -4338,18 +4542,96 @@ function buildApplyPlan(doc, options = {}, probe = {}) {
         paged: v.paged,
         defaultView: v.defaultView,
         customFormatter: v.customFormatter,
-        jsLink: v.jsLink
+        jsLink: v.jsLink,
+        viewTypeKind: v.viewTypeKind,
+        scope: v.scope,
+        aggregations: v.aggregations,
+        aggregationsStatus: v.aggregationsStatus,
+        tabularView: v.tabularView,
+        mobileView: v.mobileView,
+        mobileDefaultView: v.mobileDefaultView,
+        includeRootFolder: v.includeRootFolder,
+        viewData: v.viewData,
+        viewJoins: v.viewJoins
       }
     }));
   }
   if (d.list.validationFormula) {
     steps.push(step("validation", "list.validation", "Apply the list validation formula", {
-      dependsOn: viewStepIds.length ? viewStepIds : ["settings"],
+      // Ordered last so every column the formula names exists; a formula
+      // over a column that failed is refused by SharePoint on its own merits.
+      dependsOn: ["list"],
       payload: { validationFormula: d.list.validationFormula, validationMessage: d.list.validationMessage },
       optional: true
     }));
   }
   return { title, targetWebUrl: options.targetWebUrl || "", existingListId: existing?.id || null, steps, warnings };
+}
+function newReport(plan) {
+  return {
+    dryRun: false,
+    title: plan.title,
+    listId: plan.existingListId || null,
+    created: false,
+    targetWebUrl: plan.targetWebUrl || "",
+    rootFolder: "",
+    adopted: Boolean(plan.existingListId),
+    aborted: "",
+    settings: { applied: [], failed: [] },
+    validation: { applied: false, error: "" },
+    contentTypes: { attached: 0, skipped: 0, failed: 0 },
+    fields: { added: 0, skipped: 0, failed: [] },
+    fieldMerges: { applied: 0, failed: 0 },
+    views: { added: 0, updated: 0, failed: [] },
+    fieldIdMap: {},
+    warnings: [...plan.warnings || []],
+    steps: (plan.steps || []).map((s) => ({ ...s }))
+  };
+}
+function buildApplyReport({ report, doc, targetWebUrl }) {
+  const title = report?.title || doc?.list?.title || "List";
+  const dest = targetWebUrl || report?.targetWebUrl || "the target site";
+  const lines = ["# List schema report", ""];
+  lines.push(report?.created ? `Created \u2018${title}\u2019 on ${dest}.` : `Updated \u2018${title}\u2019 on ${dest}.`, "");
+  lines.push(
+    "## Fields",
+    "",
+    `- Added: ${report?.fields?.added ?? 0}`,
+    `- Skipped: ${report?.fields?.skipped ?? 0}`,
+    `- Failed: ${(report?.fields?.failed || []).length}`,
+    ""
+  );
+  lines.push(
+    "## Views",
+    "",
+    `- Added: ${report?.views?.added ?? 0}`,
+    `- Updated: ${report?.views?.updated ?? 0}`,
+    `- Failed: ${(report?.views?.failed || []).length}`,
+    ""
+  );
+  if (report?.contentTypes) {
+    lines.push(
+      "## Content types",
+      "",
+      `- Attached: ${report.contentTypes.attached ?? 0}`,
+      `- Skipped: ${report.contentTypes.skipped ?? 0}`,
+      `- Failed: ${report.contentTypes.failed ?? 0}`,
+      ""
+    );
+  }
+  const warnings = report?.warnings || [];
+  if (warnings.length) {
+    lines.push("## Warnings", "");
+    for (const w of warnings) lines.push(`- ${w}`);
+    lines.push("");
+  }
+  const failedSteps = (report?.steps || []).filter((s) => s.status === "failed");
+  if (failedSteps.length) {
+    lines.push("## Failed steps", "");
+    for (const s of failedSteps) lines.push(`- ${s.label}: ${s.error || "failed"}`);
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 // ../src/workbench/list-schema-capture.js
@@ -4378,6 +4660,21 @@ async function captureListSchema(client2, listId, { includeHidden = false } = {}
   const warnings = [];
   const web = await client2.get("web", { select: ["Id", "Title", "Url", "ServerRelativeUrl", "Language"] });
   const list2 = await client2.get(guidPath(listId), { expand: "RootFolder" });
+  const NAMED_ONLY = ["ValidationFormula", "ValidationMessage", "OnQuickLaunch", "ReadSecurity", "WriteSecurity"];
+  const missing = NAMED_ONLY.filter((k) => !(k in list2));
+  if (missing.length) {
+    try {
+      Object.assign(list2, await client2.get(guidPath(listId), { select: missing }));
+    } catch (err) {
+      if (isDeniedRead(err) || isExpiredSession(err)) throw err;
+      for (const key2 of missing) {
+        try {
+          Object.assign(list2, await client2.get(guidPath(listId), { select: [key2] }));
+        } catch {
+        }
+      }
+    }
+  }
   const { items: rawFields } = await client2.getAll(
     guidPath(listId, "/fields"),
     includeHidden ? {} : { filter: "Hidden eq false" }
@@ -4467,6 +4764,55 @@ async function captureListSchema(client2, listId, { includeHidden = false } = {}
     generatorBuild: APP_BUILD_INFO.build
   });
   return { doc, raw: { web, list: list2, fields: rawFields, views: rawViews } };
+}
+async function probeTarget(client2, { title, doc } = {}) {
+  const { items: allLists } = await client2.getAll("web/lists", {
+    select: ["Id", "Title", "BaseTemplate", "ContentTypesEnabled", "RootFolder/ServerRelativeUrl"],
+    expand: "RootFolder"
+  });
+  const wanted = String(title || "").trim().toLowerCase();
+  const match = wanted ? allLists.find((l) => String(l.Title || "").toLowerCase() === wanted) : null;
+  const existingList = match ? {
+    id: match.Id,
+    title: match.Title,
+    baseTemplate: match.BaseTemplate,
+    contentTypesEnabled: !!match.ContentTypesEnabled,
+    rootFolderUrl: match.RootFolder?.ServerRelativeUrl || ""
+  } : null;
+  let existingFields = [];
+  let existingViews = [];
+  let existingContentTypeIds = [];
+  if (existingList) {
+    const { items: rawFields } = await client2.getAll(guidPath(existingList.id, "/fields"));
+    existingFields = rawFields.map((f) => ({
+      internalName: f.InternalName,
+      title: f.Title,
+      typeAsString: f.TypeAsString,
+      id: f.Id
+    }));
+    const { items: rawViews } = await client2.getAll(guidPath(existingList.id, "/views"), { select: ["Id", "Title", "DefaultView"] });
+    existingViews = rawViews.map((v) => ({ id: v.Id, title: v.Title, defaultView: !!v.DefaultView }));
+    if (existingList.contentTypesEnabled) {
+      const { items: rawCts } = await client2.getAll(guidPath(existingList.id, "/contenttypes"), { select: ["StringId"] });
+      existingContentTypeIds = rawCts.map((c) => parentContentTypeId(c.StringId));
+    }
+  }
+  let availableContentTypes = null;
+  if (doc?.list?.contentTypesEnabled) {
+    const { items } = await client2.getAll("web/availablecontenttypes", {
+      select: ["StringId", "Name", "Group"],
+      top: 5e3
+    });
+    availableContentTypes = items.map((c) => ({ id: c.StringId, name: c.Name, group: c.Group }));
+  }
+  return {
+    existingList,
+    existingFields,
+    existingViews,
+    existingContentTypeIds,
+    availableContentTypes,
+    targetLists: allLists.map((l) => ({ id: l.Id, title: l.Title }))
+  };
 }
 
 // ../src/workbench/list-schema-script.js
@@ -4690,6 +5036,1484 @@ function toPnpjs2Provisioning(doc, opts = {}) {
   return lines.join("\n");
 }
 
+// ../src/workbench/list-schema-apply.js
+var listPath = (id, sub = "") => `web/lists(guid'${id}')${sub}`;
+function needsVerboseRetry(err) {
+  if (err?.status !== 400) return false;
+  const msg = String(err?.message || "");
+  return /__metadata/i.test(msg) || /\bSP\.[A-Za-z]+(\.[A-Za-z]+)*\b/.test(msg) || /entity ?type/i.test(msg);
+}
+async function writeJson(spWrite, method, path, body, entityType, opts = {}) {
+  try {
+    return await spWrite[method](path, body, opts);
+  } catch (err) {
+    if (!needsVerboseRetry(err)) throw err;
+    const verboseBody = entityType === "SP.XmlSchemaFieldCreationInformation" ? { ...body, parameters: { __metadata: { type: entityType }, ...body.parameters || {} } } : { __metadata: { type: entityType }, ...body };
+    return spWrite[method](path, verboseBody, { ...opts, contentType: "application/json;odata=verbose" });
+  }
+}
+async function readTargetFields(ctx2) {
+  const { items } = await ctx2.client.getAll(listPath(ctx2.listId, "/fields"), {
+    select: ["Id", "InternalName", "Title", "TypeAsString", "Hidden", "ReadOnlyField", "Indexed", "EnforceUniqueValues"]
+  });
+  return items.map((f) => ({
+    id: f.Id,
+    internalName: f.InternalName,
+    title: f.Title,
+    typeAsString: f.TypeAsString,
+    hidden: !!f.Hidden,
+    readOnly: !!f.ReadOnlyField,
+    indexed: !!f.Indexed,
+    enforceUniqueValues: !!f.EnforceUniqueValues
+  }));
+}
+async function readTargetListsByTitle(ctx2) {
+  const { items } = await ctx2.client.getAll("web/lists", { select: ["Id", "Title"] });
+  const map = /* @__PURE__ */ new Map();
+  for (const l of items) map.set(String(l.Title || "").toLowerCase(), l.Id);
+  return map;
+}
+async function readTargetViews(ctx2) {
+  const { items } = await ctx2.client.getAll(listPath(ctx2.listId, "/views"), {
+    select: ["Id", "Title", "DefaultView"]
+  });
+  return items.map((v) => ({ id: v.Id, title: v.Title, defaultView: !!v.DefaultView }));
+}
+function seedFieldIdMap(ctx2) {
+  for (const f of ctx2.targetFields || []) {
+    if (!(f.internalName in ctx2.fieldIdMap)) ctx2.fieldIdMap[f.internalName] = f.id;
+  }
+}
+async function readTargetState(ctx2) {
+  ctx2.targetFields = await readTargetFields(ctx2);
+  seedFieldIdMap(ctx2);
+  ctx2.targetListsByTitle = await readTargetListsByTitle(ctx2);
+  ctx2.targetViews = await readTargetViews(ctx2);
+}
+async function safeRead(ctx2, report, fn) {
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    if (isExpiredSession(err)) {
+      report.aborted = "auth";
+      return false;
+    }
+    report.aborted = "probe";
+    report.warnings.push(err?.message || String(err));
+    return false;
+  }
+}
+function resolveListIdByTitle(ctx2, title) {
+  const id = ctx2.targetListsByTitle?.get(String(title || "").toLowerCase());
+  if (!id) {
+    throw new SpFileError(
+      `Lookup target list \u2018${title}\u2019 was not found on the target.`,
+      { code: "not-found" }
+    );
+  }
+  return id;
+}
+async function runListCreate(step2, ctx2, report) {
+  const { title, description, baseTemplate, contentTypesEnabled, urlName } = step2.payload;
+  const proposedUrlName = urlName || String(title || "").replace(/\s+/g, "");
+  if (!ctx2.spWrite.isMock()) {
+    let webRel = "";
+    try {
+      webRel = new URL(ctx2.client.webUrl()).pathname.replace(/\/+$/, "");
+    } catch {
+    }
+    const listUrl = `${webRel}/Lists/${proposedUrlName}`;
+    try {
+      const existing = await ctx2.client.get(
+        `web/GetList(@listUrl)?@listUrl='${odataPathLiteral(listUrl)}'&$select=Id,Title`
+      );
+      if (existing?.Title && existing.Title !== title) {
+        throw new SpFileError(
+          `The list URL \u2018${listUrl}\u2019 is already taken by \u2018${existing.Title}\u2019 \u2014 it may be sitting in the recycle bin. Choose a different title, or empty the recycle bin first.`,
+          { code: "url-taken" }
+        );
+      }
+    } catch (err) {
+      if (err?.status === 404 || err?.code === "not-found") {
+      } else throw err;
+    }
+  }
+  const body = {
+    Title: urlName || title,
+    Description: description || "",
+    BaseTemplate: baseTemplate,
+    ContentTypesEnabled: !!contentTypesEnabled,
+    AllowContentTypes: true
+  };
+  const data = await writeJson(
+    ctx2.spWrite,
+    "postJson",
+    "web/lists",
+    body,
+    "SP.List",
+    { fallback: "Could not create the list", code: "write" }
+  );
+  ctx2.listId = data.Id;
+  report.listId = data.Id;
+  report.created = true;
+  report.rootFolder = data.RootFolder?.ServerRelativeUrl || "";
+  if (urlName) {
+    try {
+      await writeJson(ctx2.spWrite, "mergeJson", listPath(data.Id), { Title: title }, "SP.List", {});
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      report.warnings.push(
+        `The list was created under the URL name \u2018${urlName}\u2019 \u2014 renaming its title to \u2018${title}\u2019 failed (${err.message || err}).`
+      );
+    }
+  }
+  return data;
+}
+async function runListAdopt(step2) {
+  const { listId, title } = step2.payload;
+  return { id: listId, title };
+}
+async function mergeSettingsGroup(ctx2, report, group) {
+  const keys = Object.keys(group || {});
+  if (!keys.length) return;
+  try {
+    await writeJson(
+      ctx2.spWrite,
+      "mergeJson",
+      listPath(ctx2.listId),
+      group,
+      "SP.List",
+      { fallback: "Could not apply list settings", code: "write" }
+    );
+    report.settings.applied.push(...keys);
+  } catch (err) {
+    if (isExpiredSession(err)) throw err;
+    for (const key2 of keys) {
+      try {
+        await writeJson(
+          ctx2.spWrite,
+          "mergeJson",
+          listPath(ctx2.listId),
+          { [key2]: group[key2] },
+          "SP.List",
+          { fallback: `Could not apply ${key2}`, code: "write" }
+        );
+        report.settings.applied.push(key2);
+      } catch (err2) {
+        if (isExpiredSession(err2)) throw err2;
+        report.settings.failed.push(key2);
+        report.warnings.push(`Setting \u2018${key2}\u2019 was rejected on the target \u2014 ${err2.message}`);
+      }
+    }
+  }
+}
+async function runListSettings(step2, ctx2, report) {
+  const { groupA, groupB } = step2.payload;
+  await mergeSettingsGroup(ctx2, report, groupA);
+  await mergeSettingsGroup(ctx2, report, groupB);
+}
+async function runCtAttach(step2, ctx2) {
+  const { contentTypeId } = step2.payload;
+  return writeJson(
+    ctx2.spWrite,
+    "postJson",
+    `${listPath(ctx2.listId)}/contenttypes/addAvailableContentType`,
+    { contentTypeId },
+    "SP.List",
+    { fallback: "Could not attach the content type", code: "write" }
+  );
+}
+function resolveFieldRefs(step2, ctx2) {
+  const refs = step2.refs || {};
+  let lookupListId = null;
+  if (refs.lookupListId) {
+    if (refs.lookupListId.self) lookupListId = ctx2.listId;
+    else if (refs.lookupListId.id) lookupListId = refs.lookupListId.id;
+    else if (refs.lookupListId.list) lookupListId = resolveListIdByTitle(ctx2, refs.lookupListId.list);
+  }
+  let primaryFieldId = null;
+  if (refs.primaryFieldId?.field) {
+    primaryFieldId = ctx2.fieldIdMap[refs.primaryFieldId.field] || null;
+    if (!primaryFieldId) {
+      throw new SpFileError(
+        `Its primary lookup column \u2018${refs.primaryFieldId.field}\u2019 was not created on the target.`,
+        { code: "blocked" }
+      );
+    }
+  }
+  return { lookupListId, primaryFieldId };
+}
+async function runFieldCreate(step2, ctx2) {
+  const { field: f, asText, options } = step2.payload;
+  const { lookupListId, primaryFieldId } = resolveFieldRefs(step2, ctx2);
+  const xml = asText ? textFallbackXml(f) : scrubSchemaXml(f.schemaXml, { lookupListId, primaryFieldId, fieldType: f.type });
+  const body = { parameters: { SchemaXml: xml, Options: options ?? 8 } };
+  const data = await writeJson(
+    ctx2.spWrite,
+    "postJson",
+    `${listPath(ctx2.listId)}/fields/createfieldasxml`,
+    body,
+    "SP.XmlSchemaFieldCreationInformation",
+    { fallback: `Could not create the column \u2018${f.displayName}\u2019`, code: "write" }
+  );
+  if (data.InternalName && data.InternalName !== f.internalName) {
+    throw new SpFileError(
+      `Created as \u2018${data.InternalName}\u2019, expected \u2018${f.internalName}\u2019.`,
+      { code: "name-mismatch" }
+    );
+  }
+  ctx2.fieldIdMap[f.internalName] = data.Id;
+  return data;
+}
+var FIELD_MERGE_ORDER = ["Indexed", "EnforceUniqueValues", "CustomFormatter"];
+async function runFieldMerge(step2, ctx2, report) {
+  const { internalName, merges } = step2.payload;
+  const fid = ctx2.fieldIdMap[internalName];
+  if (!fid) {
+    throw new SpFileError(`Column \u2018${internalName}\u2019 has no id on the target to merge onto.`, { code: "write" });
+  }
+  const keys = FIELD_MERGE_ORDER.filter((k) => k in merges);
+  const failures = [];
+  for (const key2 of keys) {
+    try {
+      await writeJson(
+        ctx2.spWrite,
+        "mergeJson",
+        `${listPath(ctx2.listId)}/fields(guid'${fid}')`,
+        { [key2]: merges[key2] },
+        "SP.Field",
+        { fallback: `Could not apply ${key2}`, code: "write" }
+      );
+      report.fieldMerges.applied++;
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      report.fieldMerges.failed++;
+      failures.push({ key: key2, message: err.message });
+    }
+  }
+  if (keys.length && failures.length === keys.length) {
+    throw new SpFileError(failures.map((f) => f.message).join(" "), { code: "write" });
+  }
+  for (const f of failures) {
+    report.warnings.push(`\u2018${internalName}\u2019: ${f.key} was not applied \u2014 ${f.message}`);
+  }
+  return { failed: failures.map((f) => f.key) };
+}
+async function runFieldBase(step2, ctx2) {
+  const { displayName, required } = step2.payload;
+  return writeJson(
+    ctx2.spWrite,
+    "mergeJson",
+    `${listPath(ctx2.listId)}/fields/getbyinternalnameortitle('Title')`,
+    { Title: displayName, Required: !!required },
+    "SP.Field",
+    { fallback: "Could not update the Title column", code: "write" }
+  );
+}
+async function runViewUpsert(step2, ctx2, report) {
+  const {
+    title,
+    viewId: matchedViewId,
+    fields: wanted,
+    viewQuery,
+    rowLimit,
+    paged,
+    defaultView,
+    customFormatter,
+    jsLink,
+    viewTypeKind,
+    scope,
+    aggregations,
+    aggregationsStatus,
+    tabularView,
+    mobileView,
+    mobileDefaultView,
+    includeRootFolder,
+    viewData,
+    viewJoins
+  } = step2.payload;
+  let viewId = matchedViewId;
+  if (!viewId) {
+    const targetViews = ctx2.targetViews || [];
+    const found = targetViews.find((tv) => String(tv.title).toLowerCase() === String(title).toLowerCase()) || (defaultView ? targetViews.find((tv) => tv.defaultView) : null);
+    if (found) viewId = found.id;
+  }
+  let created = false;
+  if (viewId) {
+    await writeJson(
+      ctx2.spWrite,
+      "mergeJson",
+      `${listPath(ctx2.listId)}/views(guid'${viewId}')`,
+      // No Title: a view matched as the target's (localized) default view
+      // keeps its own name — the consent only promises rebuilt columns.
+      { ViewQuery: viewQuery || "", RowLimit: rowLimit ?? 30, Paged: paged !== false },
+      "SP.View",
+      { fallback: `Could not update the view \u2018${title}\u2019`, code: "write" }
+    );
+  } else {
+    const body = {
+      Title: title,
+      PersonalView: false,
+      ViewQuery: viewQuery || "",
+      RowLimit: rowLimit ?? 30,
+      Paged: paged !== false,
+      DefaultView: false
+    };
+    if (viewTypeKind != null && viewTypeKind !== 1) body.ViewTypeKind = viewTypeKind;
+    const data = await writeJson(
+      ctx2.spWrite,
+      "postJson",
+      `${listPath(ctx2.listId)}/views`,
+      body,
+      "SP.View",
+      { fallback: `Could not create the view \u2018${title}\u2019`, code: "write" }
+    );
+    viewId = data.Id;
+    created = true;
+  }
+  const available = new Set((ctx2.targetFields || []).map((f) => f.internalName));
+  const toAdd = [];
+  for (const name of wanted || []) {
+    if (available.has(name)) toAdd.push(name);
+    else report.warnings.push(`View \u2018${title}\u2019: column \u2018${name}\u2019 is not on the target \u2014 left out.`);
+  }
+  let previous = [];
+  try {
+    const vf = await ctx2.client.get(`${listPath(ctx2.listId)}/views(guid'${viewId}')/viewfields`);
+    previous = vf?.Items?.results ?? vf?.Items ?? [];
+  } catch {
+  }
+  await writeJson(
+    ctx2.spWrite,
+    "postJson",
+    `${listPath(ctx2.listId)}/views(guid'${viewId}')/viewfields/removeallviewfields`,
+    {},
+    "SP.View",
+    { fallback: `Could not clear the columns on \u2018${title}\u2019`, code: "write" }
+  );
+  try {
+    for (const name of toAdd) {
+      await writeJson(
+        ctx2.spWrite,
+        "postJson",
+        `${listPath(ctx2.listId)}/views(guid'${viewId}')/viewfields/addviewfield('${odataPathLiteral(name)}')`,
+        {},
+        "SP.View",
+        { fallback: `Could not add column \u2018${name}\u2019 to \u2018${title}\u2019`, code: "write" }
+      );
+    }
+  } catch (err) {
+    if (isExpiredSession(err)) throw err;
+    try {
+      await ctx2.spWrite.postJson(`${listPath(ctx2.listId)}/views(guid'${viewId}')/viewfields/removeallviewfields`, {});
+      for (const name of previous) {
+        await ctx2.spWrite.postJson(
+          `${listPath(ctx2.listId)}/views(guid'${viewId}')/viewfields/addviewfield('${odataPathLiteral(name)}')`,
+          {}
+        );
+      }
+    } catch {
+    }
+    throw err;
+  }
+  const propsMerge = {};
+  if (scope != null && scope !== 0) propsMerge.Scope = scope;
+  if (aggregations) propsMerge.Aggregations = aggregations;
+  if (aggregationsStatus) propsMerge.AggregationsStatus = aggregationsStatus;
+  if (viewData) propsMerge.ViewData = viewData;
+  if (viewJoins) propsMerge.ViewJoins = viewJoins;
+  if (tabularView === false) propsMerge.TabularView = false;
+  if (mobileView === true) propsMerge.MobileView = true;
+  if (mobileDefaultView === true) propsMerge.MobileDefaultView = true;
+  if (includeRootFolder === true) propsMerge.IncludeRootFolder = true;
+  if (Object.keys(propsMerge).length) {
+    try {
+      await writeJson(ctx2.spWrite, "mergeJson", `${listPath(ctx2.listId)}/views(guid'${viewId}')`, propsMerge, "SP.View", {});
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      report.warnings.push(`View \u2018${title}\u2019: some view properties were not applied \u2014 ${err.message}`);
+    }
+  }
+  const optionalMerge = async (body, label) => {
+    try {
+      await writeJson(ctx2.spWrite, "mergeJson", `${listPath(ctx2.listId)}/views(guid'${viewId}')`, body, "SP.View", {});
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      report.warnings.push(`View \u2018${title}\u2019: ${label} \u2014 ${err.message}`);
+    }
+  };
+  if (customFormatter) await optionalMerge({ CustomFormatter: customFormatter }, "the column-formatting JSON was not applied");
+  if (jsLink) await optionalMerge({ JSLink: jsLink }, "JSLink was not applied");
+  if (defaultView) await optionalMerge({ DefaultView: true }, "could not be set as the default view");
+  return { id: viewId, created };
+}
+async function runListValidation(step2, ctx2) {
+  const { validationFormula, validationMessage } = step2.payload;
+  return writeJson(
+    ctx2.spWrite,
+    "mergeJson",
+    listPath(ctx2.listId),
+    { ValidationFormula: validationFormula, ValidationMessage: validationMessage || "" },
+    "SP.List",
+    { fallback: "Could not apply the validation formula", code: "write" }
+  );
+}
+var STEP_RUNNERS = {
+  "list.create": runListCreate,
+  "list.adopt": runListAdopt,
+  "list.settings": runListSettings,
+  "ct.attach": runCtAttach,
+  "field.create": runFieldCreate,
+  "field.merge": runFieldMerge,
+  "field.base": runFieldBase,
+  "view.upsert": runViewUpsert,
+  "list.validation": runListValidation
+};
+function recordSkippedFieldId(step2, ctx2) {
+  if (step2.kind !== "field.create" || step2.status !== "skipped") return;
+  const name = step2.payload?.field?.internalName;
+  if (!name) return;
+  const found = (ctx2.targetFields || []).find((f) => f.internalName === name);
+  if (found) ctx2.fieldIdMap[name] = found.id;
+}
+function tallyStep(step2, report) {
+  switch (step2.kind) {
+    case "field.create": {
+      const name = step2.payload?.field?.internalName;
+      if (step2.status === "done") report.fields.added++;
+      else if (step2.status === "skipped") report.fields.skipped++;
+      else if (step2.status === "failed") report.fields.failed.push({ internalName: name, error: step2.error });
+      break;
+    }
+    case "view.upsert": {
+      if (step2.status === "done") {
+        if (step2.result?.created) report.views.added++;
+        else report.views.updated++;
+      } else if (step2.status === "failed") {
+        report.views.failed.push({ title: step2.payload?.title, error: step2.error });
+      }
+      break;
+    }
+    case "ct.attach": {
+      if (step2.status === "done") report.contentTypes.attached++;
+      else if (step2.status === "failed") report.contentTypes.failed++;
+      else if (step2.status === "skipped") report.contentTypes.skipped++;
+      break;
+    }
+    case "list.validation": {
+      report.validation.applied = step2.status === "done";
+      if (step2.status === "failed") report.validation.error = step2.error;
+      break;
+    }
+    default:
+      break;
+  }
+}
+async function runPlan(plan, ctx2 = {}) {
+  if (plan.existingListId && !ctx2.listId) ctx2.listId = plan.existingListId;
+  ctx2.fieldIdMap = ctx2.fieldIdMap || {};
+  ctx2.targetFields = ctx2.targetFields || [];
+  ctx2.targetListsByTitle = ctx2.targetListsByTitle || null;
+  ctx2.targetViews = ctx2.targetViews || [];
+  const report = newReport(plan);
+  const steps = report.steps;
+  const total = steps.length;
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  if (ctx2.listId && !ctx2.targetFields.length) {
+    const ok = await safeRead(ctx2, report, () => readTargetState(ctx2));
+    if (!ok) return report;
+  }
+  let fieldsRereadForViews = false;
+  const isBlockedByDeps = (s) => (s.dependsOn || []).some((depId) => {
+    const dep = byId.get(depId);
+    return dep && !dep.optional && (dep.status === "failed" || dep.status === "blocked");
+  });
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    if (s.status === "skipped" || s.status === "failed" || s.status === "blocked") {
+      recordSkippedFieldId(s, ctx2);
+      tallyStep(s, report);
+      ctx2.onStep?.(s, i, total);
+      continue;
+    }
+    if (ctx2.signal?.aborted) {
+      report.aborted = "user";
+      break;
+    }
+    if (isBlockedByDeps(s)) {
+      s.status = "blocked";
+      tallyStep(s, report);
+      ctx2.onStep?.(s, i, total);
+      continue;
+    }
+    if (s.kind === "view.upsert" && !fieldsRereadForViews) {
+      fieldsRereadForViews = true;
+      const ok = await safeRead(ctx2, report, async () => {
+        ctx2.targetFields = await readTargetFields(ctx2);
+        ctx2.targetViews = await readTargetViews(ctx2);
+      });
+      if (!ok) return report;
+    }
+    s.status = "running";
+    ctx2.onStep?.(s, i, total);
+    let aborted = false;
+    try {
+      const runner = STEP_RUNNERS[s.kind];
+      if (!runner) throw new SpFileError(`No executor for step kind \u2018${s.kind}\u2019.`, { code: "internal" });
+      const result = await runner(s, ctx2, report);
+      s.status = "done";
+      s.result = result ?? null;
+    } catch (err) {
+      s.status = err?.code === "blocked" ? "blocked" : "failed";
+      s.error = err?.message || String(err);
+      if (isExpiredSession(err)) {
+        report.aborted = "auth";
+        aborted = true;
+      } else if (s.optional) {
+        report.warnings.push(`${s.label}: ${s.error}`);
+      }
+    }
+    recordSkippedFieldId(s, ctx2);
+    tallyStep(s, report);
+    ctx2.onStep?.(s, i, total);
+    if (aborted) break;
+    if (s.status === "done" && (s.kind === "list.create" || s.kind === "list.adopt")) {
+      const ok = await safeRead(ctx2, report, () => readTargetState(ctx2));
+      if (!ok) return report;
+    }
+  }
+  return report;
+}
+
+// ../src/state.js
+var STORAGE_KEY = "dcspad.v2.workspace";
+var DEFAULTS = {
+  projectName: "",
+  html: '<div id="app">\n  <h2>Hello from DCSPad</h2>\n  <p>Edit HTML, CSS and JS, then press Run.</p>\n</div>\n',
+  css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
+  js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
+  libraries: { enabled: [], pinned: ["pnpjs2"], custom: [] },
+  settings: {
+    autorun: false,
+    jsAsModule: false,
+    autoClearConsole: true,
+    seenSplash: false,
+    previewDark: true,
+    diagFontSize: 12,
+    editorFontSize: 13,
+    wordWrap: false,
+    spFilesWebUrl: "",
+    spFilesFolder: "",
+    browserHistory: [],
+    browserFavorites: [],
+    projectFileFingerprint: ""
+  },
+  layout: {
+    sidebarW: 230,
+    sidebarCollapsed: false,
+    editorsFr: 1,
+    runtimeFr: 1,
+    previewFr: 1,
+    diagH: 260,
+    diagCollapsed: false,
+    editorTab: "js",
+    diagTab: "console",
+    // Pane visibility (the topbar segmented toggles). sidebarCollapsed /
+    // diagCollapsed above are legacy flags kept for shape stability: layout.js
+    // reads them once to seed `panes` for pre-existing workspaces, then only
+    // writes `panes`.
+    panes: { resources: true, preview: true, console: true },
+    snippetsPanelH: 210
+  }
+};
+var state = load();
+var saveTimer = null;
+var listeners = /* @__PURE__ */ new Set();
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return structuredClone(DEFAULTS);
+    const parsed = JSON.parse(raw);
+    return {
+      ...structuredClone(DEFAULTS),
+      ...parsed,
+      libraries: { ...structuredClone(DEFAULTS.libraries), ...parsed.libraries || {} },
+      settings: { ...structuredClone(DEFAULTS.settings), ...parsed.settings || {} },
+      layout: { ...structuredClone(DEFAULTS.layout), ...parsed.layout || {} }
+    };
+  } catch {
+    return structuredClone(DEFAULTS);
+  }
+}
+function persist() {
+  saveTimer = null;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    for (const fn of listeners) fn("saved");
+  } catch (e) {
+    console.warn("DCSPad: autosave failed", e);
+    for (const fn of listeners) fn("error");
+  }
+}
+function saveNow() {
+  clearTimeout(saveTimer);
+  persist();
+}
+function loadDoc(key2) {
+  try {
+    const raw = localStorage.getItem(key2);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && Array.isArray(parsed.items) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function saveDoc(key2, doc) {
+  try {
+    localStorage.setItem(key2, JSON.stringify(doc));
+    return true;
+  } catch (e) {
+    console.warn(`DCSPad: saving ${key2} failed`, e);
+    return false;
+  }
+}
+var idSeed = Math.random().toString(36).slice(2, 6);
+var idCounter = 0;
+function newId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}${idSeed}${(idCounter++).toString(36)}`;
+}
+window.addEventListener("pagehide", () => {
+  if (saveTimer) saveNow();
+});
+
+// ../src/workbench/favorites.js
+var FAVORITES_KEY = "dcspad.v2.wbsites";
+var RECENTS_CAP = 8;
+function emptyDoc() {
+  return { kind: "dcspad-workbench-sites", version: 1, items: [], recents: [] };
+}
+function readDoc() {
+  const doc = loadDoc(FAVORITES_KEY);
+  if (!doc || doc.kind !== "dcspad-workbench-sites") return emptyDoc();
+  return {
+    ...emptyDoc(),
+    ...doc,
+    items: Array.isArray(doc.items) ? doc.items : [],
+    recents: Array.isArray(doc.recents) ? doc.recents : []
+  };
+}
+var canonical = (url) => String(url || "").replace(/\/+$/, "").toLowerCase();
+var quotaListener = null;
+function onQuotaError(fn) {
+  quotaListener = fn;
+}
+function writeDoc(doc) {
+  if (!saveDoc(FAVORITES_KEY, doc)) quotaListener?.();
+  return doc;
+}
+function getFavorites() {
+  return readDoc().items;
+}
+function getRecents() {
+  return readDoc().recents;
+}
+function isFavorite(url) {
+  const key2 = canonical(url);
+  return readDoc().items.some((item2) => canonical(item2.url) === key2);
+}
+function addFavorite({ url = "", title = "" } = {}) {
+  const doc = readDoc();
+  const key2 = canonical(url);
+  if (doc.items.some((item2) => canonical(item2.url) === key2)) return doc.items;
+  doc.items.push({ id: newId("fav"), url: String(url || ""), title: String(title || ""), addedAt: (/* @__PURE__ */ new Date()).toISOString() });
+  return writeDoc(doc).items;
+}
+function removeFavorite(url) {
+  const doc = readDoc();
+  const key2 = canonical(url);
+  doc.items = doc.items.filter((item2) => canonical(item2.url) !== key2);
+  return writeDoc(doc).items;
+}
+function pushRecent({ url = "", title = "" } = {}) {
+  const doc = readDoc();
+  const key2 = canonical(url);
+  doc.recents = [
+    { url: String(url || ""), title: String(title || ""), lastAt: (/* @__PURE__ */ new Date()).toISOString() },
+    ...doc.recents.filter((item2) => canonical(item2.url) !== key2)
+  ].slice(0, RECENTS_CAP);
+  return writeDoc(doc).recents;
+}
+
+// ../src/workbench/grid.js
+function bindNewTab2(a) {
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) return;
+    e.preventDefault();
+    window.open(a.href, "_blank", "noopener");
+  });
+  return a;
+}
+
+// ../src/workbench/list-schema-dialog.js
+var el4 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var cleanId = (v) => String(v || "").replace(/[{}]/g, "").toLowerCase();
+var canonUrl = (u) => String(u || "").replace(/\/+$/, "").toLowerCase();
+var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+var STATE_MAP = {
+  planned: "pending",
+  running: "running",
+  done: "ok",
+  skipped: "skip",
+  failed: "failed",
+  blocked: "blocked"
+};
+function verbFor(step2) {
+  switch (step2.kind) {
+    case "list.create":
+      return "Creating the list";
+    case "list.adopt":
+      return "Opening the existing list";
+    case "list.settings":
+      return "Applying list settings";
+    case "ct.attach":
+      return "Attaching content type";
+    case "field.create":
+      return "Creating field";
+    case "field.merge":
+      return "Updating field";
+    case "field.base":
+      return "Updating the Title column";
+    case "view.upsert":
+      return "Creating view";
+    case "list.validation":
+      return "Applying the validation formula";
+    default:
+      return "Working";
+  }
+}
+function stepLine(step2) {
+  return step2.error ? `${step2.label} \u2014 ${step2.error}` : step2.label;
+}
+function buildHeadline(report, { isMock }) {
+  if (report.aborted === "auth") return EXPIRED_SESSION_NOTE;
+  if (report.aborted === "probe") {
+    const msg = report.warnings?.[report.warnings.length - 1] || "a read failed";
+    return `The run stopped: ${msg} \u2014 Retry resumes from the list as it is now.`;
+  }
+  const failed = report.steps.filter((s) => s.status === "failed").length;
+  const retryable = report.steps.filter((s) => s.status === "failed" && !s.final).length;
+  let headline;
+  if (report.adopted) {
+    headline = `Updated \u2018${report.title}\u2019 \u2014 ${plural(report.fields.added, "field")} added, ${report.fields.skipped} already present, ${plural(report.views.added + report.views.updated, "view")} rebuilt.`;
+  } else {
+    const fieldsTotal = report.fields.added + report.fields.skipped + report.fields.failed.length;
+    const ctPart = report.contentTypes.attached ? `, ${plural(report.contentTypes.attached, "content type")}` : "";
+    const dest = report.targetWebUrl || "the target site";
+    headline = `${report.created ? "Created" : "Could not create"} \u2018${report.title}\u2019 on ${dest} \u2014 ${report.fields.added} of ${fieldsTotal} fields, ${plural(report.views.added + report.views.updated, "view")}${ctPart}.`;
+  }
+  if (failed) {
+    headline += retryable ? ` ${plural(failed, "step")} failed \u2014 see below, then Retry failed steps.` : ` ${plural(failed, "step")} could not be applied \u2014 see below.`;
+  }
+  if (isMock) headline += " (mock mode \u2014 the fixture web does not change).";
+  return headline;
+}
+function openSchemaApplyDialog({
+  doc,
+  mode = "copy",
+  client: client2,
+  createClient,
+  navigate,
+  inspectSite: inspectSite2,
+  mockWriter: mockWriter2
+} = {}) {
+  return new Promise((resolve) => {
+    const d = normalizeSchemaDoc(doc);
+    let targetClient = createClient();
+    const isMockMode = !targetClient.context().live;
+    const writerFor = (c) => createSpWriteClient({ client: c, mockWriter: isMockMode ? mockWriter2 : void 0 });
+    let spWrite = writerFor(targetClient);
+    let probe = { targetLists: [], existingList: null, existingFields: [], existingViews: [], existingContentTypeIds: [], availableContentTypes: null };
+    let connected = false;
+    let connectedInputValue = null;
+    let existingPolicy = "new";
+    let phase = "form";
+    let listExists = false;
+    let lastReport = null;
+    let liById = /* @__PURE__ */ new Map();
+    let abortController = null;
+    let titleTouched = false;
+    let lastCollisionKey = null;
+    const dialog = el4("dialog", "app-dialog sp-metadata-dialog wb-schema-dialog");
+    const panel = el4("div", "app-dialog__panel");
+    const head = el4("div", "app-dialog__head");
+    head.append(el4("h2", "", mode === "copy" ? "Copy list to\u2026" : "New list from schema"));
+    const closeBtn = el4("button", "btn btn-ghost btn-xs wb-schema-close", "\u2715");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    head.append(closeBtn);
+    const context = el4("p", "app-dialog__context", mode === "copy" ? `Copy the schema of \u2018${d.list.title}\u2019 to a new or existing list.` : `Create a list from the imported schema for \u2018${d.list.title}\u2019.`);
+    panel.append(head, context);
+    const targetField = el4("div", "app-dialog__field wb-schema-target-row");
+    targetField.append(el4("label", "", "Target site"));
+    const targetRow = el4("div", "wb-schema-target-inputrow");
+    const targetInput = el4("input", "wb-schema-target");
+    targetInput.type = "text";
+    targetInput.autocomplete = "off";
+    targetInput.setAttribute("list", "wb-schema-target-list");
+    const datalist = el4("datalist");
+    datalist.id = "wb-schema-target-list";
+    targetRow.append(targetInput, datalist);
+    const connectBtn = el4("button", "btn btn-xs wb-schema-connect", "Connect");
+    connectBtn.type = "button";
+    targetRow.append(connectBtn);
+    targetField.append(targetRow);
+    const targetStatus = el4("div", "wb-schema-target-status");
+    targetStatus.hidden = true;
+    targetField.append(targetStatus);
+    panel.append(targetField);
+    function fillDatalist() {
+      datalist.textContent = "";
+      const host = el4("option", "", "This site (host web)");
+      host.value = "";
+      datalist.append(host);
+      for (const fav of getFavorites()) {
+        const opt = el4("option", "", fav.title || fav.url);
+        opt.value = fav.url;
+        datalist.append(opt);
+      }
+      for (const rec of getRecents()) {
+        const opt = el4("option", "", rec.title || rec.url);
+        opt.value = rec.url;
+        datalist.append(opt);
+      }
+    }
+    fillDatalist();
+    const titleField = el4("div", "app-dialog__field wb-schema-title-row");
+    titleField.append(el4("label", "", "Title"));
+    const titleInput = el4("input", "wb-schema-title");
+    titleInput.type = "text";
+    titleInput.autocomplete = "off";
+    titleField.append(titleInput);
+    const titleStatus = el4("div", "wb-schema-title-status");
+    titleField.append(titleStatus);
+    panel.append(titleField);
+    const descField = el4("div", "app-dialog__field wb-schema-description-row");
+    descField.append(el4("label", "", "Description"));
+    const descInput = el4("textarea", "wb-schema-description");
+    descInput.rows = 2;
+    descInput.value = d.list.description || "";
+    descField.append(descInput);
+    panel.append(descField);
+    const lookupSection = el4("div", "wb-schema-lookups-section");
+    lookupSection.hidden = true;
+    lookupSection.append(el4("h3", "", "Lookup targets"));
+    const lookupTable = el4("table", "wb-table wb-schema-lookups");
+    const lookupHead = el4("thead");
+    const headRow = el4("tr");
+    headRow.append(el4("th", "", "Column"), el4("th", "", "Source list"), el4("th", "", "Target list"));
+    lookupHead.append(headRow);
+    const lookupBody = el4("tbody");
+    lookupTable.append(lookupHead, lookupBody);
+    lookupSection.append(lookupTable);
+    const policyRow = el4("div", "wb-schema-lookup-policy");
+    policyRow.hidden = true;
+    const policyLabel = el4("div", "", "When a lookup target is missing on the target:");
+    const skipLabel = el4("label", "wb-schema-lookup-policy-opt");
+    const skipRadio = el4("input");
+    skipRadio.type = "radio";
+    skipRadio.name = "wb-schema-missing-lookup";
+    skipRadio.value = "skip";
+    skipRadio.checked = true;
+    skipLabel.append(skipRadio, el4("span", "", "Skip the column"));
+    const textLabel = el4("label", "wb-schema-lookup-policy-opt");
+    const textRadio = el4("input");
+    textRadio.type = "radio";
+    textRadio.name = "wb-schema-missing-lookup";
+    textRadio.value = "text";
+    textLabel.append(textRadio, el4("span", "", "Create it as a single line of text"));
+    policyRow.append(policyLabel, skipLabel, textLabel);
+    lookupSection.append(policyRow);
+    panel.append(lookupSection);
+    const ctSection = el4("div", "wb-schema-cts-section");
+    ctSection.hidden = true;
+    ctSection.append(el4("h3", "", "Content types"));
+    const ctList = el4("ul", "wb-schema-cts-list");
+    ctSection.append(ctList);
+    ctSection.append(el4("p", "wb-schema-note", "Missing content types are not created in this stage."));
+    panel.append(ctSection);
+    const itemsFieldset = el4("fieldset", "wb-schema-items");
+    itemsFieldset.disabled = true;
+    itemsFieldset.title = "Item data arrives in stage 1b \u2014 this run copies the schema only.";
+    const legend = el4("legend", "", "Items");
+    itemsFieldset.append(legend);
+    const itemsRow = el4("div", "wb-schema-items-row");
+    for (const label of ["Include items", "Include attachments", "Preserve authorship"]) {
+      const cbLabel = el4("label", "wb-schema-items-opt");
+      const cb = el4("input");
+      cb.type = "checkbox";
+      cbLabel.append(cb, el4("span", "", label));
+      itemsRow.append(cbLabel);
+    }
+    itemsFieldset.append(itemsRow);
+    panel.append(itemsFieldset);
+    const existingSection = el4("div", "wb-schema-existing sp-metadata-consent");
+    existingSection.hidden = true;
+    const newTitleLabel = el4("label", "sp-metadata-consent__row");
+    const newTitleRadio = el4("input");
+    newTitleRadio.type = "radio";
+    newTitleRadio.name = "wb-schema-existing-policy";
+    newTitleRadio.value = "new";
+    newTitleRadio.checked = true;
+    newTitleLabel.append(newTitleRadio, el4("span", "sp-metadata-consent__label", "Choose another title"));
+    const resumeLabel = el4("label", "sp-metadata-consent__row");
+    const resumeRadio = el4("input");
+    resumeRadio.type = "radio";
+    resumeRadio.name = "wb-schema-existing-policy";
+    resumeRadio.value = "resume";
+    resumeLabel.append(resumeRadio, el4("span", "sp-metadata-consent__label", "Add missing fields and views to the existing list"));
+    existingSection.append(newTitleLabel, resumeLabel);
+    const gateRow = el4("label", "sp-metadata-consent__row wb-schema-gate");
+    gateRow.hidden = true;
+    const gateBox = el4("input");
+    gateBox.type = "checkbox";
+    const gateLabel = el4("span", "sp-metadata-consent__label");
+    gateRow.append(gateBox, gateLabel);
+    existingSection.append(gateRow);
+    panel.append(existingSection);
+    const planPanel = el4("div", "wb-schema-plan");
+    planPanel.hidden = true;
+    const planHeading = el4("p", "wb-schema-plan-heading");
+    planPanel.append(planHeading);
+    const stepsList = el4("ol", "wb-schema-steps");
+    planPanel.append(stepsList);
+    const masterLine = el4("p", "wb-schema-master");
+    masterLine.hidden = true;
+    planPanel.append(masterLine);
+    panel.append(planPanel);
+    const reportPanel = el4("div", "wb-schema-report");
+    reportPanel.hidden = true;
+    const reportHeadline = el4("p", "wb-schema-report-headline");
+    const reportCounts = el4("table", "wb-table wb-schema-report-counts");
+    const reportFailed = el4("div", "wb-schema-report-failed");
+    const reportWarnings = el4("div", "wb-schema-report-warnings");
+    const reportLinks = el4("div", "wb-schema-report-links");
+    reportPanel.append(reportHeadline, reportCounts, reportFailed, reportWarnings, reportLinks);
+    panel.append(reportPanel);
+    const error = el4("div", "sp-files-error");
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+    panel.append(error);
+    const actions = el4("div", "app-dialog__actions sp-metadata-actions wb-schema-actions-row");
+    const cancelBtn = el4("button", "btn btn-ghost wb-schema-cancel", "Cancel");
+    cancelBtn.type = "button";
+    const dryRunBtn = el4("button", "btn btn-xs wb-schema-dryrun", "Dry run");
+    dryRunBtn.type = "button";
+    const retryBtn = el4("button", "btn btn-xs wb-schema-retry", "Retry failed steps");
+    retryBtn.type = "button";
+    retryBtn.hidden = true;
+    const downloadBtn = el4("button", "btn btn-xs wb-schema-report-download", "Download report .md");
+    downloadBtn.type = "button";
+    downloadBtn.hidden = true;
+    const createBtn = el4("button", "btn btn-run wb-schema-create", "Create list");
+    createBtn.type = "button";
+    actions.append(cancelBtn, dryRunBtn, retryBtn, downloadBtn, createBtn);
+    panel.append(actions);
+    dialog.append(panel);
+    document.body.append(dialog);
+    const finish = (outcome) => {
+      dialog.close();
+      dialog.remove();
+      resolve(outcome);
+    };
+    function showError(message) {
+      error.textContent = message;
+      error.hidden = !message;
+    }
+    function sameAsSource() {
+      return mode === "copy" && probe.existingList && cleanId(probe.existingList.id) === cleanId(d.source?.listId);
+    }
+    function baseTypeMismatch() {
+      return Boolean(probe.existingList) && probe.existingList.baseTemplate != null && Number(probe.existingList.baseTemplate) !== Number(d.list.baseTemplate);
+    }
+    function eligible() {
+      return Number(d.list.baseTemplate) === 100 && !baseTypeMismatch();
+    }
+    function updateTitleStatus() {
+      if (!probe.existingList) {
+        titleStatus.textContent = connected ? "Available" : "";
+        titleStatus.classList.remove("wb-schema-title-taken");
+      } else if (sameAsSource()) {
+        titleStatus.textContent = "Choose a title different from the source list \u2014 this is the same list on the same site.";
+        titleStatus.classList.add("wb-schema-title-taken");
+      } else {
+        titleStatus.textContent = `A list named \u2018${probe.existingList.title}\u2019 already exists on the target.`;
+        titleStatus.classList.add("wb-schema-title-taken");
+      }
+    }
+    function updateExistingSection() {
+      const collisionKey = probe.existingList ? `${canonUrl(targetClient.webUrl())}::${cleanId(probe.existingList.id)}` : null;
+      if (collisionKey !== lastCollisionKey) {
+        lastCollisionKey = collisionKey;
+        existingPolicy = "new";
+        newTitleRadio.checked = true;
+        gateBox.checked = false;
+      }
+      const show = Boolean(probe.existingList) && !sameAsSource();
+      existingSection.hidden = !show;
+      if (!show) {
+        gateRow.hidden = true;
+        return;
+      }
+      gateLabel.textContent = `I understand this changes \u2018${probe.existingList.title}\u2019: missing columns and views are added, views with the same title have their columns rebuilt, and attachments or folders are switched on if the source needs them. Nothing is deleted.`;
+      gateRow.hidden = existingPolicy !== "resume";
+    }
+    function customLookups() {
+      return d.fields.filter((f) => f.custom && LOOKUP_TYPES.has(f.type));
+    }
+    function buildLookupMap() {
+      const map = {};
+      for (const select of lookupBody.querySelectorAll("select[data-key]")) {
+        if (select.value && select.dataset.key) map[select.dataset.key] = select.value;
+      }
+      return map;
+    }
+    function renderLookupRows() {
+      const lookups = customLookups();
+      lookupSection.hidden = lookups.length === 0;
+      lookupBody.textContent = "";
+      let anyMissing = false;
+      for (const f of lookups) {
+        const tr = el4("tr");
+        tr.append(el4("td", "", f.displayName || f.internalName));
+        tr.append(el4("td", "", f.lookupList || f.lookupListId || "\u2014"));
+        const td = el4("td");
+        if (f.isSelfLookup) {
+          td.append(el4("span", "", "(this list)"));
+        } else {
+          const select = el4("select", "wb-schema-lookup-target");
+          const emptyOpt = el4("option", "", "\u2014 missing \u2014");
+          emptyOpt.value = "";
+          select.append(emptyOpt);
+          for (const l of probe.targetLists || []) {
+            const opt = el4("option", "", l.title);
+            opt.value = l.title;
+            select.append(opt);
+          }
+          const wanted = String(f.lookupList || "").toLowerCase();
+          const found = (probe.targetLists || []).find((l) => String(l.title).toLowerCase() === wanted);
+          select.value = found ? found.title : "";
+          if (!found) anyMissing = true;
+          select.dataset.key = f.lookupList || f.lookupListId || "";
+          td.append(select);
+        }
+        tr.append(td);
+        lookupBody.append(tr);
+      }
+      policyRow.hidden = !anyMissing;
+    }
+    function renderContentTypes() {
+      ctSection.hidden = !d.list.contentTypesEnabled;
+      if (!d.list.contentTypesEnabled) return;
+      ctList.textContent = "";
+      const available = new Set((probe.availableContentTypes || []).map((c) => c.id));
+      const already = new Set(probe.existingContentTypeIds || []);
+      const seen = /* @__PURE__ */ new Set();
+      for (const ct of d.contentTypes) {
+        const parentId = ct.parentId || parentContentTypeId(ct.id);
+        if (isBuiltinParent(parentId) || seen.has(parentId)) continue;
+        seen.add(parentId);
+        const status = already.has(parentId) ? "already on the target" : available.has(parentId) ? "available on the target" : "missing on the target; will be skipped";
+        ctList.append(el4("li", "", `${ct.name} \u2014 ${status}`));
+      }
+    }
+    function canDryRun() {
+      return eligible() && connected && Boolean(titleInput.value.trim()) && !sameAsSource() && (!probe.existingList || existingPolicy === "resume");
+    }
+    function canCreate() {
+      return canDryRun() && (!probe.existingList || gateBox.checked) && connectedInputValue !== null && canonUrl(connectedInputValue) === canonUrl(targetInput.value);
+    }
+    function refreshGate() {
+      dryRunBtn.disabled = !canDryRun();
+      createBtn.disabled = !canCreate();
+      createBtn.textContent = probe.existingList && existingPolicy === "resume" ? "Add to existing list" : "Create list";
+    }
+    async function refreshProbeForTitle(title) {
+      try {
+        probe = await probeTarget(targetClient, { title, doc: d });
+      } catch (err) {
+        showError(err.message || String(err));
+        return;
+      }
+      updateTitleStatus();
+      updateExistingSection();
+      renderLookupRows();
+      renderContentTypes();
+      if (baseTypeMismatch()) {
+        showError(`\u2018${probe.existingList.title}\u2019 already exists on the target as a different type of list \u2014 it can\u2019t be used for this schema.`);
+      } else if (Number(d.list.baseTemplate) !== 100) {
+        showError("Only generic lists can be created in this stage \u2014 document libraries arrive in stage 2.");
+      } else {
+        showError("");
+      }
+      refreshGate();
+    }
+    let connectSeq = 0;
+    async function connect(rawUrl) {
+      const seq = ++connectSeq;
+      const stale = () => seq !== connectSeq;
+      let candidate = null;
+      showError("");
+      targetStatus.hidden = true;
+      connectBtn.disabled = true;
+      connected = false;
+      connectedInputValue = null;
+      refreshGate();
+      try {
+        candidate = createClient();
+        await candidate.connectWeb(rawUrl);
+      } catch (err) {
+        if (stale()) return false;
+        connectBtn.disabled = false;
+        targetStatus.textContent = err.message || String(err);
+        targetStatus.hidden = false;
+        probe = { targetLists: [], existingList: null, existingFields: [], existingViews: [], existingContentTypeIds: [], availableContentTypes: null };
+        updateTitleStatus();
+        refreshGate();
+        return false;
+      }
+      if (stale()) return false;
+      let initial;
+      try {
+        initial = await probeTarget(candidate, { title: "", doc: d });
+      } catch (err) {
+        if (stale()) return false;
+        connectBtn.disabled = false;
+        showError(err.message || String(err));
+        return false;
+      }
+      if (stale()) return false;
+      targetClient = candidate;
+      spWrite = writerFor(candidate);
+      connectBtn.disabled = false;
+      connected = true;
+      connectedInputValue = rawUrl;
+      probe = initial;
+      if (!titleTouched) titleInput.value = defaultTargetTitle(d, probe.targetLists);
+      await refreshProbeForTitle(titleInput.value.trim());
+      return true;
+    }
+    connectBtn.addEventListener("click", () => connect(targetInput.value));
+    targetInput.addEventListener("input", () => {
+      connected = false;
+      connectedInputValue = null;
+      probe = { targetLists: [], existingList: null, existingFields: [], existingViews: [], existingContentTypeIds: [], availableContentTypes: null };
+      targetStatus.textContent = "Connect to check this site.";
+      targetStatus.hidden = false;
+      updateTitleStatus();
+      refreshGate();
+    });
+    let titleDebounce = null;
+    titleInput.addEventListener("input", () => {
+      titleTouched = true;
+      clearTimeout(titleDebounce);
+      titleDebounce = setTimeout(() => {
+        if (connected) refreshProbeForTitle(titleInput.value.trim());
+      }, 150);
+    });
+    newTitleRadio.addEventListener("change", () => {
+      existingPolicy = "new";
+      gateBox.checked = false;
+      updateExistingSection();
+      refreshGate();
+    });
+    resumeRadio.addEventListener("change", () => {
+      existingPolicy = "resume";
+      updateExistingSection();
+      refreshGate();
+    });
+    gateBox.addEventListener("change", refreshGate);
+    function buildStepsList(steps) {
+      stepsList.textContent = "";
+      liById = /* @__PURE__ */ new Map();
+      for (const step2 of steps) {
+        const li = el4("li", "", stepLine(step2));
+        li.dataset.state = STATE_MAP[step2.status] || "pending";
+        stepsList.append(li);
+        liById.set(step2.id, li);
+      }
+    }
+    function handleStep(step2, i, total) {
+      const li = liById.get(step2.id);
+      if (li) {
+        li.dataset.state = STATE_MAP[step2.status] || "pending";
+        li.textContent = stepLine(step2);
+      }
+      masterLine.hidden = false;
+      masterLine.textContent = `${verbFor(step2)} ${i + 1} of ${total}\u2026`;
+      if (currentCtx?.listId && !listExists) {
+        listExists = true;
+        closeBtn.hidden = true;
+        cancelBtn.hidden = true;
+      }
+    }
+    let currentCtx = null;
+    async function runDryRun() {
+      if (!canDryRun()) return;
+      showError("");
+      dryRunBtn.disabled = true;
+      try {
+        probe = await probeTarget(targetClient, { title: titleInput.value.trim(), doc: d });
+        updateTitleStatus();
+        updateExistingSection();
+        const plan = buildApplyPlan(d, buildOptions(), probe);
+        planPanel.hidden = false;
+        planHeading.textContent = "Plan \u2014 nothing has been written.";
+        masterLine.hidden = true;
+        buildStepsList(plan.steps);
+      } catch (err) {
+        showError(err.message || String(err));
+      } finally {
+        refreshGate();
+      }
+    }
+    function buildOptions() {
+      return {
+        title: titleInput.value.trim(),
+        description: descInput.value,
+        existing: probe.existingList && existingPolicy === "resume" ? "resume" : "fail",
+        missingLookup: [...policyRow.querySelectorAll('input[name="wb-schema-missing-lookup"]')].find((r) => r.checked)?.value === "text" ? "text" : "skip",
+        lookupMap: buildLookupMap(),
+        targetWebUrl: targetClient.webUrl()
+      };
+    }
+    function setPhase(next) {
+      phase = next;
+      const inForm = next === "form";
+      const inRunning = next === "running";
+      const inReport = next === "report";
+      targetField.hidden = !inForm;
+      titleField.hidden = !inForm;
+      descField.hidden = !inForm;
+      itemsFieldset.hidden = !inForm;
+      if (inForm) {
+        renderLookupRows();
+        renderContentTypes();
+        updateExistingSection();
+      } else {
+        lookupSection.hidden = true;
+        ctSection.hidden = true;
+        existingSection.hidden = true;
+      }
+      if (inRunning) planPanel.hidden = false;
+      else if (inReport) planPanel.hidden = true;
+      reportPanel.hidden = !inReport;
+      dryRunBtn.hidden = !inForm;
+      createBtn.hidden = !inForm;
+      retryBtn.hidden = true;
+      downloadBtn.hidden = !inReport;
+      cancelBtn.hidden = false;
+      cancelBtn.textContent = inReport ? "Close" : "Cancel";
+      closeBtn.hidden = false;
+    }
+    async function runCreate() {
+      if (!canCreate()) return;
+      showError("");
+      dryRunBtn.disabled = true;
+      createBtn.disabled = true;
+      let plan;
+      try {
+        probe = await probeTarget(targetClient, { title: titleInput.value.trim(), doc: d });
+        plan = buildApplyPlan(d, buildOptions(), probe);
+      } catch (err) {
+        showError(err.message || String(err));
+        dryRunBtn.disabled = false;
+        createBtn.disabled = false;
+        return;
+      }
+      setPhase("running");
+      planHeading.textContent = `Applying the plan to \u2018${targetClient.webUrl()}\u2019\u2026`;
+      buildStepsList(plan.steps);
+      listExists = false;
+      abortController = new AbortController();
+      currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
+      try {
+        const report = await runPlan(plan, currentCtx);
+        lastReport = report;
+        renderReport(report);
+        setPhase("report");
+      } catch (err) {
+        setPhase("form");
+        showError(err.message || String(err));
+        dryRunBtn.disabled = false;
+        createBtn.disabled = false;
+      }
+    }
+    async function runRetry() {
+      if (!lastReport) return;
+      showError("");
+      retryBtn.disabled = true;
+      let plan;
+      try {
+        const resumeProbe = await probeTarget(targetClient, { title: lastReport.title, doc: d });
+        if (resumeProbe.existingList) {
+          plan = buildApplyPlan(
+            d,
+            { ...buildOptions(), title: resumeProbe.existingList.title, existing: "resume" },
+            resumeProbe
+          );
+        } else if (lastReport.listId) {
+          showError(`The list \u2018${lastReport.title}\u2019 could not be found on the target anymore \u2014 retry cannot continue.`);
+          retryBtn.disabled = false;
+          return;
+        } else {
+          plan = buildApplyPlan(d, { ...buildOptions(), title: lastReport.title }, resumeProbe);
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+        retryBtn.disabled = false;
+        return;
+      }
+      setPhase("running");
+      planHeading.textContent = "Retrying \u2014 resuming from the list as it is now\u2026";
+      buildStepsList(plan.steps);
+      listExists = Boolean(plan.existingListId);
+      abortController = new AbortController();
+      currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
+      try {
+        lastReport = await runPlan(plan, currentCtx);
+      } catch (err) {
+        showError(err.message || String(err));
+      } finally {
+        setPhase("report");
+        renderReport(lastReport);
+        retryBtn.disabled = false;
+      }
+    }
+    function renderReportCounts(report) {
+      reportCounts.textContent = "";
+      const tbody = el4("tbody");
+      const rows = [
+        ["Fields", `${report.fields.added} added \xB7 ${report.fields.skipped} skipped \xB7 ${report.fields.failed.length} failed`],
+        ["Views", `${report.views.added} added \xB7 ${report.views.updated} updated \xB7 ${report.views.failed.length} failed`],
+        ["Content types", `${report.contentTypes.attached} attached \xB7 ${report.contentTypes.skipped} skipped \xB7 ${report.contentTypes.failed} failed`],
+        ["Validation", report.validation.applied ? "applied" : report.validation.error ? "failed" : "\u2014"]
+      ];
+      for (const [label, value] of rows) {
+        const tr = el4("tr");
+        tr.append(el4("td", "", label), el4("td", "", value));
+        tbody.append(tr);
+      }
+      reportCounts.append(tbody);
+    }
+    function renderReportFailed(report) {
+      reportFailed.textContent = "";
+      const failed = report.steps.filter((s) => s.status === "failed");
+      if (!failed.length) return;
+      reportFailed.append(el4("h3", "", "Failed steps"));
+      const table2 = el4("table", "wb-table");
+      const tbody = el4("tbody");
+      for (const s of failed) {
+        const tr = el4("tr");
+        tr.append(el4("td", "", s.label), el4("td", "", s.error || ""));
+        tbody.append(tr);
+      }
+      table2.append(tbody);
+      reportFailed.append(table2);
+    }
+    function renderReportWarnings(report) {
+      reportWarnings.textContent = "";
+      if (!report.warnings?.length) return;
+      reportWarnings.append(el4("h3", "", "Warnings"));
+      const list2 = el4("ul", "wb-grid-notice");
+      for (const w of report.warnings) list2.append(el4("li", "", w));
+      reportWarnings.append(list2);
+    }
+    function renderReportLinks(report) {
+      reportLinks.textContent = "";
+      if (!report.listId) return;
+      const sameWeb = canonUrl(targetClient.webUrl()) === canonUrl(client2.webUrl());
+      if (sameWeb) {
+        const openBtn = el4("button", "btn btn-xs wb-schema-report-open", "Open the new list");
+        openBtn.type = "button";
+        openBtn.addEventListener("click", () => {
+          navigate({ view: "lists", listId: report.listId, listTitle: report.title });
+          finish("created");
+        });
+        reportLinks.append(openBtn);
+      } else {
+        const settingsLink = el4("a", "btn btn-xs wb-schema-report-settings", "Open list settings \u2197");
+        settingsLink.href = linkUrl(targetClient.webUrl(), LIST_SETTINGS, { guid: report.listId });
+        bindNewTab2(settingsLink);
+        const inspectBtn = el4("button", "btn btn-xs wb-schema-report-inspect", "Inspect the target site");
+        inspectBtn.type = "button";
+        inspectBtn.addEventListener("click", async () => {
+          await inspectSite2(targetClient.webUrl());
+          navigate({ view: "lists", listId: report.listId, listTitle: report.title });
+          finish("created");
+        });
+        reportLinks.append(settingsLink, inspectBtn);
+      }
+    }
+    function renderReport(report) {
+      reportHeadline.textContent = buildHeadline(report, { isMock: spWrite.isMock() });
+      reportHeadline.classList.toggle("wb-schema-report-auth", report.aborted === "auth");
+      renderReportCounts(report);
+      renderReportFailed(report);
+      renderReportWarnings(report);
+      renderReportLinks(report);
+      retryBtn.hidden = !(report.steps.some((s) => s.status === "failed" && !s.final) || report.aborted === "probe" && Boolean(report.listId));
+      downloadBtn.hidden = false;
+    }
+    dryRunBtn.addEventListener("click", runDryRun);
+    createBtn.addEventListener("click", runCreate);
+    retryBtn.addEventListener("click", runRetry);
+    downloadBtn.addEventListener("click", () => {
+      if (!lastReport) return;
+      const stem = String(lastReport.title || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+      downloadText(`schema-report-${stem}.md`, buildApplyReport({ report: lastReport, doc: d, targetWebUrl: lastReport.targetWebUrl }), "text/markdown");
+    });
+    cancelBtn.addEventListener("click", () => {
+      if (phase === "running") {
+        abortController?.abort();
+        return;
+      }
+      if (phase === "report") {
+        finish(lastReport?.listId ? "created" : "cancelled");
+        return;
+      }
+      finish("cancelled");
+    });
+    closeBtn.addEventListener("click", () => {
+      if (phase === "running") return;
+      finish(phase === "report" && lastReport?.listId ? "created" : "cancelled");
+    });
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      if (phase === "running") {
+        if (!listExists) abortController?.abort();
+        return;
+      }
+      finish(phase === "report" && lastReport?.listId ? "created" : "cancelled");
+    });
+    setPhase("form");
+    dryRunBtn.disabled = true;
+    createBtn.disabled = true;
+    dialog.showModal();
+    targetInput.value = client2.webUrl();
+    connect(client2.webUrl());
+  });
+}
+
 // ../src/workbench/views/lists.js
 var BASE_TEMPLATE_NAMES = {
   100: "Generic list",
@@ -4779,7 +6603,7 @@ var choicesText = (v) => {
   return Array.isArray(arr) ? arr.join(" | ") : "";
 };
 var fileStem = (s) => String(s || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
-var el4 = (tag, cls, text) => {
+var el5 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -4828,10 +6652,15 @@ function parseItemsQuery(text) {
   }
   return out;
 }
-function createListsView({ client: client2, navigate, updateRoute, inspectSite: inspectSite2, createClient }) {
-  const root = el4("section", "wb-view wb-view-lists");
-  void inspectSite2;
-  void createClient;
+function createListsView({
+  client: client2,
+  navigate,
+  updateRoute,
+  inspectSite: inspectSite2,
+  createClient,
+  mockWriter: mockWriter2
+}) {
+  const root = el5("section", "wb-view wb-view-lists");
   const webOrigin = () => {
     try {
       return new URL(client2.webUrl()).origin;
@@ -4840,8 +6669,8 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     }
   };
   const absUrl = (rel) => rel ? `${webOrigin()}${encodeSpPath(rel)}` : "";
-  const gridPane = el4("div", "wb-pane");
-  const head = el4("div", "wb-view-head");
+  const gridPane = el5("div", "wb-pane");
+  const head = el5("div", "wb-view-head");
   head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web \u2014 SharePoint-internal plumbing sits behind the expander below the grid. Click a row for fields, views, content types, and items.</p>';
   const grid = createGrid({
     columns: [
@@ -4881,11 +6710,71 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
       webUrl: client2.webUrl()
     }
   });
-  const moreBtn = el4("button", "btn btn-xs wb-lists-more");
+  const moreBtn = el5("button", "btn btn-xs wb-lists-more");
   moreBtn.type = "button";
   moreBtn.hidden = true;
-  gridPane.append(head, grid.el, moreBtn);
-  const detailPane = el4("div", "wb-pane");
+  const importNotice = el5("div", "wb-consent wb-schema-import-notice");
+  importNotice.hidden = true;
+  gridPane.append(head, importNotice, grid.el, moreBtn);
+  const newFromSchemaBtn = el5("button", "btn btn-xs wb-schema-new", "New from schema\u2026");
+  newFromSchemaBtn.type = "button";
+  const schemaFileInput = el5("input", "wb-schema-file");
+  schemaFileInput.type = "file";
+  schemaFileInput.accept = ".json";
+  schemaFileInput.hidden = true;
+  schemaFileInput.setAttribute("aria-label", "Choose a list schema JSON file");
+  newFromSchemaBtn.addEventListener("click", () => schemaFileInput.click());
+  function showImportNotice(message) {
+    importNotice.textContent = "";
+    importNotice.hidden = false;
+    importNotice.classList.add("wb-consent-error");
+    importNotice.append(el5("span", "wb-consent-text", message));
+    const dismiss = el5("button", "btn btn-xs", "Dismiss");
+    dismiss.type = "button";
+    dismiss.addEventListener("click", () => {
+      importNotice.hidden = true;
+    });
+    importNotice.append(dismiss);
+  }
+  schemaFileInput.addEventListener("change", async () => {
+    const file = schemaFileInput.files?.[0];
+    schemaFileInput.value = "";
+    if (!file) return;
+    importNotice.hidden = true;
+    if (file.size > MAX_IMPORT_BYTES) {
+      showImportNotice(`\u2018${file.name}\u2019 is ${(file.size / 1048576).toFixed(1)} MB \u2014 above the 5 MB import limit.`);
+      return;
+    }
+    let json;
+    try {
+      json = JSON.parse(await file.text());
+    } catch {
+      showImportNotice(`\u2018${file.name}\u2019 isn\u2019t valid JSON.`);
+      return;
+    }
+    let doc;
+    try {
+      doc = normalizeSchemaDoc(json);
+    } catch {
+      showImportNotice(`\u2018${file.name}\u2019 is not a list schema document (expected kind ${SCHEMA_KIND}).`);
+      return;
+    }
+    const outcome = await openSchemaApplyDialog({
+      doc,
+      mode: "import",
+      client: client2,
+      createClient,
+      navigate,
+      inspectSite: inspectSite2,
+      mockWriter: mockWriter2
+    });
+    if (outcome === "created") {
+      listsLoaded = false;
+      loadLists();
+    }
+  });
+  grid.actionsEl.prepend(newFromSchemaBtn, schemaFileInput);
+  const detailPane = el5("div", "wb-pane");
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
   let listsLoaded = false;
@@ -4937,35 +6826,35 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     return tabCache.get(key2);
   }
   function buildItemsPane(wrap, listId, listTitle) {
-    const controls = el4("span", "wb-items-controls");
-    const viewLabel = el4("label", "wb-items-label", "Columns ");
-    const viewSel = el4("select", "wb-items-view");
+    const controls = el5("span", "wb-items-controls");
+    const viewLabel = el5("label", "wb-items-label", "Columns ");
+    const viewSel = el5("select", "wb-items-view");
     viewSel.setAttribute("aria-label", "Column source: a view or all columns");
     viewLabel.append(viewSel);
-    const maxLabel = el4("label", "wb-items-label", "Max ");
-    const maxIn = el4("input", "wb-items-max");
+    const maxLabel = el5("label", "wb-items-label", "Max ");
+    const maxIn = el5("input", "wb-items-max");
     maxIn.type = "number";
     maxIn.min = "1";
     maxIn.max = "5000";
     maxIn.value = "500";
     maxIn.setAttribute("aria-label", "Maximum items to fetch");
     maxLabel.append(maxIn);
-    const queryToggle = el4("button", "wb-items-querytoggle", "Query \u25BE");
+    const queryToggle = el5("button", "wb-items-querytoggle", "Query \u25BE");
     queryToggle.type = "button";
     const QUERY_HINT = "Advanced: raw OData clauses for the item query \u2014 $filter=\u2026 and/or $orderby=\u2026, joined with &. A bare expression counts as $filter. Order defaults to ID desc.";
     queryToggle.title = QUERY_HINT;
     queryToggle.setAttribute("aria-expanded", "false");
-    const queryWrap = el4("span", "wb-items-querywrap");
+    const queryWrap = el5("span", "wb-items-querywrap");
     queryWrap.hidden = true;
-    const queryIn = el4("input", "wb-items-query");
+    const queryIn = el5("input", "wb-items-query");
     queryIn.type = "text";
     queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
     queryIn.setAttribute("aria-label", "OData $filter and $orderby for the item query");
     queryIn.title = QUERY_HINT;
-    const queryErr = el4("span", "wb-items-error");
+    const queryErr = el5("span", "wb-items-error");
     queryWrap.append(queryIn, queryErr);
     controls.append(viewLabel, maxLabel, queryToggle, queryWrap);
-    const gridBox = el4("div", "wb-items-grid");
+    const gridBox = el5("div", "wb-items-grid");
     wrap.append(gridBox);
     function setQueryOpen(open) {
       queryWrap.hidden = !open;
@@ -5020,7 +6909,7 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
         itemsGrid.setLoading("Loading items\u2026");
       } else {
         gridBox.textContent = "";
-        status = el4("div", "wb-grid-status", "Loading items\u2026");
+        status = el5("div", "wb-grid-status", "Loading items\u2026");
         gridBox.append(status);
       }
       let fields = null;
@@ -5034,11 +6923,11 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
         fields = fieldsResult.items;
         if (!viewsFilled) {
           viewsFilled = true;
-          const none = el4("option", "", "All columns");
+          const none = el5("option", "", "All columns");
           none.value = "";
           viewSel.append(none);
           for (const view of views.filter((v) => !v.PersonalView)) {
-            const opt = el4("option", "", view.DefaultView ? `${view.Title} (default)` : view.Title);
+            const opt = el5("option", "", view.DefaultView ? `${view.Title} (default)` : view.Title);
             opt.value = view.Id;
             viewSel.append(opt);
           }
@@ -5170,21 +7059,21 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     return "";
   }
   function schemaChip(cls, text, title) {
-    const chip = el4("span", `wb-info-chip ${cls}`, text);
+    const chip = el5("span", `wb-info-chip ${cls}`, text);
     if (title) chip.title = title;
     return chip;
   }
   function copyableCell(text) {
-    const span = el4("span", "sp-copy", text);
+    const span = el5("span", "sp-copy", text);
     span.title = "Click to copy";
     span.addEventListener("click", () => copyText(text, span));
     return span;
   }
   function buildSettingsSection(doc) {
-    const section = el4("div", "wb-schema-section");
-    section.append(el4("h3", "", "Settings"));
-    const table2 = el4("table", "wb-table wb-schema-settings");
-    const tbody = el4("tbody");
+    const section = el5("div", "wb-schema-section");
+    section.append(el5("h3", "", "Settings"));
+    const table2 = el5("table", "wb-table wb-schema-settings");
+    const tbody = el5("tbody");
     const rows = [
       ["Description", doc.list.description || "\u2014"],
       ["Base template", `${BASE_TEMPLATE_NAMES[doc.list.baseTemplate] || "Template"} (${doc.list.baseTemplate})`],
@@ -5198,9 +7087,9 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
       ["On Quick Launch", doc.list.onQuickLaunch ? "yes" : "no"]
     ];
     for (const [label, value] of rows) {
-      const tr = el4("tr");
-      tr.append(el4("td", "", label));
-      const td = el4("td");
+      const tr = el5("tr");
+      tr.append(el5("td", "", label));
+      const td = el5("td");
       td.append(copyableCell(String(value)));
       tr.append(td);
       tbody.append(tr);
@@ -5210,8 +7099,8 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     return section;
   }
   function buildFieldsSection(doc) {
-    const section = el4("div", "wb-schema-section");
-    section.append(el4("h3", "", "Fields"));
+    const section = el5("div", "wb-schema-section");
+    section.append(el5("h3", "", "Fields"));
     const fieldsGrid = createGrid({
       columns: [
         { key: "displayName", label: "Title" },
@@ -5232,8 +7121,8 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     return section;
   }
   function buildViewsSection(doc) {
-    const section = el4("div", "wb-schema-section");
-    section.append(el4("h3", "", "Views"));
+    const section = el5("div", "wb-schema-section");
+    section.append(el5("h3", "", "Views"));
     const viewsGrid = createGrid({
       columns: [
         { key: "title", label: "Title" },
@@ -5253,10 +7142,10 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     return section;
   }
   function buildContentTypesSection(doc) {
-    const section = el4("div", "wb-schema-section");
-    section.append(el4("h3", "", "Content types"));
+    const section = el5("div", "wb-schema-section");
+    section.append(el5("h3", "", "Content types"));
     if (!doc.list.contentTypesEnabled) {
-      section.append(el4("p", "wb-schema-note", "Content types are exported for reference \u2014 they are not recreated unless enabled on the target."));
+      section.append(el5("p", "wb-schema-note", "Content types are exported for reference \u2014 they are not recreated unless enabled on the target."));
     }
     const ctGrid = createGrid({
       columns: [
@@ -5274,21 +7163,29 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     return section;
   }
   function buildWarningsSection(doc) {
-    const section = el4("div", "wb-schema-section");
-    section.append(el4("h3", "", "Warnings"));
-    const list2 = el4("ul", "wb-grid-notice");
-    for (const w of doc.warnings) list2.append(el4("li", "", w));
+    const section = el5("div", "wb-schema-section");
+    section.append(el5("h3", "", "Warnings"));
+    const list2 = el5("ul", "wb-grid-notice");
+    for (const w of doc.warnings) list2.append(el5("li", "", w));
     section.append(list2);
     return section;
   }
-  function openCopy(doc) {
-    void doc;
+  async function openCopy(doc) {
+    await openSchemaApplyDialog({
+      doc,
+      mode: "copy",
+      client: client2,
+      createClient,
+      navigate,
+      inspectSite: inspectSite2,
+      mockWriter: mockWriter2
+    });
   }
   function renderSchemaPane(doc, listTitle) {
     const summary = schemaSummary(doc);
     const stem = fileStem(listTitle);
-    const head2 = el4("div", "wb-schema-head");
-    const chips = el4("div", "wb-schema-chips");
+    const head2 = el5("div", "wb-schema-head");
+    const chips = el5("div", "wb-schema-chips");
     chips.append(
       schemaChip("wb-schema-kind", summary.kind, `BaseTemplate ${doc.list.baseTemplate}`),
       schemaChip("wb-schema-fields", summary.fieldsText, `${doc.fields.length} total fields, ${doc.fields.filter((f) => f.custom).length} custom`),
@@ -5303,14 +7200,14 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
         "Copying a document library arrives in stage 2 \u2014 export works now."
       ));
     }
-    const actions = el4("span", "wb-schema-actions");
+    const actions = el5("span", "wb-schema-actions");
     actions.append(createMenuButton("Export \u25BE", "Export this list\u2019s schema", [
       ["Download schema .json", () => downloadText(`schema-${stem}.json`, JSON.stringify(doc, null, 2), "application/json")],
       ["Copy schema JSON", (btn) => copyText(JSON.stringify(doc, null, 2), btn)],
       ["Copy as PnP.PowerShell (provision)", (btn) => copyText(toPnpPowerShellProvisioning(doc, { targetWebUrl: client2.webUrl() }), btn)],
       ["Copy as PnPjs 2 (provision)", (btn) => copyText(toPnpjs2Provisioning(doc, {}), btn)]
     ]));
-    const copyBtn = el4("button", "btn btn-xs wb-schema-copy", "Copy to\u2026");
+    const copyBtn = el5("button", "btn btn-xs wb-schema-copy", "Copy to\u2026");
     copyBtn.type = "button";
     const gated = doc.list.baseTemplate !== 100;
     copyBtn.disabled = gated;
@@ -5318,18 +7215,18 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     copyBtn.addEventListener("click", () => openCopy(doc));
     actions.append(copyBtn);
     head2.append(chips, actions);
-    const sections = el4("div", "wb-schema-sections");
+    const sections = el5("div", "wb-schema-sections");
     sections.append(buildSettingsSection(doc));
     sections.append(buildFieldsSection(doc));
     sections.append(buildViewsSection(doc));
     if (doc.contentTypes.length) sections.append(buildContentTypesSection(doc));
     if (doc.warnings.length) sections.append(buildWarningsSection(doc));
-    const root2 = el4("div", "wb-schema");
+    const root2 = el5("div", "wb-schema");
     root2.append(head2, sections);
     return root2;
   }
   function buildSchemaPane(wrap, listId, listTitle) {
-    const status = el4("div", "wb-grid-status", "Reading the list schema\u2026");
+    const status = el5("div", "wb-grid-status", "Reading the list schema\u2026");
     wrap.append(status);
     cached2(listId, "schema", () => captureListSchema(client2, listId)).then(({ doc }) => {
       status.remove();
@@ -5433,22 +7330,22 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     detailPane.hidden = false;
     detailPane.textContent = "";
     const listId = route.listId;
-    const back = el4("button", "btn btn-xs wb-back", "\u2190 All lists");
+    const back = el5("button", "btn btn-xs wb-back", "\u2190 All lists");
     back.type = "button";
     back.addEventListener("click", () => navigate({ view: "lists" }));
-    const title = el4("h2", "", route.listTitle || "List");
-    const sub = el4("span", "wb-detail-id sp-copy", listId);
+    const title = el5("h2", "", route.listTitle || "List");
+    const sub = el5("span", "wb-detail-id sp-copy", listId);
     sub.title = "Click to copy the list id";
     sub.addEventListener("click", () => copyText(listId, sub));
-    const settingsLink = el4("a", "btn btn-xs wb-detail-settings", "List settings \u2197");
+    const settingsLink = el5("a", "btn btn-xs wb-detail-settings", "List settings \u2197");
     settingsLink.href = linkUrl(client2.webUrl(), LIST_SETTINGS, { guid: listId });
     bindNewTab(settingsLink);
     settingsLink.title = "Open this list\u2019s settings page in a new tab";
-    const headRow = el4("div", "wb-detail-head");
+    const headRow = el5("div", "wb-detail-head");
     headRow.append(back, title, sub, settingsLink);
-    const tabsBar = el4("div", "wb-tabs");
+    const tabsBar = el5("div", "wb-tabs");
     tabsBar.setAttribute("role", "tablist");
-    const body = el4("div", "wb-tab-body");
+    const body = el5("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     let activeTab = null;
     function activate(tab) {
@@ -5463,7 +7360,7 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
     }
     function pane(tab) {
       if (panes.has(tab.id)) return panes.get(tab.id);
-      const wrap = el4("div", "wb-tab-pane");
+      const wrap = el5("div", "wb-tab-pane");
       panes.set(tab.id, wrap);
       if (tab.id === "items") {
         buildItemsPane(wrap, listId, route.listTitle || "List");
@@ -5474,12 +7371,12 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
         return wrap;
       }
       if (tab.id === "raw") {
-        const status = el4("div", "wb-grid-status", "Loading raw list entity\u2026");
+        const status = el5("div", "wb-grid-status", "Loading raw list entity\u2026");
         wrap.append(status);
         cached2(listId, "raw", () => client2.get(guidPath2(listId))).then((json) => {
           status.remove();
           const node = toNode(json, 0, { maxDepth: 8, maxItems: 250 });
-          const inspector = el4("div", "wb-raw");
+          const inspector = el5("div", "wb-raw");
           inspector.append(enhance(node) ?? renderValue(node));
           wrap.append(inspector);
         }).catch((err) => {
@@ -5501,7 +7398,7 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
       return wrap;
     }
     for (const tab of TABS) {
-      const btn = el4("button", "wb-tab", tab.label);
+      const btn = el5("button", "wb-tab", tab.label);
       btn.type = "button";
       btn.dataset.tab = tab.id;
       btn.setAttribute("role", "tab");
@@ -5525,7 +7422,7 @@ function createListsView({ client: client2, navigate, updateRoute, inspectSite: 
 }
 
 // ../src/workbench/views/security.js
-var el5 = (tag, cls, text) => {
+var el6 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -5533,25 +7430,25 @@ var el5 = (tag, cls, text) => {
 };
 var roleNames = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
 function createSecurityView({ client: client2 }) {
-  const root = el5("section", "wb-view wb-view-security");
+  const root = el6("section", "wb-view wb-view-security");
   const spWrite = createSpWriteClient({ client: client2 });
-  const head = el5("div", "wb-view-head");
+  const head = el6("div", "wb-view-head");
   head.innerHTML = '<h2>Permissions</h2><p class="wb-view-hint">Site groups, membership, role definitions, and who holds what on this web. The inheritance scan is on-demand \u2014 it makes SharePoint evaluate security per list.</p>';
-  const headLinks = el5("div", "wb-head-links");
+  const headLinks = el6("div", "wb-head-links");
   const permGroup = LINK_GROUPS.find((g) => g.title === "Permissions & people");
   for (const link of (permGroup?.links || []).filter((l) => l.label !== "Access requests")) {
-    const a = el5("a", "btn btn-xs wb-head-link", `${link.label} \u2197`);
+    const a = el6("a", "btn btn-xs wb-head-link", `${link.label} \u2197`);
     bindNewTab(a);
     a.dataset.path = link.path;
     headLinks.append(a);
   }
   head.append(headLinks);
-  const tabsBar = el5("div", "wb-tabs");
-  const body = el5("div", "wb-tab-body");
+  const tabsBar = el6("div", "wb-tabs");
+  const body = el6("div", "wb-tab-body");
   root.append(head, tabsBar, body);
   const panes = /* @__PURE__ */ new Map();
   function groupsPane() {
-    const wrap = el5("div", "wb-tab-pane");
+    const wrap = el6("div", "wb-tab-pane");
     const groupsQuery = {
       path: "web/sitegroups",
       options: { select: ["Id", "Title", "Description", "OwnerTitle", "PrincipalType", "OnlyAllowMembersViewMembership"] }
@@ -5571,10 +7468,10 @@ function createSecurityView({ client: client2 }) {
       exportName: "sp-groups",
       descriptor: { ...groupsQuery, webUrl: client2.webUrl() }
     });
-    const membersBox = el5("div", "wb-subpanel");
+    const membersBox = el6("div", "wb-subpanel");
     membersBox.hidden = true;
-    const membersTitle = el5("h3", "wb-subpanel-title", "");
-    const membersHost = el5("div", "wb-subpanel-body");
+    const membersTitle = el6("h3", "wb-subpanel-title", "");
+    const membersHost = el6("div", "wb-subpanel-body");
     membersBox.append(membersTitle, membersHost);
     wrap.append(grid.el, membersBox);
     grid.setLoading("Loading site groups\u2026");
@@ -5608,16 +7505,16 @@ function createSecurityView({ client: client2 }) {
     return wrap;
   }
   function membersPane() {
-    const wrap = el5("div", "wb-tab-pane");
-    const notice = el5("div", "wb-consent");
+    const wrap = el6("div", "wb-tab-pane");
+    const notice = el6("div", "wb-consent");
     notice.hidden = true;
     function showNotice(message, { isError = false, confirm = null } = {}) {
       notice.textContent = "";
       notice.hidden = false;
       notice.classList.toggle("wb-consent-error", isError);
-      notice.append(el5("span", "wb-consent-text", message));
+      notice.append(el6("span", "wb-consent-text", message));
       if (confirm) {
-        const yes = el5("button", "btn btn-xs", confirm.label);
+        const yes = el6("button", "btn btn-xs", confirm.label);
         yes.type = "button";
         yes.addEventListener("click", () => {
           notice.hidden = true;
@@ -5625,22 +7522,22 @@ function createSecurityView({ client: client2 }) {
         });
         notice.append(yes);
       }
-      const dismiss = el5("button", "btn btn-xs", confirm ? "Cancel" : "Dismiss");
+      const dismiss = el6("button", "btn btn-xs", confirm ? "Cancel" : "Dismiss");
       dismiss.type = "button";
       dismiss.addEventListener("click", () => {
         notice.hidden = true;
       });
       notice.append(dismiss);
     }
-    const addBar = el5("div", "wb-members-add");
-    const groupSelect = el5("select", "wb-members-group");
+    const addBar = el6("div", "wb-members-add");
+    const groupSelect = el6("select", "wb-members-group");
     groupSelect.setAttribute("aria-label", "Group to add the user to");
-    const loginInput = el5("input", "wb-members-login");
+    const loginInput = el6("input", "wb-members-login");
     loginInput.type = "text";
     loginInput.placeholder = "user@tenant.com or i:0#.f|membership|\u2026";
-    const addBtn = el5("button", "btn btn-xs", "Add to group");
+    const addBtn = el6("button", "btn btn-xs", "Add to group");
     addBtn.type = "button";
-    addBar.append(el5("span", "wb-qb-label", "Add user"), groupSelect, loginInput, addBtn);
+    addBar.append(el6("span", "wb-qb-label", "Add user"), groupSelect, loginInput, addBtn);
     const grid = createGrid({
       rowKey: "Key",
       columns: [
@@ -5688,7 +7585,7 @@ function createSecurityView({ client: client2 }) {
         groups = items;
         groupSelect.textContent = "";
         for (const group of groups) {
-          const opt = el5("option", "", group.Title);
+          const opt = el6("option", "", group.Title);
           opt.value = String(group.Id);
           groupSelect.append(opt);
         }
@@ -5751,7 +7648,7 @@ function createSecurityView({ client: client2 }) {
     return wrap;
   }
   function roleDefsPane() {
-    const wrap = el5("div", "wb-tab-pane");
+    const wrap = el6("div", "wb-tab-pane");
     const grid = createGrid({
       columns: [
         { key: "Name", label: "Role" },
@@ -5781,10 +7678,10 @@ function createSecurityView({ client: client2 }) {
         webUrl: client2.webUrl()
       }
     });
-    const decodeBox = el5("div", "wb-subpanel");
+    const decodeBox = el6("div", "wb-subpanel");
     decodeBox.hidden = true;
-    const decodeTitle = el5("h3", "wb-subpanel-title", "");
-    const decodeBody = el5("div", "wb-subpanel-body wb-flags");
+    const decodeTitle = el6("h3", "wb-subpanel-title", "");
+    const decodeBody = el6("div", "wb-subpanel-body wb-flags");
     decodeBox.append(decodeTitle, decodeBody);
     wrap.append(grid.el, decodeBox);
     grid.setLoading("Loading role definitions\u2026");
@@ -5796,13 +7693,13 @@ function createSecurityView({ client: client2 }) {
       const d = decodeBasePermissions(role.BasePermissions);
       decodeTitle.textContent = `${role.Name} \u2014 ${d.isFullControl ? "full control" : `${d.flags.length} permission flags`}`;
       decodeBody.textContent = "";
-      for (const flag of d.flags) decodeBody.append(el5("span", "wb-flag", flag));
-      if (d.isEmpty) decodeBody.append(el5("span", "wb-view-hint", "No permission bits set."));
+      for (const flag of d.flags) decodeBody.append(el6("span", "wb-flag", flag));
+      if (d.isEmpty) decodeBody.append(el6("span", "wb-view-hint", "No permission bits set."));
     }
     return wrap;
   }
   function assignmentsPane() {
-    const wrap = el5("div", "wb-tab-pane");
+    const wrap = el6("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "PrincipalId",
       columns: [
@@ -5838,11 +7735,11 @@ function createSecurityView({ client: client2 }) {
     return wrap;
   }
   function inheritancePane() {
-    const wrap = el5("div", "wb-tab-pane");
-    const bar = el5("div", "wb-scan-bar");
-    const btn = el5("button", "btn", "Scan lists for unique permissions");
+    const wrap = el6("div", "wb-tab-pane");
+    const bar = el6("div", "wb-scan-bar");
+    const btn = el6("button", "btn", "Scan lists for unique permissions");
     btn.type = "button";
-    const hint = el5(
+    const hint = el6(
       "span",
       "wb-view-hint",
       "Asks SharePoint for HasUniqueRoleAssignments on every list \u2014 slow on large sites, so it only runs on demand."
@@ -5902,7 +7799,7 @@ function createSecurityView({ client: client2 }) {
     body.append(panes.get(tab.id));
   }
   for (const tab of TABS) {
-    const btn = el5("button", "wb-tab", tab.label);
+    const btn = el6("button", "wb-tab", tab.label);
     btn.type = "button";
     btn.dataset.tab = tab.id;
     btn.addEventListener("click", () => activate(tab));
@@ -5918,7 +7815,7 @@ function createSecurityView({ client: client2 }) {
 }
 
 // ../src/workbench/views/site.js
-var el6 = (tag, cls, text) => {
+var el7 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -5948,7 +7845,7 @@ var WEB_SELECT = [
 ];
 var SITE_SELECT = ["Id", "Url", "ServerRelativeUrl", "ReadOnly", "ShareByEmailEnabled"];
 function createSiteView({ client: client2 }) {
-  const root = el6("section", "wb-view wb-view-site");
+  const root = el7("section", "wb-view wb-view-site");
   const absUrl = (rel) => {
     try {
       return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
@@ -5956,14 +7853,14 @@ function createSiteView({ client: client2 }) {
       return "";
     }
   };
-  const head = el6("div", "wb-view-head");
+  const head = el7("div", "wb-view-head");
   head.innerHTML = '<h2>Site overview</h2><p class="wb-view-hint">Web and site collection properties, features, subwebs, and the property bag.</p>';
-  const tabsBar = el6("div", "wb-tabs");
-  const body = el6("div", "wb-tab-body");
+  const tabsBar = el7("div", "wb-tabs");
+  const body = el7("div", "wb-tab-body");
   root.append(head, tabsBar, body);
   const panes = /* @__PURE__ */ new Map();
   function sheetPane(query, extraSections = []) {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el7("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "Property",
       columns: [
@@ -5980,10 +7877,10 @@ function createSiteView({ client: client2 }) {
     grid.setLoading("Loading\u2026");
     client2.get(query.path, query.options).then((entity2) => grid.setRows(entityRows(entity2))).catch((err) => grid.setError(err));
     for (const extra of extraSections) {
-      const box = el6("div", "wb-subpanel");
+      const box = el7("div", "wb-subpanel");
       box.hidden = false;
-      box.append(el6("h3", "wb-subpanel-title", extra.title));
-      const hostEl = el6("div", "wb-subpanel-body");
+      box.append(el7("h3", "wb-subpanel-title", extra.title));
+      const hostEl = el7("div", "wb-subpanel-body");
       box.append(hostEl);
       const extraGrid = createGrid({
         rowKey: "Property",
@@ -6004,7 +7901,7 @@ function createSiteView({ client: client2 }) {
     return wrap;
   }
   function featuresPane() {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el7("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "DefinitionId",
       columns: [
@@ -6038,7 +7935,7 @@ function createSiteView({ client: client2 }) {
     return wrap;
   }
   function subwebsPane() {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el7("div", "wb-tab-pane");
     const query = {
       path: "web/webs",
       options: { select: ["Id", "Title", "ServerRelativeUrl", "WebTemplate", "Created", "Language"] }
@@ -6064,7 +7961,7 @@ function createSiteView({ client: client2 }) {
     return wrap;
   }
   function propertyBagPane() {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el7("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "RawKey",
       columns: [
@@ -6126,7 +8023,7 @@ function createSiteView({ client: client2 }) {
     body.append(panes.get(tab.id));
   }
   for (const tab of TABS) {
-    const btn = el6("button", "wb-tab", tab.label);
+    const btn = el7("button", "wb-tab", tab.label);
     btn.type = "button";
     btn.dataset.tab = tab.id;
     btn.addEventListener("click", () => activate(tab));
@@ -6139,7 +8036,7 @@ function createSiteView({ client: client2 }) {
 }
 
 // ../src/workbench/views/site-home.js
-var el7 = (tag, cls, text) => {
+var el8 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -6147,7 +8044,7 @@ var el7 = (tag, cls, text) => {
 };
 var fmtDate2 = (v) => v ? String(v).slice(0, 10) : "";
 function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSite2 }) {
-  const root = el7("section", "wb-view wb-view-sitehome");
+  const root = el8("section", "wb-view wb-view-sitehome");
   const absUrl = (rel) => {
     try {
       return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
@@ -6155,20 +8052,20 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
       return "";
     }
   };
-  const head = el7("div", "wb-view-head");
+  const head = el8("div", "wb-view-head");
   head.innerHTML = '<h2>Site</h2><p class="wb-view-hint">The inspected web at a glance. Full property sheets are under Advanced.</p>';
-  const cards = el7("div", "wb-home-cards");
-  const webCard = el7("div", "wb-home-card");
-  const userCard = el7("div", "wb-home-card");
+  const cards = el8("div", "wb-home-cards");
+  const webCard = el8("div", "wb-home-card");
+  const userCard = el8("div", "wb-home-card");
   cards.append(webCard, userCard);
-  const subwebsBox = el7("div", "wb-home-subwebs");
+  const subwebsBox = el8("div", "wb-home-subwebs");
   root.append(head, cards, subwebsBox);
   let loadedForWeb = "";
-  const failureRow = (err, subject) => showFailure(el7("div", "wb-grid-status"), err, subject);
+  const failureRow = (err, subject) => showFailure(el8("div", "wb-grid-status"), err, subject);
   function factRow(label, value, { copyFull = "" } = {}) {
-    const row = el7("div", "wb-home-fact");
-    row.append(el7("span", "wb-home-fact-label", label));
-    const v = el7("span", copyFull ? "wb-home-fact-value sp-copy" : "wb-home-fact-value", value || "\u2014");
+    const row = el8("div", "wb-home-fact");
+    row.append(el8("span", "wb-home-fact-label", label));
+    const v = el8("span", copyFull ? "wb-home-fact-value sp-copy" : "wb-home-fact-value", value || "\u2014");
     if (copyFull) {
       v.title = "Click to copy the full URL";
       v.addEventListener("click", () => copyText(copyFull, v));
@@ -6181,9 +8078,9 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
     if (loadedForWeb === webUrl) return;
     loadedForWeb = webUrl;
     webCard.textContent = "";
-    webCard.append(el7("h3", "wb-home-card-title", "This web"));
+    webCard.append(el8("h3", "wb-home-card-title", "This web"));
     userCard.textContent = "";
-    userCard.append(el7("h3", "wb-home-card-title", "You"));
+    userCard.append(el8("h3", "wb-home-card-title", "You"));
     subwebsBox.textContent = "";
     try {
       const web = await client2.get("web", {
@@ -6218,9 +8115,9 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
         factRow("Email", user2.Email),
         factRow("Login", user2.LoginName)
       );
-      const roleRow = el7("div", "wb-home-fact");
-      roleRow.append(el7("span", "wb-home-fact-label", "Role"));
-      roleRow.append(el7(
+      const roleRow = el8("div", "wb-home-fact");
+      roleRow.append(el8("span", "wb-home-fact-label", "Role"));
+      roleRow.append(el8(
         "span",
         user2.IsSiteAdmin ? "wb-role-chip wb-role-admin" : "wb-role-chip wb-role-user",
         user2.IsSiteAdmin ? "Site admin" : "Site user"
@@ -6264,7 +8161,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
         webUrl: client2.webUrl()
       }
     });
-    subwebsBox.append(el7("h3", "wb-home-card-title", "Subwebs"), grid.el);
+    subwebsBox.append(el8("h3", "wb-home-card-title", "Subwebs"), grid.el);
     grid.setLoading("Loading subwebs\u2026");
     client2.getAll("web/webs", {
       select: ["Id", "Title", "ServerRelativeUrl", "Created", "WebTemplate"]
@@ -6278,30 +8175,30 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
 }
 
 // ../src/workbench/views/links.js
-var el8 = (tag, cls, text) => {
+var el9 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
   return n;
 };
 function createLinksView({ client: client2 }) {
-  const root = el8("section", "wb-view wb-view-links");
-  const head = el8("div", "wb-view-head");
+  const root = el9("section", "wb-view wb-view-links");
+  const head = el9("div", "wb-view-head");
   head.innerHTML = '<h2>Panels</h2><p class="wb-view-hint">Quick jumps to the SharePoint configuration panels you actually reach for. Links open in a new tab; hover for the underlying page.</p>';
-  const body = el8("div", "wb-links");
+  const body = el9("div", "wb-links");
   root.append(head, body);
   function load2() {
     const webUrl = client2.webUrl();
     body.textContent = "";
     for (const group of LINK_GROUPS) {
-      const card = el8("div", "wb-linkgroup");
-      card.append(el8("h3", "", group.title));
+      const card = el9("div", "wb-linkgroup");
+      card.append(el9("h3", "", group.title));
       for (const link of group.links) {
-        const row = el8("a", "wb-link");
+        const row = el9("a", "wb-link");
         row.href = linkUrl(webUrl, link);
         bindNewTab(row);
-        row.append(el8("span", "wb-link-label", link.label));
-        row.append(el8("span", "wb-link-go", "\u2197"));
+        row.append(el9("span", "wb-link-label", link.label));
+        row.append(el9("span", "wb-link-go", "\u2197"));
         row.title = link.hint ? `${link.path}
 ${link.hint}` : link.path;
         card.append(row);
@@ -6338,7 +8235,7 @@ var OPERATORS = [
   ["startswith", "starts with"],
   ["substringof", "contains"]
 ];
-var el9 = (tag, cls, text) => {
+var el10 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -6442,65 +8339,65 @@ function writeSaved(webUrl, state2) {
   }
 }
 function createQueryView({ client: client2 }) {
-  const root = el9("section", "wb-view wb-view-query");
-  const head = el9("div", "wb-view-head");
+  const root = el10("section", "wb-view wb-view-query");
+  const head = el10("div", "wb-view-head");
   head.innerHTML = '<h2>Query builder</h2><p class="wb-view-hint">Compose an OData query against any list \u2014 or any /_api endpoint \u2014 and run it. \u201CCopy as\u201D turns the query into a script.</p>';
-  const composer = el9("div", "wb-qb");
-  const targetRow = el9("div", "wb-qb-row");
-  const listSelect = el9("select", "wb-qb-list");
+  const composer = el10("div", "wb-qb");
+  const targetRow = el10("div", "wb-qb-row");
+  const listSelect = el10("select", "wb-qb-list");
   listSelect.setAttribute("aria-label", "Query target list");
-  const endpointInput = el9("input", "wb-qb-endpoint");
+  const endpointInput = el10("input", "wb-qb-endpoint");
   endpointInput.type = "text";
   endpointInput.placeholder = "web/currentuser \u2014 path after /_api/";
   endpointInput.hidden = true;
-  targetRow.append(el9("span", "wb-qb-label", "Target"), listSelect, endpointInput);
-  const fieldsBox = el9("div", "wb-qb-fields");
-  const fieldsList = el9("div", "wb-qb-fieldlist");
-  fieldsBox.append(el9("span", "wb-qb-label", "$select"), fieldsList);
-  const filtersBox = el9("div", "wb-qb-filters");
-  const filterRows = el9("div", "wb-qb-filterrows");
-  const addFilter = el9("button", "btn btn-xs", "+ Filter");
+  targetRow.append(el10("span", "wb-qb-label", "Target"), listSelect, endpointInput);
+  const fieldsBox = el10("div", "wb-qb-fields");
+  const fieldsList = el10("div", "wb-qb-fieldlist");
+  fieldsBox.append(el10("span", "wb-qb-label", "$select"), fieldsList);
+  const filtersBox = el10("div", "wb-qb-filters");
+  const filterRows = el10("div", "wb-qb-filterrows");
+  const addFilter = el10("button", "btn btn-xs", "+ Filter");
   addFilter.type = "button";
-  filtersBox.append(el9("span", "wb-qb-label", "$filter"), filterRows, addFilter);
-  const optionsRow = el9("div", "wb-qb-row");
-  const orderSelect = el9("select", "wb-qb-order");
-  const orderDir = el9("select", "wb-qb-orderdir");
+  filtersBox.append(el10("span", "wb-qb-label", "$filter"), filterRows, addFilter);
+  const optionsRow = el10("div", "wb-qb-row");
+  const orderSelect = el10("select", "wb-qb-order");
+  const orderDir = el10("select", "wb-qb-orderdir");
   for (const [v, label] of [["asc", "ascending"], ["desc", "descending"]]) {
-    const opt = el9("option", "", label);
+    const opt = el10("option", "", label);
     opt.value = v;
     orderDir.append(opt);
   }
-  const topInput = el9("input", "wb-qb-top");
+  const topInput = el10("input", "wb-qb-top");
   topInput.type = "number";
   topInput.min = "1";
   topInput.max = String(MAX_TOP);
   topInput.value = String(DEFAULT_TOP);
-  const expandInput = el9("input", "wb-qb-expand");
+  const expandInput = el10("input", "wb-qb-expand");
   expandInput.type = "text";
   expandInput.placeholder = "extra $expand (comma-separated)";
   optionsRow.append(
-    el9("span", "wb-qb-label", "$orderby"),
+    el10("span", "wb-qb-label", "$orderby"),
     orderSelect,
     orderDir,
-    el9("span", "wb-qb-label", "$top"),
+    el10("span", "wb-qb-label", "$top"),
     topInput,
-    el9("span", "wb-qb-label", "$expand"),
+    el10("span", "wb-qb-label", "$expand"),
     expandInput
   );
-  const rawRow = el9("div", "wb-qb-rawrow");
-  const rawArea = el9("textarea", "wb-qb-raw");
+  const rawRow = el10("div", "wb-qb-rawrow");
+  const rawArea = el10("textarea", "wb-qb-raw");
   rawArea.spellcheck = false;
   rawArea.setAttribute("aria-label", "Raw query");
-  const rawNote = el9("span", "wb-qb-rawnote", "Editing the raw query overrides the builder.");
+  const rawNote = el10("span", "wb-qb-rawnote", "Editing the raw query overrides the builder.");
   rawNote.hidden = true;
-  const runBtn = el9("button", "btn btn-xs wb-qb-run wb-primary", "Run \u25B6");
+  const runBtn = el10("button", "btn btn-xs wb-qb-run wb-primary", "Run \u25B6");
   runBtn.type = "button";
-  const backToBuilder = el9("button", "btn btn-xs", "Back to builder");
+  const backToBuilder = el10("button", "btn btn-xs", "Back to builder");
   backToBuilder.type = "button";
   backToBuilder.hidden = true;
   rawRow.append(rawArea, rawNote, runBtn, backToBuilder);
   composer.append(targetRow, fieldsBox, filtersBox, optionsRow, rawRow);
-  const results = el9("div", "wb-qb-results");
+  const results = el10("div", "wb-qb-results");
   root.append(head, composer, results);
   let lists = [];
   let fields = [];
@@ -6512,34 +8409,34 @@ function createQueryView({ client: client2 }) {
     return listSelect.value === "::endpoint" ? "" : listSelect.value;
   }
   function addFilterRow(saved = {}) {
-    const row = el9("div", "wb-qb-filterrow");
-    const join2 = el9("select", "wb-qb-join");
+    const row = el10("div", "wb-qb-filterrow");
+    const join2 = el10("select", "wb-qb-join");
     for (const [v, label] of [["and", "AND"], ["or", "OR"]]) {
-      const opt = el9("option", "", label);
+      const opt = el10("option", "", label);
       opt.value = v;
       join2.append(opt);
     }
     join2.value = saved.join || "and";
     if (!filterRows.childElementCount) join2.classList.add("wb-qb-join-first");
-    const fieldSel = el9("select", "wb-qb-field");
+    const fieldSel = el10("select", "wb-qb-field");
     for (const f of fields) {
-      const opt = el9("option", "", f.InternalName);
+      const opt = el10("option", "", f.InternalName);
       opt.value = f.InternalName;
       fieldSel.append(opt);
     }
     if (saved.field) fieldSel.value = saved.field;
-    const opSel = el9("select", "wb-qb-op");
+    const opSel = el10("select", "wb-qb-op");
     for (const [v, label] of OPERATORS) {
-      const opt = el9("option", "", label);
+      const opt = el10("option", "", label);
       opt.value = v;
       opSel.append(opt);
     }
     if (saved.op) opSel.value = saved.op;
-    const valueInput = el9("input", "wb-qb-value");
+    const valueInput = el10("input", "wb-qb-value");
     valueInput.type = "text";
     valueInput.placeholder = "value";
     valueInput.value = saved.value || "";
-    const remove = el9("button", "btn btn-xs", "\xD7");
+    const remove = el10("button", "btn btn-xs", "\xD7");
     remove.type = "button";
     remove.title = "Remove this filter";
     remove.addEventListener("click", () => {
@@ -6616,22 +8513,22 @@ function createQueryView({ client: client2 }) {
   function renderFieldList(savedSelect = null) {
     fieldsList.textContent = "";
     orderSelect.textContent = "";
-    const blank = el9("option", "", "(no ordering)");
+    const blank = el10("option", "", "(no ordering)");
     blank.value = "";
     orderSelect.append(blank);
     const wanted = new Set(savedSelect || ["Id", "Title"]);
     for (const f of fields) {
       const entry = EXPANDABLE_TYPES.has(f.TypeAsString) ? `${f.InternalName}/Title` : f.InternalName;
-      const label = el9("label", "wb-qb-fieldopt");
-      const box = el9("input");
+      const label = el10("label", "wb-qb-fieldopt");
+      const box = el10("input");
       box.type = "checkbox";
       box.value = entry;
       box.checked = wanted.has(entry);
       box.addEventListener("change", onBuilderChange);
       label.append(box, document.createTextNode(entry));
-      label.append(el9("span", "wb-qb-fieldtype", f.TypeAsString));
+      label.append(el10("span", "wb-qb-fieldtype", f.TypeAsString));
       fieldsList.append(label);
-      const opt = el9("option", "", f.InternalName);
+      const opt = el10("option", "", f.InternalName);
       opt.value = f.InternalName;
       orderSelect.append(opt);
     }
@@ -6645,7 +8542,7 @@ function createQueryView({ client: client2 }) {
       onBuilderChange();
       return;
     }
-    fieldsList.append(el9("div", "wb-qb-loading", "Loading fields\u2026"));
+    fieldsList.append(el10("div", "wb-qb-loading", "Loading fields\u2026"));
     try {
       const { items } = await client2.getAll(`web/lists(guid'${listId}')/fields`, {
         select: FIELD_SELECT2
@@ -6658,17 +8555,17 @@ function createQueryView({ client: client2 }) {
       onBuilderChange();
     } catch (err) {
       fieldsList.textContent = "";
-      fieldsList.append(showFailure(el9("div", "wb-qb-loading"), err, "this list\u2019s fields"));
+      fieldsList.append(showFailure(el10("div", "wb-qb-loading"), err, "this list\u2019s fields"));
     }
   }
   function renderListPicker(savedListId = "") {
     listSelect.textContent = "";
     for (const list2 of lists) {
-      const opt = el9("option", "", list2.Hidden ? `${list2.Title} (hidden)` : list2.Title);
+      const opt = el10("option", "", list2.Hidden ? `${list2.Title} (hidden)` : list2.Title);
       opt.value = list2.Id;
       listSelect.append(opt);
     }
-    const endpoint = el9("option", "", "\u2014 arbitrary endpoint \u2014");
+    const endpoint = el10("option", "", "\u2014 arbitrary endpoint \u2014");
     endpoint.value = "::endpoint";
     listSelect.append(endpoint);
     if (savedListId && lists.some((l) => l.Id === savedListId)) listSelect.value = savedListId;
@@ -6742,7 +8639,7 @@ function createQueryView({ client: client2 }) {
     } catch (err) {
       lists = [];
       results.textContent = "";
-      results.append(showFailure(el9("div", "wb-grid-status"), err, "the lists in this web"));
+      results.append(showFailure(el10("div", "wb-grid-status"), err, "the lists in this web"));
     }
     const saved = readSaved(webUrl);
     renderListPicker(saved?.listId || "");
@@ -7010,7 +8907,7 @@ function sanitizeHtml(html) {
 }
 
 // ../src/workbench/field-editor.js
-var el10 = (tag, cls, text) => {
+var el11 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -7102,18 +8999,18 @@ function fromItemValue(field2, itemValue) {
 function createFieldEditor(field2, initialValue) {
   const type = String(field2.TypeAsString || "");
   const initial = fromItemValue(field2, initialValue);
-  const row = el10("div", "wb-editor-row");
+  const row = el11("div", "wb-editor-row");
   row.dataset.internal = field2.InternalName || "";
-  const label = el10("label", "wb-editor-label", field2.Title || field2.InternalName);
-  const typeBadge = el10("span", "wb-editor-type", type);
+  const label = el11("label", "wb-editor-label", field2.Title || field2.InternalName);
+  const typeBadge = el11("span", "wb-editor-type", type);
   label.append(typeBadge);
-  const control = el10("div", "wb-editor-control");
-  const error = el10("div", "wb-editor-error");
+  const control = el11("div", "wb-editor-control");
+  const error = el11("div", "wb-editor-error");
   error.hidden = true;
   row.append(label, control, error);
   let getValue = () => "";
   const textInput = (tag, value) => {
-    const input = el10(tag === "textarea" ? "textarea" : "input");
+    const input = el11(tag === "textarea" ? "textarea" : "input");
     if (tag !== "textarea") input.type = tag;
     input.value = value ?? "";
     control.append(input);
@@ -7126,18 +9023,18 @@ function createFieldEditor(field2, initialValue) {
       break;
     }
     case "Choice": {
-      const select = el10("select");
+      const select = el11("select");
       const options = choicesOf(field2);
-      const blank = el10("option", "", "\u2014");
+      const blank = el11("option", "", "\u2014");
       blank.value = "";
       select.append(blank);
       for (const choice of options) {
-        const opt = el10("option", "", choice);
+        const opt = el11("option", "", choice);
         opt.value = choice;
         select.append(opt);
       }
       if (initial && !options.includes(initial)) {
-        const opt = el10("option", "", `${initial} (current)`);
+        const opt = el11("option", "", `${initial} (current)`);
         opt.value = initial;
         select.append(opt);
       }
@@ -7153,12 +9050,12 @@ function createFieldEditor(field2, initialValue) {
       break;
     }
     case "MultiChoice": {
-      const listBox = el10("div", "wb-editor-choices");
+      const listBox = el11("div", "wb-editor-choices");
       const initialSet = new Set(Array.isArray(initial) ? initial : []);
       const boxes = [];
       for (const choice of choicesOf(field2)) {
-        const lab = el10("label", "wb-editor-choice");
-        const box = el10("input");
+        const lab = el11("label", "wb-editor-choice");
+        const box = el11("input");
         box.type = "checkbox";
         box.value = choice;
         box.checked = initialSet.has(choice);
@@ -7171,7 +9068,7 @@ function createFieldEditor(field2, initialValue) {
       break;
     }
     case "Boolean": {
-      const box = el10("input");
+      const box = el11("input");
       box.type = "checkbox";
       box.checked = Boolean(initial);
       control.append(box);
@@ -7220,18 +9117,18 @@ function createFieldEditor(field2, initialValue) {
   };
 }
 function readOnlyRow(field2, displayText) {
-  const row = el10("div", "wb-editor-row wb-editor-readonly");
+  const row = el11("div", "wb-editor-row wb-editor-readonly");
   row.dataset.internal = field2.InternalName || "";
-  const label = el10("label", "wb-editor-label", field2.Title || field2.InternalName);
-  label.append(el10("span", "wb-editor-type", String(field2.TypeAsString || "")));
-  const value = el10("div", "wb-editor-static", displayText || "");
+  const label = el11("label", "wb-editor-label", field2.Title || field2.InternalName);
+  label.append(el11("span", "wb-editor-type", String(field2.TypeAsString || "")));
+  const value = el11("div", "wb-editor-static", displayText || "");
   value.title = field2.ReadOnlyField ? "Read-only field" : "Not editable in the workbench";
   row.append(label, value);
   return row;
 }
 function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSave }) {
-  const root = el10("div", "wb-editor-form");
-  const rows = el10("div", "wb-editor-rows");
+  const root = el11("div", "wb-editor-form");
+  const rows = el11("div", "wb-editor-rows");
   const editors = [];
   const shown = (fields || []).filter((f) => !f.Hidden);
   for (const field2 of shown) {
@@ -7245,10 +9142,10 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
       rows.append(readOnlyRow(field2, String(display ?? "")));
     }
   }
-  const bar = el10("div", "wb-editor-bar");
-  const save = el10("button", "btn btn-xs", "Save metadata");
+  const bar = el11("div", "wb-editor-bar");
+  const save = el11("button", "btn btn-xs", "Save metadata");
   save.type = "button";
-  const status = el10("span", "wb-editor-status");
+  const status = el11("span", "wb-editor-status");
   bar.append(save, status);
   root.append(rows, bar);
   function dirtyFormValues() {
@@ -7885,7 +9782,7 @@ function pagesLibraryCandidates(items) {
 }
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
-var el11 = (tag, cls, text) => {
+var el12 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -7900,22 +9797,22 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
 }).join("/");
 var guidPath3 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function reducedChip(lost, where, because = "") {
-  const chip = el11("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
+  const chip = el12("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
   chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read.` + (because ? `
 
 SharePoint said: ${because}` : "");
   return chip;
 }
 function createPagesView({ client: client2, navigate, updateRoute }) {
-  const root = el11("section", "wb-view wb-view-pages");
+  const root = el12("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
-  const gridPane = el11("div", "wb-pane");
-  const head = el11("div", "wb-view-head");
+  const gridPane = el12("div", "wb-pane");
+  const head = el12("div", "wb-view-head");
   head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Every page in this web\u2019s pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
-  const strip = el11("div", "wb-lib-strip");
-  strip.append(el11("span", "wb-lib-wait", "locating library\u2026"));
+  const strip = el12("div", "wb-lib-strip");
+  strip.append(el12("span", "wb-lib-wait", "locating library\u2026"));
   head.append(strip);
-  const libraryLink = el11("a", "btn btn-xs wb-head-link", "Open \u2197");
+  const libraryLink = el12("a", "btn btn-xs wb-head-link", "Open \u2197");
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
   strip.append(libraryLink);
@@ -7927,11 +9824,11 @@ function createPagesView({ client: client2, navigate, updateRoute }) {
     strip.hidden = false;
     strip.textContent = "";
     if (libraries.length > 1) {
-      const select = el11("select", "wb-lib-select wb-lib-picker");
+      const select = el12("select", "wb-lib-select wb-lib-picker");
       select.setAttribute("aria-label", "Pages library to inspect");
       select.title = `This web has ${libraries.length} pages libraries \u2014 pick which one to inspect.`;
       for (const lib of libraries) {
-        const opt = el11("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
+        const opt = el12("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
         opt.value = lib.listId;
         if (lib.listId === current.listId) opt.selected = true;
         select.append(opt);
@@ -7941,7 +9838,7 @@ function createPagesView({ client: client2, navigate, updateRoute }) {
       });
       strip.append(select);
     } else {
-      const name = el11("span", "wb-lib-name sp-copy", current.title);
+      const name = el12("span", "wb-lib-name sp-copy", current.title);
       if (current.rootPath) {
         name.title = `Click to copy the library path
 ${current.rootPath}`;
@@ -7949,7 +9846,7 @@ ${current.rootPath}`;
       }
       strip.append(name);
     }
-    const kind = el11(
+    const kind = el12(
       "span",
       `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
       libraryKindLabel(current.kind)
@@ -7966,10 +9863,10 @@ ${current.rootPath}` : "");
     }
     strip.append(libraryLink);
   }
-  const masterStatus = el11("div", "wb-grid-status");
+  const masterStatus = el12("div", "wb-grid-status");
   masterStatus.hidden = true;
   gridPane.append(head, masterStatus);
-  const detailPane = el11("div", "wb-pane");
+  const detailPane = el12("div", "wb-pane");
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
   let librariesPromise = null;
@@ -8287,26 +10184,26 @@ ${current.rootPath}` : "");
     return fieldsPromise;
   }
   function structurePane(parsed) {
-    const wrap = el11("div", "wb-tab-pane");
-    const tree = el11("div", "wb-canvas-tree");
+    const wrap = el12("div", "wb-tab-pane");
+    const tree = el12("div", "wb-canvas-tree");
     const { sections, unplaced } = buildSectionTree(parsed.controls);
     if (!sections.length && !unplaced.length) {
-      tree.append(el11("div", "wb-grid-status", "No canvas sections on this page."));
+      tree.append(el12("div", "wb-grid-status", "No canvas sections on this page."));
     }
     sections.forEach((section, i) => {
       const bits = [`${section.columns.length} column${section.columns.length === 1 ? "" : "s"}`];
       if (section.emphasis) bits.push(`emphasis ${section.emphasis}`);
       if (section.vertical) bits.push("vertical");
       if (section.collapsible) bits.push("collapsible");
-      tree.append(el11("div", "wb-canvas-section", `Section ${i + 1} \u2014 ${bits.join(", ")}`));
+      tree.append(el12("div", "wb-canvas-section", `Section ${i + 1} \u2014 ${bits.join(", ")}`));
       for (const column of section.columns) {
-        const row = el11("div", "wb-canvas-column");
+        const row = el12("div", "wb-canvas-column");
         const width = typeof column.sectionFactor === "number" ? `${column.sectionFactor}/12` : "auto";
-        row.append(el11("span", "wb-canvas-width", width));
-        if (!column.controls.length) row.append(el11("span", "wb-canvas-chip wb-canvas-empty", "empty"));
+        row.append(el12("span", "wb-canvas-width", width));
+        if (!column.controls.length) row.append(el12("span", "wb-canvas-chip wb-canvas-empty", "empty"));
         for (const control of column.controls) {
           const chipLabel = control.kind === "text" ? "Text" : control.kind === "webpart" ? control.webPartData.title || webPartName(control.webPartId) : control.kind;
-          const chip = el11("span", "wb-canvas-chip", chipLabel);
+          const chip = el12("span", "wb-canvas-chip", chipLabel);
           chip.title = control.kind === "webpart" ? `${webPartName(control.webPartId)} \xB7 ${control.webPartId}` : textOfControl(control).slice(0, 200);
           row.append(chip);
         }
@@ -8314,10 +10211,10 @@ ${current.rootPath}` : "");
       }
     });
     if (unplaced.length) {
-      tree.append(el11("div", "wb-canvas-section", `Unplaced entries (${unplaced.length})`));
+      tree.append(el12("div", "wb-canvas-section", `Unplaced entries (${unplaced.length})`));
       for (const control of unplaced) {
-        const row = el11("div", "wb-canvas-column");
-        row.append(el11("span", "wb-canvas-chip", control.kind));
+        const row = el12("div", "wb-canvas-column");
+        row.append(el12("span", "wb-canvas-chip", control.kind));
         tree.append(row);
       }
     }
@@ -8325,7 +10222,7 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function webPartsPane(parsed) {
-    const wrap = el11("div", "wb-tab-pane");
+    const wrap = el12("div", "wb-tab-pane");
     const rows = parsed.controls.filter((c) => c.kind === "webpart").map((c, i) => ({
       Id: c.id || String(i),
       Title: c.webPartData.title,
@@ -8351,9 +10248,9 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function classicWebPartsPane(webParts, error) {
-    const wrap = el11("div", "wb-tab-pane");
+    const wrap = el12("div", "wb-tab-pane");
     if (error) {
-      const notice = el11(
+      const notice = el12(
         "div",
         "wb-grid-notice",
         "\u26A0 The page\u2019s web parts could not be read \u2014 " + (error.message || String(error))
@@ -8388,24 +10285,24 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function textPane(parts, notice) {
-    const wrap = el11("div", "wb-tab-pane wb-text-pane");
+    const wrap = el12("div", "wb-tab-pane wb-text-pane");
     if (notice) wrap.append(notice);
     if (!parts.length) {
-      wrap.append(el11("div", "wb-grid-status", "No readable content on this page."));
+      wrap.append(el12("div", "wb-grid-status", "No readable content on this page."));
       return wrap;
     }
-    const contentBlock = el11("div", "wb-text-block");
-    contentBlock.append(el11("div", "wb-subpanel-title", "Content"));
-    const rendered = el11("div", "wb-text-rendered");
+    const contentBlock = el12("div", "wb-text-block");
+    contentBlock.append(el12("div", "wb-subpanel-title", "Content"));
+    const rendered = el12("div", "wb-text-rendered");
     for (const part of parts) {
-      rendered.append(el11("h3", "wb-text-part", part.label));
+      rendered.append(el12("h3", "wb-text-part", part.label));
       if (part.kind === "text") {
-        const body = el11("div", "wb-text-body");
+        const body = el12("div", "wb-text-body");
         body.innerHTML = sanitizeHtml(part.html);
         rendered.append(body);
       } else {
-        const list2 = el11("ul", "wb-text-lines");
-        for (const line of part.lines) list2.append(el11("li", "", line));
+        const list2 = el12("ul", "wb-text-lines");
+        for (const line of part.lines) list2.append(el12("li", "", line));
         rendered.append(list2);
       }
     }
@@ -8413,9 +10310,9 @@ ${current.rootPath}` : "");
     wrap.append(contentBlock);
     const withHtml = parts.filter((p) => p.kind === "text");
     if (withHtml.length) {
-      const htmlBlock = el11("div", "wb-text-block");
-      htmlBlock.append(el11("div", "wb-subpanel-title", "HTML"));
-      htmlBlock.append(el11(
+      const htmlBlock = el12("div", "wb-text-block");
+      htmlBlock.append(el12("div", "wb-subpanel-title", "HTML"));
+      htmlBlock.append(el12(
         "pre",
         "wb-text-raw",
         withHtml.map((p) => `<!-- ${p.label} -->
@@ -8426,8 +10323,8 @@ ${p.html}`).join("\n\n")
     return wrap;
   }
   function metadataPane(listId, pageId) {
-    const wrap = el11("div", "wb-tab-pane");
-    const status = el11("div", "wb-grid-status", "Loading metadata\u2026");
+    const wrap = el12("div", "wb-tab-pane");
+    const status = el12("div", "wb-grid-status", "Loading metadata\u2026");
     wrap.append(status);
     (async () => {
       const fields = await listFields(listId);
@@ -8460,11 +10357,11 @@ ${p.html}`).join("\n\n")
     return wrap;
   }
   function rawPane(item2, parsed, webParts = []) {
-    const wrap = el11("div", "wb-tab-pane");
+    const wrap = el12("div", "wb-tab-pane");
     const payload = { item: item2, parsedCanvas: parsed.controls };
     if (webParts.length) payload.webParts = webParts;
     const node = toNode(payload, 0, { maxDepth: 10, maxItems: 400 });
-    const inspector = el11("div", "wb-raw");
+    const inspector = el12("div", "wb-raw");
     inspector.append(enhance(node) ?? renderValue(node));
     wrap.append(inspector);
     return wrap;
@@ -8474,14 +10371,14 @@ ${p.html}`).join("\n\n")
     gridPane.hidden = true;
     detailPane.hidden = false;
     detailPane.textContent = "";
-    const back = el11("button", "btn btn-xs wb-back", "\u2190 All pages");
+    const back = el12("button", "btn btn-xs wb-back", "\u2190 All pages");
     back.type = "button";
     back.addEventListener("click", () => navigate({ view: "pages", libId: current?.listId }));
-    const title = el11("h2", "", route.pageName || `Page ${route.pageId}`);
-    const headRow = el11("div", "wb-detail-head");
+    const title = el12("h2", "", route.pageName || `Page ${route.pageId}`);
+    const headRow = el12("div", "wb-detail-head");
     headRow.append(back, title);
     detailPane.append(headRow);
-    const status = el11("div", "wb-grid-status", "Loading page\u2026");
+    const status = el12("div", "wb-grid-status", "Loading page\u2026");
     detailPane.append(status);
     let sitePages;
     let item2;
@@ -8513,7 +10410,7 @@ ${p.html}`).join("\n\n")
         }
       })();
       const fullUrl = `${origin}${encodedServerPath(item2.FileRef)}`;
-      const frag = el11("span", "wb-detail-id sp-copy", item2.FileRef);
+      const frag = el12("span", "wb-detail-id sp-copy", item2.FileRef);
       frag.title = `Click to copy the full URL
 ${fullUrl}`;
       frag.addEventListener("click", () => copyText(fullUrl, frag));
@@ -8534,20 +10431,20 @@ ${fullUrl}`;
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
     const displayKind = !isCanvas && contentKind === "empty" && readingParts.length ? "webparts" : contentKind;
-    const kindChip = el11("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
+    const kindChip = el12("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
-    const actions = el11("span", "wb-detail-actions");
-    const exportContent = el11("button", "btn btn-xs", "Export content");
+    const actions = el12("span", "wb-detail-actions");
+    const exportContent = el12("button", "btn btn-xs", "Export content");
     exportContent.type = "button";
     exportContent.title = "One human-readable file: metadata, merged web-part content, full metadata";
-    const exportRaw = el11("button", "btn btn-xs", "Export raw");
+    const exportRaw = el12("button", "btn btn-xs", "Export raw");
     exportRaw.type = "button";
     exportRaw.title = "Item + parsed canvas controls as JSON, for scripts";
     actions.append(exportContent, exportRaw);
     if (item2.FileRef) {
-      const open = el11("a", "btn btn-xs", "Open page \u2197");
+      const open = el12("a", "btn btn-xs", "Open page \u2197");
       open.href = item2.FileRef;
       bindNewTab(open);
       actions.append(open);
@@ -8568,7 +10465,7 @@ ${fullUrl}`;
       );
     });
     if (isCanvas && parsed.errors.length) {
-      const notice = el11(
+      const notice = el12(
         "div",
         "wb-grid-notice",
         `\u26A0 ${parsed.errors.length} canvas entr${parsed.errors.length === 1 ? "y" : "ies"} could not be fully parsed \u2014 shown raw where possible.`
@@ -8576,15 +10473,15 @@ ${fullUrl}`;
       notice.title = parsed.errors.join("\n");
       detailPane.append(notice);
     }
-    const tabsBar = el11("div", "wb-tabs");
+    const tabsBar = el12("div", "wb-tabs");
     tabsBar.setAttribute("role", "tablist");
-    const body = el11("div", "wb-tab-body");
+    const body = el12("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     const TABS = [
       {
         id: "text",
         label: "Extract",
-        build: () => textPane(readingParts, webPartError ? el11(
+        build: () => textPane(readingParts, webPartError ? el12(
           "div",
           "wb-grid-notice",
           `\u26A0 This page\u2019s web parts could not be read, so embedded content may be missing \u2014 ${webPartError.message || String(webPartError)}`
@@ -8609,7 +10506,7 @@ ${fullUrl}`;
       body.append(panes.get(tab.id));
     }
     for (const tab of TABS) {
-      const btn = el11("button", "wb-tab", tab.label);
+      const btn = el12("button", "wb-tab", tab.label);
       btn.type = "button";
       btn.dataset.tab = tab.id;
       btn.setAttribute("role", "tab");
@@ -8700,7 +10597,7 @@ function metadataFieldStates(libraryFields) {
   return states;
 }
 var anyMetadataAvailable = (states) => Object.values(states || {}).some((s) => s.available);
-var el12 = (tag, cls, text) => {
+var el13 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -8715,30 +10612,30 @@ function openUploadMetadataDialog({
   doMetadata
 }) {
   return new Promise((resolve, reject) => {
-    const dialog = el12("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
-    const panel = el12("div", "app-dialog__panel");
-    const head = el12("div", "app-dialog__head");
-    head.append(el12("h2", "", "File metadata"));
-    const closeBtn = el12("button", "btn btn-ghost btn-xs", "\u2715");
+    const dialog = el13("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
+    const panel = el13("div", "app-dialog__panel");
+    const head = el13("div", "app-dialog__head");
+    head.append(el13("h2", "", "File metadata"));
+    const closeBtn = el13("button", "btn btn-ghost btn-xs", "\u2715");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close");
     head.append(closeBtn);
-    const context = el12("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
+    const context = el13("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
     panel.append(head, context);
     const inputs = {};
     for (const state2 of Object.values(states)) {
-      const label = el12(
+      const label = el13(
         "label",
         `app-dialog__field sp-metadata-field ${state2.available ? "available" : "unavailable"}`
       );
-      const headRow = el12("span", "sp-metadata-field__head");
-      headRow.append(el12("span", "", state2.label));
-      headRow.append(el12(
+      const headRow = el13("span", "sp-metadata-field__head");
+      headRow.append(el13("span", "", state2.label));
+      headRow.append(el13(
         "span",
         "sp-metadata-field__state",
         state2.available ? "Available" : "Unavailable"
       ));
-      const input = state2.key === "description" ? el12("textarea") : el12("input");
+      const input = state2.key === "description" ? el13("textarea") : el13("input");
       if (state2.key === "description") input.rows = 4;
       else {
         input.type = "text";
@@ -8748,21 +10645,21 @@ function openUploadMetadataDialog({
       input.className = `wb-upload-meta-${state2.key}`;
       input.disabled = !state2.available;
       input.value = state2.available ? String(values[state2.key] ?? "") : "";
-      const hint = el12("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
+      const hint = el13("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
       label.append(headRow, input, hint);
       panel.append(label);
       inputs[state2.key] = input;
     }
-    const error = el12("div", "sp-files-error");
+    const error = el13("div", "sp-files-error");
     error.setAttribute("role", "alert");
     error.hidden = true;
-    const actions = el12("div", "app-dialog__actions sp-metadata-actions");
-    const cancel = el12("button", "btn btn-ghost", "Cancel");
+    const actions = el13("div", "app-dialog__actions sp-metadata-actions");
+    const cancel = el13("button", "btn btn-ghost", "Cancel");
     cancel.type = "button";
-    const keep = el12("button", "btn wb-upload-meta-keep", "Keep file without metadata");
+    const keep = el13("button", "btn wb-upload-meta-keep", "Keep file without metadata");
     keep.type = "button";
     keep.hidden = true;
-    const primary = el12("button", "btn btn-run wb-upload-meta-go", "Upload file");
+    const primary = el13("button", "btn btn-run wb-upload-meta-go", "Upload file");
     primary.type = "button";
     actions.append(cancel, keep, primary);
     panel.append(error, actions);
@@ -8866,7 +10763,7 @@ var FILE_SELECT = [
   "UIVersionLabel",
   "CheckOutType"
 ];
-var el13 = (tag, cls, text) => {
+var el14 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -8942,19 +10839,19 @@ function normalizedPath2(value) {
   return path;
 }
 function createBrowserView({ client: client2, navigate }) {
-  const root = el13("section", "wb-view wb-view-files");
+  const root = el14("section", "wb-view wb-view-files");
   const spWrite = createSpWriteClient({ client: client2 });
-  const head = el13("div", "wb-view-head");
+  const head = el14("div", "wb-view-head");
   head.innerHTML = '<h2>Files</h2><p class="wb-view-hint">Browse any library or folder of this web \u2014 every file type, with download, binary upload, folder creation, and full metadata editing.</p>';
-  const bar = el13("div", "wb-crumbs-bar");
-  const librarySelect = el13("select", "wb-lib-select");
+  const bar = el14("div", "wb-crumbs-bar");
+  const librarySelect = el14("select", "wb-lib-select");
   librarySelect.setAttribute("aria-label", "Jump to a document library");
-  const crumbs = el13("div", "wb-crumbs");
+  const crumbs = el14("div", "wb-crumbs");
   bar.append(librarySelect, crumbs);
-  const consent = el13("div", "wb-consent");
+  const consent = el14("div", "wb-consent");
   consent.hidden = true;
-  const gridWrap = el13("div", "wb-files-grid");
-  const metaPanel = el13("div", "wb-subpanel wb-file-meta");
+  const gridWrap = el14("div", "wb-files-grid");
+  const metaPanel = el14("div", "wb-subpanel wb-file-meta");
   metaPanel.hidden = true;
   root.append(head, bar, consent, gridWrap, metaPanel);
   let libraries = [];
@@ -8991,7 +10888,7 @@ function createBrowserView({ client: client2, navigate }) {
     const rootPath = webRootPath();
     const segments = currentPath === "/" ? [] : currentPath.slice(1).split("/");
     let acc = "";
-    const rootBtn = el13("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
+    const rootBtn = el14("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
     rootBtn.type = "button";
     rootBtn.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
     let started = rootPath === "/";
@@ -9001,16 +10898,16 @@ function createBrowserView({ client: client2, navigate }) {
       if (!started) {
         if (normalizedPath2(acc) === rootPath) {
           started = true;
-          const btn2 = el13("button", "wb-crumb", rootPath);
+          const btn2 = el14("button", "wb-crumb", rootPath);
           btn2.type = "button";
           btn2.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
           crumbs.append(btn2);
         }
         continue;
       }
-      crumbs.append(el13("span", "wb-crumb-sep", "/"));
+      crumbs.append(el14("span", "wb-crumb-sep", "/"));
       const target = acc;
-      const btn = el13("button", "wb-crumb", segment);
+      const btn = el14("button", "wb-crumb", segment);
       btn.type = "button";
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
@@ -9038,13 +10935,13 @@ function createBrowserView({ client: client2, navigate }) {
       libraries = [];
     }
     librarySelect.textContent = "";
-    const blank = el13("option", "", "Libraries\u2026");
+    const blank = el14("option", "", "Libraries\u2026");
     blank.value = "";
     librarySelect.append(blank);
     for (const lib of libraries) {
       const url = lib.RootFolder?.ServerRelativeUrl;
       if (!url) continue;
-      const opt = el13("option", "", lib.Title);
+      const opt = el14("option", "", lib.Title);
       opt.value = url;
       librarySelect.append(opt);
     }
@@ -9060,10 +10957,10 @@ function createBrowserView({ client: client2, navigate }) {
           label: "Name",
           value: (row) => row.Name,
           render: (name, row) => {
-            const wrap = el13("span", `wb-file-name wb-node-${fileRole(row)}`);
+            const wrap = el14("span", `wb-file-name wb-node-${fileRole(row)}`);
             const glyph = icon(row.kind === "folder" ? "folder" : "file");
             glyph.classList.add("wb-node");
-            wrap.append(glyph, el13("span", "wb-file-name-text", name));
+            wrap.append(glyph, el14("span", "wb-file-name-text", name));
             return wrap;
           }
         },
@@ -9116,9 +11013,9 @@ function createBrowserView({ client: client2, navigate }) {
       exportName: "sp-files",
       toolbarExtras: bar
     });
-    const uploadBtn = el13("button", "btn btn-xs wb-primary", "Upload\u2026");
+    const uploadBtn = el14("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";
-    const fileInput = el13("input");
+    const fileInput = el14("input");
     fileInput.type = "file";
     fileInput.hidden = true;
     fileInput.setAttribute("aria-label", "Choose a file to upload");
@@ -9127,10 +11024,10 @@ function createBrowserView({ client: client2, navigate }) {
       if (fileInput.files?.length) startUpload(fileInput.files[0]);
       fileInput.value = "";
     });
-    const newFolderBtn = el13("button", "btn btn-xs wb-newfolder", "New folder\u2026");
+    const newFolderBtn = el14("button", "btn btn-xs wb-newfolder", "New folder\u2026");
     newFolderBtn.type = "button";
     newFolderBtn.addEventListener("click", promptNewFolder);
-    const refreshBtn = el13("button", "btn btn-xs", "Refresh");
+    const refreshBtn = el14("button", "btn btn-xs", "Refresh");
     refreshBtn.type = "button";
     refreshBtn.addEventListener("click", () => listFolder(currentPath, { force: true }));
     grid.actionsEl.prepend(uploadBtn, fileInput, newFolderBtn, refreshBtn);
@@ -9169,28 +11066,28 @@ function createBrowserView({ client: client2, navigate }) {
   function showConsent(message, onConfirm, { gate = "" } = {}) {
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el13("span", "wb-consent-text", message));
-    const replace = el13("button", "btn btn-xs", "Replace");
+    consent.append(el14("span", "wb-consent-text", message));
+    const replace = el14("button", "btn btn-xs", "Replace");
     replace.type = "button";
     replace.addEventListener("click", () => {
       consent.hidden = true;
       onConfirm();
     });
-    const cancel = el13("button", "btn btn-xs", "Cancel");
+    const cancel = el14("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
     });
     if (gate) {
       replace.disabled = true;
-      const row = el13("label", "sp-metadata-consent__row wb-consent-gate");
-      const box = el13("input");
+      const row = el14("label", "sp-metadata-consent__row wb-consent-gate");
+      const box = el14("input");
       box.type = "checkbox";
       box.className = "wb-consent-checkout";
       box.addEventListener("change", () => {
         replace.disabled = !box.checked;
       });
-      row.append(box, el13("span", "sp-metadata-consent__label", gate));
+      row.append(box, el14("span", "sp-metadata-consent__label", gate));
       consent.append(row);
     }
     consent.append(replace, cancel);
@@ -9199,8 +11096,8 @@ function createBrowserView({ client: client2, navigate }) {
     consent.textContent = "";
     consent.hidden = false;
     consent.classList.toggle("wb-consent-error", isError);
-    consent.append(el13("span", "wb-consent-text", message));
-    const dismiss = el13("button", "btn btn-xs", "Dismiss");
+    consent.append(el14("span", "wb-consent-text", message));
+    const dismiss = el14("button", "btn btn-xs", "Dismiss");
     dismiss.type = "button";
     dismiss.addEventListener("click", () => {
       consent.hidden = true;
@@ -9416,14 +11313,14 @@ function createBrowserView({ client: client2, navigate }) {
     consent.classList.remove("wb-consent-error");
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el13("span", "wb-consent-text", `New folder in ${folderPath}:`));
-    const nameIn = el13("input", "wb-folder-name");
+    consent.append(el14("span", "wb-consent-text", `New folder in ${folderPath}:`));
+    const nameIn = el14("input", "wb-folder-name");
     nameIn.type = "text";
     nameIn.placeholder = "Folder name";
     nameIn.setAttribute("aria-label", "New folder name");
-    const create = el13("button", "btn btn-xs wb-primary", "Create");
+    const create = el14("button", "btn btn-xs wb-primary", "Create");
     create.type = "button";
-    const cancel = el13("button", "btn btn-xs", "Cancel");
+    const cancel = el14("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
@@ -9490,18 +11387,18 @@ function createBrowserView({ client: client2, navigate }) {
   async function openMetadata(row) {
     metaPanel.hidden = false;
     metaPanel.textContent = "";
-    const titleRow = el13("div", "wb-file-meta-head");
-    titleRow.append(el13("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
-    const close = el13("button", "btn btn-xs", "Close");
+    const titleRow = el14("div", "wb-file-meta-head");
+    titleRow.append(el14("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
+    const close = el14("button", "btn btn-xs", "Close");
     close.type = "button";
     close.addEventListener("click", () => {
       metaPanel.hidden = true;
     });
     titleRow.append(close);
     metaPanel.append(titleRow);
-    const body = el13("div", "wb-subpanel-body");
+    const body = el14("div", "wb-subpanel-body");
     metaPanel.append(body);
-    const status = el13("div", "wb-grid-status", "Loading metadata\u2026");
+    const status = el14("div", "wb-grid-status", "Loading metadata\u2026");
     body.append(status);
     try {
       const listId = await parentListId(currentPath);
@@ -9555,166 +11452,6 @@ function createBrowserView({ client: client2, navigate }) {
   return { el: root, load: load2, destroy };
 }
 
-// ../src/state.js
-var STORAGE_KEY = "dcspad.v2.workspace";
-var DEFAULTS = {
-  projectName: "",
-  html: '<div id="app">\n  <h2>Hello from DCSPad</h2>\n  <p>Edit HTML, CSS and JS, then press Run.</p>\n</div>\n',
-  css: 'body {\n  font-family: "Segoe UI", sans-serif;\n  padding: 1rem;\n}\n',
-  js: 'console.log("DCSPad ready", { when: new Date().toISOString() });\n',
-  libraries: { enabled: [], pinned: ["pnpjs2"], custom: [] },
-  settings: {
-    autorun: false,
-    jsAsModule: false,
-    autoClearConsole: true,
-    seenSplash: false,
-    previewDark: true,
-    diagFontSize: 12,
-    editorFontSize: 13,
-    wordWrap: false,
-    spFilesWebUrl: "",
-    spFilesFolder: "",
-    browserHistory: [],
-    browserFavorites: [],
-    projectFileFingerprint: ""
-  },
-  layout: {
-    sidebarW: 230,
-    sidebarCollapsed: false,
-    editorsFr: 1,
-    runtimeFr: 1,
-    previewFr: 1,
-    diagH: 260,
-    diagCollapsed: false,
-    editorTab: "js",
-    diagTab: "console",
-    // Pane visibility (the topbar segmented toggles). sidebarCollapsed /
-    // diagCollapsed above are legacy flags kept for shape stability: layout.js
-    // reads them once to seed `panes` for pre-existing workspaces, then only
-    // writes `panes`.
-    panes: { resources: true, preview: true, console: true },
-    snippetsPanelH: 210
-  }
-};
-var state = load();
-var saveTimer = null;
-var listeners = /* @__PURE__ */ new Set();
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(DEFAULTS);
-    const parsed = JSON.parse(raw);
-    return {
-      ...structuredClone(DEFAULTS),
-      ...parsed,
-      libraries: { ...structuredClone(DEFAULTS.libraries), ...parsed.libraries || {} },
-      settings: { ...structuredClone(DEFAULTS.settings), ...parsed.settings || {} },
-      layout: { ...structuredClone(DEFAULTS.layout), ...parsed.layout || {} }
-    };
-  } catch {
-    return structuredClone(DEFAULTS);
-  }
-}
-function persist() {
-  saveTimer = null;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    for (const fn of listeners) fn("saved");
-  } catch (e) {
-    console.warn("DCSPad: autosave failed", e);
-    for (const fn of listeners) fn("error");
-  }
-}
-function saveNow() {
-  clearTimeout(saveTimer);
-  persist();
-}
-function loadDoc(key2) {
-  try {
-    const raw = localStorage.getItem(key2);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && Array.isArray(parsed.items) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function saveDoc(key2, doc) {
-  try {
-    localStorage.setItem(key2, JSON.stringify(doc));
-    return true;
-  } catch (e) {
-    console.warn(`DCSPad: saving ${key2} failed`, e);
-    return false;
-  }
-}
-var idSeed = Math.random().toString(36).slice(2, 6);
-var idCounter = 0;
-function newId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}${idSeed}${(idCounter++).toString(36)}`;
-}
-window.addEventListener("pagehide", () => {
-  if (saveTimer) saveNow();
-});
-
-// ../src/workbench/favorites.js
-var FAVORITES_KEY = "dcspad.v2.wbsites";
-var RECENTS_CAP = 8;
-function emptyDoc() {
-  return { kind: "dcspad-workbench-sites", version: 1, items: [], recents: [] };
-}
-function readDoc() {
-  const doc = loadDoc(FAVORITES_KEY);
-  if (!doc || doc.kind !== "dcspad-workbench-sites") return emptyDoc();
-  return {
-    ...emptyDoc(),
-    ...doc,
-    items: Array.isArray(doc.items) ? doc.items : [],
-    recents: Array.isArray(doc.recents) ? doc.recents : []
-  };
-}
-var canonical = (url) => String(url || "").replace(/\/+$/, "").toLowerCase();
-var quotaListener = null;
-function onQuotaError(fn) {
-  quotaListener = fn;
-}
-function writeDoc(doc) {
-  if (!saveDoc(FAVORITES_KEY, doc)) quotaListener?.();
-  return doc;
-}
-function getFavorites() {
-  return readDoc().items;
-}
-function getRecents() {
-  return readDoc().recents;
-}
-function isFavorite(url) {
-  const key2 = canonical(url);
-  return readDoc().items.some((item2) => canonical(item2.url) === key2);
-}
-function addFavorite({ url = "", title = "" } = {}) {
-  const doc = readDoc();
-  const key2 = canonical(url);
-  if (doc.items.some((item2) => canonical(item2.url) === key2)) return doc.items;
-  doc.items.push({ id: newId("fav"), url: String(url || ""), title: String(title || ""), addedAt: (/* @__PURE__ */ new Date()).toISOString() });
-  return writeDoc(doc).items;
-}
-function removeFavorite(url) {
-  const doc = readDoc();
-  const key2 = canonical(url);
-  doc.items = doc.items.filter((item2) => canonical(item2.url) !== key2);
-  return writeDoc(doc).items;
-}
-function pushRecent({ url = "", title = "" } = {}) {
-  const doc = readDoc();
-  const key2 = canonical(url);
-  doc.recents = [
-    { url: String(url || ""), title: String(title || ""), lastAt: (/* @__PURE__ */ new Date()).toISOString() },
-    ...doc.recents.filter((item2) => canonical(item2.url) !== key2)
-  ].slice(0, RECENTS_CAP);
-  return writeDoc(doc).recents;
-}
-
 // ../src/workbench/main.js
 var GLYPHS = {
   lists: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.7" cy="4" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="2.7" cy="12" r=".9" fill="currentColor" stroke="none"/></svg>',
@@ -9753,7 +11490,11 @@ var shell = createShell({
   deps: {
     client,
     inspectSite: (url) => inspectSite(url),
-    createClient: () => createSpRestClient({ mockResolver: ctx.live ? null : mockResolver })
+    createClient: () => createSpRestClient({ mockResolver: ctx.live ? null : mockResolver }),
+    // Mock-mode-only write fixture (see mock-data.js) — the Schema tab's
+    // apply dialog is the sole consumer; views never import mock-data.js
+    // directly (invariant: only main.js touches it).
+    mockWriter: ctx.live ? void 0 : mockWriter
   },
   views: [
     // Nav order and grouping are Joe's spec (2026-07-31): identity first,

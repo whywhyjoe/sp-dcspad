@@ -61,7 +61,13 @@ export async function captureListSchema(client, listId, { includeHidden = false 
       if (isDeniedRead(err) || isExpiredSession(err)) throw err;
       for (const key of missing) {
         try { Object.assign(list, await client.get(guidPath(listId), { select: [key] })); }
-        catch { /* not on this tenant — keep the default */ }
+        catch (err2) {
+          // Only a rejected shape (400) means "not on this tenant"; anything
+          // else is a real failure, and a schema silently missing its
+          // validation formula is worse than no schema.
+          if (err2?.status !== 400) throw err2;
+          warnings.push(`List property ${key} is not available on this tenant — it was not captured.`);
+        }
       }
     }
   }

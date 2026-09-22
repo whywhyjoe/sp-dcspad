@@ -391,6 +391,51 @@ await check('pure: re-review fixes — Copy suffix skips a taken copy, a GUID-ke
       && ps.includes(' -Paged');
   }));
 
+await check('pure: executor — no views read without view steps, a 401 on the rename keeps the list done, default-view fallback never double-claims a target view', () =>
+  page.evaluate(async () => {
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const { SpFileError } = await import('/src/sp-odata.js');
+    const mkClient = (views, reads) => ({
+      webUrl: () => 'https://t/sites/x',
+      get: async (path) => { reads.push(path); return {}; },
+      getAll: async (path) => {
+        reads.push(path);
+        if (path.endsWith('/views')) return { items: views };
+        if (path.endsWith('/fields')) return { items: [{ Id: 'f1', InternalName: 'LinkTitle', Title: 'Title', TypeAsString: 'Computed' }] };
+        return { items: [] };
+      },
+    });
+    const mkWrite = (posts, { fail401On = '' } = {}) => {
+      const go = async (path, body, opts) => {
+        posts.push({ path, body });
+        if (fail401On && path.includes(fail401On) && body?.Title) throw new SpFileError('expired', { code: 'auth', status: 401 });
+        if (path === 'web/lists') return { Id: 'L1', RootFolder: { ServerRelativeUrl: '/x' } };
+        return { Id: `v${posts.length}` };
+      };
+      return { postJson: go, mergeJson: go, isMock: () => true };
+    };
+    const listStep = (urlName = '') => ({ id: 'list', kind: 'list.create', label: 'l', dependsOn: [], status: 'planned',
+      payload: { title: 'Req', description: '', baseTemplate: 100, contentTypesEnabled: false, urlName }, refs: {}, optional: false });
+    // (a) no view steps → no /views read
+    const readsA = [];
+    await runPlan({ title: 'Req', steps: [listStep()] }, { client: mkClient([], readsA), spWrite: mkWrite([]) });
+    const noViewsRead = !readsA.some((p) => p.endsWith('/views'));
+    // (b) rename 401 → list done, aborted auth
+    const reportB = await runPlan({ title: 'Req', steps: [listStep('ReqUrl')] },
+      { client: mkClient([], []), spWrite: mkWrite([], { fail401On: "lists(guid'L1')" }) });
+    const listDone = reportB.steps[0].status === 'done' && reportB.aborted === 'auth' && reportB.listId === 'L1';
+    // (c) source default 'Alle Elemente' + source 'All Items' vs target default 'All Items'
+    const vstep = (id, title, defaultView) => ({ id, kind: 'view.upsert', label: id, dependsOn: ['list'], status: 'planned', refs: {}, optional: false,
+      payload: { title, viewId: null, fields: ['LinkTitle'], viewQuery: '', rowLimit: 30, paged: true, defaultView } });
+    const postsC = [];
+    const reportC = await runPlan({ title: 'Req', steps: [listStep(), vstep('view:Alle', 'Alle Elemente', true), vstep('view:All', 'All Items', false)] },
+      { client: mkClient([{ Id: 'T1', Title: 'All Items', DefaultView: true }], []), spWrite: mkWrite(postsC) });
+    const viewPosts = postsC.filter((p) => /\/views$/.test(p.path));
+    const oneToOne = reportC.views.updated === 1 && reportC.views.added === 1 && viewPosts.length === 1
+      && viewPosts[0].body.Title === 'Alle Elemente';
+    return noViewsRead && listDone && oneToOne;
+  }));
+
 await check('pure: defaultTargetTitle keeps the source title when free, appends Copy when taken', () =>
   page.evaluate(async () => {
     const { defaultTargetTitle, buildSchemaDoc } = await import('/src/workbench/list-schema.js');

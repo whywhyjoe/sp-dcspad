@@ -361,10 +361,89 @@ SitePages Templates-folder noise, uncertain WEBPART_NAMES entries,
 group add/remove (the nometadata JSON body for `sitegroups(id)/users`
 needs one live confirmation), and the role chip on a non-admin account.
 
+## SP Workbench: List schema (stage 1a) (2026-09-21)
+
+The Workbench can now capture, export, import, create and copy a **list's
+schema** (settings, fields, views, content types — no items yet). Plan
+record: `~/.claude/plans/plan-to-add-a-idempotent-rossum.md`. Commits
+3a7d6e3 (capture + Schema tab + scripts), 2d96bc3 (bundle rebuild),
+32bce23 (apply executor), aa9418c (Copy to… / New from schema… dialog).
+
+**What shipped:** a **Schema** tab in the Lists drill-down (after Content
+types) showing settings/fields/views/content types plus an Export menu
+(download/copy JSON, copy as PnP.PowerShell or PnPjs 2 provisioning script);
+a **New from schema…** button on the Lists grid toolbar that imports a
+schema document and opens the **Copy to… / New from schema** dialog — its
+own target-web connection, title/lookup/content-type mapping, a Dry run
+(reads only) preview of the ordered step plan, Create with per-step
+progress, Retry failed steps, and a downloadable markdown report. New
+modules: `list-schema.js` (pure core), `list-schema-capture.js`,
+`list-schema-apply.js`, `list-schema-script.js`, `list-schema-dialog.js`
+(all under `src/workbench/`). New suite `tests/workbench-schema.mjs` (78
+checks); `workbench.mjs` stays at 133 (only its tab-order pin gained
+Schema). Total across all suites: 513.
+
+**Doc interchange contract:** `kind: "dcspad-sputils-list-schema"`. Every
+v1 key is kept verbatim with its v1 type; new keys are additive; the
+Workbench writes `version: 2` and reads both `version: 1` and `version: 2`.
+SPUtils's own reader checks only `kind`, so a SPUtils export imports in the
+Workbench and a Workbench export imports in SPUtils unchanged — this is
+what makes the two tools interoperate without either one depending on the
+other's code.
+
+**SPUtils gaps this port closes** (recorded as SPUtils follow-ups; SPUtils
+itself was not touched):
+- The Workbench always sends `createfieldasxml` with an `Options` bitmask
+  including `AddFieldInternalNameHint` (8). SPUtils calls the string
+  overload of `createFieldAsXml` with no `Options`, so SharePoint may derive
+  the internal name from `DisplayName` instead of the requested one (e.g.
+  `Project_x0020_Status`). Needs a live check on SPUtils; back-port if
+  confirmed.
+- `scrubSchemaXml` strips `List=` only from Lookup fields — User fields keep
+  `List="UserInfo"`, which SPUtils's blanket strip removes. Calculated
+  fields' `<FieldRefs><FieldRef ID=…>` source GUIDs are stripped too
+  (SharePoint resolves them by `Name`); SPUtils leaves the source GUIDs in.
+
+**Second-client pattern:** the dialog opens its own REST connection to the
+target web (`createClient()` + `connectWeb()` + its own `sp-write` client)
+so a Copy to… run never disturbs the shell's client or the source list
+view — the one new shell dependency is `createClient` itself
+(`src/workbench/main.js`), everything else (`shell.js`, the source view)
+is unchanged.
+
+**Hooks left for later stages:** the dialog's Items fieldset (`Include
+items`, `Include attachments`, `Preserve authorship`) is present but
+`disabled`, titled "Item data arrives in stage 1b — this run copies the
+schema only."; `Copy to…` is disabled on document libraries (`baseTemplate
+!== 100`) with a stage-2 title. Stage 1b (item data, same engine) and stage
+2 (document libraries, schema only) are reserved seams — see Roadmap below.
+
+**Live-tenant checklist (open — not yet run):**
+- nometadata `POST web/lists` accepted; `createfieldasxml`
+  `{parameters:{SchemaXml, Options}}` in nometadata and the `Options 8|4`
+  behaviour on a content-types-enabled list.
+- `views?$expand=ViewFields`; `ViewTypeKind` in the views POST; `RowLimit`/
+  `Paged` in one MERGE.
+- Field MERGE of `Indexed`/`EnforceUniqueValues`/`CustomFormatter` on
+  lookup/choice types.
+- `addAvailableContentType` posted before field creation.
+- A User field round-trips with `List="UserInfo"`; a FullHtml Note
+  round-trips.
+- Property availability of `EnableRequestSignOff`/`ListExperienceOptions`/
+  `DisableGridEditing` on this tenant.
+- A cross-web copy into a subsite.
+- The 429 retry path under real throttling.
+- Whether SPUtils' string-overload `createFieldAsXml` regenerates internal
+  names (the SPUtils follow-up above).
+- Export a SPUtils v1 doc and import it in the Workbench, and the reverse
+  through `SPUtils.createListFromSchema`.
+
 ## Roadmap (seams reserved)
 
 - **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).
   Remaining seams: mount its views into the pad sidebar,
   User/Lookup/Taxonomy metadata editing, chunked >50 MB uploads.
+- **List Schema** — stage 1a shipped (above). Remaining: stage 1b (item
+  data on the same engine), stage 2 (document libraries, schema only).
 - **SharePoint JSON storage** replacing localStorage via the `state.js` seam.
 - **Console remote handles** — lazy live-object expansion.

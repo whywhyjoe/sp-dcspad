@@ -99,9 +99,11 @@ export function openSchemaApplyDialog({
 } = {}) {
   return new Promise((resolve) => {
     const d = normalizeSchemaDoc(doc);
-    const targetClient = createClient();
+    // Replaced per connect (see connect()); closures read the current one.
+    let targetClient = createClient();
     const isMockMode = !targetClient.context().live;
-    const spWrite = createSpWriteClient({ client: targetClient, mockWriter: isMockMode ? mockWriter : undefined });
+    const writerFor = (c) => createSpWriteClient({ client: c, mockWriter: isMockMode ? mockWriter : undefined });
+    let spWrite = writerFor(targetClient);
 
     let probe = { targetLists: [], existingList: null, existingFields: [], existingViews: [], existingContentTypeIds: [], availableContentTypes: null };
     let connected = false;
@@ -499,7 +501,14 @@ export function openSchemaApplyDialog({
       refreshGate();
     }
 
+    // Only the latest connect may apply its results: the dialog auto-connects
+    // on open, and a Connect clicked before that settles must not have the
+    // older answer land afterwards (it set the title from the wrong web).
+    let connectSeq = 0;
     async function connect(rawUrl) {
+      const seq = ++connectSeq;
+      const stale = () => seq !== connectSeq;
+      let candidate = null;
       showError('');
       targetStatus.hidden = true;
       connectBtn.disabled = true;
@@ -507,8 +516,12 @@ export function openSchemaApplyDialog({
       connectedInputValue = null;
       refreshGate();
       try {
-        await targetClient.connectWeb(rawUrl);
+        // A fresh client per connect: connectWeb sets its web after an await,
+        // so a shared client could be repointed by an older, slower connect.
+        candidate = createClient();
+        await candidate.connectWeb(rawUrl);
       } catch (err) {
+        if (stale()) return false;
         connectBtn.disabled = false;
         targetStatus.textContent = err.message || String(err);
         targetStatus.hidden = false;
@@ -517,16 +530,22 @@ export function openSchemaApplyDialog({
         refreshGate();
         return false;
       }
-      connectBtn.disabled = false;
-      connected = true;
-      connectedInputValue = rawUrl;
+      if (stale()) return false;
       let initial;
       try {
-        initial = await probeTarget(targetClient, { title: '', doc: d });
+        initial = await probeTarget(candidate, { title: '', doc: d });
       } catch (err) {
+        if (stale()) return false;
+        connectBtn.disabled = false;
         showError(err.message || String(err));
         return false;
       }
+      if (stale()) return false;
+      targetClient = candidate;
+      spWrite = writerFor(candidate);
+      connectBtn.disabled = false;
+      connected = true;
+      connectedInputValue = rawUrl;
       probe = initial;
       if (!titleTouched) titleInput.value = defaultTargetTitle(d, probe.targetLists);
       await refreshProbeForTitle(titleInput.value.trim());
@@ -661,24 +680,34 @@ export function openSchemaApplyDialog({
     async function runCreate() {
       if (!canCreate()) return;
       showError('');
+      // Pin the connection this run writes through, and lock the target
+      // while the final probe is in flight: a Connect clicked now must not
+      // retarget a run that has already been confirmed.
+      const client = targetClient;
+      const writer = spWrite;
+      const unlock = () => {
+        targetInput.disabled = false; connectBtn.disabled = false;
+        dryRunBtn.disabled = false; createBtn.disabled = false;
+      };
+      targetInput.disabled = true; connectBtn.disabled = true;
       dryRunBtn.disabled = true;
       createBtn.disabled = true;
       let plan;
       try {
-        probe = await probeTarget(targetClient, { title: titleInput.value.trim(), doc: d });
+        probe = await probeTarget(client, { title: titleInput.value.trim(), doc: d });
         plan = buildApplyPlan(d, buildOptions(), probe);
       } catch (err) {
         showError(err.message || String(err));
-        dryRunBtn.disabled = false;
-        createBtn.disabled = false;
+        unlock();
         return;
       }
+      targetInput.disabled = false; connectBtn.disabled = false;
       setPhase('running');
-      planHeading.textContent = `Applying the plan to ‘${targetClient.webUrl()}’…`;
+      planHeading.textContent = `Applying the plan to ‘${client.webUrl()}’…`;
       buildStepsList(plan.steps);
       listExists = false;
       abortController = new AbortController();
-      currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
+      currentCtx = { client, spWrite: writer, onStep: handleStep, signal: abortController.signal };
       try {
         const report = await runPlan(plan, currentCtx);
         lastReport = report;
@@ -714,8 +743,26 @@ export function openSchemaApplyDialog({
       showError('');
       retryBtn.disabled = true;
       let plan;
+      // The same connection the run used — never whatever the form holds now.
+      const client = currentCtx?.client || targetClient;
+      const writer = currentCtx?.spWrite || spWrite;
       try {
-        const resumeProbe = await probeTarget(targetClient, { title: lastReport.title, doc: d });
+        let resumeProbe = await probeTarget(client, { title: lastReport.title, doc: d });
+        // A created list is found by its id, not its title: a rename that
+        // failed leaves it under its URL name, and another list taking the
+        // title must never be adopted in its place.
+        if (lastReport.listId) {
+          const wantedId = String(lastReport.listId).toLowerCase();
+          const byId = resumeProbe.targetLists.find((l) => String(l.id).toLowerCase() === wantedId);
+          if (!byId) {
+            showError(`The list ‘${lastReport.title}’ could not be found on the target anymore — retry cannot continue.`);
+            retryBtn.disabled = false;
+            return;
+          }
+          if (!resumeProbe.existingList || String(resumeProbe.existingList.id).toLowerCase() !== wantedId) {
+            resumeProbe = await probeTarget(client, { title: byId.title, doc: d });
+          }
+        }
         if (resumeProbe.existingList) {
           plan = buildApplyPlan(
             d,
@@ -739,7 +786,7 @@ export function openSchemaApplyDialog({
       buildStepsList(plan.steps);
       listExists = Boolean(plan.existingListId);
       abortController = new AbortController();
-      currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
+      currentCtx = { client, spWrite: writer, onStep: handleStep, signal: abortController.signal };
       try {
         lastReport = await runPlan(plan, currentCtx);
       } catch (err) {

@@ -95,7 +95,9 @@ async function readTargetState(ctx) {
   ctx.targetFields = await readTargetFields(ctx);
   seedFieldIdMap(ctx);
   ctx.targetListsByTitle = await readTargetListsByTitle(ctx);
-  ctx.targetViews = await readTargetViews(ctx);
+  // Views only matter to view.upsert steps; a plan without any must not be
+  // able to abort on a views read it never needed.
+  if (ctx.planHasViews) ctx.targetViews = await readTargetViews(ctx);
 }
 
 // Reads the executor takes BETWEEN steps are never a write, but a failure
@@ -126,6 +128,29 @@ function resolveListIdByTitle(ctx, title) {
     );
   }
   return id;
+}
+
+// One-to-one source → target view assignment, computed from the live view
+// set right before the first view step: title matches claim first, then a
+// source default view may take the target's default — but only if no title
+// match already claimed it (a German "Alle Elemente" default and a separate
+// "All Items" must not both land on the target's "All Items").
+function assignViews(steps, targetViews) {
+  const byId = new Map();
+  const claimed = new Set();
+  const views = steps.filter((s) => s.kind === 'view.upsert' && !s.payload.viewId);
+  for (const s of steps) if (s.kind === 'view.upsert' && s.payload.viewId) claimed.add(s.payload.viewId);
+  for (const s of views) {
+    const t = targetViews.find((tv) => !claimed.has(tv.id)
+      && String(tv.title).toLowerCase() === String(s.payload.title).toLowerCase());
+    if (t) { byId.set(s.id, t.id); claimed.add(t.id); }
+  }
+  for (const s of views) {
+    if (byId.has(s.id) || !s.payload.defaultView) continue;
+    const t = targetViews.find((tv) => tv.defaultView && !claimed.has(tv.id));
+    if (t) { byId.set(s.id, t.id); claimed.add(t.id); }
+  }
+  return byId;
 }
 
 // ---- step runners ------------------------------------------------------
@@ -178,7 +203,9 @@ async function runListCreate(step, ctx, report) {
     try {
       await writeJson(ctx.spWrite, 'mergeJson', listPath(data.Id), { Title: title }, 'SP.List', {});
     } catch (err) {
-      if (isExpiredSession(err)) throw err;
+      // The list exists either way: never fail its step. An expired session
+      // still stops the run — after this step is recorded as done.
+      if (isExpiredSession(err)) ctx.abortAfterStep = 'auth';
       report.warnings.push(
         `The list was created under the URL name ‘${urlName}’ — renaming its title to ‘${title}’ failed (${err.message || err}).`,
       );
@@ -323,12 +350,7 @@ async function runViewUpsert(step, ctx, report) {
   // ran) — match the live re-read (ctx.targetViews) by title, falling back
   // to the target's own default view when the source view is itself the
   // default, so this upserts that view instead of posting a duplicate.
-  if (!viewId) {
-    const targetViews = ctx.targetViews || [];
-    const found = targetViews.find((tv) => String(tv.title).toLowerCase() === String(title).toLowerCase())
-      || (defaultView ? targetViews.find((tv) => tv.defaultView) : null);
-    if (found) viewId = found.id;
-  }
+  if (!viewId) viewId = ctx.viewAssignment?.get(step.id) || null;
   let created = false;
 
   if (viewId) {
@@ -396,6 +418,15 @@ async function runViewUpsert(step, ctx, report) {
   // fields — only properties that differ from SharePoint's own default are
   // sent, and a rejection is a warning, never a failed step.
   const propsMerge = {};
+  if (!created) {
+    // A matched view may carry the target's own values: send the source's
+    // full set so a default can clear them. (ViewTypeKind is not MERGE-able
+    // on an existing view — a view's type is fixed when it is created.)
+    Object.assign(propsMerge, {
+      Scope: scope ?? 0, TabularView: tabularView !== false, MobileView: !!mobileView,
+      MobileDefaultView: !!mobileDefaultView, IncludeRootFolder: !!includeRootFolder,
+    });
+  }
   if (scope != null && scope !== 0) propsMerge.Scope = scope;
   if (aggregations) propsMerge.Aggregations = aggregations;
   if (aggregationsStatus) propsMerge.AggregationsStatus = aggregationsStatus;
@@ -507,6 +538,8 @@ export async function runPlan(plan, ctx = {}) {
   ctx.targetFields = ctx.targetFields || [];
   ctx.targetListsByTitle = ctx.targetListsByTitle || null;
   ctx.targetViews = ctx.targetViews || [];
+  ctx.planHasViews = (plan.steps || []).some((st) => st.kind === 'view.upsert');
+  ctx.abortAfterStep = '';
 
   const report = newReport(plan);
   const steps = report.steps;
@@ -561,6 +594,7 @@ export async function runPlan(plan, ctx = {}) {
         ctx.targetViews = await readTargetViews(ctx);
       });
       if (!ok) return report;
+      ctx.viewAssignment = assignViews(steps, ctx.targetViews);
     }
 
     s.status = 'running';
@@ -590,6 +624,7 @@ export async function runPlan(plan, ctx = {}) {
     tallyStep(s, report);
     ctx.onStep?.(s, i, total);
     if (aborted) break;
+    if (ctx.abortAfterStep) { report.aborted = ctx.abortAfterStep; break; }
 
     // The list now exists (or was adopted) — everything after this depends
     // on what's really on the target, not what the plan-time probe guessed.

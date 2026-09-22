@@ -87,6 +87,21 @@ suite.
 
 ### Copying a list
 
+The SP Workbench's Schema tab / **Copy to…** and **New from schema…** are the
+assisted path for the schema half of this (settings, fields, views, content
+types — no items yet); this script is the console path. Both read and write
+the same document (`kind: "dcspad-sputils-list-schema"`): the Workbench
+writes `version: 2` and reads `version: 1` or `2`, this script writes and
+reads `version: 1`, and each checks only `kind` — a schema exported here
+opens in the Workbench dialog, and a Workbench export downloads as a `.json`
+this script's `readJsonFile()`/`createListFromSchema()` can consume
+unchanged. Porting it found two gaps in this script, not yet fixed here:
+`createFieldAsXml` is called without an `Options` bitmask, which can let
+SharePoint derive a field's internal name from its display name instead of
+the one requested; and `scrubSchemaXml` strips `List=` from every field
+(including User fields, which need to keep `List="UserInfo"`) and leaves
+source GUIDs inside a Calculated field's `<FieldRefs>`.
+
 SharePoint has no good built-in way to copy a list with its data. The four
 primitives do it in steps that each support `dryRun`; any step can be rerun
 on its own, and a partial import resumes from its report (see below):
