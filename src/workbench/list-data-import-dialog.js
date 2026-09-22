@@ -13,8 +13,24 @@ import { writableFields } from './list-data.js';
 import { NEVER_WRITE, NEVER_WRITE_TYPES } from './list-schema.js';
 import { applyListData } from './list-data-apply.js';
 import { createSpWriteClient } from './sp-write.js';
-import { EXPIRED_SESSION_NOTE } from './denied.js';
+import { EXPIRED_SESSION_NOTE, showFailure } from './denied.js';
 import { downloadText } from '../io.js?v=2';
+
+// How long a run gets, after Cancel, before the dialog offers "Close
+// anyway" — findings review #1: Cancel only flips the AbortSignal, which
+// applyListData checks BETWEEN items (list-data-apply.js runItems/
+// runFolders/runSelfLookups/runAuthorship), so a single in-flight write that
+// never settles (a dropped connection, a stalled tenant) would otherwise
+// leave the dialog with no way out. Mutable + exported so a test can shorten
+// it deterministically instead of waiting out the real 15s.
+export const DEFAULT_CLOSE_ANYWAY_MS = 15000;
+let closeAnywayMs = DEFAULT_CLOSE_ANYWAY_MS;
+export function setCloseAnywayMs(ms) {
+  closeAnywayMs = Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_CLOSE_ANYWAY_MS;
+}
+
+const CLOSE_ANYWAY_NOTE =
+  'The current request is still in flight — closing leaves it running; the Items tab will refresh.';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -40,7 +56,16 @@ function dropReason(name, meta, targetFieldRow) {
   return 'not writable';
 }
 
-function buildFieldTable(dataDoc, targetFieldRows, writable) {
+// The four authorship-pass fields (list-data-apply.js runAuthorship) never
+// go through writableFields()/dropReason() — they're not in dataDoc.fields
+// at all, SPUtils restores them as a dedicated post-create pass — so their
+// row is driven directly by the "Preserve authorship" checkbox instead of
+// the source/target field comparison every other row uses. Recomputed
+// (rebuildFieldsTable, below) each time that checkbox toggles so the
+// preview never lies about what a run will actually write.
+const AUTHORSHIP_FIELD_NAMES = ['Author', 'Editor', 'Created', 'Modified'];
+
+function buildFieldTable(dataDoc, targetFieldRows, writable, preserveAuthorship) {
   const table = el('table', 'wb-table wb-import-fields');
   const thead = el('thead');
   const headRow = el('tr');
@@ -59,17 +84,34 @@ function buildFieldTable(dataDoc, targetFieldRows, writable) {
     tr.append(td);
     tbody.append(tr);
   }
+  for (const name of AUTHORSHIP_FIELD_NAMES) {
+    const tr = el('tr', 'wb-import-authorship-row');
+    tr.append(el('td', '', name));
+    const td = el('td');
+    td.className = preserveAuthorship ? '' : 'wb-import-dropped';
+    td.textContent = preserveAuthorship ? 'written — preserve authorship' : 'not written (authorship off)';
+    tr.append(td);
+    tbody.append(tr);
+  }
   table.append(thead, tbody);
   return table;
+}
+
+// Failure totals must count the items the report couldn't even keep a row
+// for (items.failedTruncated, list-data-apply.js's FAILED_CAP) — not just
+// the ones it lists — everywhere a total is shown, on screen and in the
+// downloaded .md, with a note whenever some are missing from the itemised
+// list below. Exported (single source of truth for both surfaces) so it can
+// be unit-tested directly instead of only through the rendered dialog.
+export function itemFailureSummary(items) {
+  const total = (items.failed?.length || 0) + (items.failedTruncated || 0);
+  return items.failedTruncated ? `${total} failed (${items.failedTruncated} not itemised below)` : `${plural(total, 'failure')}`;
 }
 
 function buildHeadline(report, { listTitle, isMock }) {
   if (report.aborted === 'auth') return EXPIRED_SESSION_NOTE;
   if (report.aborted === 'user') return 'Import cancelled.';
-  const failedText = report.items.failedTruncated
-    ? `${report.items.failed.length}+${report.items.failedTruncated} failed`
-    : `${plural(report.items.failed.length, 'failure')}`;
-  let headline = `Imported into ‘${listTitle}’ — ${plural(report.items.added, 'item')} added, ${failedText}.`;
+  let headline = `Imported into ‘${listTitle}’ — ${plural(report.items.added, 'item')} added, ${itemFailureSummary(report.items)}.`;
   if (isMock) headline += ' (mock mode — the fixture web does not change).';
   return headline;
 }
@@ -77,7 +119,7 @@ function buildHeadline(report, { listTitle, isMock }) {
 function buildReportMarkdown(report, { listTitle }) {
   const lines = [`# Import report — ${listTitle}`, '', buildHeadline(report, { listTitle, isMock: false }), ''];
   lines.push('## Counts', '');
-  lines.push(`- Items: ${report.items.added} added, ${report.items.failed.length} failed`);
+  lines.push(`- Items: ${report.items.added} added, ${itemFailureSummary(report.items)}`);
   lines.push(`- Folders: ${report.folders.created} created, ${report.folders.failed} failed`);
   lines.push(`- Attachments: ${report.attachments.added} added, ${report.attachments.skipped} skipped, ${report.attachments.failed} failed`);
   lines.push(`- Authorship: ${report.authorship.applied} applied, ${report.authorship.failed} failed`);
@@ -100,9 +142,15 @@ function buildReportMarkdown(report, { listTitle }) {
   return lines.join('\n');
 }
 
-// { dataDoc, client, listId, listTitle, mockWriter } -> Promise<'imported'|'cancelled'>
+// { dataDoc, client, listId, listTitle, mockWriter, invalidateItems } ->
+// Promise<'imported'|'cancelled'|'closed-during-run'>. `invalidateItems`
+// (ctx.invalidateItems from list-tools.js) is called by the dialog itself,
+// at most once, the moment a report shows the list may have changed —
+// findings #3: added items or created folders, from ANY outcome (a normal
+// finish, a cancel that already wrote, or Close anyway) — never left to the
+// caller to infer from the returned outcome string.
 export function openImportDataDialog({
-  dataDoc, client, listId, listTitle, mockWriter,
+  dataDoc, client, listId, listTitle, mockWriter, invalidateItems,
 } = {}) {
   return new Promise((resolve) => {
     const isMock = !client.context().live;
@@ -160,7 +208,15 @@ export function openImportDataDialog({
     const planPanel = el('div', 'wb-schema-plan');
     planPanel.hidden = true;
     const masterLine = el('p', 'wb-schema-master');
-    planPanel.append(masterLine);
+    // Findings #1: Cancel only aborts the signal — a request already in
+    // flight settles on its own timing. If it hasn't by closeAnywayMs, this
+    // becomes the escape hatch so the dialog can never trap the operator.
+    const closeAnywayNote = el('p', 'wb-schema-note wb-import-closeanyway-note', CLOSE_ANYWAY_NOTE);
+    closeAnywayNote.hidden = true;
+    const closeAnywayBtn = el('button', 'btn btn-xs wb-import-closeanyway', 'Close anyway');
+    closeAnywayBtn.type = 'button';
+    closeAnywayBtn.hidden = true;
+    planPanel.append(masterLine, closeAnywayNote, closeAnywayBtn);
     panel.append(planPanel);
 
     // ---- report ----
@@ -196,8 +252,48 @@ export function openImportDataDialog({
     let phase = 'form';
     let lastReport = null;
     let abortController = null;
+    let cancelRequested = false;
+    let closeAnywayTimer = null;
+    let invalidated = false;
+    let previewOk = false;
+    let fieldsTableEl = null;
+    let cachedTargetFieldRows = null;
+    let cachedWritable = null;
 
     const finish = (outcome) => { dialog.close(); dialog.remove(); resolve(outcome); };
+
+    // Findings #3: a report is grounds to invalidate the Items tab the
+    // moment items were added or folders created — regardless of how the
+    // run ended (finished clean, cancelled after writing, or 401'd
+    // mid-write) — never gated on the outcome string the dialog resolves
+    // with. Idempotent: Close anyway (below) always invalidates too, and a
+    // run that later settles on its own must not invalidate a second time.
+    const mutated = (report) => Boolean(report && ((report.items?.added || 0) > 0 || (report.folders?.created || 0) > 0));
+    function invalidateOnce() {
+      if (invalidated) return;
+      invalidated = true;
+      invalidateItems?.();
+    }
+
+    function hideCloseAnyway() {
+      closeAnywayNote.hidden = true;
+      closeAnywayBtn.hidden = true;
+      if (closeAnywayTimer) { clearTimeout(closeAnywayTimer); closeAnywayTimer = null; }
+    }
+
+    // Findings #1: Cancel flips the signal (checked BETWEEN items by
+    // list-data-apply.js's loops) but cannot interrupt a single request
+    // already in flight. If the run hasn't settled closeAnywayMs after
+    // Cancel, "Close anyway" appears so the dialog is never stuck open.
+    function requestCancel() {
+      if (phase !== 'running' || cancelRequested) return;
+      cancelRequested = true;
+      abortController?.abort();
+      closeAnywayTimer = setTimeout(() => {
+        closeAnywayTimer = null;
+        if (phase === 'running') { closeAnywayNote.hidden = false; closeAnywayBtn.hidden = false; }
+      }, closeAnywayMs);
+    }
 
     function setPhase(next) {
       phase = next;
@@ -215,24 +311,45 @@ export function openImportDataDialog({
       closeBtn.hidden = next === 'running';
     }
 
-    consentBox.addEventListener('change', () => { importBtn.disabled = !consentBox.checked; });
+    // Findings #2: Import needs BOTH consent and a successfully loaded
+    // column preview — a preview failure (denied, expired session, a
+    // network error) must never leave Import clickable against a table the
+    // operator never actually saw.
+    function updateImportEnabled() { importBtn.disabled = !(consentBox.checked && previewOk); }
+    consentBox.addEventListener('change', updateImportEnabled);
+
+    // Findings #5: the authorship rows (Author/Editor/Created/Modified)
+    // reflect the "Preserve authorship" checkbox, not the source/target
+    // field comparison every other row uses — rebuilt whenever it toggles
+    // so the preview can never say something the run won't actually do.
+    function rebuildFieldsTable() {
+      if (!cachedTargetFieldRows) return;
+      fieldsTableEl?.remove();
+      fieldsTableEl = buildFieldTable(dataDoc, cachedTargetFieldRows, cachedWritable, authorshipCb.checked);
+      fieldsSection.append(fieldsTableEl);
+    }
+    authorshipCb.addEventListener('change', rebuildFieldsTable);
 
     client.getAll(guidPath(listId, '/fields'), { select: FIELD_SELECT })
       .then(({ items: targetFieldRows }) => {
         fieldsStatus.remove();
-        const writable = writableFields(dataDoc.fields, targetFieldRows);
-        fieldsSection.append(buildFieldTable(dataDoc, targetFieldRows, writable));
+        cachedTargetFieldRows = targetFieldRows;
+        cachedWritable = writableFields(dataDoc.fields, targetFieldRows);
+        rebuildFieldsTable();
+        previewOk = true;
+        updateImportEnabled();
       })
       .catch((err) => {
-        fieldsStatus.textContent = err?.message || String(err);
-        fieldsStatus.classList.add('wb-error');
+        previewOk = false;
+        showFailure(fieldsStatus, err, 'this list’s columns');
+        updateImportEnabled();
       });
 
     function renderReportCounts(report) {
       reportCounts.textContent = '';
       const tbody = el('tbody');
       const rows = [
-        ['Items', `${report.items.added} added · ${report.items.failed.length} failed`],
+        ['Items', `${report.items.added} added · ${itemFailureSummary(report.items)}`],
         ['Folders', `${report.folders.created} created · ${report.folders.failed} failed`],
       ];
       if (attachCb.checked) rows.push(['Attachments', `${report.attachments.added} added · ${report.attachments.skipped} skipped · ${report.attachments.failed} failed`]);
@@ -298,6 +415,8 @@ export function openImportDataDialog({
       if (importBtn.disabled) return;
       error.hidden = true;
       importBtn.disabled = true;
+      cancelRequested = false;
+      hideCloseAnyway();
       setPhase('running');
       masterLine.textContent = 'Importing…';
       abortController = new AbortController();
@@ -311,10 +430,16 @@ export function openImportDataDialog({
           onStep: (info) => { masterLine.textContent = info.label; },
           signal: abortController.signal,
         });
+        // The run settled on its own — a pending close-anyway timer (Cancel
+        // was clicked, then the request resolved before closeAnywayMs) is
+        // moot now that a report exists to show instead.
+        hideCloseAnyway();
         lastReport = report;
         setPhase('report');
         renderReport(report);
+        if (mutated(report)) invalidateOnce();
       } catch (err) {
+        hideCloseAnyway();
         setPhase('form');
         importBtn.disabled = false;
         error.textContent = err?.message || String(err);
@@ -327,8 +452,17 @@ export function openImportDataDialog({
       downloadText(`import-report-${stem(listTitle)}.md`, buildReportMarkdown(lastReport, { listTitle }), 'text/markdown');
     });
 
+    closeAnywayBtn.addEventListener('click', () => {
+      // The awaited applyListData() in the importBtn handler above keeps
+      // running after this — its eventual report (or throw) lands on a
+      // detached dialog and is discarded; invalidateOnce() already covers
+      // the Items tab regardless of what that report turns out to say.
+      invalidateOnce();
+      finish('closed-during-run');
+    });
+
     cancelBtn.addEventListener('click', () => {
-      if (phase === 'running') { abortController?.abort(); return; }
+      if (phase === 'running') { requestCancel(); return; }
       if (phase === 'report') { finish(lastReport && !lastReport.aborted ? 'imported' : 'cancelled'); return; }
       finish('cancelled');
     });
@@ -338,7 +472,9 @@ export function openImportDataDialog({
     });
     dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
-      if (phase === 'running') return;
+      // Esc = Cancel while running (findings #1) — previously a no-op that
+      // left the dialog stuck exactly like an unreachable Cancel button.
+      if (phase === 'running') { requestCancel(); return; }
       finish(phase === 'report' && lastReport && !lastReport.aborted ? 'imported' : 'cancelled');
     });
 

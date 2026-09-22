@@ -23,7 +23,7 @@
 
 import { schemaBaseType, schemaSummary } from './list-schema.js';
 import { captureListData } from './list-data-capture.js';
-import { normalizeDataDoc, DATA_KIND } from './list-data.js';
+import { normalizeDataDoc, validateDataDoc, DATA_KIND } from './list-data.js';
 import { toPnpPowerShellProvisioning, toPnpjs2Provisioning } from './list-schema-script.js';
 import { createMenuButton } from './grid.js';
 import { copyText } from './export.js';
@@ -222,10 +222,22 @@ const importDataTool = {
           showInlineNotice(notice, `‘${file.name}’ is not a list data document (expected kind ${DATA_KIND}).`);
           return;
         }
-        const outcome = await openImportDataDialog({
+        // Right kind, wrong shape (a hand-edited export, a truncated file, a
+        // future/unsupported version) — caught here, inline, rather than
+        // handed to the dialog where normalizeDataDoc's own leniency
+        // (missing arrays default to []) would silently run an empty import.
+        const problem = validateDataDoc(json);
+        if (problem) {
+          showInlineNotice(notice, `‘${file.name}’ is not a usable list data document (${problem}).`);
+          return;
+        }
+        // invalidateItems is called by the dialog itself, not inferred here
+        // from its returned outcome — see openImportDataDialog's own header
+        // note (list-data-import-dialog.js).
+        await openImportDataDialog({
           dataDoc, client: ctx.client, listId: ctx.listId, listTitle: ctx.listTitle, mockWriter: ctx.mockWriter,
+          invalidateItems: ctx.invalidateItems,
         });
-        if (outcome === 'imported') ctx.invalidateItems?.();
       });
       body.append(btn, input, notice);
     }).catch((err) => showFailure(status, err, 'this list’s schema'));

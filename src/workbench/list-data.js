@@ -133,6 +133,26 @@ export function normalizeDataDoc(doc) {
   };
 }
 
+// Structural sanity check for a RIGHT-KIND document, run before
+// normalizeDataDoc's own leniency (missing/malformed arrays silently
+// default to []) can turn a hand-edited or truncated file into a
+// quietly-empty import. Pure, kind-agnostic (the caller — list-tools.js —
+// already checked `kind` via normalizeDataDoc's own throw) — returns an
+// error sentence fragment, or '' when the doc is usable. `fields` is
+// checked as "array or object" because that's what typeof already gives
+// both an array and SPUtils exportListData's plain object keyed by
+// internalName (utilities/dcspad-sp-utilities.js:2526-2533) — never a
+// string/number/boolean.
+export function validateDataDoc(doc) {
+  if (!doc || typeof doc !== 'object') return 'not a JSON object';
+  const version = doc.version == null ? 1 : Number(doc.version);
+  if (!(version === 1 || version === 2)) return `unsupported version ${doc.version}`;
+  if (!Array.isArray(doc.items)) return '"items" must be an array';
+  if (doc.fields != null && typeof doc.fields !== 'object') return '"fields" must be an array or object';
+  if (doc.folders != null && !Array.isArray(doc.folders)) return '"folders" must be an array';
+  return '';
+}
+
 // Parents-first, by folder-path depth; stable within a depth (original
 // position wins the tie — see the file-header note on why this differs from
 // SPUtils' Id tiebreak).

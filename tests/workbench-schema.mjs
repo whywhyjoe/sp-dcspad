@@ -1061,7 +1061,15 @@ const LIVE_DENIED_ID = '33333333-0000-4000-8000-000000000003';
 const LIVE_NEW_LIST_ID = '33333333-0000-4000-8000-000000000009';
 const liveReads = [];   // { url, accept }
 const liveDialogWrites = [];   // { url, method, body } — the dialog's own 401 test, below
-const liveDialogFlags = { expireOnField: null, expireOnImport: null };
+// hangOnImport/delayImportMs: findings #1/#3 tests below — a write that
+// never settles (Close anyway) and one cancelled after already writing.
+// expireOnPreview: findings #2 — the import dialog's OWN column-preview
+// read (matched by its distinct $select=Id…, see the /fields branch below),
+// never captureListSchema's unprojected one the Schema/Tools tabs also use.
+const liveDialogFlags = {
+  expireOnField: null, expireOnImport: null, expireOnPreview: null,
+  hangOnImport: false, delayImportMs: 0,
+};
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 await live.addInitScript(() => {
@@ -1110,6 +1118,14 @@ await live.route('**/_api/**', async (route) => {
   }
 
   if (url.includes(`lists(guid'${LIVE_LIST_ID}')/fields`)) {
+    // The import dialog's own column-preview read carries its own $select
+    // (list-data-import-dialog.js's FIELD_SELECT) — captureListSchema's
+    // read (Schema/Tools tab render) has none, so this can target exactly
+    // the dialog's own request without touching the other.
+    if (liveDialogFlags.expireOnPreview && url.includes('$select=Id')) {
+      liveDialogFlags.expireOnPreview = null;
+      return route.fulfill({ status: 401, json: { 'odata.error': { message: { value: 'The security token is expired.' } } } });
+    }
     return route.fulfill({ json: { value: [
       {
         Id: 'f1', Title: 'Title', InternalName: 'Title', TypeAsString: 'Text',
@@ -1125,12 +1141,17 @@ await live.route('**/_api/**', async (route) => {
   // Tools tab → Import data: writes an item into LiveRequests. Its own 401
   // test (below) sets expireOnImport to make exactly the next write fail,
   // the same one-shot pattern liveDialogFlags.expireOnField uses for the
-  // schema dialog's own 401 test.
+  // schema dialog's own 401 test. hangOnImport/delayImportMs back the
+  // "Close anyway" and cancel-after-write tests (findings #1/#3): a request
+  // this route never fulfills, or fulfills only after a delay long enough
+  // for the test to click Cancel while it's still in flight.
   if (method === 'POST' && url.includes(`lists(guid'${LIVE_LIST_ID}')/AddValidateUpdateItemUsingPath`)) {
     if (liveDialogFlags.expireOnImport) {
       liveDialogFlags.expireOnImport = null;
       return route.fulfill({ status: 401, json: { 'odata.error': { message: { value: 'The security token is expired.' } } } });
     }
+    if (liveDialogFlags.hangOnImport) return new Promise(() => {});   // never settles
+    if (liveDialogFlags.delayImportMs) await new Promise((r) => setTimeout(r, liveDialogFlags.delayImportMs));
     const data = JSON.parse(request.postData() || '{}');
     const formValues = Array.isArray(data.formValues) ? data.formValues : [];
     return route.fulfill({ json: { value: [
@@ -2665,6 +2686,130 @@ await check('live-tools: Import data → a 401 mid-run shows EXPIRED_SESSION_NOT
   return headline.includes('expired') && headline.includes('reload the page');
 });
 
+await live.locator('.wb-import-data-dialog .wb-schema-close').click();
+await live.waitForSelector('.wb-import-data-dialog', { state: 'detached' });
+
+// ---- Import dialog code-review findings (unclosable dialog, preview gate,
+// invalidation on any mutating outcome) --------------------------------
+
+const readsOfItems = () => liveReads.filter((r) => r.url.includes(`lists(guid'${LIVE_LIST_ID}')/items`)).length;
+
+await check('dialog: Import stays disabled until the column preview loads, and a 401 preview shows EXPIRED_SESSION_NOTE with Import disabled', async () => {
+  await live.locator('.wb-back').click();
+  await live.locator('.wb-table tbody tr', { hasText: 'LiveRequests' }).locator('td').first().click();
+  await live.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await live.waitForSelector('.wb-tools-import');
+  liveDialogFlags.expireOnPreview = true;
+  const previewFailDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'LiveRequests', siteUrl: 'https://live.example' },
+    fields: { Title: { type: 'Text', custom: false } },
+    items: [{ Id: 801, Title: 'Preview fail test' }],
+    folders: [], users: [], warnings: [],
+  };
+  await live.setInputFiles('.wb-tools-import-file', [
+    { name: 'preview-fail.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(previewFailDoc)) },
+  ]);
+  await live.waitForSelector('.wb-import-data-dialog');
+  const disabledBeforeConsent = await live.locator('.wb-import-run').isDisabled();
+  await live.waitForFunction(() => {
+    const note = document.querySelector('.wb-import-data-dialog .wb-schema-section .wb-schema-note');
+    return note && note.textContent.includes('expired');
+  });
+  const statusText = await live.locator('.wb-import-data-dialog .wb-schema-section .wb-schema-note').textContent();
+  await live.locator('.wb-import-data-dialog .sp-metadata-consent input[type="checkbox"]').check();
+  const disabledAfterConsent = await live.locator('.wb-import-run').isDisabled();
+  await live.locator('.wb-import-data-dialog .wb-schema-close').click();
+  await live.waitForSelector('.wb-import-data-dialog', { state: 'detached' });
+  return disabledBeforeConsent && disabledAfterConsent
+    && statusText.includes('expired') && statusText.includes('reload the page');
+});
+
+await check('dialog: a write that never settles offers "Close anyway" after Cancel, and closing it invalidates the Items tab', async () => {
+  await live.locator('.wb-back').click();
+  await live.locator('.wb-table tbody tr', { hasText: 'LiveRequests' }).locator('td').first().click();
+  // Prime the Items tab once so the invalidation check below has a
+  // before/after read count to compare (list-tools.js's invalidateItems
+  // only matters if something had already been cached to drop).
+  await live.locator('.wb-tab', { hasText: 'Items' }).click();
+  await live.waitForSelector('.wb-items-grid');
+  const readsBefore = readsOfItems();
+  await live.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await live.waitForSelector('.wb-tools-import');
+  await live.evaluate(async () => {
+    const { setCloseAnywayMs } = await import('/src/workbench/list-data-import-dialog.js');
+    setCloseAnywayMs(200);   // real default is 15s — shortened for the test
+  });
+  const hangDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'LiveRequests', siteUrl: 'https://live.example' },
+    fields: { Title: { type: 'Text', custom: false } },
+    items: [{ Id: 701, Title: 'Hangs forever' }],
+    folders: [], users: [], warnings: [],
+  };
+  await live.setInputFiles('.wb-tools-import-file', [
+    { name: 'hang-data.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(hangDoc)) },
+  ]);
+  await live.waitForSelector('.wb-import-data-dialog');
+  await live.locator('.wb-import-data-dialog .sp-metadata-consent input[type="checkbox"]').check();
+  liveDialogFlags.hangOnImport = true;
+  await live.locator('.wb-import-run').click();
+  await live.locator('.wb-import-data-dialog .wb-schema-cancel').click();
+  await live.waitForSelector('.wb-import-closeanyway:not([hidden])', { timeout: 5000 });
+  const noteText = await live.locator('.wb-import-closeanyway-note').textContent();
+  await live.locator('.wb-import-closeanyway').click();
+  await live.waitForSelector('.wb-import-data-dialog', { state: 'detached' });
+  await live.locator('.wb-tab', { hasText: 'Items' }).click();
+  await live.waitForTimeout(300);
+  const readsAfter = readsOfItems();
+  liveDialogFlags.hangOnImport = false;
+  await live.evaluate(async () => {
+    const { setCloseAnywayMs, DEFAULT_CLOSE_ANYWAY_MS } = await import('/src/workbench/list-data-import-dialog.js');
+    setCloseAnywayMs(DEFAULT_CLOSE_ANYWAY_MS);
+  });
+  return noteText.includes('still in flight') && noteText.includes('Items tab will refresh')
+    && readsAfter > readsBefore;
+});
+
+await check('dialog: cancelling after at least one item was already written still invalidates the Items tab', async () => {
+  await live.locator('.wb-back').click();
+  await live.locator('.wb-table tbody tr', { hasText: 'LiveRequests' }).locator('td').first().click();
+  await live.locator('.wb-tab', { hasText: 'Items' }).click();
+  await live.waitForSelector('.wb-items-grid');
+  const readsBefore = readsOfItems();
+  await live.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await live.waitForSelector('.wb-tools-import');
+  const threeItemDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'LiveRequests', siteUrl: 'https://live.example' },
+    fields: { Title: { type: 'Text', custom: false } },
+    items: [{ Id: 901, Title: 'One' }, { Id: 902, Title: 'Two' }, { Id: 903, Title: 'Three' }],
+    folders: [], users: [], warnings: [],
+  };
+  await live.setInputFiles('.wb-tools-import-file', [
+    { name: 'three-item.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(threeItemDoc)) },
+  ]);
+  await live.waitForSelector('.wb-import-data-dialog');
+  await live.locator('.wb-import-data-dialog .sp-metadata-consent input[type="checkbox"]').check();
+  // Long enough that Cancel (clicked ~100ms after Import) always lands
+  // before item 1's write settles — item 2/3 must never start once the
+  // signal is aborted (checked BETWEEN items — list-data-apply.js).
+  liveDialogFlags.delayImportMs = 500;
+  await live.locator('.wb-import-run').click();
+  await live.waitForTimeout(100);
+  await live.locator('.wb-import-data-dialog .wb-schema-cancel').click();
+  await live.waitForSelector('.wb-schema-report:not([hidden])', { timeout: 10000 });
+  liveDialogFlags.delayImportMs = 0;
+  const headline = await live.locator('.wb-schema-report-headline').textContent();
+  const countsText = await live.locator('.wb-import-data-dialog .wb-schema-report-counts').textContent();
+  await live.locator('.wb-import-data-dialog .wb-schema-close').click();
+  await live.waitForSelector('.wb-import-data-dialog', { state: 'detached' });
+  await live.locator('.wb-tab', { hasText: 'Items' }).click();
+  await live.waitForTimeout(300);
+  const readsAfter = readsOfItems();
+  return headline.includes('Import cancelled') && countsText.includes('1 added') && readsAfter > readsBefore;
+});
+
 // ---- Stage 1b-a: list item DATA capture + export (pure list-data.js) ------
 
 await check('pure: a v1 data document normalizes to v2 (items/folders split, warnings kept); the wrong kind is refused', () =>
@@ -2696,6 +2841,37 @@ await check('pure: folderOrder sorts parents before children, stable within a de
     ];
     const order = folderOrder(folders).map((f) => f._folderPath);
     return order.join(',') === 'A,X,A/B,A/B/C';
+  }));
+
+// Findings #6: a RIGHT-KIND doc that's otherwise malformed — normalizeDataDoc
+// alone would silently coerce these into an empty/degenerate import
+// (missing arrays default to []); validateDataDoc catches them first.
+await check('pure: validateDataDoc accepts v1/v2 shapes (array or object fields) and rejects a bad version/items/fields/folders', () =>
+  page.evaluate(async () => {
+    const { validateDataDoc, DATA_KIND } = await import('/src/workbench/list-data.js');
+    const base = { kind: DATA_KIND, items: [], fields: { Title: { type: 'Text' } }, folders: [] };
+    const okNoVersion = validateDataDoc({ ...base }) === '';       // absent -> defaults to 1
+    const okV1 = validateDataDoc({ ...base, version: 1 }) === '';
+    const okV2 = validateDataDoc({ ...base, version: 2 }) === '';
+    const okArrayFields = validateDataDoc({ ...base, fields: [] }) === '';   // SPUtils v1 shape is an object, but an array must not be refused either
+    const badVersion = validateDataDoc({ ...base, version: 999 });
+    const badItems = validateDataDoc({ ...base, items: 'nope' });
+    const badFields = validateDataDoc({ ...base, fields: 'nope' });
+    const badFolders = validateDataDoc({ ...base, folders: 'nope' });
+    return okNoVersion && okV1 && okV2 && okArrayFields
+      && badVersion.includes('999') && badItems.toLowerCase().includes('items')
+      && badFields.toLowerCase().includes('fields') && badFolders.toLowerCase().includes('folders');
+  }));
+
+// Findings #4: the failure TOTAL (table + downloaded .md both read this one
+// function) must count items the report couldn't even keep a row for.
+await check('pure: itemFailureSummary sums failed + failedTruncated, with the "not itemised below" note only when truncated', () =>
+  page.evaluate(async () => {
+    const { itemFailureSummary } = await import('/src/workbench/list-data-import-dialog.js');
+    const untruncated = itemFailureSummary({ failed: [{}, {}] });
+    const truncated = itemFailureSummary({ failed: new Array(50).fill({}), failedTruncated: 11 });
+    return untruncated.includes('2') && !untruncated.includes('not itemised')
+      && truncated.includes('61') && truncated.includes('11 not itemised below');
   }));
 
 await check('pure: writableFields drops NEVER_WRITE names/types, read-only columns, and anything missing on the target', () =>
@@ -3128,6 +3304,33 @@ await check('tools: Import data refuses the wrong document kind inline', async (
   return text.includes('not a list data document') && text.includes('dcspad-sputils-list-data');
 });
 
+// Findings #6 — right kind, wrong shape: validateDataDoc rejects these
+// BEFORE the dialog ever opens (normalizeDataDoc alone would silently
+// coerce a non-array `items` to [] and run an empty, misleading import).
+await check('tools: Import data refuses a malformed items array inline (right kind, bad shape)', async () => {
+  const badItemsDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'Requests' }, fields: { Title: { type: 'Text', custom: false } },
+    items: 'not-an-array', folders: [], users: [], warnings: [],
+  };
+  await pickImportFile('bad-items.json', 'application/json', Buffer.from(JSON.stringify(badItemsDoc)));
+  await schemaPage.waitForSelector('.wb-tool-import-notice:not([hidden])');
+  const text = await schemaPage.locator('.wb-tool-import-notice').textContent();
+  return text.includes('not a usable list data document') && text.toLowerCase().includes('items');
+});
+
+await check('tools: Import data refuses an unsupported version inline (right kind, bad shape)', async () => {
+  const badVersionDoc = {
+    kind: 'dcspad-sputils-list-data', version: 999,
+    source: { listTitle: 'Requests' }, fields: { Title: { type: 'Text', custom: false } },
+    items: [], folders: [], users: [], warnings: [],
+  };
+  await pickImportFile('bad-version.json', 'application/json', Buffer.from(JSON.stringify(badVersionDoc)));
+  await schemaPage.waitForSelector('.wb-tool-import-notice:not([hidden])');
+  const text = await schemaPage.locator('.wb-tool-import-notice').textContent();
+  return text.includes('not a usable list data document') && text.includes('999');
+});
+
 const importDataDoc = {
   kind: 'dcspad-sputils-list-data', version: 2,
   source: { listTitle: 'Requests', siteUrl: '/sites/schema', listId: 'requests-src-id' },
@@ -3147,6 +3350,25 @@ await check('dialog: a valid data doc opens the import dialog with counts and th
   await schemaPage.waitForSelector('.wb-import-fields tbody tr');
   const fieldRows = await schemaPage.locator('.wb-import-fields tbody tr').count();
   return context.includes('Requests') && counts.includes('2 items') && fieldRows > 0;
+});
+
+// Findings #5: the four authorship rows are driven by the checkbox, not by
+// writableFields()/dropReason() like every other row — recomputed on toggle.
+await check('dialog: the column preview reflects Preserve authorship, and recomputes when it’s toggled', async () => {
+  const rowTexts = () => schemaPage.locator('.wb-import-fields .wb-import-authorship-row').allTextContents();
+  const off = await rowTexts();
+  const offOk = off.length === 4 && off.every((t) => t.includes('not written (authorship off)'))
+    && off.some((t) => t.startsWith('Author')) && off.some((t) => t.startsWith('Editor'))
+    && off.some((t) => t.startsWith('Created')) && off.some((t) => t.startsWith('Modified'));
+  const authorshipCheckbox = schemaPage.locator('.wb-import-data-dialog .wb-schema-items-opt', { hasText: 'Preserve authorship' })
+    .locator('input[type="checkbox"]');
+  await authorshipCheckbox.check();
+  const on = await rowTexts();
+  const onOk = on.length === 4 && on.every((t) => t.includes('written — preserve authorship'));
+  // Leave it unchecked — the run right after this test expects the
+  // authorship-off default it already had before this check ran.
+  await authorshipCheckbox.uncheck();
+  return offOk && onOk;
 });
 
 await check('dialog: Import stays disabled until the consent box is checked', async () => {

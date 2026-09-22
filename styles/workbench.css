@@ -681,6 +681,12 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-import-fields { width: 100%; margin: 6px 0; }
 .wb-import-fields th, .wb-import-fields td { text-align: left; padding: 3px 8px 3px 0; font-size: 12px; }
 .wb-import-dropped { color: var(--fg-faint); }
+/* The "Close anyway" escape hatch (list-data-import-dialog.js's
+   requestCancel/closeAnywayMs) — warn register: leaving a write running
+   detached is a deliberate, slightly risky choice, not a routine action. */
+.wb-import-closeanyway-note { color: var(--warn); margin: 6px 0 0; }
+.wb-import-closeanyway { color: var(--warn); border-color: var(--warn-soft-line); }
+.wb-import-closeanyway:hover { background: var(--warn-soft); }
 
 /* Inline inputs in the consent strip (new-folder prompt). */
 .wb-consent input[type="text"] {
