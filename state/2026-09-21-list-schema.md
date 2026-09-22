@@ -80,18 +80,10 @@ same engine · **2** document libraries (schema only; no file transfer).
   ARM64) — see the CLAUDE.md Gotchas entry on the two-Node-installs machine; an x64 esbuild
   binary throws "installed esbuild for another platform" partway through `Sync-Live.ps1`.
 
-## Live-tenant checklist (copied from the plan's Verification section; open, unfilled)
+## Live-tenant checklist
 
-- nometadata `POST web/lists` accepted; `createfieldasxml` `{parameters:{SchemaXml, Options}}`
-  in nometadata and the `Options 8|4` behaviour on a content-types-enabled list.
-- `views?$expand=ViewFields`; `ViewTypeKind` in the views POST; `RowLimit`/`Paged` in one MERGE.
-- Field MERGE of `Indexed`/`EnforceUniqueValues`/`CustomFormatter` on lookup/choice types.
-- `addAvailableContentType` posted before field creation.
-- A User field round-trips with `List="UserInfo"`; a FullHtml Note round-trips.
-- Property availability of `EnableRequestSignOff`/`ListExperienceOptions`/`DisableGridEditing`
-  on this tenant.
-- A cross-web copy into a subsite.
-- The 429 retry path under real throttling.
-- Whether SPUtils' string-overload `createFieldAsXml` regenerates internal names.
-- Export a SPUtils v1 doc and import it in the Workbench, and the reverse through
-  `SPUtils.createListFromSchema`.
+Run 2026-09-22 on the dev tenant (build #171): cross-web and same-web
+copies green; results and the still-open items are recorded in HANDOFF.md
+("SP Workbench: List schema (stage 1a)" → Live-tenant checklist). Test
+lists named `zz-schema-*` on `/sites/NewNerve` and `/sites/NewNerve/sputils-test`
+are leftovers to delete by hand.

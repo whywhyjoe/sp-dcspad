@@ -418,25 +418,34 @@ schema only."; `Copy to…` is disabled on document libraries (`baseTemplate
 !== 100`) with a stage-2 title. Stage 1b (item data, same engine) and stage
 2 (document libraries, schema only) are reserved seams — see Roadmap below.
 
-**Live-tenant checklist (open — not yet run):**
-- nometadata `POST web/lists` accepted; `createfieldasxml`
-  `{parameters:{SchemaXml, Options}}` in nometadata and the `Options 8|4`
-  behaviour on a content-types-enabled list.
-- `views?$expand=ViewFields`; `ViewTypeKind` in the views POST; `RowLimit`/
-  `Paged` in one MERGE.
-- Field MERGE of `Indexed`/`EnforceUniqueValues`/`CustomFormatter` on
-  lookup/choice types.
-- `addAvailableContentType` posted before field creation.
-- A User field round-trips with `List="UserInfo"`; a FullHtml Note
-  round-trips.
-- Property availability of `EnableRequestSignOff`/`ListExperienceOptions`/
-  `DisableGridEditing` on this tenant.
-- A cross-web copy into a subsite.
-- The 429 retry path under real throttling.
-- Whether SPUtils' string-overload `createFieldAsXml` regenerates internal
-  names (the SPUtils follow-up above).
-- Export a SPUtils v1 doc and import it in the Workbench, and the reverse
-  through `SPUtils.createListFromSchema`.
+**Live-tenant checklist — run 2026-09-22 on the dev tenant, build #171.**
+Source `zz-schema-requests` on `/sites/NewNerve` (12 custom columns: Choice,
+FullHtml Note, Number, DateOnly, Boolean, URL, User, lookup, dependent
+lookup, self-lookup, Calculated, Indexed+unique Text; validation formula;
+versioning 50; an extra view). Copies: `zz-schema-requests`, `… Copy`,
+`… Copy 2` on the subweb `/sites/NewNerve/sputils-test` and `… Copy` on
+`/sites/NewNerve` — leftover test lists, safe to delete (with the
+`zz-schema-clients` lookup targets on both webs). The first two subweb
+copies came from pre-fix builds (one carries a duplicate "All Items").
+- ✓ nometadata `POST web/lists`; `createfieldasxml {parameters:{SchemaXml,
+  Options:8}}` keeps every internal name (verified via PnP).
+- ✓ Lookup rebound to the target's list, self-lookup to the new list,
+  dependent lookup carries its new primary `FieldRef`; User keeps
+  `List="UserInfo"`; FullHtml Note, Calculated, and the Indexed+unique
+  MERGEs land.
+- ✓ `views?$expand=ViewFields`; `RowLimit`/`Paged` MERGE; the new list's
+  own "All Items" is updated, not duplicated; validation applied last.
+- ✓ Cross-web copy into a subweb; same-web copy (offers Open the new list).
+- Found live and fixed: SPO omits `ValidationFormula`, `ValidationMessage`,
+  `OnQuickLaunch`, `ReadSecurity`, `WriteSecurity` from the default SP.List
+  payload (capture names them); SP.List has no `Ordered` REST property.
+- Still open: `Options 8|4` on a content-types-enabled list and
+  `addAvailableContentType` (no CT-enabled fixture yet); `ViewTypeKind` in a
+  views POST (only HTML views tested); the 429 path under real throttling;
+  `EnableRequestSignOff`/`ListExperienceOptions`/`DisableGridEditing`
+  availability; whether SPUtils' string-overload `createFieldAsXml`
+  regenerates internal names; a SPUtils v1 doc imported in the Workbench and
+  the reverse; a reconcile (Add to existing list) run.
 
 ## Roadmap (seams reserved)
 
