@@ -111,6 +111,13 @@ re-syncs from the standalone build.
 `styles/workbench.css` keeps `.wb-info-chip` as a thin alias of
 `.dcs-chip-info` (or the markup switches to the design-system class outright, if
 the workbench is linking the sheet by then). Until promotion, `.wb-info-chip` is
-the single local definition and both instances — `.wb-lib-kind` in the Pages
-toolbar and `.wb-detail-kind` in the page drilldown — compose it, so they cannot
-drift apart in the meantime.
+the single local definition, and every instance composes it so they cannot
+drift apart in the meantime: `.wb-lib-kind` in the Pages toolbar,
+`.wb-detail-kind` in the page drilldown, `.wb-reduced-chip` for a
+schema-rejected query, and the Lists Schema tab's
+`.wb-schema-kind`/`-fields`/`-views`/`-cts`/`-versioning`/`-libkind` (five
+quiet facts about a list, not states to act on). The Schema tab's "Copy
+to…"/"New from schema…" apply dialog (`list-schema-dialog.js`) deliberately
+does **not** add any info-chip instances of its own — its step list
+(`.wb-schema-steps`) is the other register, STATUS, and takes signal colour
+on purpose (running/done/failed/skipped), never composing `.wb-info-chip`.

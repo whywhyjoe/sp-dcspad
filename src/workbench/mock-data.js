@@ -193,11 +193,12 @@ const fCategory = schemaField('Category', 'RequestCategory', 'TaxonomyFieldType'
 const fContentType = schemaField('Content Type', 'ContentType', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, Hidden: true, ReadOnlyField: true });
 const fAttachmentsF = schemaField('Attachments', 'Attachments', 'Attachments', 23, { FromBaseType: true, CanBeDeleted: false, Hidden: true });
 const fAuthor = schemaField('Created By', 'Author', 'User', 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: 'UserInfo' } });
+const fLinkTitle = schemaField('Title', 'LinkTitle', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true });
 
 const SCHEMA_REQUESTS_FIELDS = [
   fRequestsTitle, fRequestsId, fStatus, fNotes, fBudget, fDue, fApproved, fReference, fOwner,
   fClient, fClientCode, fParent, fRegion, fTotal, fTracking, fFormatted, fCategory,
-  fContentType, fAttachmentsF, fAuthor,
+  fContentType, fAttachmentsF, fAuthor, fLinkTitle,
 ];
 
 const SCHEMA_REQUESTS_LIST = {

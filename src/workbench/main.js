@@ -7,7 +7,7 @@
 import { getSpContext } from '../bridge/sp-context.js';
 import { APP_BUILD_INFO, applyWorkbenchBuildMarker, buildTooltipFor } from '../build-info.js';
 import { createSpRestClient } from './sp-rest.js?v=2';
-import { mockResolver } from './mock-data.js';
+import { mockResolver, mockWriter } from './mock-data.js';
 import { createShell } from './shell.js?v=2';
 import { createListsView } from './views/lists.js';
 import { createSecurityView } from './views/security.js';
@@ -72,6 +72,10 @@ const shell = createShell({
     client,
     inspectSite: (url) => inspectSite(url),
     createClient: () => createSpRestClient({ mockResolver: ctx.live ? null : mockResolver }),
+    // Mock-mode-only write fixture (see mock-data.js) — the Schema tab's
+    // apply dialog is the sole consumer; views never import mock-data.js
+    // directly (invariant: only main.js touches it).
+    mockWriter: ctx.live ? undefined : mockWriter,
   },
   views: [
     // Nav order and grouping are Joe's spec (2026-07-31): identity first,

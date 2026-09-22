@@ -5,7 +5,7 @@
 import { showFailure } from '../denied.js';
 import { createGrid, encodeSpPath, bindNewTab, createMenuButton } from '../grid.js?v=2';
 import { copyText, downloadMarkdown } from '../export.js';
-import { downloadText } from '../../io.js?v=2';
+import { downloadText, MAX_IMPORT_BYTES } from '../../io.js?v=2';
 import {
   buildItemsMarkdown, contentFields, viewColumnFields,
   fieldText, itemTitle, personText,
@@ -16,8 +16,9 @@ import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { toNode } from '../../inspect/to-node.js';
 import { captureListSchema } from '../list-schema-capture.js';
-import { schemaSummary, TAXONOMY_TYPES } from '../list-schema.js';
+import { schemaSummary, TAXONOMY_TYPES, normalizeSchemaDoc, SCHEMA_KIND } from '../list-schema.js';
 import { toPnpPowerShellProvisioning, toPnpjs2Provisioning } from '../list-schema-script.js';
+import { openSchemaApplyDialog } from '../list-schema-dialog.js';
 
 // Friendly names for the templates that actually show up in day-to-day work;
 // anything else renders as its number.
@@ -169,13 +170,10 @@ export function parseItemsQuery(text) {
   return out;
 }
 
-export function createListsView({ client, navigate, updateRoute, inspectSite, createClient }) {
+export function createListsView({
+  client, navigate, updateRoute, inspectSite, createClient, mockWriter,
+}) {
   const root = el('section', 'wb-view wb-view-lists');
-  // inspectSite/createClient are threaded through now so the Copy-to dialog
-  // (slice 2) only has to add a click handler, not a shell change — see
-  // openCopy() below, which stays a deliberate no-op for this slice.
-  void inspectSite;
-  void createClient;
 
   // Server-relative paths become real links: absolute against the inspected
   // web's origin, opened in a new tab (the cell text stays the relative path).
@@ -232,7 +230,59 @@ export function createListsView({ client, navigate, updateRoute, inspectSite, cr
   const moreBtn = el('button', 'btn btn-xs wb-lists-more');
   moreBtn.type = 'button';
   moreBtn.hidden = true;
-  gridPane.append(head, grid.el, moreBtn);
+  const importNotice = el('div', 'wb-consent wb-schema-import-notice');
+  importNotice.hidden = true;
+  gridPane.append(head, importNotice, grid.el, moreBtn);
+
+  // ---- New from schema… -------------------------------------------------
+  // A schema JSON exported from this Workbench (or from SPUtils — same
+  // kind, v1 keys verbatim) becomes a candidate for the apply dialog in
+  // 'import' mode. Rejections read inline in the grid's own consent strip
+  // (browser.js's pattern), never alert().
+  const newFromSchemaBtn = el('button', 'btn btn-xs wb-schema-new', 'New from schema…');
+  newFromSchemaBtn.type = 'button';
+  const schemaFileInput = el('input', 'wb-schema-file');
+  schemaFileInput.type = 'file';
+  schemaFileInput.accept = '.json';
+  schemaFileInput.hidden = true;
+  schemaFileInput.setAttribute('aria-label', 'Choose a list schema JSON file');
+  newFromSchemaBtn.addEventListener('click', () => schemaFileInput.click());
+
+  function showImportNotice(message) {
+    importNotice.textContent = '';
+    importNotice.hidden = false;
+    importNotice.classList.add('wb-consent-error');
+    importNotice.append(el('span', 'wb-consent-text', message));
+    const dismiss = el('button', 'btn btn-xs', 'Dismiss');
+    dismiss.type = 'button';
+    dismiss.addEventListener('click', () => { importNotice.hidden = true; });
+    importNotice.append(dismiss);
+  }
+
+  schemaFileInput.addEventListener('change', async () => {
+    const file = schemaFileInput.files?.[0];
+    schemaFileInput.value = '';
+    if (!file) return;
+    importNotice.hidden = true;
+    if (file.size > MAX_IMPORT_BYTES) {
+      showImportNotice(`‘${file.name}’ is ${(file.size / 1048576).toFixed(1)} MB — above the 5 MB import limit.`);
+      return;
+    }
+    let json;
+    try { json = JSON.parse(await file.text()); }
+    catch { showImportNotice(`‘${file.name}’ isn’t valid JSON.`); return; }
+    let doc;
+    try { doc = normalizeSchemaDoc(json); }
+    catch {
+      showImportNotice(`‘${file.name}’ is not a list schema document (expected kind ${SCHEMA_KIND}).`);
+      return;
+    }
+    const outcome = await openSchemaApplyDialog({
+      doc, mode: 'import', client, createClient, navigate, inspectSite, mockWriter,
+    });
+    if (outcome === 'created') { listsLoaded = false; loadLists(); }
+  });
+  grid.actionsEl.prepend(newFromSchemaBtn, schemaFileInput);
 
   // ---- detail pane (rebuilt per list) ----
   const detailPane = el('div', 'wb-pane');
@@ -710,10 +760,11 @@ export function createListsView({ client, navigate, updateRoute, inspectSite, cr
     return section;
   }
 
-  // The Copy-to dialog is slice 2 — this stays a named no-op so the button's
-  // wiring (and its gating) can ship now without a dynamic import to a
-  // module that doesn't exist yet.
-  function openCopy(doc) { void doc; }
+  async function openCopy(doc) {
+    await openSchemaApplyDialog({
+      doc, mode: 'copy', client, createClient, navigate, inspectSite, mockWriter,
+    });
+  }
 
   function renderSchemaPane(doc, listTitle) {
     const summary = schemaSummary(doc);

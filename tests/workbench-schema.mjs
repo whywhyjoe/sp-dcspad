@@ -497,7 +497,7 @@ await check('schema: chips show the five schema facts for Requests', async () =>
   const views = await schemaPage.locator('.wb-schema-views').textContent();
   const cts = await schemaPage.locator('.wb-schema-cts').textContent();
   const versioning = await schemaPage.locator('.wb-schema-versioning').textContent();
-  return kind === 'Generic list' && fields === '20 fields · 15 custom' && views === '2 views'
+  return kind === 'Generic list' && fields === '21 fields · 15 custom' && views === '2 views'
     && cts === 'content types on' && versioning === 'versioning on';
 });
 
@@ -573,7 +573,10 @@ await check('schema: a document library shows the library chip and gates Copy to
 const LIVE_LIST_ID = '33333333-0000-4000-8000-000000000001';
 const LIVE_LOOKUP_ID = '33333333-0000-4000-8000-000000000002';
 const LIVE_DENIED_ID = '33333333-0000-4000-8000-000000000003';
+const LIVE_NEW_LIST_ID = '33333333-0000-4000-8000-000000000009';
 const liveReads = [];   // { url, accept }
+const liveDialogWrites = [];   // { url, method, body } — the dialog's own 401 test, below
+const liveDialogFlags = { expireOnField: null };
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 await live.addInitScript(() => {
@@ -582,7 +585,44 @@ await live.addInitScript(() => {
 await live.route('**/_api/**', async (route) => {
   const request = route.request();
   const url = request.url();
+  const method = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
   liveReads.push({ url, accept: request.headers().accept || '' });
+
+  // ---- writes for the apply dialog's own 401 test (below) ----------------
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'LIVE-DIALOG-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (method === 'GET' && /\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+    const base = url.slice(0, url.indexOf('/_api/'));
+    return route.fulfill({ json: { Id: 'live-web', Title: 'Live Web', Url: base, ServerRelativeUrl: '/' } });
+  }
+  if (method === 'POST' && /\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    liveDialogWrites.push({ url, method: 'POST', body: request.postData() || '' });
+    return route.fulfill({ json: {
+      Id: LIVE_NEW_LIST_ID, Title: JSON.parse(request.postData() || '{}').Title,
+      RootFolder: { ServerRelativeUrl: '/Lists/LiveTarget' },
+    } });
+  }
+  if (method === 'GET' && url.includes(`lists(guid'${LIVE_NEW_LIST_ID}')/fields`)) {
+    return route.fulfill({ json: { value: [
+      { Id: 'nf1', InternalName: 'Title', Title: 'Title', TypeAsString: 'Text', Hidden: false, ReadOnlyField: false },
+    ] } });
+  }
+  if (method === 'POST' && xHttpMethod === 'MERGE' && new RegExp(`lists\\(guid'${LIVE_NEW_LIST_ID}'\\)$`).test(url)) {
+    liveDialogWrites.push({ url, method: 'MERGE', body: request.postData() || '' });
+    return route.fulfill({ json: {} });
+  }
+  if (url.includes('createfieldasxml') && url.includes(`lists(guid'${LIVE_NEW_LIST_ID}')`)) {
+    liveDialogWrites.push({ url, method: 'POST', body: request.postData() || '' });
+    if (liveDialogFlags.expireOnField) {
+      liveDialogFlags.expireOnField = null;
+      return route.fulfill({ status: 401, json: { 'odata.error': { message: { value: 'The security token is expired.' } } } });
+    }
+    return route.fulfill({ json: { Id: 'nf2', InternalName: 'Region' } });
+  }
 
   if (url.includes(`lists(guid'${LIVE_LIST_ID}')/fields`)) {
     return route.fulfill({ json: { value: [
@@ -631,6 +671,10 @@ await live.route('**/_api/**', async (route) => {
     return route.fulfill({ json: { value: [
       { Id: LIVE_LIST_ID, Title: 'LiveRequests', BaseTemplate: 100, ItemCount: 4, Hidden: false, RootFolder: { ServerRelativeUrl: '/Lists/LiveRequests' } },
       { Id: LIVE_DENIED_ID, Title: 'LiveDenied', BaseTemplate: 100, ItemCount: 0, Hidden: false, RootFolder: { ServerRelativeUrl: '/Lists/LiveDenied' } },
+      // Same web as the source (this page's dialog target defaults to the
+      // host web) — gives the Region lookup's field.create step a real
+      // target to resolve, so the apply-dialog 401 test below reaches it.
+      { Id: 'live-regions', Title: 'Regions', BaseTemplate: 100, ItemCount: 3, Hidden: false, RootFolder: { ServerRelativeUrl: '/Lists/Regions' } },
     ] } });
   }
   return route.fulfill({ json: { value: [] } });
@@ -711,7 +755,7 @@ await check('apply-mock: a dry run touches nothing', () =>
 // fails (managed metadata is never recreated) and one lookup (Region) with no
 // target on /sites/target. Neither may cost the list its views or its
 // validation formula: views and validation depend on the list alone.
-await check('apply-mock: a Create run writes list → settings → content types → fields (tier order, Options bit 8) → views → validation last; one failed taxonomy column blocks nothing', () =>
+await check('apply-mock: a Create run writes list → settings → content types → fields (tier order, Options bit 8) → views → validation last; the skipped taxonomy column blocks nothing and is never retried', () =>
   applyPage.evaluate(async () => {
     globalThis.__DCSPAD_WB_WRITES__ = [];
     const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
@@ -762,8 +806,8 @@ await check('apply-mock: a Create run writes list → settings → content types
 
     return report.created === true
       && report.listId
-      && report.fields.added === 13 && report.fields.skipped === 1 && report.fields.failed.length === 1
-      && categoryStep.status === 'failed' && regionStep.status === 'skipped'
+      && report.fields.added === 13 && report.fields.skipped === 2 && report.fields.failed.length === 0
+      && categoryStep.status === 'skipped' && categoryStep.final === true && regionStep.status === 'skipped'
       && report.contentTypes.attached === 1
       && listCreateIdx === 0
       && settingsIdx === 1
@@ -1163,6 +1207,258 @@ await check('live-apply: a 401 mid-run aborts with report.aborted === "auth"', (
 });
 
 await liveApply.close();
+
+// ---- Mock UI: the apply dialog (slice 2b) ----------------------------------
+// Own page: opens the Schema tab's "Copy to…" and the all-lists grid's "New
+// from schema…" fresh, so it never inherits state from the read-only
+// schemaPage tests above (which end on the Documents list).
+
+const dialogPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await dialogPage.goto(WB_URL);
+await dialogPage.waitForSelector('.wb-home-cards');
+await dialogPage.fill('#wb-site-input', '/sites/schema');
+await dialogPage.locator('#wb-site-open').click();
+await dialogPage.waitForFunction(() =>
+  document.getElementById('wb-status-context').textContent.includes('/sites/schema'));
+await dialogPage.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
+await dialogPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
+await dialogPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
+await dialogPage.waitForSelector('.wb-tab');
+await dialogPage.locator('.wb-tab', { hasText: 'Schema' }).click();
+await dialogPage.waitForSelector('.wb-schema-copy');
+
+// Every dialog below except the final one (Dialog A) targets /sites/target
+// or an invalid URL, so the /sites/schema all-lists grid still shows exactly
+// one 'Requests' row until then — the last block deliberately runs the
+// same-web copy (which adds a 'Requests Copy' row) after everything else
+// that re-selects 'Requests' from that grid.
+
+// -- Dialog B: cross-web target (/sites/target) — lookups, dry run, create ordering
+
+await dialogPage.locator('.wb-schema-copy').click();
+await dialogPage.waitForSelector('.wb-schema-dialog');
+// Wait out the dialog's own auto-connect (to the same web) before driving it
+// further — racing a second connect() against the boot-time one is exactly
+// what a real user's fast typing could also trigger, but the assertions
+// below need one settled connection to reason about.
+await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
+
+await check('dialog: connecting to /sites/target keeps the source view alive and defaults the title to ‘Requests’', async () => {
+  const before = await dialogPage.locator('#wb-status-context').textContent();
+  await dialogPage.fill('.wb-schema-target', '/sites/target');
+  await dialogPage.locator('.wb-schema-connect').click();
+  await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Requests');
+  // The dialog's target client is a second, independent connection — the
+  // shell's own status line (the source view's "inspecting …" note) must
+  // read exactly as it did before the dialog ever touched /sites/target.
+  const after = await dialogPage.locator('#wb-status-context').textContent();
+  return after === before && !after.includes('/sites/target');
+});
+
+await check('dialog: lookup rows show Clients present and Region missing, with the policy radio', () =>
+  dialogPage.evaluate(() => {
+    const rows = [...document.querySelectorAll('.wb-schema-lookups tbody tr')];
+    const clientRow = rows.find((tr) => tr.cells[0].textContent.trim() === 'Client');
+    const regionRow = rows.find((tr) => tr.cells[0].textContent.trim() === 'Region');
+    const clientSelect = clientRow?.querySelector('select');
+    const regionSelect = regionRow?.querySelector('select');
+    const policyVisible = !document.querySelector('.wb-schema-lookup-policy').hidden;
+    return clientSelect?.value === 'Clients' && regionSelect?.value === '' && policyVisible;
+  }));
+
+await check('dialog: Dry run lists ordered steps and writes nothing', async () => {
+  await dialogPage.evaluate(() => { window.__DCSPAD_WB_WRITES__ = []; });
+  await dialogPage.locator('.wb-schema-dryrun').click();
+  await dialogPage.waitForFunction(() => document.querySelectorAll('.wb-schema-steps li').length > 3);
+  const steps = await dialogPage.locator('.wb-schema-steps li').allTextContents();
+  const writes = await dialogPage.evaluate(() => (window.__DCSPAD_WB_WRITES__ || []).length);
+  return steps.length > 3 && writes === 0;
+});
+
+await check('dialog: the text policy changes the Region plan line', async () => {
+  await dialogPage.locator('.wb-schema-lookup-policy input[value="text"]').check();
+  await dialogPage.locator('.wb-schema-dryrun').click();
+  await dialogPage.waitForFunction(() => [...document.querySelectorAll('.wb-schema-steps li')]
+    .some((li) => li.textContent.includes('Region') && li.textContent.includes('as text')));
+  await dialogPage.locator('.wb-schema-lookup-policy input[value="skip"]').check();
+  return true;
+});
+
+await check('dialog: Create records web/lists first and the validation MERGE last, and shows the mock-mode sentence with Cancel relabeled Close', async () => {
+  await dialogPage.evaluate(() => { window.__DCSPAD_WB_WRITES__ = []; });
+  await dialogPage.locator('.wb-schema-create').click();
+  await dialogPage.waitForSelector('.wb-schema-report:not([hidden])');
+  const headline = await dialogPage.locator('.wb-schema-report-headline').textContent();
+  const cancelText = await dialogPage.locator('.wb-schema-cancel').textContent();
+  const result = await dialogPage.evaluate(() => {
+    const writes = window.__DCSPAD_WB_WRITES__ || [];
+    const method = (w) => w.headers?.['X-HTTP-Method'] || w.headers?.['x-http-method'] || '';
+    const lower = (w) => w.url.toLowerCase();
+    const listIdx = writes.findIndex((w) => /\/web\/lists$/.test(lower(w)) && !method(w));
+    const settingsIdx = writes.findIndex((w, i) => i > listIdx && method(w) === 'MERGE'
+      && /lists\(guid'[0-9a-f-]+'\)$/.test(lower(w)));
+    const last = writes[writes.length - 1];
+    const validationLast = !!last && method(last) === 'MERGE' && JSON.parse(last.body || '{}').ValidationFormula !== undefined;
+    return { listIdx, settingsIdx, validationLast };
+  });
+  return headline.includes('mock mode') && cancelText.trim() === 'Close'
+    && result.listIdx === 0 && result.settingsIdx > result.listIdx && result.validationLast;
+});
+
+await check('dialog: the report .md downloads', async () => {
+  const [download] = await Promise.all([
+    dialogPage.waitForEvent('download'),
+    dialogPage.locator('.wb-schema-report-download').click(),
+  ]);
+  return /^schema-report-.*\.md$/.test(download.suggestedFilename());
+});
+
+await dialogPage.locator('.wb-schema-cancel').click();
+await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+
+// -- Dialog C: cross-tenant URL is refused, Create stays disabled
+
+await dialogPage.locator('.wb-schema-copy').click();
+await dialogPage.waitForSelector('.wb-schema-dialog');
+await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
+await check('dialog: a cross-tenant URL shows the different-tenant sentence and Create stays disabled', async () => {
+  await dialogPage.fill('.wb-schema-target', 'https://not-this-tenant.example.com/sites/x');
+  await dialogPage.locator('.wb-schema-connect').click();
+  await dialogPage.waitForFunction(() =>
+    document.querySelector('.wb-schema-target-status')?.textContent.includes('different tenant'));
+  const disabled = await dialogPage.locator('.wb-schema-create').isDisabled();
+  return disabled;
+});
+await dialogPage.locator('.wb-schema-close').click();
+await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+
+// -- Dialog D: an existing title on the target gates reconcile behind the consent box
+
+await dialogPage.locator('.wb-schema-copy').click();
+await dialogPage.waitForSelector('.wb-schema-dialog');
+await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
+await dialogPage.fill('.wb-schema-target', '/sites/target');
+await dialogPage.locator('.wb-schema-connect').click();
+// Dialog B already created a 'Requests' list on /sites/target (this page's
+// mock writer state persists across dialogs), so the default title here is
+// 'Requests Copy', not 'Requests' — wait for the probe to settle (the
+// lookup rows only render once it has) rather than pinning that value.
+await dialogPage.waitForFunction(() => document.querySelectorAll('.wb-schema-lookups tbody tr').length > 0);
+
+await check('dialog: an existing title (Archive Requests) gates reconcile behind the consent box and relabels Create', async () => {
+  await dialogPage.fill('.wb-schema-title', 'Archive Requests');
+  await dialogPage.waitForFunction(() =>
+    document.querySelector('.wb-schema-title-status')?.textContent.includes('already exists'));
+  const createDisabledDefault = await dialogPage.locator('.wb-schema-create').isDisabled();
+  await dialogPage.locator('.wb-schema-existing input[value="resume"]').check();
+  await dialogPage.waitForSelector('.wb-schema-gate:not([hidden])');
+  const createStillDisabled = await dialogPage.locator('.wb-schema-create').isDisabled();
+  await dialogPage.locator('.wb-schema-gate input[type="checkbox"]').check();
+  const label = await dialogPage.locator('.wb-schema-create').textContent();
+  const createEnabled = await dialogPage.locator('.wb-schema-create').isEnabled();
+  return createDisabledDefault && createStillDisabled && createEnabled && label.trim() === 'Add to existing list';
+});
+await dialogPage.locator('.wb-schema-close').click();
+await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+
+// -- New from schema… on the all-lists grid
+
+await dialogPage.locator('.wb-back').click();
+await dialogPage.waitForSelector('.wb-schema-new');
+
+await check('dialog: New from schema… rejects a non-JSON file inline', async () => {
+  await dialogPage.setInputFiles('.wb-schema-file', {
+    name: 'not-json.txt', mimeType: 'text/plain', buffer: Buffer.from('not json'),
+  });
+  await dialogPage.waitForSelector('.wb-schema-import-notice:not([hidden])');
+  const text = await dialogPage.locator('.wb-schema-import-notice').textContent();
+  return text.includes('valid JSON');
+});
+
+await check('dialog: New from schema… rejects an oversized file inline', async () => {
+  await dialogPage.locator('.wb-schema-import-notice button', { hasText: 'Dismiss' }).click();
+  await dialogPage.setInputFiles('.wb-schema-file', {
+    name: 'huge.json', mimeType: 'application/json', buffer: Buffer.alloc(6 * 1024 * 1024, '1'),
+  });
+  await dialogPage.waitForSelector('.wb-schema-import-notice:not([hidden])');
+  const text = await dialogPage.locator('.wb-schema-import-notice').textContent();
+  return text.includes('MB') && text.includes('import limit');
+});
+
+await check('dialog: New from schema… imports a v1 doc titled like an existing list and opens with ‘<Title> Copy’', async () => {
+  await dialogPage.locator('.wb-schema-import-notice button', { hasText: 'Dismiss' }).click();
+  const v1Doc = {
+    kind: 'dcspad-sputils-list-schema', version: 1,
+    source: { listTitle: 'Clients' },
+    list: { title: 'Clients', baseTemplate: 100 },
+    fields: [{ internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true }],
+    views: [{ title: 'All Items', fields: ['Title'] }],
+    contentTypes: [], warnings: [],
+  };
+  await dialogPage.setInputFiles('.wb-schema-file', {
+    name: 'clients-schema.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(v1Doc)),
+  });
+  await dialogPage.waitForSelector('.wb-schema-dialog');
+  await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Clients Copy');
+  return true;
+});
+await dialogPage.locator('.wb-schema-close').click();
+await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+
+// -- Dialog A: same-web copy → default title, Items gate, Create, Open the new list
+// Last: the created 'Requests Copy' would otherwise make every earlier
+// re-selection of the 'Requests' row ambiguous.
+
+await dialogPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
+await dialogPage.locator('.wb-tab', { hasText: 'Schema' }).click();
+await dialogPage.waitForSelector('.wb-schema-copy');
+
+await check('dialog: Copy to… on the same web defaults the title to ‘Requests Copy’', async () => {
+  await dialogPage.locator('.wb-schema-copy').click();
+  await dialogPage.waitForSelector('.wb-schema-dialog');
+  await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Requests Copy');
+  return true;
+});
+
+await check('dialog: the Items fieldset is disabled with the stage-1b reason', async () => {
+  const disabled = await dialogPage.locator('.wb-schema-items').evaluate((f) => f.disabled);
+  const title = await dialogPage.locator('.wb-schema-items').getAttribute('title');
+  return disabled && title.includes('stage 1b');
+});
+
+await check('dialog: Create (same web) writes the list and Open the new list navigates to it', async () => {
+  await dialogPage.locator('.wb-schema-create').click();
+  await dialogPage.waitForSelector('.wb-schema-report:not([hidden])');
+  await dialogPage.locator('.wb-schema-report-open').click();
+  await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+  await dialogPage.waitForFunction(() =>
+    document.querySelector('.wb-detail-head h2')?.textContent === 'Requests Copy');
+  return true;
+});
+
+await dialogPage.close();
+
+// ---- Stubbed live: the apply dialog's own 401 mid-run ----------------------
+// Reuses the existing `live` page (already SP-context-stubbed for the
+// capture checks above) — its route handler was extended, above, with the
+// write endpoints a live Create needs (web/lists POST, settings MERGE,
+// createfieldasxml) plus a Regions list so the Region lookup resolves.
+
+await check('live-dialog: a 401 mid-run shows EXPIRED_SESSION_NOTE', async () => {
+  await live.locator('.wb-back').click();
+  await live.locator('.wb-table tbody tr', { hasText: 'LiveRequests' }).locator('td').first().click();
+  await live.locator('.wb-tab', { hasText: 'Schema' }).click();
+  await live.waitForSelector('.wb-schema-copy');
+  liveDialogFlags.expireOnField = true;
+  await live.locator('.wb-schema-copy').click();
+  await live.waitForSelector('.wb-schema-dialog');
+  await live.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
+  await live.locator('.wb-schema-create').click();
+  await live.waitForSelector('.wb-schema-report:not([hidden])');
+  const headline = await live.locator('.wb-schema-report-headline').textContent();
+  return headline.includes('expired') && headline.includes('reload the page');
+});
 
 await page.close();
 await schemaPage.close();

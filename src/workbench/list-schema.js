@@ -398,10 +398,14 @@ export function xmlHasAttr(xml, name) {
 // Step into a write; buildApplyPlan and the dry-run preview both call this
 // same function so the plan a user reviews is the plan that runs.
 
+// `final` marks a refusal the planner made from the probe (a type clash, a
+// taken display name, a content type the target lacks): re-running the same
+// write cannot succeed, so retryPlan never re-enters it.
 function step(id, kind, label, {
   dependsOn = [], payload = {}, refs = {}, optional = false, status = 'planned', error = '',
+  final = false,
 } = {}) {
-  return { id, kind, label, dependsOn, payload, refs, optional, status, error, result: null };
+  return { id, kind, label, dependsOn, payload, refs, optional, status, error, final, result: null };
 }
 
 // Site (parent) content-type ids that every list already carries — never
@@ -554,6 +558,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
         refs: { listId: { self: true } },
         optional: true,
         status: isAvailable ? 'planned' : 'failed',
+        final: !isAvailable,
         error: isAvailable ? '' : `‘${ct.name}’ is not available on the target web — publish the content type there first.`,
       }));
     }
@@ -591,6 +596,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
         dependsOn: ['list', ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: same ? 'skipped' : 'failed',
+        final: !same,
         error: same ? '' : `exists on the target as ${present.typeAsString}, source is ${f.type} — values will not import.`,
       }));
       if (same) {
@@ -607,17 +613,22 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
         dependsOn: ['list', ...ctStepIds],
         payload: { field: f, options: fieldOptions },
         status: 'failed',
+        final: true,
         error: `a different column already uses the display name ‘${f.displayName}’.`,
       }));
       continue;
     }
     if (TAXONOMY_TYPES.has(f.type)) {
-      steps.push(step(id, 'field.create', `Column ‘${f.displayName}’ (${f.internalName})`, {
+      // Skipped, not failed: nothing about a re-run could create it (it needs
+      // a term-set binding), and a retry must never post its XML unbound.
+      steps.push(step(id, 'field.create', `Skip column ‘${f.displayName}’ (${f.internalName}) — managed metadata is not recreated`, {
         dependsOn: ['list', ...ctStepIds],
         payload: { field: f, options: fieldOptions },
-        status: 'failed',
-        error: 'managed metadata columns are not recreated automatically.',
+        status: 'skipped',
+        error: '',
+        final: true,
       }));
+      steps[steps.length - 1].skipReason = 'managed-metadata';
       continue;
     }
 
@@ -660,7 +671,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
               asText = true;
               warnings.push(`Lookup ‘${f.internalName}’ target ‘${mappedValue}’ is missing on the target — created as a single line of text (policy: text; a re-run cannot upgrade it).`);
             } else {
-              steps.push(step(id, 'field.create', `Skip column ‘${f.displayName}’ (${f.internalName})`, {
+              steps.push(step(id, 'field.create', `Skip column ‘${f.displayName}’ (${f.internalName}) — lookup target ‘${mappedValue}’ is missing (policy: skip)`, {
                 dependsOn: ['list', ...ctStepIds],
                 payload: { field: f, options: fieldOptions },
                 status: 'skipped',
@@ -775,7 +786,7 @@ export function reportFromPlan(plan, report = {}) {
 // button's input. Bound to the list the earlier run created (or adopted).
 export function retryPlan(report) {
   const steps = (report?.steps || [])
-    .filter((s) => s.status === 'failed')
+    .filter((s) => s.status === 'failed' && !s.final)
     .map((s) => ({ ...s, status: 'planned', error: '' }));
   return {
     title: report?.title || '',
