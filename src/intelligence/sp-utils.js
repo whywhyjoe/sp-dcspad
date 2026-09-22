@@ -28,6 +28,13 @@ export const SP_UTILS_FUNCTION_NAMES = [
   'exportListToExcel',
   'getListFields',
   'getListSchemaForMigration',
+  'getListSchema',
+  'exportListData',
+  'createListFromSchema',
+  'importListData',
+  'copyList',
+  'downloadJson',
+  'readJsonFile',
 ];
 
 export const SP_UTILS_JS_LIBRARIES = [{
@@ -167,6 +174,90 @@ interface SPUtilsAddFieldsResult {
   added: number;
   skipped: number;
   failed: Array<{ name: string; error: string }>;
+}
+
+/** Structure document produced by getListSchema(); input to createListFromSchema(). */
+interface SPUtilsSchemaDoc {
+  kind: 'dcspad-sputils-list-schema';
+  version: 1;
+  exported: string;
+  source: { siteUrl: string; listTitle: string; listId: string; rootFolder: string | null; itemCount: number };
+  list: {
+    title: string; description: string; baseTemplate: number;
+    enableVersioning: boolean; majorVersionLimit: number | null; enableMinorVersions: boolean;
+    majorWithMinorVersionsLimit: number | null; draftVersionVisibility: number; forceCheckout: boolean;
+    hidden: boolean; contentTypesEnabled: boolean; enableAttachments: boolean;
+    enableFolderCreation: boolean; enableModeration: boolean;
+  };
+  fields: Array<{
+    /** Source field id; dependent lookups are rebound through it. */
+    id: string;
+    internalName: string; staticName: string; displayName: string; type: string;
+    required: boolean; readOnly: boolean; fromBaseType: boolean;
+    /** true when the list author added it (not inherited, deletable). Only custom fields are recreated. */
+    custom: boolean;
+    description: string; defaultValue: string | null; choices: string[]; maxLength: number | null;
+    indexed: boolean; enforceUniqueValues: boolean; allowMultipleValues: boolean; customFormatter: string;
+    lookupListId: string | null;
+    /** Title of the lookup's target list (resolved from its GUID). */
+    lookupList: string | null;
+    lookupField: string | null; isSelfLookup: boolean;
+    /** A secondary lookup column that depends on a primary lookup. */
+    isDependentLookup: boolean; primaryFieldId: string | null;
+    schemaXml: string;
+  }>;
+  views: Array<{
+    id: string; title: string; defaultView: boolean; hidden: boolean; viewType: string;
+    viewQuery: string; rowLimit: number; paged: boolean; customFormatter: string; jsLink: string;
+    fields: string[];
+  }>;
+  contentTypes: Array<{ name: string; id: string; description?: string; group?: string; hidden?: boolean; readOnly?: boolean }>;
+  warnings: string[];
+}
+
+/** Item document produced by exportListData(); input to importListData(). */
+interface SPUtilsDataDoc {
+  kind: 'dcspad-sputils-list-data';
+  version: 1;
+  exported: string;
+  source: { siteUrl: string; listTitle: string; listId: string };
+  /** Compact per-field metadata keyed by internal name. */
+  fields: Record<string, {
+    type: string; custom: boolean; readOnly: boolean;
+    lookupList: string | null; lookupListId: string | null; lookupField: string | null; isSelfLookup: boolean; allowMultipleValues: boolean;
+  }>;
+  /** Raw REST rows plus resolved people/lookups and optional attachments. */
+  items: Array<SPUtilsListItem & {
+    _resolved: Record<string, Array<{ Id: number; Email?: string; LoginName?: string; Title?: string; value?: string | number | boolean | null }>>;
+    _attachments?: Array<{ name: string; base64: string }>;
+    /** Folder path (relative to the list root) the item lives in; empty at the root. */
+    _dir?: string;
+    /** true for a folder row; _folderPath is its own relative path. */
+    _folder?: boolean; _folderPath?: string;
+  }>;
+  warnings: string[];
+}
+
+/** Report returned by createListFromSchema(). */
+interface SPUtilsCreateReport {
+  dryRun: boolean; title: string; listId: string | null; created: boolean;
+  fields: { added: number; skipped: number; failed: Array<{ internalName: string; displayName: string; error: string }> };
+  views: { added: number; updated: number; failed: Array<{ title: string; error: string }> };
+  warnings: string[];
+}
+
+/** Report returned by importListData(). */
+interface SPUtilsImportReport {
+  dryRun: boolean; listTitle: string; attempted: number; created: number;
+  /** Source items skipped because a seeded idMap already had them. */
+  skipped: number;
+  failed: Array<{ sourceId: number; error: string }>;
+  fieldErrors: Array<{ sourceId: number; field: string; message: string }>;
+  /** Source item Id → new item Id. */
+  idMap: Record<number, number>;
+  attachments: { added: number; failed: number };
+  folders: { created: number; failed: number };
+  warnings: string[];
 }
 
 interface SPUtilsApi {
@@ -320,6 +411,92 @@ interface SPUtilsApi {
    * @example const schema = await SPUtils.getListSchemaForMigration("Requests")
    */
   getListSchemaForMigration(listTitle: string): Promise<SPUtilsListSchema>;
+
+  /**
+   * **Copy step 1.** Capture settings, every visible field (scrub-ready
+   * SchemaXml, lookup targets as list titles, column formatting), views and
+   * content types. No item data.
+   * @example const schema = await SPUtils.getListSchema("Requests")
+   */
+  getListSchema(listTitle: string): Promise<SPUtilsSchemaDoc>;
+
+  /**
+   * **Copy step 2.** Export every item as raw REST values plus resolved
+   * people (email/login) and lookups (shown value), so they can be re-resolved
+   * on another site. Attachments are embedded only when asked.
+   * @example const data = await SPUtils.exportListData("Requests", { includeAttachments: true })
+   */
+  exportListData(listTitle: string, options?: {
+    /** Embed attachment bytes as base64 (default false). */
+    includeAttachments?: boolean;
+    /** Reuse a getListSchema() result instead of reading the schema again. */
+    schema?: SPUtilsSchemaDoc;
+  }): Promise<SPUtilsDataDoc>;
+
+  /**
+   * **Copy step 3.** Create the list on the current site from a schema
+   * document, or add missing columns and views to an existing list of that
+   * title. Columns are created plain → lookup → calculated.
+   * @example await SPUtils.createListFromSchema(schema, { title: "Requests", dryRun: true })
+   */
+  createListFromSchema(schema: SPUtilsSchemaDoc, options?: {
+    /** Target list title (default: the source title). */
+    title?: string;
+    description?: string;
+    /** Log the plan and change nothing (default false). */
+    dryRun?: boolean;
+    /** Source lookup-list title → target list title, for lookups whose target has a different name here. */
+    lookupMap?: Record<string, string>;
+  }): Promise<SPUtilsCreateReport>;
+
+  /**
+   * **Copy step 4.** Create the items in the current site's list. Values use
+   * the ValidateUpdateListItem conventions; people are re-resolved by email,
+   * lookups by shown value, self-referencing lookups in a second pass.
+   * @example await SPUtils.importListData(data, { listTitle: "Requests", dryRun: true })
+   */
+  importListData(data: SPUtilsDataDoc, options?: {
+    /** Target list (default: the source title). */
+    listTitle?: string;
+    /** Show sample payloads and counts, create nothing (default false). */
+    dryRun?: boolean;
+    /** Parallel creates (default 1, which keeps source order; higher is faster but scrambles new ids). */
+    concurrency?: number;
+    /** Keep Created/Modified/Author/Editor from the source (default false). Seconds are not preserved; app/system authors fall back to the importing user. */
+    preserveAuthorship?: boolean;
+    /** Re-upload embedded attachments (default true). */
+    includeAttachments?: boolean;
+    /** A previous report's idMap: source items already in it are skipped, so a partial import resumes without duplicates. */
+    idMap?: Record<number, number>;
+  }): Promise<SPUtilsImportReport>;
+
+  /**
+   * Steps 1–4 chained. On the same site the copy is named "<title> Copy";
+   * with targetSite the context switches before create/import and the title
+   * is kept. Returns each step's output so a partial run can be resumed.
+   * @example await SPUtils.copyList("Requests", { targetSite: "sites/Archive", dryRun: true })
+   */
+  copyList(sourceTitle: string, options?: {
+    targetTitle?: string;
+    /** Site path or absolute same-tenant URL; passed to setupContext(). */
+    targetSite?: string;
+    dryRun?: boolean;
+    includeAttachments?: boolean;
+    preserveAuthorship?: boolean;
+    lookupMap?: Record<string, string>;
+  }): Promise<{ schema: SPUtilsSchemaDoc; data: SPUtilsDataDoc; created: SPUtilsCreateReport; imported: SPUtilsImportReport; targetSite: string }>;
+
+  /**
+   * Save any object as a pretty-printed .json download.
+   * @example SPUtils.downloadJson(schema, "Requests.schema.json")
+   */
+  downloadJson(object: unknown, fileName?: string): void;
+
+  /**
+   * Read and parse a .json file stored in a library on the current site.
+   * @example const data = await SPUtils.readJsonFile("/sites/X/Shared Documents/Requests.data.json")
+   */
+  readJsonFile<T = any>(filePath: string): Promise<T>;
 }
 
 /** DCSPad SP Utilities. Run \`SPUtils.help()\` for the function list. */

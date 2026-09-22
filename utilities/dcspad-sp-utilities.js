@@ -88,6 +88,12 @@ console.log(`[SPUtils] ${lastModified}
  * @function getAllLists()
  *   Retrieves and displays all lists on the current SharePoint site (console.table).
  *
+ * @function getListSchema(listTitle) · exportListData(listTitle, options) ·
+ *           createListFromSchema(schema, options) · importListData(data, options) ·
+ *           copyList(sourceTitle, options) · downloadJson(object, fileName) · readJsonFile(filePath)
+ *   The list-copy primitives: capture structure, export items, recreate, import — in
+ *   memory across two setupContext() calls or through JSON files. All support dryRun.
+ *
  * @function getListSchemaForMigration(listTitle)
  * Retrieves SharePoint list schema information including list settings, field
  * definitions, content types, and views. Useful for migration, backup, and
@@ -145,7 +151,7 @@ window.SPUtils = (() => {
         example: `await SPUtils.getAllLists()` },
       { name: "getListFields", sig: "(listTitle)", what: "Visible fields with type, required, read-only. Returns the array.",
         example: `const f = await SPUtils.getListFields("Requests")` },
-      { name: "getListSchemaForMigration", sig: "(listTitle)", what: "Settings + fields + views + content types as one object, for rebuilding the list elsewhere.",
+      { name: "getListSchemaForMigration", sig: "(listTitle)", what: "Older read-only schema dump. For copying a list use getListSchema().",
         example: `const schema = await SPUtils.getListSchemaForMigration("Requests")` },
       { name: "previewListItems", sig: "(listTitle, batchSize = 100)", what: "Table of all items (Id, Title).",
         example: `await SPUtils.previewListItems("Requests")` },
@@ -168,7 +174,21 @@ window.SPUtils = (() => {
       { name: "getSharingLinkForItem", sig: "(filePath, canEdit = false, expireInDays = 1)", what: "Create a view or edit sharing link for a file (0 days = no expiry).",
         example: `await SPUtils.getSharingLinkForItem("/sites/X/Shared Documents/a.pdf", false, 7)` },
       { name: "removeAllSharingLinksForItem", sig: "(filePath, areYouSure)", what: "Revoke every sharing link on a file. Second argument must be true.",
-        example: `await SPUtils.removeAllSharingLinksForItem("/sites/X/Shared Documents/a.pdf", true)` }
+        example: `await SPUtils.removeAllSharingLinksForItem("/sites/X/Shared Documents/a.pdf", true)` },
+      { name: "getListSchema", sig: "(listTitle)", what: "COPY step 1: settings, fields (SchemaXml, lookups, formatting), views. Rebuildable; no item data.",
+        example: `const schema = await SPUtils.getListSchema("Requests")` },
+      { name: "exportListData", sig: "(listTitle, { includeAttachments, schema })", what: "COPY step 2: every item as JSON with people and lookups resolved (attachments opt-in).",
+        example: `const data = await SPUtils.exportListData("Requests")` },
+      { name: "createListFromSchema", sig: "(schema, { title, description, dryRun, lookupMap })", what: "COPY step 3: create the list (or add missing columns/views) on the current site.",
+        example: `await SPUtils.createListFromSchema(schema, { dryRun: true })` },
+      { name: "importListData", sig: "(data, { listTitle, dryRun, concurrency, preserveAuthorship, includeAttachments, idMap })", what: "COPY step 4: create the items; people by email, lookups by value, self-lookups in pass 2.",
+        example: `await SPUtils.importListData(data, { listTitle: "Requests", dryRun: true })` },
+      { name: "copyList", sig: "(sourceTitle, { targetTitle, targetSite, dryRun, includeAttachments, preserveAuthorship, lookupMap })", what: "Steps 1–4 chained. Same site → \"<title> Copy\"; targetSite switches context for the create/import.",
+        example: `await SPUtils.copyList("Requests", { targetSite: "sites/Archive", dryRun: true })` },
+      { name: "downloadJson", sig: "(object, fileName)", what: "Save a schema/data document (or anything) as a .json download.",
+        example: `SPUtils.downloadJson(schema, "Requests.schema.json")` },
+      { name: "readJsonFile", sig: "(filePath)", what: "Read a .json document from a library on the current site.",
+        example: `const schema = await SPUtils.readJsonFile("/sites/X/Shared Documents/Requests.schema.json")` }
     ];
 
     // ---------------------------------------------------------------
@@ -309,11 +329,14 @@ window.SPUtils = (() => {
      * // Initialize for a managed path site
      * window.SPUtils.setupContext("sites/ProjectX");
      */
+    // "sites/X", "/sites/X" or an absolute same-tenant URL → normalized absolute site URL.
+    const resolveSiteUrl = (siteSubUrl) => {
+      const raw = String(siteSubUrl || "").trim();
+      return (/^https?:\/\//i.test(raw) ? raw : SPTenantBase + raw.replace(/^\/+/, "")).replace(/\/+$/, "");
+    };
     const setupContext = (siteSubUrl) => {
       try {
-        const raw = String(siteSubUrl || "").trim();
-        const baseUrl = (/^https?:\/\//i.test(raw) ? raw : SPTenantBase + raw.replace(/^\/+/, ""))
-          .replace(/\/+$/, "");
+        const baseUrl = resolveSiteUrl(siteSubUrl);
         pnp2.sp.setup({ sp: { baseUrl } });
         writeStatus("setupContext", `Context set to: ${baseUrl}`);
         siteBaseUrl = baseUrl;
@@ -341,12 +364,14 @@ window.SPUtils = (() => {
           try {
               return await fn();
           } catch (err) {
-              const is429 = err?.status === 429 || (err?.message || "").includes("Too Many Requests");
-              if (!is429 || attempt === maxRetries) {
+              const throttled = err?.status === 429 || err?.status === 503 || (err?.message || "").includes("Too Many Requests");
+              // noRetry marks an error whose own retry budget is already spent (the digest refresh).
+              if (err?.noRetry || !throttled || attempt === maxRetries) {
                   throw err;
               }
-              const delay = baseDelayMs * Math.pow(2, attempt);
-              writeStatus("retryWithBackoff", `429 detected. Retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`);
+              // Retry-After (seconds) wins over the exponential schedule when the server sends one.
+              const delay = err?.retryAfterMs || baseDelayMs * Math.pow(2, attempt);
+              writeStatus("retryWithBackoff", `${err?.status || 429} detected. Retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`);
               await new Promise(res => setTimeout(res, delay));
           }
       }
@@ -368,21 +393,10 @@ window.SPUtils = (() => {
      */
     const previewListItems = async (listTitle, batchSize = 100) => {
       let items = [];
-      let skip = 0;
   
       writeStatus("previewListItems", `Fetching items from list: ${listTitle}`);
   
-      while (true) {
-        const page = await pnp2.sp.web.lists.getByTitle(listTitle).items
-          .select("Id", "Title")
-          .top(batchSize)
-          .skip(skip)();
-  
-        if (page.length === 0) break;
-  
-        items = items.concat(page);
-        skip += batchSize;
-      }
+      items = await fetchAllRows(listPathByTitle(listTitle), { select: "Id,Title", orderby: "ID asc", top: batchSize });
   
       writeStatus("previewListItems", `Total items found: ${items.length}`);
       console.table(items.map(item => ({ Id: item.Id, Title: item.Title })));
@@ -487,21 +501,10 @@ window.SPUtils = (() => {
       } = options;
   
       let items = [];
-      let skip = 0;
   
       writeStatus("deleteListItems", `Fetching items from list: ${listTitle}`);
   
-      while (true) {
-        const page = await pnp2.sp.web.lists.getByTitle(listTitle).items
-          .select("Id", "Title")
-          .top(batchSize)
-          .skip(skip)();
-  
-        if (page.length === 0) break;
-  
-        items = items.concat(page);
-        skip += batchSize;
-      }
+      items = await fetchAllRows(listPathByTitle(listTitle), { select: "Id,Title", orderby: "ID asc", top: batchSize });
   
       writeStatus("deleteListItems", `Total items fetched: ${items.length}`);
   
@@ -1931,6 +1934,1290 @@ const syncUsersFromCSVToGroups = async (filePath, {
 
 
 
+// =====================================================================
+// LIST COPY PRIMITIVES
+//
+// Four composable steps plus a wrapper. Each step can be run alone,
+// dry-run, and handed a JSON object produced by the previous step —
+// in memory across two setupContext() calls, or through a file via
+// downloadJson() / readJsonFile().
+//
+//   const schema = await SPUtils.getListSchema("Requests");
+//   const data   = await SPUtils.exportListData("Requests");
+//   SPUtils.setupContext("sites/OtherSite");
+//   await SPUtils.createListFromSchema(schema, { dryRun: true });
+//   await SPUtils.importListData(data, { dryRun: true });
+//
+// Writes go through ValidateUpdateListItem / AddValidateUpdateItemUsingPath
+// with the string conventions SharePoint documents for every field type,
+// so one code path covers text, choice, multi-choice, number, date,
+// yes/no, URL, person, lookup and managed metadata — and the server
+// reports per-field errors instead of a bare 400.
+// =====================================================================
+
+const SCHEMA_KIND = "dcspad-sputils-list-schema";
+const DATA_KIND = "dcspad-sputils-list-data";
+
+const requireContext = (FN) => {
+  if (!contextInitialized) {
+    writeStatus(FN, "⚠️ Call setupContext() first.");
+    throw new Error("Context not initialized");
+  }
+};
+
+const escOData = (s) => String(s).replace(/'/g, "''");
+const cleanGuid = (g) => String(g || "").replace(/[{}]/g, "").toLowerCase();
+
+// Site URL for raw _api calls: the setupContext() target, else the page's web.
+const apiBase = () => siteBaseUrl
+  || (typeof _spPageContextInfo !== "undefined" && _spPageContextInfo.webAbsoluteUrl)
+  || location.origin;
+
+// An Error carrying the HTTP status and the server's Retry-After (ms), so
+// retryWithBackoff can recognise throttling from any of the raw fetch paths.
+const httpError = (res, what) => {
+  const err = new Error(`HTTP ${res.status} ${res.statusText} for ${what}`);
+  err.status = res.status;
+  const retryAfter = Number(res.headers?.get?.("Retry-After"));
+  if (retryAfter > 0) err.retryAfterMs = retryAfter * 1000;
+  return err;
+};
+
+// Raw REST paging (nometadata). Follows @odata.nextLink — never $skip,
+// which fails past the list view threshold.
+const fetchAllRows = async (listPath, { select, filter, orderby, top = 500 } = {}) => {
+  const params = [`$top=${top}`];
+  if (select) params.push(`$select=${select}`);
+  if (filter) params.push(`$filter=${filter}`);
+  if (orderby) params.push(`$orderby=${orderby}`);
+  let url = `${apiBase()}/_api/web/${listPath}/items?${params.join("&")}`;
+  const rows = [];
+  while (url) {
+    const json = await retryWithBackoff(async () => {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json;odata=nometadata" },
+        credentials: "same-origin"
+      });
+      if (!res.ok) throw httpError(res, url);
+      return res.json();
+    });
+    rows.push(...(json.value || []));
+    url = json["@odata.nextLink"] || null;
+  }
+  return rows;
+};
+const listPathByTitle = (title) => `lists/getByTitle('${encodeURIComponent(escOData(title))}')`;
+const listPathById = (id) => `lists(guid'${cleanGuid(id)}')`;
+
+// Request digest per site, refreshed a minute before it expires. Item writes
+// go through raw REST (ValidateUpdateListItem endpoints) rather than the
+// PnPjs item API: PnPjs 2.15 has no AddValidateUpdateItemUsingPath.
+const digestCache = new Map(); // base -> { value, expires }
+let digestInFlight = null; // single-flight: concurrent workers share one refresh
+const getDigest = async (force = false) => {
+  const base = apiBase();
+  const cached = digestCache.get(base);
+  if (!force && cached && cached.expires > Date.now()) return cached.value;
+  if (digestInFlight) return digestInFlight;
+  digestInFlight = retryWithBackoff(async () => {
+    const res = await fetch(`${base}/_api/contextinfo`, {
+      method: "POST",
+      headers: { Accept: "application/json;odata=nometadata" },
+      credentials: "same-origin"
+    });
+    if (!res.ok) throw httpError(res, "contextinfo");
+    const json = await res.json();
+    const value = json.FormDigestValue;
+    const seconds = Number(json.FormDigestTimeoutSeconds) || 1800;
+    digestCache.set(base, { value, expires: Date.now() + (seconds - 60) * 1000 });
+    return value;
+  }).catch((err) => {
+    // The refresh already retried throttling; the write that needed the
+    // digest must not restart that budget.
+    err.noRetry = true;
+    throw err;
+  }).finally(() => { digestInFlight = null; });
+  return digestInFlight;
+};
+// GET helper with the same error shape as spPostJson.
+const spGetJson = async (path) => {
+  const res = await fetch(`${apiBase()}/_api/web/${path}`, {
+    headers: { Accept: "application/json;odata=nometadata" }, credentials: "same-origin"
+  });
+  if (!res.ok) throw httpError(res, path);
+  return res.json();
+};
+const spPostJson = async (path, body) => {
+  const send = async (digest) => fetch(`${apiBase()}/_api/web/${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json;odata=nometadata",
+      "Content-Type": "application/json;odata=nometadata",
+      "X-RequestDigest": digest
+    },
+    credentials: "same-origin",
+    body: JSON.stringify(body)
+  });
+  let res = await send(await getDigest());
+  if (res.status === 403) res = await send(await getDigest(true)); // expired digest looks like 403
+  if (!res.ok) {
+    let detail = "";
+    try { const j = await res.json(); detail = j?.["odata.error"]?.message?.value || j?.error?.message?.value || j?.error?.message || ""; } catch {}
+    const err = httpError(res, path);
+    if (detail) err.message += `: ${detail}`;
+    throw err;
+  }
+  return res.status === 204 ? {} : res.json();
+};
+// Both ValidateUpdate endpoints answer with rows of { FieldName, FieldValue, HasException, ErrorMessage }.
+const formResultRows = (result) => Array.isArray(result) ? result : (result?.value || result?.results || []);
+
+// ValidateUpdateListItem wants dates the way the web's regional settings
+// display them, in the WEB's time zone — never ISO. Verified live on
+// en-US, en-GB, en-CA, fr-FR and ja-JP webs: SP.DateFormat 0 = month-day-year,
+// 1 = day-month-year, 2 = year-month-day, and the separator varies. The
+// definitive source for the date order is the server's own sample in a
+// validation error ("Enter a date and time like this: 23/02/2012 02:25 PM"),
+// so calibrateDateFormat() asks for it once per site with a create that a
+// deliberately invalid date aborts — nothing is written; settings are the
+// fallback. The time is always written as a zero-padded 24-hour clock: every
+// locale tested accepts it, while AM/PM markers are locale-specific and the
+// ja-JP web rejects its own sample form. Time-zone conversion uses the
+// server's utcToLocalTime, cached per UTC day, with an exact per-instant
+// lookup on DST-transition days.
+const regionalCache = new Map(); // base -> { ...settings, tzOffsetByDay, tzOffsetExact, format }
+const getRegionalSettings = async () => {
+  const base = apiBase();
+  if (!regionalCache.has(base)) {
+    // Retried like every other call; a failure is an error, never a guessed
+    // default — a wrong date order silently corrupts every date written.
+    let settings;
+    try {
+      settings = await retryWithBackoff(() => spGetJson("RegionalSettings?$select=DateFormat,DateSeparator,TimeSeparator,Time24,AM,PM,LocaleId"));
+    } catch (err) {
+      throw new Error(`Regional settings of ${base} could not be read (${err.message}); dates cannot be written safely.`);
+    }
+    regionalCache.set(base, { ...settings, tzOffsetByDay: new Map(), tzOffsetExact: new Map(), format: null });
+  }
+  return regionalCache.get(base);
+};
+
+// A date format spec: { order: "mdy"|"dmy"|"ymd", sep, timeSep, source }
+const formatFromSettings = (s) => ({
+  order: s.DateFormat === 2 ? "ymd" : s.DateFormat === 1 ? "dmy" : "mdy",
+  sep: s.DateSeparator || "/",
+  timeSep: s.TimeSeparator || ":",
+  source: "settings"
+});
+// Parse "2/23/2012 2:25 PM" / "23/02/2012 02:25 PM" / "2012-02-23 2:25 PM" / "2012/02/23 午後 2:25".
+const formatFromSample = (sample, s) => {
+  const m = String(sample || "").match(/(\d{1,4})([^\d\s])(\d{1,2})\2(\d{1,4})/);
+  if (!m) return null;
+  const parts = [m[1], m[3], m[4]];
+  const order = parts.map(p => (p.length === 4 ? "y" : Number(p) === 23 ? "d" : "m")).join("");
+  if (!/^(mdy|dmy|ymd)$/.test(order)) return null;
+  const rest = sample.slice(m.index + m[0].length);
+  const tm = rest.match(/\d{1,2}([^\d\s])\d{2}/);
+  return { order, sep: m[2], timeSep: tm ? tm[1] : (s.TimeSeparator || ":"), source: "sample" };
+};
+// Ask the target list for its expected sample. The create is aborted by the
+// invalid date (a rejected field never creates an item), so this is read-only.
+const calibrateDateFormat = async (listPath, rootFolder, probeField) => {
+  const s = await getRegionalSettings();
+  if (s.format) return s.format;
+  let format = null;
+  try {
+    const result = await spPostJson(`${listPath}/AddValidateUpdateItemUsingPath`, {
+      listItemCreateInfo: { FolderPath: { DecodedUrl: rootFolder }, UnderlyingObjectType: 0 },
+      formValues: [{ FieldName: probeField, FieldValue: "not-a-date" }],
+      bNewDocumentUpdate: false
+    });
+    const row = formResultRows(result).find(r => r.FieldName === probeField && r.HasException);
+    const sample = row?.ErrorMessage?.split(":").slice(1).join(":") || "";
+    format = formatFromSample(sample, s);
+  } catch {}
+  s.format = format || formatFromSettings(s);
+  return s.format;
+};
+
+// The web's offset from UTC for an instant, from the server. Retried; on
+// failure the caller's date fails, nothing is cached.
+const utcOffsetAt = async (utc) => {
+  try {
+    const local = (await retryWithBackoff(() => spGetJson(`RegionalSettings/TimeZone/utcToLocalTime(@d)?@d='${utc.toISOString()}'`))).value;
+    return new Date(`${local}Z`).getTime() - utc.getTime();
+  } catch (err) {
+    throw new Error(`Web time zone could not be read (${err.message}); date not written.`);
+  }
+};
+const offsetForDay = async (s, day) => {
+  if (!s.tzOffsetByDay.has(day)) s.tzOffsetByDay.set(day, await utcOffsetAt(new Date(`${day}T12:00:00Z`)));
+  return s.tzOffsetByDay.get(day);
+};
+const webLocalDate = async (utc) => {
+  const s = await getRegionalSettings();
+  const dayOf = (d) => d.toISOString().slice(0, 10);
+  const day = dayOf(utc);
+  const here = await offsetForDay(s, day);
+  const prev = await offsetForDay(s, dayOf(new Date(utc.getTime() - 86400000)));
+  const next = await offsetForDay(s, dayOf(new Date(utc.getTime() + 86400000)));
+  let offsetMs = here;
+  if (here !== prev || here !== next) {
+    // A transition day: the noon offset may be wrong for this instant.
+    const key = utc.toISOString();
+    if (!s.tzOffsetExact.has(key)) s.tzOffsetExact.set(key, await utcOffsetAt(utc));
+    offsetMs = s.tzOffsetExact.get(key);
+  }
+  return new Date(utc.getTime() + offsetMs);
+};
+const toWebDateString = async (value, { dateOnly = false } = {}) => {
+  const utc = new Date(value);
+  if (Number.isNaN(utc.getTime())) return String(value);
+  const s = await getRegionalSettings();
+  const f = s.format || formatFromSettings(s);
+  const d = await webLocalDate(utc);
+  const n2 = (n) => String(n).padStart(2, "0");
+  const partsByKey = { y: String(d.getUTCFullYear()), m: n2(d.getUTCMonth() + 1), d: n2(d.getUTCDate()) };
+  const dateText = f.order.split("").map(k => partsByKey[k]).join(f.sep);
+  if (dateOnly) return dateText;
+  return `${dateText} ${n2(d.getUTCHours())}${f.timeSep}${n2(d.getUTCMinutes())}`;
+};
+
+// Small promise pool shared by the copy steps.
+const runPool = async (items, limit, worker) => {
+  const q = [...items];
+  const n = Math.max(1, Math.min(limit, q.length || 1));
+  await Promise.all(new Array(n).fill(0).map(async () => {
+    while (q.length) { await worker(q.shift()); }
+  }));
+};
+
+const USER_TYPES = new Set(["User", "UserMulti"]);
+const LOOKUP_TYPES = new Set(["Lookup", "LookupMulti"]);
+const TAXONOMY_TYPES = new Set(["TaxonomyFieldType", "TaxonomyFieldTypeMulti"]);
+// Never written on import; SharePoint owns them (authorship is handled separately).
+const NEVER_WRITE = new Set(["ID", "Id", "Attachments", "ContentType", "ContentTypeId", "Author", "Editor",
+  "Created", "Modified", "GUID", "FileRef", "FileDirRef", "FileLeafRef", "UniqueId", "_UIVersionString", "Order"]);
+const NEVER_WRITE_TYPES = new Set(["Computed", "Counter", "Attachments", "File", "ContentTypeId", "Calculated", "Guid"]);
+
+// A "custom" field is one the list author added: not inherited from the base
+// type and deletable. Site columns added to the list qualify; system columns
+// (Author, Modified, ContentType, _UIVersionString…) do not.
+const isCustomField = (f) => !f.FromBaseType && f.CanBeDeleted === true && !f.Hidden
+  && f.TypeAsString !== "Computed";
+
+// Strip everything that ties SchemaXml to its source list/web so
+// createFieldAsXml recreates the column cleanly on another list.
+const scrubSchemaXml = (xml, { lookupListId = null } = {}) => {
+  const doc = new DOMParser().parseFromString(xml, "text/xml");
+  const el = doc.documentElement;
+  if (!el || el.nodeName === "parsererror") throw new Error("SchemaXml could not be parsed");
+  for (const attr of ["ID", "SourceID", "ColName", "RowOrdinal", "Version", "WebId", "List", "Sealed", "Customization"]) {
+    el.removeAttribute(attr);
+  }
+  if (lookupListId) el.setAttribute("List", `{${cleanGuid(lookupListId)}}`);
+  return new XMLSerializer().serializeToString(el);
+};
+
+const base64FromBuffer = (buffer) => {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+};
+const bufferFromBase64 = (b64) => {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+};
+
+/**
+ * getListSchema
+ *
+ * Captures everything needed to rebuild a list's structure elsewhere:
+ * settings, every visible field (with scrub-ready SchemaXml, lookup targets
+ * resolved to list titles, column formatting), views (query, row limit,
+ * ordered fields, view formatting) and content types (informational).
+ * Item data is NOT included — see exportListData().
+ *
+ * @param {string} listTitle - Display name of the list
+ * @returns {Promise<object>} A `dcspad-sputils-list-schema` document
+ * @example
+ * const schema = await SPUtils.getListSchema("Requests");
+ * SPUtils.downloadJson(schema, "Requests.schema.json");
+ */
+const getListSchema = async (listTitle) => {
+  const FN = "getListSchema";
+  requireContext(FN);
+  writeStatus(FN, `Reading schema of "${listTitle}"...`);
+  const web = pnp2.sp.web;
+  const list = web.lists.getByTitle(listTitle);
+  const warnings = [];
+
+  const settings = await list
+    .select("Id", "Title", "Description", "BaseTemplate", "EnableVersioning", "MajorVersionLimit",
+      "EnableMinorVersions", "MajorWithMinorVersionsLimit", "DraftVersionVisibility", "ForceCheckout",
+      "Hidden", "ContentTypesEnabled", "EnableAttachments", "EnableFolderCreation", "EnableModeration",
+      "ItemCount", "RootFolder/ServerRelativeUrl")
+    .expand("RootFolder")();
+
+  if (settings.BaseTemplate !== 100) {
+    warnings.push(`BaseTemplate ${settings.BaseTemplate}: only generic lists (100) are fully supported; libraries need a file copy, not an item import.`);
+  }
+  if (settings.ContentTypesEnabled) {
+    warnings.push("Content types are enabled on the source; they are exported for reference but not recreated.");
+  }
+
+  // No $select on purpose: fields are heterogeneous and type-specific
+  // properties (LookupList, Choices, CustomFormatter…) only exist on some.
+  const rawFields = await list.fields.filter("Hidden eq false")();
+  const listTitleCache = new Map();
+  const lookupTitle = async (guid) => {
+    const id = cleanGuid(guid);
+    if (!id) return null;
+    if (id === cleanGuid(settings.Id)) return settings.Title;
+    if (!listTitleCache.has(id)) {
+      try {
+        const target = await web.lists.getById(id).select("Title")();
+        listTitleCache.set(id, target.Title);
+      } catch { listTitleCache.set(id, null); }
+    }
+    return listTitleCache.get(id);
+  };
+
+  const fields = [];
+  for (const f of rawFields) {
+    const type = f.TypeAsString;
+    const isLookup = LOOKUP_TYPES.has(type);
+    const custom = isCustomField(f);
+    // Lookup targets are resolved for custom columns only; system lookup-typed
+    // fields (ItemChildCount, AppAuthor, compliance columns) point at hidden lists.
+    const lookupListId = isLookup && custom ? cleanGuid(f.LookupList) : null;
+    const entry = {
+      id: cleanGuid(f.Id),
+      internalName: f.InternalName,
+      staticName: f.StaticName,
+      displayName: f.Title,
+      type,
+      required: !!f.Required,
+      readOnly: !!f.ReadOnlyField,
+      fromBaseType: !!f.FromBaseType,
+      custom,
+      description: f.Description || "",
+      defaultValue: f.DefaultValue ?? null,
+      choices: Array.isArray(f.Choices) ? f.Choices : (f.Choices?.results || []),
+      maxLength: f.MaxLength ?? null,
+      indexed: !!f.Indexed,
+      enforceUniqueValues: !!f.EnforceUniqueValues,
+      allowMultipleValues: !!f.AllowMultipleValues || type.endsWith("Multi"),
+      customFormatter: f.CustomFormatter || "",
+      lookupListId,
+      lookupList: lookupListId ? await lookupTitle(lookupListId) : null,
+      lookupField: isLookup ? (f.LookupField || "Title") : null,
+      isSelfLookup: !!lookupListId && lookupListId === cleanGuid(settings.Id),
+      // A secondary ("additional") lookup column depends on a primary lookup by field id.
+      isDependentLookup: !!f.IsDependentLookup,
+      primaryFieldId: f.IsDependentLookup ? cleanGuid(f.PrimaryFieldId) : null,
+      schemaXml: f.SchemaXml
+    };
+    if (lookupListId && !entry.lookupList) warnings.push(`Lookup "${f.InternalName}" points at a list that could not be read; it will need a lookupMap entry.`);
+    if (TAXONOMY_TYPES.has(type) && entry.custom) warnings.push(`Managed metadata column "${f.InternalName}" cannot be recreated automatically (needs a term-set binding).`);
+    fields.push(entry);
+  }
+
+  const rawViews = await list.views.filter("PersonalView eq false")();
+  const views = [];
+  for (const v of rawViews) {
+    let viewFields = [];
+    try {
+      const vf = await list.views.getById(v.Id).fields();
+      viewFields = vf.Items || vf.results || [];
+    } catch (err) {
+      warnings.push(`View "${v.Title}": fields could not be read (${err.message}).`);
+    }
+    views.push({
+      id: v.Id,
+      title: v.Title,
+      defaultView: !!v.DefaultView,
+      hidden: !!v.Hidden,
+      viewType: v.ViewType || "HTML",
+      viewQuery: v.ViewQuery || "",
+      rowLimit: v.RowLimit ?? 30,
+      paged: v.Paged !== false,
+      customFormatter: v.CustomFormatter || "",
+      jsLink: v.JSLink || "",
+      fields: viewFields
+    });
+  }
+
+  let contentTypes = [];
+  try {
+    contentTypes = (await list.contentTypes.select("Name", "StringId", "Description", "Group", "Hidden", "ReadOnly")())
+      .map(ct => ({ name: ct.Name, id: ct.StringId, description: ct.Description, group: ct.Group, hidden: ct.Hidden, readOnly: ct.ReadOnly }));
+  } catch (err) {
+    warnings.push(`Content types could not be read (${err.message}).`);
+  }
+
+  const schema = {
+    kind: SCHEMA_KIND,
+    version: 1,
+    exported: new Date().toISOString(),
+    source: {
+      siteUrl: apiBase(),
+      listTitle: settings.Title,
+      listId: cleanGuid(settings.Id),
+      rootFolder: settings.RootFolder?.ServerRelativeUrl || null,
+      itemCount: settings.ItemCount
+    },
+    list: {
+      title: settings.Title,
+      description: settings.Description || "",
+      baseTemplate: settings.BaseTemplate,
+      enableVersioning: !!settings.EnableVersioning,
+      majorVersionLimit: settings.MajorVersionLimit ?? null,
+      enableMinorVersions: !!settings.EnableMinorVersions,
+      majorWithMinorVersionsLimit: settings.MajorWithMinorVersionsLimit ?? null,
+      draftVersionVisibility: settings.DraftVersionVisibility ?? 0,
+      forceCheckout: !!settings.ForceCheckout,
+      hidden: !!settings.Hidden,
+      contentTypesEnabled: !!settings.ContentTypesEnabled,
+      enableAttachments: settings.EnableAttachments !== false,
+      enableFolderCreation: !!settings.EnableFolderCreation,
+      enableModeration: !!settings.EnableModeration
+    },
+    fields,
+    views,
+    contentTypes,
+    warnings
+  };
+
+  writeStatus(FN, `Done. Fields=${fields.length} (custom ${fields.filter(f => f.custom).length}), Views=${views.length}, Warnings=${warnings.length}`);
+  warnings.forEach(w => writeStatus(FN, `⚠️ ${w}`));
+  return schema;
+};
+
+// Id → user cache for the current site, filled lazily.
+const siteUserCache = new Map(); // siteBase -> Map(id -> {Id, Email, LoginName, Title})
+const getSiteUsers = async () => {
+  const base = apiBase();
+  if (!siteUserCache.has(base)) {
+    const users = await pnp2.sp.web.siteUsers.select("Id", "Email", "LoginName", "Title")();
+    siteUserCache.set(base, new Map(users.map(u => [u.Id, u])));
+  }
+  return siteUserCache.get(base);
+};
+const resolveUser = async (id) => {
+  const users = await getSiteUsers();
+  if (!users.has(id)) {
+    try {
+      const u = await pnp2.sp.web.getUserById(id).select("Id", "Email", "LoginName", "Title")();
+      users.set(id, u);
+    } catch { users.set(id, null); }
+  }
+  const u = users.get(id);
+  return u ? { Id: u.Id, Email: u.Email || "", LoginName: u.LoginName || "", Title: u.Title || "" } : { Id: id, Email: "", LoginName: "", Title: "" };
+};
+
+/**
+ * exportListData
+ *
+ * Exports every item as raw REST values plus resolved forms of the values
+ * that do not survive a move: person fields carry email and login, lookup
+ * fields carry the looked-up text. Author/Editor are resolved too so
+ * importListData() can preserve authorship. Attachments are opt-in (base64).
+ *
+ * @param {string} listTitle - Display name of the list
+ * @param {object} [options]
+ * @param {boolean} [options.includeAttachments=false] - Embed attachment bytes (base64)
+ * @param {object}  [options.schema] - A getListSchema() result to reuse (saves a round trip)
+ * @returns {Promise<object>} A `dcspad-sputils-list-data` document
+ * @example
+ * const data = await SPUtils.exportListData("Requests", { includeAttachments: true });
+ * SPUtils.downloadJson(data, "Requests.data.json");
+ */
+const exportListData = async (listTitle, { includeAttachments = false, schema = null } = {}) => {
+  const FN = "exportListData";
+  requireContext(FN);
+  const sch = schema && schema.kind === SCHEMA_KIND ? schema : await getListSchema(listTitle);
+  const warnings = [];
+  writeStatus(FN, `Fetching items of "${listTitle}"...`);
+  const rows = await fetchAllRows(listPathByTitle(listTitle), { select: "*,FSObjType,FileDirRef,FileRef", orderby: "ID asc" });
+  const rootFolder = (sch.source.rootFolder || "").replace(/\/+$/, "");
+  const relPath = (serverRelative) => {
+    const p = String(serverRelative || "");
+    if (!rootFolder || !p.toLowerCase().startsWith(rootFolder.toLowerCase())) return "";
+    return p.slice(rootFolder.length).replace(/^\/+/, "");
+  };
+  const folderCount = rows.filter(r => Number(r.FSObjType) === 1).length;
+  writeStatus(FN, `Items: ${rows.length}${folderCount ? ` (${folderCount} folder(s); items keep their folder path)` : ""}`);
+
+  const userFields = sch.fields.filter(f => USER_TYPES.has(f.type) && (f.custom || f.internalName === "Author" || f.internalName === "Editor"));
+  const lookupFields = sch.fields.filter(f => LOOKUP_TYPES.has(f.type) && f.custom);
+
+  // Lookup value maps: id -> shown value, one fetch per lookup target.
+  const lookupValues = new Map(); // internalName -> Map(id -> value)
+  for (const f of lookupFields) {
+    if (!f.lookupListId) continue;
+    try {
+      const targetRows = await fetchAllRows(listPathById(f.lookupListId), { select: `Id,${f.lookupField}` });
+      lookupValues.set(f.internalName, new Map(targetRows.map(r => [r.Id, r[f.lookupField]])));
+    } catch (err) {
+      warnings.push(`Lookup "${f.internalName}": target list could not be read (${err.message}); ids exported without values.`);
+    }
+  }
+
+  const toIdList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]).filter(x => x != null);
+  const items = [];
+  for (const raw of rows) {
+    const resolved = {};
+    for (const f of userFields) {
+      const ids = toIdList(raw[`${f.internalName}Id`]);
+      if (ids.length) resolved[f.internalName] = await Promise.all(ids.map(resolveUser));
+    }
+    for (const f of lookupFields) {
+      const ids = toIdList(raw[`${f.internalName}Id`]);
+      if (ids.length) {
+        const map = lookupValues.get(f.internalName);
+        resolved[f.internalName] = ids.map(id => ({ Id: id, value: map ? (map.get(id) ?? null) : null }));
+      }
+    }
+    const isFolder = Number(raw.FSObjType) === 1;
+    const item = { ...raw, _resolved: resolved, _dir: relPath(raw.FileDirRef) };
+    if (isFolder) { item._folder = true; item._folderPath = relPath(raw.FileRef); }
+    items.push(item);
+  }
+
+  let attachmentCount = 0;
+  if (includeAttachments) {
+    const list = pnp2.sp.web.lists.getByTitle(listTitle);
+    const withAttachments = items.filter(i => i.Attachments === true && !i._folder);
+    writeStatus(FN, `Reading attachments for ${withAttachments.length} item(s)...`);
+    await runPool(withAttachments, 4, async (item) => {
+      try {
+        const files = await list.items.getById(item.Id).attachmentFiles();
+        item._attachments = [];
+        for (const a of files) {
+          const buffer = await retryWithBackoff(() => pnp2.sp.web.getFileByServerRelativePath(a.ServerRelativeUrl).getBuffer());
+          item._attachments.push({ name: a.FileName, base64: base64FromBuffer(buffer) });
+          attachmentCount++;
+        }
+      } catch (err) {
+        warnings.push(`Item ${item.Id}: attachments could not be read (${err.message}).`);
+      }
+    });
+  }
+
+  const fieldMap = {};
+  for (const f of sch.fields) {
+    fieldMap[f.internalName] = {
+      type: f.type, custom: f.custom, readOnly: f.readOnly,
+      lookupList: f.lookupList, lookupListId: f.lookupListId, lookupField: f.lookupField, isSelfLookup: f.isSelfLookup,
+      allowMultipleValues: f.allowMultipleValues
+    };
+  }
+
+  const data = {
+    kind: DATA_KIND,
+    version: 1,
+    exported: new Date().toISOString(),
+    source: { siteUrl: apiBase(), listTitle: sch.source.listTitle, listId: sch.source.listId },
+    fields: fieldMap,
+    items,
+    warnings
+  };
+  writeStatus(FN, `Done. Items=${items.length}${includeAttachments ? `, Attachments=${attachmentCount}` : ""}, Warnings=${warnings.length}`);
+  warnings.forEach(w => writeStatus(FN, `⚠️ ${w}`));
+  return data;
+};
+
+/**
+ * createListFromSchema
+ *
+ * Creates a list from a getListSchema() document on the current site, or
+ * adds whatever is missing to a list of that title that already exists.
+ * Custom columns are recreated from scrubbed SchemaXml in dependency order
+ * (plain → lookup → calculated); the Title column's display name and
+ * required flag are applied; views are created or updated with their
+ * query, fields and formatting.
+ *
+ * @param {object} schema - A `dcspad-sputils-list-schema` document
+ * @param {object} [options]
+ * @param {string}  [options.title] - Target list title (default: the source title)
+ * @param {string}  [options.description]
+ * @param {boolean} [options.dryRun=false] - Log the plan, change nothing
+ * @param {object}  [options.lookupMap] - Source lookup list title → target list title
+ * @returns {Promise<object>} Report: listId, created, fields, views, warnings
+ * @example
+ * await SPUtils.createListFromSchema(schema, { title: "Requests", dryRun: true });
+ */
+const createListFromSchema = async (schema, { title, description, dryRun = false, lookupMap = {} } = {}) => {
+  const FN = "createListFromSchema";
+  requireContext(FN);
+  if (!schema || schema.kind !== SCHEMA_KIND) throw new Error(`Expected a ${SCHEMA_KIND} document (from getListSchema).`);
+  const web = pnp2.sp.web;
+  const targetTitle = title || schema.list.title;
+  const report = {
+    dryRun, title: targetTitle, listId: null, created: false,
+    fields: { added: 0, skipped: 0, failed: [] },
+    views: { added: 0, updated: 0, failed: [] },
+    warnings: [...(schema.warnings || [])]
+  };
+  const warn = (m) => { report.warnings.push(m); writeStatus(FN, `⚠️ ${m}`); };
+
+  // ---- list ------------------------------------------------------------
+  const existing = await web.lists.filter(`Title eq '${escOData(targetTitle)}'`).select("Id", "Title", "BaseTemplate")();
+  let list = null;
+  if (existing.length) {
+    list = web.lists.getById(existing[0].Id);
+    report.listId = cleanGuid(existing[0].Id);
+    writeStatus(FN, `List "${targetTitle}" exists — adding missing fields and views only.`);
+    // Reconcile the settings an import depends on; leave the rest alone.
+    const reconcile = {};
+    if (schema.list.enableAttachments) reconcile.EnableAttachments = true;
+    if (schema.list.enableFolderCreation) reconcile.EnableFolderCreation = true;
+    if (Object.keys(reconcile).length && !dryRun) {
+      try { await retryWithBackoff(() => list.update(reconcile)); }
+      catch (err) { warn(`Existing list settings not reconciled (${Object.keys(reconcile).join(", ")}): ${err.message}`); }
+    }
+  } else if (dryRun) {
+    writeStatus(FN, `DRY RUN: would create list "${targetTitle}" (template ${schema.list.baseTemplate}).`);
+  } else {
+    const r = await retryWithBackoff(() => web.lists.add(
+      targetTitle,
+      description ?? schema.list.description ?? "",
+      schema.list.baseTemplate || 100,
+      !!schema.list.contentTypesEnabled
+    ));
+    list = r.list;
+    report.listId = cleanGuid(r.data.Id);
+    report.created = true;
+    writeStatus(FN, `Created list "${targetTitle}".`);
+    const s = schema.list;
+    const settings = {
+      EnableVersioning: s.enableVersioning,
+      EnableAttachments: s.enableAttachments,
+      EnableFolderCreation: s.enableFolderCreation,
+      EnableModeration: s.enableModeration,
+      ForceCheckout: !!s.forceCheckout,
+      Hidden: !!s.hidden
+    };
+    if (s.enableVersioning && s.majorVersionLimit) settings.MajorVersionLimit = s.majorVersionLimit;
+    if (s.enableVersioning && s.enableMinorVersions) {
+      settings.EnableMinorVersions = true;
+      if (s.majorWithMinorVersionsLimit) settings.MajorWithMinorVersionsLimit = s.majorWithMinorVersionsLimit;
+    }
+    if (s.enableModeration || s.enableMinorVersions) settings.DraftVersionVisibility = s.draftVersionVisibility;
+    try { await retryWithBackoff(() => list.update(settings)); }
+    catch (err) { warn(`List settings could not all be applied: ${err.message}`); }
+  }
+
+  // ---- fields ----------------------------------------------------------
+  const existingFields = new Map(); // internalName -> field
+  const existingTitles = new Set();
+  if (list) {
+    for (const f of await list.fields.select("Id", "InternalName", "Title", "TypeAsString")()) {
+      existingFields.set(f.InternalName, f);
+      existingTitles.add(f.Title.toLowerCase());
+    }
+  }
+  const targetListIdByTitle = new Map();
+  const resolveTargetList = async (sourceTitle) => {
+    const mapped = lookupMap[sourceTitle] || sourceTitle;
+    if (!targetListIdByTitle.has(mapped)) {
+      const found = await web.lists.filter(`Title eq '${escOData(mapped)}'`).select("Id")();
+      targetListIdByTitle.set(mapped, found.length ? cleanGuid(found[0].Id) : null);
+    }
+    return { title: mapped, id: targetListIdByTitle.get(mapped) };
+  };
+
+  const custom = schema.fields.filter(f => f.custom);
+  // plain → lookup → dependent lookup (needs its primary's new id) → calculated
+  const tier = (f) => (f.type === "Calculated" ? 3 : f.isDependentLookup ? 2 : LOOKUP_TYPES.has(f.type) ? 1 : 0);
+  const ordered = [...custom].sort((a, b) => tier(a) - tier(b));
+  const fieldIdMap = new Map(); // source field id -> target field id
+
+  for (const f of ordered) {
+    try {
+      const present = existingFields.get(f.internalName);
+      if (present) {
+        if (present.TypeAsString !== f.type) {
+          throw new Error(`exists on the target as ${present.TypeAsString}, source is ${f.type}; values will not import`);
+        }
+        if (present.Id && f.id) fieldIdMap.set(f.id, cleanGuid(present.Id));
+        report.fields.skipped++;
+        continue;
+      }
+      if (existingTitles.has(f.displayName.toLowerCase())) {
+        throw new Error(`a different column already uses the display name "${f.displayName}"`);
+      }
+      if (TAXONOMY_TYPES.has(f.type)) throw new Error("managed metadata columns are not recreated automatically");
+
+      let lookupListId = null;
+      if (LOOKUP_TYPES.has(f.type)) {
+        if (f.isSelfLookup) {
+          lookupListId = report.listId;
+          if (!lookupListId && dryRun) lookupListId = "00000000-0000-0000-0000-000000000000";
+        } else {
+          const target = await resolveTargetList(f.lookupList);
+          if (!target.id) throw new Error(`lookup target list "${target.title}" was not found on this site (add a lookupMap entry)`);
+          lookupListId = target.id;
+        }
+      }
+      // A secondary lookup column is bound to its primary by field id (FieldRef
+      // in SchemaXml), so it goes through the dependent-lookup endpoint with
+      // the primary's NEW id rather than through createFieldAsXml.
+      if (f.isDependentLookup) {
+        const primaryFieldId = fieldIdMap.get(f.primaryFieldId) || null;
+        if (!primaryFieldId && !dryRun) throw new Error("its primary lookup column was not created on the target");
+        if (dryRun) {
+          writeStatus(FN, `DRY RUN: add dependent lookup "${f.displayName}" (${f.internalName}) → primary ${f.primaryFieldId}`);
+          report.fields.added++;
+          continue;
+        }
+        const dep = await retryWithBackoff(() => list.fields.addDependentLookupField(f.displayName, primaryFieldId, f.lookupField || "Title"));
+        if (f.id && dep?.data?.Id) fieldIdMap.set(f.id, cleanGuid(dep.data.Id));
+        existingFields.set(f.internalName, { Id: dep?.data?.Id, InternalName: f.internalName, Title: f.displayName, TypeAsString: f.type });
+        existingTitles.add(f.displayName.toLowerCase());
+        report.fields.added++;
+        writeStatus(FN, `ADDED dependent lookup "${f.displayName}" (${f.internalName})`);
+        continue;
+      }
+      const xml = scrubSchemaXml(f.schemaXml, { lookupListId });
+
+      if (dryRun) {
+        writeStatus(FN, `DRY RUN: add ${f.type} "${f.displayName}" (${f.internalName})${lookupListId ? ` → list ${lookupListId}` : ""}`);
+        report.fields.added++;
+        continue;
+      }
+      const createdField = await retryWithBackoff(() => list.fields.createFieldAsXml(xml));
+      if (f.id && createdField?.data?.Id) fieldIdMap.set(f.id, cleanGuid(createdField.data.Id));
+      if (f.customFormatter && !/CustomFormatter=/.test(xml)) {
+        try { await list.fields.getByInternalNameOrTitle(f.internalName).update({ CustomFormatter: f.customFormatter }); }
+        catch (err) { warn(`Column formatting for "${f.internalName}" was not applied: ${err.message}`); }
+      }
+      existingFields.set(f.internalName, { Id: createdField?.data?.Id, InternalName: f.internalName, Title: f.displayName, TypeAsString: f.type });
+      existingTitles.add(f.displayName.toLowerCase());
+      report.fields.added++;
+      writeStatus(FN, `ADDED ${f.type} "${f.displayName}" (${f.internalName})`);
+    } catch (err) {
+      report.fields.failed.push({ internalName: f.internalName, displayName: f.displayName, error: err.message });
+      writeStatus(FN, `⚠️ Field "${f.displayName}" failed: ${err.message}`);
+    }
+  }
+
+  // Title column: display name / required are per-list customizations.
+  const titleField = schema.fields.find(f => f.internalName === "Title");
+  if (titleField && (titleField.displayName !== "Title" || titleField.required === false)) {
+    if (dryRun) {
+      writeStatus(FN, `DRY RUN: set Title column display name "${titleField.displayName}", required=${titleField.required}`);
+    } else if (list) {
+      try {
+        await list.fields.getByInternalNameOrTitle("Title").update({ Title: titleField.displayName, Required: titleField.required });
+      } catch (err) { warn(`Title column settings not applied: ${err.message}`); }
+    }
+  }
+
+  // ---- views -----------------------------------------------------------
+  for (const v of schema.views.filter(v => !v.hidden)) {
+    try {
+      const wanted = v.fields.filter(name => existingFields.has(name) || dryRun);
+      const missing = v.fields.filter(name => !existingFields.has(name));
+      if (missing.length && !dryRun) warn(`View "${v.title}": columns not on the target were left out: ${missing.join(", ")}`);
+      if (dryRun) {
+        writeStatus(FN, `DRY RUN: view "${v.title}" [${wanted.join(", ")}]${v.customFormatter ? " + formatting" : ""}`);
+        report.views.added++;
+        continue;
+      }
+      const found = await list.views.filter(`Title eq '${escOData(v.title)}'`).select("Id")();
+      const addAll = async (view, names) => {
+        for (const name of names) await retryWithBackoff(() => view.fields.add(name));
+      };
+      const props = { ViewQuery: v.viewQuery, RowLimit: v.rowLimit, Paged: v.paged };
+      if (found.length) {
+        // Existing view: rebuild the columns FIRST and touch nothing else
+        // until they succeed; on failure restore the previous columns so the
+        // view keeps its old, consistent state. Blank source formatting and
+        // JSLink are sent too, so stale target values are cleared.
+        const view = list.views.getById(found[0].Id);
+        let previous = [];
+        try { const vf = await view.fields(); previous = vf.Items || vf.results || []; } catch {}
+        await retryWithBackoff(() => view.fields.removeAll());
+        try {
+          await addAll(view, wanted);
+        } catch (err) {
+          warn(`View "${v.title}": rebuilding its columns failed (${err.message})${previous.length ? "; restoring the previous columns" : ""}`);
+          try { await retryWithBackoff(() => view.fields.removeAll()); await addAll(view, previous); } catch {}
+          throw err;
+        }
+        await retryWithBackoff(() => view.update({ ...props, CustomFormatter: v.customFormatter || "", JSLink: v.jsLink || "" }));
+        if (v.defaultView) { try { await view.update({ DefaultView: true }); } catch {} }
+        report.views.updated++;
+      } else {
+        const r = await retryWithBackoff(() => list.views.add(v.title, false, { ...props, DefaultView: v.defaultView }));
+        const view = r.view;
+        await retryWithBackoff(() => view.fields.removeAll());
+        try {
+          await addAll(view, wanted);
+        } catch (err) {
+          // A half-built new view is worse than none.
+          try { await view.delete(); } catch {}
+          throw err;
+        }
+        const extras = {};
+        if (v.customFormatter) extras.CustomFormatter = v.customFormatter;
+        if (v.jsLink) extras.JSLink = v.jsLink;
+        if (Object.keys(extras).length) {
+          try { await retryWithBackoff(() => view.update(extras)); }
+          catch (err) { warn(`View "${v.title}": formatting/JSLink not applied: ${err.message}`); }
+        }
+        report.views.added++;
+      }
+      writeStatus(FN, `${found.length ? "UPDATED" : "ADDED"} view "${v.title}" (${wanted.length} columns)`);
+    } catch (err) {
+      report.views.failed.push({ title: v.title, error: err.message });
+      writeStatus(FN, `⚠️ View "${v.title}" failed: ${err.message}`);
+    }
+  }
+
+  writeStatus(FN, `${dryRun ? "DRY RUN complete" : "Done"}. Fields: +${report.fields.added} / skipped ${report.fields.skipped} / failed ${report.fields.failed.length}. Views: +${report.views.added} / updated ${report.views.updated} / failed ${report.views.failed.length}.`);
+  return report;
+};
+
+/**
+ * importListData
+ *
+ * Creates items in the current site's list from an exportListData()
+ * document. Values are written with the ValidateUpdateListItem string
+ * conventions, person fields are re-resolved by email, lookup fields by
+ * their shown value against the target's lookup list, and self-referencing
+ * lookups are filled in a second pass through the old→new id map.
+ *
+ * @param {object} data - A `dcspad-sputils-list-data` document
+ * @param {object} [options]
+ * @param {string}  [options.listTitle] - Target list (default: the source title)
+ * @param {boolean} [options.dryRun=false] - Plan only; shows sample payloads
+ * @param {number}  [options.concurrency=1] - Parallel creates. 1 keeps source order (new ids ascend like the
+ *                                            old ones); higher is faster but scrambles the order.
+ * @param {boolean} [options.preserveAuthorship=false] - Keep Created/Modified/Author/Editor
+ * @param {boolean} [options.includeAttachments=true] - Re-upload embedded attachments
+ * @param {object}  [options.idMap] - A previous report's idMap: source items already in it are skipped,
+ *                                    so a partial import can be resumed without duplicating rows
+ * @returns {Promise<object>} Report: created, skipped, failed, fieldErrors, idMap, attachments, folders
+ * @example
+ * const r = await SPUtils.importListData(data, { listTitle: "Requests", dryRun: true });
+ */
+const importListData = async (data, { listTitle, dryRun = false, concurrency = 1, preserveAuthorship = false, includeAttachments = true, idMap: idMapSeed = null } = {}) => {
+  const FN = "importListData";
+  requireContext(FN);
+  if (!data || data.kind !== DATA_KIND) throw new Error(`Expected a ${DATA_KIND} document (from exportListData).`);
+  const web = pnp2.sp.web;
+  const targetTitle = listTitle || data.source.listTitle;
+  const report = {
+    dryRun, listTitle: targetTitle, attempted: data.items.filter(i => !i._folder).length, created: 0, skipped: 0,
+    failed: [], fieldErrors: [], idMap: { ...(idMapSeed || {}) }, attachments: { added: 0, failed: 0 },
+    folders: { created: 0, failed: 0 }, warnings: []
+  };
+  if (idMapSeed) writeStatus(FN, `Resuming: ${Object.keys(idMapSeed).length} source item(s) already imported will be skipped.`);
+  const warn = (m) => { report.warnings.push(m); writeStatus(FN, `⚠️ ${m}`); };
+
+  const found = await web.lists.filter(`Title eq '${escOData(targetTitle)}'`).select("Id", "RootFolder/ServerRelativeUrl").expand("RootFolder")();
+  if (!found.length) {
+    if (dryRun) {
+      writeStatus(FN, `DRY RUN: target list "${targetTitle}" does not exist yet; ${data.items.length} item(s) would be imported after createListFromSchema().`);
+      return report;
+    }
+    throw new Error(`Target list "${targetTitle}" was not found. Run createListFromSchema() first.`);
+  }
+  const list = web.lists.getById(found[0].Id);
+  const rootFolder = found[0].RootFolder.ServerRelativeUrl;
+  const targetFields = new Map((await list.fields.filter("Hidden eq false")()).map(f => [f.InternalName, f]));
+
+  // Writable = present on target, not read-only, not system-owned, and
+  // either custom on the source or the Title column.
+  const writable = [];
+  const deferredSelf = [];
+  for (const [name, meta] of Object.entries(data.fields)) {
+    const tf = targetFields.get(name);
+    if (!tf || tf.ReadOnlyField || NEVER_WRITE.has(name) || NEVER_WRITE_TYPES.has(tf.TypeAsString)) continue;
+    if (!(meta.custom || name === "Title")) continue;
+    if (LOOKUP_TYPES.has(tf.TypeAsString) && meta.isSelfLookup) { deferredSelf.push({ name, tf, meta }); continue; }
+    // The source-id shortcut for ambiguous lookup values is only meaningful
+    // when the target column points at the very same list as the source.
+    const sameLookupList = LOOKUP_TYPES.has(tf.TypeAsString) && !!meta.lookupListId && cleanGuid(tf.LookupList) === meta.lookupListId;
+    writable.push({ name, tf, meta, sameLookupList });
+  }
+  writeStatus(FN, `Target "${targetTitle}": ${writable.length} writable column(s)${deferredSelf.length ? `, ${deferredSelf.length} self-lookup(s) in pass 2` : ""}.`);
+
+  // Learn the web's date format from the server before writing any date.
+  const dateField = writable.find(w => w.tf.TypeAsString === "DateTime");
+  if (dateField || preserveAuthorship) {
+    const f = await calibrateDateFormat(listPathById(found[0].Id), rootFolder, dateField ? dateField.name : "Created");
+    writeStatus(FN, `Date format (${f.source}): ${f.order} sep "${f.sep}", 24-hour clock`);
+  }
+
+  // Lookup targets on the TARGET side: shown value -> [ids]. A value that
+  // appears more than once is ambiguous; see lookupValue().
+  const lookupIdsByValue = new Map();
+  for (const w of writable) {
+    if (!LOOKUP_TYPES.has(w.tf.TypeAsString)) continue;
+    try {
+      const showField = w.tf.LookupField || "Title";
+      const rows = await fetchAllRows(listPathById(w.tf.LookupList), { select: `Id,${showField}` });
+      const byValue = new Map();
+      for (const r of rows) {
+        const key = String(r[showField] ?? "");
+        if (!byValue.has(key)) byValue.set(key, []);
+        byValue.get(key).push(r.Id);
+      }
+      lookupIdsByValue.set(w.name, byValue);
+    } catch (err) {
+      warn(`Lookup "${w.name}": target lookup list could not be read (${err.message}); values will be left empty.`);
+    }
+  }
+
+  // Person resolution by email/login, cached.
+  const loginCache = new Map();
+  const loginFor = async (user) => {
+    const key = (user.Email || user.LoginName || "").toLowerCase();
+    if (!key) return null;
+    // App/system principals ("SharePoint App", SYSTEM) have no email and can't
+    // be matched by ValidateUpdateListItem; leave the field empty instead.
+    if (!user.Email && !/^i:0#\.f\|membership\|/i.test(user.LoginName || "")) return null;
+    // A dry run must not touch the target: ensureUser can add a principal to
+    // the site's user list, so derive the claims key from the email instead.
+    if (dryRun) return user.Email ? `i:0#.f|membership|${user.Email.toLowerCase()}` : user.LoginName;
+    if (!loginCache.has(key)) {
+      try {
+        const ensured = await retryWithBackoff(() => web.ensureUser(user.Email || user.LoginName));
+        loginCache.set(key, ensured.data.LoginName);
+      } catch {
+        loginCache.set(key, user.Email ? `i:0#.f|membership|${user.Email.toLowerCase()}` : null);
+      }
+    }
+    return loginCache.get(key);
+  };
+  const userValue = async (users) => {
+    const keys = [];
+    for (const u of users || []) { const l = await loginFor(u); if (l) keys.push({ Key: l }); }
+    return keys.length ? JSON.stringify(keys) : "";
+  };
+  // Resolve a lookup by its shown value on the target. Ambiguous values are
+  // only accepted when one candidate carries the source id (same-site copies);
+  // missing and ambiguous references are reported per field, never guessed.
+  const lookupValue = (name, resolvedList, multi, errs, sameLookupList) => {
+    const byValue = lookupIdsByValue.get(name);
+    if (!byValue) return "";
+    const ids = [];
+    for (const r of resolvedList || []) {
+      if (r.value == null || r.value === "") {
+        errs.push({ field: name, message: `source id ${r.Id} had no shown value on the source; reference left empty` });
+        continue;
+      }
+      const value = String(r.value);
+      const candidates = byValue.get(value) || [];
+      if (candidates.length === 1) { ids.push(candidates[0]); continue; }
+      if (candidates.length > 1 && sameLookupList && candidates.includes(r.Id)) { ids.push(r.Id); continue; }
+      errs.push({ field: name, message: candidates.length
+        ? `"${value}" matches ${candidates.length} items on the target lookup list; reference left empty`
+        : `"${value}" (source id ${r.Id}) was not found on the target lookup list; reference left empty` });
+    }
+    if (!ids.length) return "";
+    return multi ? `${ids.join(";#")};#` : String(ids[0]);
+  };
+  const taxonomyValue = (raw) => {
+    const terms = (raw == null ? [] : Array.isArray(raw) ? raw : [raw]).filter(t => t && t.Label);
+    return terms.map(t => `${t.Label}|${cleanGuid(t.TermGuid)};`).join("");
+  };
+
+  const toFormValue = async (w, item, errs) => {
+    const raw = item[w.name];
+    const type = w.tf.TypeAsString;
+    switch (type) {
+      case "Boolean": return raw == null ? "" : (raw ? "1" : "0");
+      case "MultiChoice": {
+        const arr = raw == null ? [] : Array.isArray(raw) ? raw : [raw];
+        return arr.length ? `;#${arr.join(";#")};#` : "";
+      }
+      case "URL": return raw && raw.Url ? `${raw.Url}, ${raw.Description || raw.Url}` : "";
+      case "DateTime": return raw ? toWebDateString(raw, { dateOnly: w.tf.DisplayFormat === 0 }) : "";
+      case "User": case "UserMulti": return userValue(item._resolved?.[w.name]);
+      case "Lookup": case "LookupMulti": return lookupValue(w.name, item._resolved?.[w.name], type === "LookupMulti", errs, w.sameLookupList);
+      case "TaxonomyFieldType": case "TaxonomyFieldTypeMulti": return taxonomyValue(raw);
+      default:
+        if (raw == null) return "";
+        return typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+    }
+  };
+
+  const authorshipValues = async (item) => {
+    const values = [];
+    const author = await userValue(item._resolved?.Author);
+    const editor = await userValue(item._resolved?.Editor);
+    if (author) values.push({ FieldName: "Author", FieldValue: author });
+    if (editor) values.push({ FieldName: "Editor", FieldValue: editor });
+    if (item.Created) values.push({ FieldName: "Created", FieldValue: await toWebDateString(item.Created) });
+    if (item.Modified) values.push({ FieldName: "Modified", FieldValue: await toWebDateString(item.Modified) });
+    return values;
+  };
+  const buildFormValues = async (item) => {
+    const values = [];
+    const errs = [];
+    for (const w of writable) values.push({ FieldName: w.name, FieldValue: await toFormValue(w, item, errs) });
+    if (preserveAuthorship) values.push(...await authorshipValues(item));
+    return { values, errs };
+  };
+  const folderPathFor = (item) => (item._dir ? `${rootFolder}/${item._dir}` : rootFolder);
+
+  const folders = data.items.filter(i => i._folder && i._folderPath)
+    .sort((a, b) => a._folderPath.split("/").length - b._folderPath.split("/").length || a.Id - b.Id);
+  const items = data.items.filter(i => !i._folder).sort((a, b) => a.Id - b.Id);
+
+  if (dryRun) {
+    if (folders.length) writeStatus(FN, `DRY RUN: ${folders.length} folder(s) would be created first: ${folders.map(f => f._folderPath).join(", ")}`);
+    for (const item of items.slice(0, 3)) {
+      const { values, errs } = await buildFormValues(item);
+      writeStatus(FN, `DRY RUN sample (source Id ${item.Id}${item._dir ? `, folder ${item._dir}` : ""}): ${values.map(v => `${v.FieldName}=${JSON.stringify(v.FieldValue)}`).join(" · ")}`);
+      for (const e of errs) report.fieldErrors.push({ sourceId: item.Id, ...e });
+    }
+    const alreadyImported = [...folders, ...items].filter(i => report.idMap[i.Id]).length;
+    report.skipped = alreadyImported;
+    writeStatus(FN, `DRY RUN: ${items.length - items.filter(i => report.idMap[i.Id]).length} item(s) would be created in "${targetTitle}"${alreadyImported ? `; ${alreadyImported} already imported would be skipped` : ""}.`);
+    return report;
+  }
+
+  // ---- pass 0: folders --------------------------------------------------
+  // A list folder must be created as a list ITEM (UnderlyingObjectType 1):
+  // a folder made through web.folders.add has no item and nothing can be
+  // created inside it (verified live). Parents come first (sorted by depth).
+  for (const f of folders) {
+    if (report.idMap[f.Id]) { report.skipped++; continue; }
+    const slash = f._folderPath.lastIndexOf("/");
+    const parent = slash === -1 ? rootFolder : `${rootFolder}/${f._folderPath.slice(0, slash)}`;
+    const name = f._folderPath.slice(slash + 1);
+    // A folder row carries metadata like any item: same conversion path, Title = folder name.
+    const built = await buildFormValues(f);
+    for (const e of built.errs) report.fieldErrors.push({ sourceId: f.Id, ...e });
+    const formValues = [{ FieldName: "Title", FieldValue: name }, ...built.values.filter(v => v.FieldName !== "Title")];
+    try {
+      const result = await retryWithBackoff(() => spPostJson(`${listPathById(found[0].Id)}/AddValidateUpdateItemUsingPath`, {
+        listItemCreateInfo: { FolderPath: { DecodedUrl: parent }, UnderlyingObjectType: 1, LeafName: { DecodedUrl: name } },
+        formValues,
+        bNewDocumentUpdate: preserveAuthorship
+      }));
+      const rows = formResultRows(result);
+      const newId = Number(rows.find(r => /^id$/i.test(r.FieldName))?.FieldValue) || null;
+      const rejected = rows.filter(r => r.HasException);
+      for (const r of rejected) report.fieldErrors.push({ sourceId: f.Id, field: r.FieldName, message: r.ErrorMessage });
+      if (!newId) throw new Error(rejected.map(r => `${r.FieldName}: ${r.ErrorMessage}`).join("; ") || "server did not return the folder's item Id");
+      report.idMap[f.Id] = newId;
+      report.folders.created++;
+    } catch (err) {
+      if (/already exists/i.test(err.message)) {
+        // Prove it is a real list folder (one with an item) before counting it.
+        try {
+          const info = await spGetJson(`GetFolderByServerRelativePath(decodedUrl='${encodeURIComponent(`${parent}/${name}`)}')/ListItemAllFields?$select=Id`);
+          if (info?.Id) { report.idMap[f.Id] = info.Id; report.folders.created++; continue; }
+        } catch {}
+        report.folders.failed++;
+        warn(`Folder "${f._folderPath}" exists but has no list item; its items cannot be created inside it`);
+        continue;
+      }
+      report.folders.failed++;
+      warn(`Folder "${f._folderPath}" could not be created (${err.message}); its items will fail unless the folder exists`);
+    }
+  }
+  if (folders.length) writeStatus(FN, `Pass 0: folders created ${report.folders.created}/${folders.length}${report.skipped ? ` (${report.skipped} already imported)` : ""}.`);
+
+  // ---- pass 1: create -------------------------------------------------
+  await runPool(items, concurrency, async (item) => {
+    if (report.idMap[item.Id]) { report.skipped++; return; }
+    try {
+      const built = await buildFormValues(item);
+      let formValues = built.values;
+      for (const e of built.errs) report.fieldErrors.push({ sourceId: item.Id, ...e });
+      const folderPath = folderPathFor(item);
+      const addOnce = () => retryWithBackoff(() => spPostJson(`${listPathById(found[0].Id)}/AddValidateUpdateItemUsingPath`, {
+        listItemCreateInfo: { FolderPath: { DecodedUrl: folderPath }, UnderlyingObjectType: 0 },
+        formValues,
+        bNewDocumentUpdate: preserveAuthorship
+      }));
+      let rows = formResultRows(await addOnce());
+      let newId = Number(rows.find(r => /^id$/i.test(r.FieldName))?.FieldValue) || null;
+      let rejected = rows.filter(r => r.HasException);
+      for (const r of rejected) report.fieldErrors.push({ sourceId: item.Id, field: r.FieldName, message: r.ErrorMessage });
+      // A rejected field aborts the whole create. Retry once without the
+      // rejected fields so the item still lands; the errors stay in the report.
+      if (!newId && rejected.length) {
+        const drop = new Set(rejected.map(r => r.FieldName));
+        formValues = formValues.filter(v => !drop.has(v.FieldName));
+        rows = formResultRows(await addOnce());
+        newId = Number(rows.find(r => /^id$/i.test(r.FieldName))?.FieldValue) || null;
+        rejected = rows.filter(r => r.HasException);
+        for (const r of rejected) report.fieldErrors.push({ sourceId: item.Id, field: r.FieldName, message: r.ErrorMessage });
+        if (newId) warn(`Item ${item.Id} → ${newId}: created without ${[...drop].join(", ")} (see fieldErrors)`);
+      }
+      if (!newId) throw new Error(`not created: ${rejected.map(r => `${r.FieldName}: ${r.ErrorMessage}`).join("; ") || "server did not return the new item Id"}`);
+      report.idMap[item.Id] = newId;
+      report.created++;
+      if (includeAttachments && Array.isArray(item._attachments)) {
+        for (const a of item._attachments) {
+          try {
+            await retryWithBackoff(() => list.items.getById(newId).attachmentFiles.add(a.name, bufferFromBase64(a.base64)));
+            report.attachments.added++;
+          } catch (err) {
+            report.attachments.failed++;
+            warn(`Item ${item.Id} → ${newId}: attachment "${a.name}" failed (${err.message})`);
+          }
+        }
+      }
+    } catch (err) {
+      report.failed.push({ sourceId: item.Id, error: err.message });
+      writeStatus(FN, `⚠️ Item ${item.Id} failed: ${err.message}`);
+    }
+  });
+  writeStatus(FN, `Pass 1: created ${report.created}/${items.length}${report.skipped ? `, skipped ${report.skipped} already imported` : ""}, failed ${report.failed.length}, field errors ${report.fieldErrors.length}.`);
+  const allRows = [...folders, ...items];
+
+  // ---- pass 2: self-referencing lookups -------------------------------
+  if (deferredSelf.length) {
+    const updates = [];
+    for (const item of allRows) {
+      const newId = report.idMap[item.Id];
+      if (!newId) continue;
+      const formValues = [];
+      for (const w of deferredSelf) {
+        const refs = item._resolved?.[w.name] || [];
+        const targets = [];
+        for (const r of refs) {
+          if (report.idMap[r.Id]) targets.push(report.idMap[r.Id]);
+          else report.fieldErrors.push({ sourceId: item.Id, field: w.name, message: `references source item ${r.Id}, which was not imported; reference left empty` });
+        }
+        if (!targets.length) continue;
+        formValues.push({ FieldName: w.name, FieldValue: w.tf.TypeAsString === "LookupMulti" ? `${targets.join(";#")};#` : String(targets[0]) });
+      }
+      if (formValues.length) updates.push({ item, newId, formValues });
+    }
+    writeStatus(FN, `Pass 2: ${updates.length} item(s) with self-referencing lookups...`);
+    await runPool(updates, concurrency, async ({ item, newId, formValues }) => {
+      try {
+        const result = await retryWithBackoff(() => spPostJson(`${listPathById(found[0].Id)}/items(${newId})/ValidateUpdateListItem`, {
+          formValues,
+          bNewDocumentUpdate: false
+        }));
+        const rows = formResultRows(result);
+        for (const r of rows) if (r.HasException) report.fieldErrors.push({ sourceId: item.Id, field: r.FieldName, message: r.ErrorMessage });
+      } catch (err) {
+        report.fieldErrors.push({ sourceId: item.Id, field: deferredSelf.map(d => d.name).join(","), message: err.message });
+      }
+    });
+  }
+
+  // ---- pass 3: restore authorship ------------------------------------
+  // Attachment uploads and the pass-2 update stamp Modified/Editor again, so
+  // the preserved values are written last.
+  if (preserveAuthorship) {
+    const restores = allRows.filter(i => report.idMap[i.Id]);
+    let restored = 0;
+    await runPool(restores, concurrency, async (item) => {
+      try {
+        const formValues = await authorshipValues(item);
+        if (!formValues.length) return;
+        const result = await retryWithBackoff(() => spPostJson(`${listPathById(found[0].Id)}/items(${report.idMap[item.Id]})/ValidateUpdateListItem`, {
+          formValues,
+          bNewDocumentUpdate: true
+        }));
+        const bad = formResultRows(result).filter(r => r.HasException);
+        for (const r of bad) report.fieldErrors.push({ sourceId: item.Id, field: r.FieldName, message: r.ErrorMessage });
+        if (!bad.length) restored++;
+      } catch (err) {
+        report.fieldErrors.push({ sourceId: item.Id, field: "Author/Editor/Created/Modified", message: err.message });
+      }
+    });
+    writeStatus(FN, `Pass 3: authorship restored on ${restored}/${restores.length} item(s).`);
+  }
+
+  if (report.fieldErrors.length) console.table(report.fieldErrors);
+  if (report.failed.length) console.table(report.failed);
+  writeStatus(FN, `Done. Created ${report.created}/${report.attempted}. Failed ${report.failed.length}. Field errors ${report.fieldErrors.length}. Attachments +${report.attachments.added}/-${report.attachments.failed}.`);
+  return report;
+};
+
+/**
+ * copyList
+ *
+ * The four primitives chained: read schema and data from the current
+ * site, optionally switch site, create the target list, import the items.
+ * Returns everything each step produced so a partial failure can be
+ * resumed by calling the remaining steps by hand.
+ *
+ * @param {string} sourceTitle - List to copy (on the current context)
+ * @param {object} [options]
+ * @param {string}  [options.targetTitle] - Default: same title on another site, "<title> Copy" on the same site
+ * @param {string}  [options.targetSite] - Site path or URL; switches setupContext() for the create/import
+ * @param {boolean} [options.dryRun=false]
+ * @param {boolean} [options.includeAttachments=false]
+ * @param {boolean} [options.preserveAuthorship=false]
+ * @param {object}  [options.lookupMap] - Source lookup list title → target list title
+ * @returns {Promise<{schema:object,data:object,created:object,imported:object,targetSite:string}>}
+ * @example
+ * await SPUtils.copyList("Requests", { targetSite: "sites/Archive", dryRun: true });
+ */
+const copyList = async (sourceTitle, { targetTitle, targetSite, dryRun = false, includeAttachments = false, preserveAuthorship = false, lookupMap = {} } = {}) => {
+  const FN = "copyList";
+  requireContext(FN);
+  const schema = await getListSchema(sourceTitle);
+  const data = await exportListData(sourceTitle, { includeAttachments, schema });
+  // A targetSite that resolves to the current site is a same-site copy: it
+  // must not point back at the source list.
+  const sameSite = !targetSite || resolveSiteUrl(targetSite).toLowerCase() === apiBase().replace(/\/+$/, "").toLowerCase();
+  const title = targetTitle || (sameSite ? `${sourceTitle} Copy` : sourceTitle);
+  if (sameSite && title.toLowerCase() === sourceTitle.toLowerCase()) {
+    throw new Error(`Target "${title}" is the source list on the same site; choose a different targetTitle or targetSite.`);
+  }
+  if (targetSite && !sameSite) setupContext(targetSite);
+  writeStatus(FN, `${dryRun ? "DRY RUN: " : ""}copying "${sourceTitle}" → "${title}" on ${apiBase()}`);
+  const created = await createListFromSchema(schema, { title, dryRun, lookupMap });
+  const imported = await importListData(data, { listTitle: title, dryRun, preserveAuthorship, includeAttachments });
+  writeStatus(FN, `${dryRun ? "DRY RUN complete" : "Copy complete"}: ${imported.created}/${imported.attempted} item(s), ${created.fields.added} column(s) added.`);
+  return { schema, data, created, imported, targetSite: apiBase() };
+};
+
+/**
+ * downloadJson
+ * Saves any object as a pretty-printed .json download (schema and data
+ * documents round-trip through readJsonFile()).
+ * @param {object} object
+ * @param {string} [fileName="export.json"]
+ */
+const downloadJson = (object, fileName = "export.json") => {
+  const blob = new Blob([JSON.stringify(object, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName.endsWith(".json") ? fileName : `${fileName}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  writeStatus("downloadJson", `Downloaded ${link.download}`);
+};
+
+/**
+ * readJsonFile
+ * Reads and parses a .json file stored in a library on the current site.
+ * @param {string} filePath - Server-relative path, e.g. "/sites/X/Shared Documents/Requests.schema.json"
+ * @returns {Promise<any>}
+ */
+const readJsonFile = async (filePath) => {
+  const FN = "readJsonFile";
+  requireContext(FN);
+  const text = await pnp2.sp.web.getFileByServerRelativePath(filePath).getText();
+  const parsed = JSON.parse(text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text);
+  writeStatus(FN, `Read ${filePath}${parsed?.kind ? ` (${parsed.kind})` : ""}`);
+  return parsed;
+};
+
+
     // Expose public functions
     return {
       help,
@@ -1949,7 +3236,15 @@ const syncUsersFromCSVToGroups = async (filePath, {
       addFieldsToList,
       exportListToExcel,
       getListFields,    
-      getListSchemaForMigration
+      getListSchemaForMigration,
+      // list copy primitives
+      getListSchema,
+      exportListData,
+      createListFromSchema,
+      importListData,
+      copyList,
+      downloadJson,
+      readJsonFile
     };
 
   })();
