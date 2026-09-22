@@ -83,7 +83,9 @@ export function isLibrary(list) {
 // never recorded it). Not exhaustive of every BaseType-1 template SharePoint
 // ships (Picture Library 109, Wiki Page Library 119, Asset Library 851,
 // Form Library 115…), just the ones this port has actually seen.
-const LIBRARY_BASE_TEMPLATES = new Set([101, 109, 115, 119, 851]);
+// Base-type-1 templates a v1 doc (no source.baseType) may carry: document,
+// picture, form, wiki page, publishing Pages and asset libraries.
+const LIBRARY_BASE_TEMPLATES = new Set([101, 109, 115, 119, 850, 851]);
 
 // The one place that decides "is this schema document a library" — 0 or 1,
 // SharePoint's own BaseType values. Prefers the captured source.baseType
@@ -640,7 +642,11 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
   }
 
   // ---- fields (tier order: plain → lookup → dependent lookup → calculated)
-  const custom = orderFields(d.fields.filter((f) => f.custom));
+  // A library's _ExtendedDescription looks custom (SPO reports it deletable
+  // and not from the base type) but every new library is born with it: never
+  // create it, apply its captured name/description as a base-field tweak.
+  const preProvisioned = (f) => isLib && f.internalName === '_ExtendedDescription';
+  const custom = orderFields(d.fields.filter((f) => f.custom && !preProvisioned(f)));
   const existingFields = probe.existingFields || [];
   const createdInternalNames = new Set();
   const fieldStepIds = [];
@@ -789,7 +795,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
   // force Required:true onto a library's Title.
   const BASE_TWEAKABLE_NAMES = new Set(['Title', '_ExtendedDescription']);
   for (const f of d.fields) {
-    if (f.custom || !BASE_TWEAKABLE_NAMES.has(f.internalName)) continue;
+    if ((f.custom && !preProvisioned(f)) || !BASE_TWEAKABLE_NAMES.has(f.internalName)) continue;
     const isTitleField = f.internalName === 'Title';
     const required = (isTitleField && isLib) ? false : Boolean(f.required);
     // A fresh list's own default: Title starts required on a generic list,
@@ -797,7 +803,8 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
     // _ExtendedDescription today) starts optional. The step is only worth a
     // write when something actually deviates from that default.
     const defaultRequired = isTitleField && !isLib;
-    const changed = f.displayName !== f.internalName
+    const defaultName = isTitleField ? 'Title' : 'Description';
+    const changed = f.displayName !== defaultName
       || required !== defaultRequired
       || Boolean(f.description);
     if (!changed) continue;

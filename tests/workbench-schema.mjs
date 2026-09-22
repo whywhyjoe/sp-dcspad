@@ -529,6 +529,24 @@ await check('pure: executor — a field.create whose name is already on the targ
       && stepB.status === 'failed' && stepB.error.includes('Text') && stepB.error.includes('Number') && noCreatePostedB;
   }));
 
+await check('pure: a v1 publishing Pages (850) schema plans as a library, and a library _ExtendedDescription rename is a base-field update, never a create', () =>
+  page.evaluate(async () => {
+    const { buildApplyPlan, SCHEMA_KIND } = await import('/src/workbench/list-schema.js');
+    const v1 = {
+      kind: SCHEMA_KIND, version: 1, source: { listTitle: 'Pages' },
+      list: { title: 'Pages', baseTemplate: 850 },
+      fields: [{ internalName: '_ExtendedDescription', displayName: 'Summary', type: 'Note', custom: true,
+        description: 'What this page is about', schemaXml: '<Field Name="_ExtendedDescription" Type="Note"/>' }],
+      views: [], contentTypes: [], warnings: [],
+    };
+    const plan = buildApplyPlan(v1, { title: 'Pages copy' }, { targetLists: [] });
+    const create = plan.steps.find((s) => s.kind === 'list.create');
+    const base = plan.steps.find((s) => s.kind === 'field.base' && s.payload.internalName === '_ExtendedDescription');
+    return create.payload.baseTemplate === 101
+      && !plan.steps.some((s) => s.id === 'field:_ExtendedDescription')
+      && base && base.payload.displayName === 'Summary' && base.payload.description === 'What this page is about';
+  }));
+
 await check('pure: defaultTargetTitle keeps the source title when free, appends Copy when taken', () =>
   page.evaluate(async () => {
     const { defaultTargetTitle, buildSchemaDoc } = await import('/src/workbench/list-schema.js');

@@ -33,9 +33,9 @@ same engine · **2** document libraries (schema only; no file transfer).
   mock writer.
 - `views/lists.js`: Schema tab (after Content types), `New from schema…` on the grid toolbar,
   route write-back of the active tab.
-- New suite `tests/workbench-schema.mjs`: 78 checks (pure planner/scrub/emitters, Schema tab
+- New suite `tests/workbench-schema.mjs`: 116 checks (after stages 1b + 2) (pure planner/scrub/emitters, Schema tab
   mock UI, executor mock + stubbed live, dialog mock UI, live 401). `workbench.mjs` stays 133
-  (only its tab-order pin gained Schema). All suites together: 513 checks, green.
+  (only its tab-order pin gained Schema). All suites together: 551 checks, green.
 - Docs updated: `CLAUDE.md` (file map, test paragraph, roadmap), `tests/README.md` (suite line,
   two-web note), `HANDOFF.md` (`## SP Workbench: List schema (stage 1a)` section — the doc
   contract, the SPUtils gaps closed, the second-client pattern, hooks for 1b/2, the live-tenant
@@ -45,14 +45,12 @@ same engine · **2** document libraries (schema only; no file transfer).
 
 ## Next
 
-- [ ] Live dev-tenant validation — see the checklist below (also recorded in HANDOFF.md).
+- [x] Live dev-tenant validation of stage 1a, 1b and 2 (HANDOFF.md records results and what is still open).
       `deploy/Sync-Live.ps1 -Environment dev`, then walk the Workbench against a real list.
-- [ ] Stage 1b: item data on the same engine (`list-data.js`, Items fieldset currently
-      `disabled` in the dialog, `AddValidateUpdateItemUsingPath`, lookup re-resolution, date
-      calibration — see the plan's Stage 1b section for the detailed design).
-- [ ] Stage 2: document libraries, schema only (`baseType === 1` detection, `BaseTemplate:101`
-      create, library-specific settings groups, `Copy to…` currently disabled on libraries with
-      a stage-2 title).
+- [x] Stage 1b: item data export/import — shipped 2026-09-22 (HANDOFF "stages 1b + 2").
+- [x] Stage 2: document libraries, schema only — shipped 2026-09-22.
+- [ ] Remaining live checks (HANDOFF "Still open"): attachments/folders, content types, 429, SPUtils round-trip, reconcile.
+- [ ] Delete the `zz-schema-*` test lists on the dev tenant (by hand).
 
 ## Open questions
 
@@ -60,6 +58,10 @@ same engine · **2** document libraries (schema only; no file transfer).
   `utilities/dcspad-sp-utilities.js`, not open design questions for the Workbench port itself.
 
 ## Landmines
+
+- Stage 1b: items import only after the schema run has no failed column; pass-1 writes are sequential on purpose (id fidelity); dates are dropped, never guessed, when calibration fails.
+- Stage 2: SharePoint provisions columns with a new list (`_ExtendedDescription` on libraries) — the executor checks the post-create field set before creating.
+- xo on this machine: pass `PYTHONUTF8=1` for a rebuttal whose diff contains non-cp1252 characters (xo's diff capture otherwise crashes).
 
 - The mock writer must return the ids the executor binds to (`web/lists` → `{Id, Title,
   RootFolder}`, `createfieldasxml` → `{Id, InternalName}`, views add → `{Id}`) — the probe step

@@ -447,6 +447,50 @@ copies came from pre-fix builds (one carries a duplicate "All Items").
   regenerates internal names; a SPUtils v1 doc imported in the Workbench and
   the reverse; a reconcile (Add to existing list) run.
 
+## SP Workbench: List schema stages 1b + 2 (2026-09-22)
+
+**Stage 1b — items.** `list-data.js` (pure: the SPUtils data document,
+kind `dcspad-sputils-list-data`, v1 keys verbatim, v2 written, v1 read;
+per-type form-value strings; lookup re-resolution by shown value; folders
+by depth; the three-pass partition), `list-data-capture.js` (whole-list
+read with `$select=*`, folders, referenced users, attachments embedded as
+v1 `{name, base64}` up to 10 MB/file and 50 MB total, url-only beyond),
+`list-data-apply.js` (library targets refused; live date-format
+calibration — a web whose format cannot be learned gets its date fields
+dropped with a warning, never guessed; per-value web-local offset;
+ensureuser; folders, then items written sequentially in source-id order so
+a fresh list keeps the source ids, one retry without a rejected field,
+self-lookups in pass 2, authorship in pass 3). The Items tab exports the
+whole list as `data-<list>.json`; the dialog's Items fieldset is live
+(copy mode captures on demand; New from schema… takes a schema and a
+matching data document). Items import only once the schema has no failed
+column, exactly once. Reviewed by Codex (xo turns 7–8).
+
+**Stage 2 — document libraries (schema only).** Any base-type-1 source
+(Picture/Wiki libraries included, with a warning) is recreated as a
+standard library (BaseTemplate 101, no `/Lists/` segment); settings drop
+`EnableAttachments` and carry `ForceCheckout` and minor versioning;
+Title is never forced required; `_ExtendedDescription`/Title tweaks apply
+as base-field steps; 0x0101-derived content types attach; library view
+columns survive; Forms templates (list or content type) are warned as a
+manual step. Files are not copied. Reviewed by Codex (xo turns 9–10).
+
+**Live on the dev tenant (builds #176, #179):** items copy with users,
+cross-list lookups (and their dependent lookup), self-lookups, URL
+descriptions, DateOnly local dates across a DST change, and authorship;
+source ids kept. A library copies with versioning 20/5, required check-out
+and its custom column. Fixed from live runs: a braced lookup-list GUID
+broke the target lookup index; a column SharePoint provisions with a new
+list (`_ExtendedDescription`) was duplicated as `_ExtendedDescription0` —
+the executor now checks the post-create field set. Test lists
+`zz-schema-*` on `/sites/NewNerve` and `/sites/NewNerve/sputils-test` are
+leftovers to delete by hand.
+
+**Still open:** attachments and folders live (the fixture has neither);
+content types on a CT-enabled list live; the 429 path under real
+throttling; a SPUtils ⇄ Workbench document round-trip in both directions;
+a reconcile (Add to existing list) run live.
+
 ## Roadmap (seams reserved)
 
 - **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).
