@@ -268,10 +268,14 @@ html.dcspad-suspended #wb-mount { display: none; }
    Not yet in the DCS Workbench design system — see design/INFO-CHIP.md for
    the promotion proposal. Keep every instance composing this one class so
    they cannot drift while that is pending: .wb-lib-kind (Pages toolbar),
-   .wb-detail-kind (page drilldown) and .wb-reduced-chip (what a query SPO
-   rejected on schema grounds could not read). The last one is the register's
-   own test case — a degraded read is not an error to act on, so it takes no
-   colour; its semantic hook, like .wb-lib-<kind>, is deliberately unpainted. */
+   .wb-detail-kind (page drilldown), .wb-reduced-chip (what a query SPO
+   rejected on schema grounds could not read), and the Lists Schema tab's
+   .wb-schema-kind/-fields/-views/-cts/-versioning/-libkind (Lists →
+   Schema — five facts about the list, none of them a state to act on;
+   .wb-schema-libkind names a document library the same quiet way, not as a
+   warning). The reduced-chip case is the register's own test case — a
+   degraded read is not an error to act on, so it takes no colour; its
+   semantic hook, like .wb-lib-<kind>, is deliberately unpainted. */
 .wb-info-chip {
   flex: none; font: 11px/1.5 var(--sans); color: var(--fg-faint);
   border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px;
@@ -577,6 +581,23 @@ html.dcspad-suspended #wb-mount { display: none; }
 /* Lists view: internal-plumbing expander under the grid. */
 .wb-lists-more { margin-top: 8px; align-self: flex-start; color: var(--fg-dim); }
 .wb-lists-more:hover { color: var(--fg); }
+
+/* Schema tab */
+.wb-schema { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
+.wb-schema-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.wb-schema-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wb-schema-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.wb-schema-sections { display: flex; flex-direction: column; gap: 16px; }
+/* Same heading as the Panels link groups (.wb-linkgroup h3). */
+.wb-schema-section h3 {
+  margin: 0 0 6px; font: 600 11px/1.3 var(--sans);
+  text-transform: uppercase; letter-spacing: .07em; color: var(--fg-faint);
+}
+.wb-schema-section ul.wb-grid-notice { margin: 0; padding-left: 24px; }
+.wb-schema-section .wb-grid, .wb-schema-section .wb-grid-scroll { max-height: 320px; }
+.wb-schema-settings { width: auto; }
+.wb-schema-settings td:first-child { color: var(--fg-dim); padding-right: 16px; white-space: nowrap; }
+.wb-schema-note { margin: 0 0 8px; color: var(--fg-dim); font-size: 12.5px; }
 
 /* Inline inputs in the consent strip (new-folder prompt). */
 .wb-consent input[type="text"] {

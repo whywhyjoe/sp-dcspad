@@ -65,7 +65,14 @@ const client = createSpRestClient({
 const shell = createShell({
   mount: document.getElementById('wb-main'),
   // inspectSite is a hoisted declaration below; views get a late-bound ref.
-  deps: { client, inspectSite: (url) => inspectSite(url) },
+  // createClient hands a view its own independent REST client (a *second*
+  // web connection, e.g. the Schema tab's "Copy to…" target) without
+  // disturbing the shell's own client or importing mock-data.js directly.
+  deps: {
+    client,
+    inspectSite: (url) => inspectSite(url),
+    createClient: () => createSpRestClient({ mockResolver: ctx.live ? null : mockResolver }),
+  },
   views: [
     // Nav order and grouping are Joe's spec (2026-07-31): identity first,
     // then content, then query, then jump-off/diagnostic sections.

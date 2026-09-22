@@ -46,6 +46,33 @@ export function bindNewTab(a) {
   return a;
 }
 
+// A small dropdown button: label/title on the trigger, items = [[label,
+// run(btn)]] rendered as a menu that closes on outside click or on pick.
+// Lifted out of createGrid's own Export/Copy-as menus so other panes (the
+// Schema tab's document-export menu) can build the identical control without
+// depending on a grid instance.
+export function createMenuButton(label, title, items) {
+  const wrap = el('span', 'wb-menu-wrap');
+  const btn = el('button', 'btn btn-xs', label);
+  btn.type = 'button';
+  btn.title = title;
+  const menu = el('div', 'wb-menu');
+  menu.hidden = true;
+  for (const [itemLabel, run] of items) {
+    const item = el('button', 'wb-menu-item', itemLabel);
+    item.type = 'button';
+    item.addEventListener('click', () => { menu.hidden = true; run(btn); });
+    menu.append(item);
+  }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  document.addEventListener('click', () => { menu.hidden = true; });
+  wrap.append(btn, menu);
+  return wrap;
+}
+
 const cellValue = (row, col) =>
   typeof col.value === 'function' ? col.value(row) : row[col.key];
 
@@ -110,25 +137,7 @@ export function createGrid({
   toolbar.append(count, filter, ...(toolbarExtras ? [toolbarExtras] : []), actions);
 
   function menuButton(label, title, items) {
-    const wrap = el('span', 'wb-menu-wrap');
-    const btn = el('button', 'btn btn-xs', label);
-    btn.type = 'button';
-    btn.title = title;
-    const menu = el('div', 'wb-menu');
-    menu.hidden = true;
-    for (const [itemLabel, run] of items) {
-      const item = el('button', 'wb-menu-item', itemLabel);
-      item.type = 'button';
-      item.addEventListener('click', () => { menu.hidden = true; run(btn); });
-      menu.append(item);
-    }
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menu.hidden = !menu.hidden;
-    });
-    document.addEventListener('click', () => { menu.hidden = true; });
-    wrap.append(btn, menu);
-    actions.append(wrap);
+    actions.append(createMenuButton(label, title, items));
   }
 
   if (descriptor) {

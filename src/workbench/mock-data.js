@@ -6,6 +6,8 @@
 // LoginName+PrincipalType). Keep additions realistic — the mock is the local
 // contract for every view.
 
+import { defaultMockWriter } from './sp-write.js';
+
 const WEB_URL = location.origin;
 
 const LISTS = [
@@ -109,6 +111,292 @@ function field(title, internal, type, kind, extra = {}) {
     SchemaXml: `<Field Name="${internal}" Type="${type}" DisplayName="${title}"/>`,
     ...extra,
   };
+}
+
+// Richer field fixture for the List Schema feature: a realistic SchemaXml
+// (ID SourceID ColName RowOrdinal Version — the attributes scrubSchemaXml
+// exists to strip) plus the raw-row keys captureListSchema reads that the
+// plain field() helper above doesn't carry (StaticName, FromBaseType,
+// CanBeDeleted, Sealed, CustomFormatter, LookupList, IsDependentLookup,
+// PrimaryFieldId…). `xmlAttrs` adds/overrides SchemaXml attributes (List,
+// ShowField, FieldRef, Indexed…); `xmlInner` supplies child elements
+// (Formula/FieldRefs for Calculated columns).
+function schemaField(title, internal, type, kind, { xmlAttrs = {}, xmlInner = '', ...extra } = {}) {
+  fieldSeq++;
+  const id = `bb1e2c1d-4444-5555-9999-${String(fieldSeq).padStart(12, '0')}`;
+  const row = {
+    Id: id, Title: title, InternalName: internal, StaticName: internal,
+    TypeAsString: type, FieldTypeKind: kind, Required: false, Hidden: false,
+    ReadOnlyField: false, FromBaseType: false, CanBeDeleted: true, Sealed: false,
+    Group: 'Custom Columns', DefaultValue: null, Description: '',
+    EnforceUniqueValues: false, Indexed: false, CustomFormatter: '',
+    LookupList: null, LookupField: null, IsDependentLookup: false, PrimaryFieldId: null,
+    ...extra,
+  };
+  const attrs = {
+    ID: `{${id}}`, SourceID: '{deadbeef-0000-4000-8000-000000000000}', ColName: `tp_${internal}`,
+    RowOrdinal: '0', Version: '1', Name: internal, StaticName: internal, DisplayName: title,
+    Type: type,
+    ...(row.Required ? { Required: 'TRUE' } : {}),
+    ...(row.Indexed ? { Indexed: 'TRUE' } : {}),
+    ...(row.EnforceUniqueValues ? { EnforceUniqueValues: 'TRUE' } : {}),
+    ...xmlAttrs,
+  };
+  const attrText = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ');
+  row.SchemaXml = xmlInner ? `<Field ${attrText}>${xmlInner}</Field>` : `<Field ${attrText} />`;
+  return row;
+}
+
+// ---- List Schema feature: two dedicated webs ------------------------------
+// Served for /sites/schema (capture source) and /sites/target (apply/probe
+// target). Own webs, like /sites/classic and /sites/both above, so nothing
+// on the default web's row counts moves. See design/list-schema plan,
+// "Mock fixtures".
+
+const SCHEMA_REQUESTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a01';
+const SCHEMA_CLIENTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a02';
+const SCHEMA_REGIONS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a03';
+const SCHEMA_DOCUMENTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6a04';
+
+const fRequestsTitle = schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false, Required: true });
+const fRequestsId = schemaField('ID', 'ID', 'Counter', 5, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true });
+const fStatus = schemaField('Status', 'Status', 'Choice', 6, { Choices: ['New', 'Active', 'Closed'], DefaultValue: 'New' });
+const fNotes = schemaField('Notes', 'RequestNotes', 'Note', 3, { xmlAttrs: { AppendOnly: 'TRUE' } });
+const fBudget = schemaField('Budget', 'Budget', 'Number', 9, {});
+const fDue = schemaField('Due', 'RequestDue', 'DateTime', 4, {});
+const fApproved = schemaField('Approved', 'Approved', 'Boolean', 8, {});
+const fReference = schemaField('Reference', 'Reference', 'URL', 11, {});
+const fOwner = schemaField('Owner', 'RequestOwner', 'User', 20, { xmlAttrs: { List: 'UserInfo', ShowField: 'Name' } });
+const fClient = schemaField('Client', 'Client', 'Lookup', 7, {
+  LookupList: SCHEMA_CLIENTS_ID, LookupField: 'Title',
+  xmlAttrs: { List: `{${SCHEMA_CLIENTS_ID}}`, ShowField: 'Title' },
+});
+const fClientCode = schemaField('Client code', 'ClientCode', 'Lookup', 7, {
+  LookupList: SCHEMA_CLIENTS_ID, LookupField: 'ClientCode', IsDependentLookup: true, PrimaryFieldId: fClient.Id,
+  xmlAttrs: { List: `{${SCHEMA_CLIENTS_ID}}`, ShowField: 'ClientCode', FieldRef: `{${fClient.Id}}` },
+});
+const fParent = schemaField('Parent request', 'ParentRequest', 'Lookup', 7, {
+  LookupList: SCHEMA_REQUESTS_ID, LookupField: 'Title',
+  xmlAttrs: { List: `{${SCHEMA_REQUESTS_ID}}`, ShowField: 'Title' },
+});
+const fRegion = schemaField('Region', 'Region', 'Lookup', 7, {
+  LookupList: SCHEMA_REGIONS_ID, LookupField: 'Title',
+  xmlAttrs: { List: `{${SCHEMA_REGIONS_ID}}`, ShowField: 'Title' },
+});
+const fTotal = schemaField('Total', 'Total', 'Calculated', 12, {
+  ReadOnlyField: true,
+  xmlInner: `<Formula>=[Budget]*1</Formula><FieldRefs><FieldRef ID="{${fBudget.Id}}" Name="Budget"/></FieldRefs>`,
+});
+const fTracking = schemaField('Tracking code', 'TrackingCode', 'Text', 2, { Indexed: true, EnforceUniqueValues: true });
+const fFormatted = schemaField('Formatted note', 'FormattedNote', 'Text', 2, { CustomFormatter: '{"schema":"https://developer.microsoft.com/json-schemas/sp/column-formatting.schema.json"}' });
+const fCategory = schemaField('Category', 'RequestCategory', 'TaxonomyFieldType', 26, {});
+const fContentType = schemaField('Content Type', 'ContentType', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, Hidden: true, ReadOnlyField: true });
+const fAttachmentsF = schemaField('Attachments', 'Attachments', 'Attachments', 23, { FromBaseType: true, CanBeDeleted: false, Hidden: true });
+const fAuthor = schemaField('Created By', 'Author', 'User', 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: 'UserInfo' } });
+
+const SCHEMA_REQUESTS_FIELDS = [
+  fRequestsTitle, fRequestsId, fStatus, fNotes, fBudget, fDue, fApproved, fReference, fOwner,
+  fClient, fClientCode, fParent, fRegion, fTotal, fTracking, fFormatted, fCategory,
+  fContentType, fAttachmentsF, fAuthor,
+];
+
+const SCHEMA_REQUESTS_LIST = {
+  Id: SCHEMA_REQUESTS_ID, Title: 'Requests', BaseTemplate: 100, BaseType: 0, ItemCount: 12,
+  Hidden: false, Created: '2025-01-05T00:00:00Z', LastItemModifiedDate: '2026-08-01T00:00:00Z',
+  EntityTypeName: 'Requests', Description: 'Schema source list.',
+  DefaultViewUrl: '/sites/schema/Lists/Requests/AllItems.aspx',
+  RootFolder: { ServerRelativeUrl: '/sites/schema/Lists/Requests', Name: 'Requests' },
+  ContentTypesEnabled: true, EnableVersioning: true, MajorVersionLimit: 50,
+  EnableMinorVersions: false, ForceCheckout: false, EnableAttachments: true,
+  EnableFolderCreation: false, EnableModeration: false, OnQuickLaunch: true,
+  ValidationFormula: '=[Budget]>0', ValidationMessage: 'Budget must be positive.',
+  NoCrawl: false, DisableGridEditing: false, Ordered: false,
+  ReadSecurity: 1, WriteSecurity: 1, ListExperienceOptions: 0, EnableRequestSignOff: false,
+};
+const SCHEMA_CLIENTS_LIST = list('Clients', SCHEMA_CLIENTS_ID, 100, 0, 5, false, '/sites/schema/Lists/Clients');
+const SCHEMA_REGIONS_LIST = list('Regions', SCHEMA_REGIONS_ID, 100, 0, 4, false, '/sites/schema/Lists/Regions');
+const SCHEMA_DOCUMENTS_LIST = list('Documents', SCHEMA_DOCUMENTS_ID, 101, 1, 6, false, '/sites/schema/Documents');
+
+const SCHEMA_LISTS = [SCHEMA_REQUESTS_LIST, SCHEMA_CLIENTS_LIST, SCHEMA_REGIONS_LIST, SCHEMA_DOCUMENTS_LIST];
+
+const SCHEMA_FIELDS = {
+  [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_FIELDS,
+  [SCHEMA_CLIENTS_ID]: [
+    schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false }),
+    schemaField('Client code', 'ClientCode', 'Text', 2, {}),
+  ],
+  [SCHEMA_REGIONS_ID]: [schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false })],
+  [SCHEMA_DOCUMENTS_ID]: [schemaField('Title', 'Title', 'Text', 2, {})],
+};
+
+const SCHEMA_REQUESTS_VIEWS = [
+  {
+    Id: 'cc1e2c1d-5555-6666-aaaa-000000000001', Title: 'All Items', DefaultView: true,
+    PersonalView: false, Hidden: false, ServerRelativeUrl: '/sites/schema/Lists/Requests/AllItems.aspx',
+    RowLimit: 30, Paged: true, ViewQuery: '<OrderBy><FieldRef Name="ID"/></OrderBy>',
+    ViewFields: { Items: ['LinkTitle', 'Status', 'Budget'] },
+  },
+  {
+    Id: 'cc1e2c1d-5555-6666-aaaa-000000000002', Title: 'Active only', DefaultView: false,
+    PersonalView: false, Hidden: false, ServerRelativeUrl: '/sites/schema/Lists/Requests/Active.aspx',
+    RowLimit: 100, Paged: true,
+    ViewQuery: '<Where><Eq><FieldRef Name="Status"/><Value Type="Choice">Active</Value></Eq></Where>',
+    ViewFields: { Items: ['LinkTitle', 'Status', 'Client'] },
+  },
+];
+
+const REQUEST_PARENT_CT = '0x0100442912F2B6C7409A8FF25CE5504F1FD';
+const REQUEST_LIST_CT = `${REQUEST_PARENT_CT}00${'A'.repeat(32)}`;
+const SCHEMA_REQUESTS_CTS = [
+  { Id: { StringValue: REQUEST_LIST_CT }, Name: 'Request', Group: 'Custom Content Types', Hidden: false, ReadOnly: false, Sealed: false, Description: 'A schema-source request.' },
+  { Id: { StringValue: '0x01' }, Name: 'Item', Group: 'List Content Types', Hidden: false, ReadOnly: false, Sealed: false, Description: 'Create a new list item.' },
+];
+
+const VIEWS_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_VIEWS };
+const CONTENT_TYPES_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_CTS };
+
+const TARGET_CLIENTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b01';
+const TARGET_TASKS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b02';
+const TARGET_DOCUMENTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b03';
+const TARGET_ARCHIVE_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b04';
+
+// A reconcile target: has Title plus one of the source's custom fields
+// already, under a different display name story (Status), so the "add
+// missing fields and views" path has real work to do. No Regions list here
+// on purpose — it exercises the missing-lookup-target skip policy.
+const TARGET_LISTS = [
+  list('Clients', TARGET_CLIENTS_ID, 100, 0, 3, false, '/sites/target/Lists/Clients'),
+  list('Tasks', TARGET_TASKS_ID, 171, 0, 10, false, '/sites/target/Lists/Tasks'),
+  list('Documents', TARGET_DOCUMENTS_ID, 101, 1, 4, false, '/sites/target/Documents'),
+  list('Archive Requests', TARGET_ARCHIVE_ID, 100, 0, 2, false, '/sites/target/Lists/ArchiveRequests'),
+];
+const TARGET_FIELDS = {
+  [TARGET_ARCHIVE_ID]: [
+    schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false }),
+    schemaField('Status', 'Status', 'Choice', 6, { Choices: ['New', 'Active', 'Closed'], DefaultValue: 'New' }),
+  ],
+  [TARGET_CLIENTS_ID]: [schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false })],
+};
+// Carries the Requests parent content type (so attach-CT can find it
+// available) but deliberately no second source content type.
+const TARGET_AVAILABLE_CTS = [
+  { StringId: REQUEST_PARENT_CT, Name: 'Request', Group: 'Custom Content Types' },
+  { StringId: '0x0101', Name: 'Document', Group: 'Document Content Types' },
+];
+
+// ---- List Schema feature: stateful mock writer -----------------------------
+// A tiny in-memory SharePoint for the (slice 2) apply dialog: registers what
+// gets POSTed under the posting web's base, so a probe that follows — "does
+// this list exist now?", "open the new list" — resolves against what THIS
+// session wrote instead of 404ing against the static fixtures above.
+const writerState = {
+  lists: new Map(),        // `${webBase}::${lower title}` -> list row
+  fields: new Map(),       // listId -> Map(internalName -> field row)
+  views: new Map(),        // listId -> Map(viewId -> { Id, Title, fields: [] })
+  contentTypes: new Map(), // listId -> Set(parentId)
+};
+
+const webBaseOf = (url) => {
+  const s = String(url);
+  const i = s.indexOf('/_api/');
+  return i === -1 ? '' : s.slice(0, i).replace(/\/+$/, '');
+};
+
+function xmlAttr(xml, name) {
+  const m = new RegExp(`${name}="([^"]*)"`, 'i').exec(String(xml || ''));
+  return m ? m[1] : '';
+}
+
+let mockWriteSeq = 0;
+const nextMockId = (prefix) => `${prefix}${String(++mockWriteSeq).padStart(8, '0')}`;
+
+// mockWriter(url, body, contentType, headers) — the shape createSpWriteClient
+// calls (sp-write.js). Falls back to sp-write's own defaultMockWriter for
+// anything it doesn't recognize, so ValidateUpdateListItem/AddUsingPath/etc.
+// used elsewhere in the Workbench keep working unmodified.
+export function mockWriter(url, body, contentType, headers = {}) {
+  const writes = (globalThis.__DCSPAD_WB_WRITES__ ||= []);
+  writes.push({ url, body, contentType, headers });
+  const webBase = webBaseOf(url);
+  const path = String(url).slice(String(url).indexOf('/_api/') + 6).toLowerCase();
+  const method = headers?.['X-HTTP-Method'] || headers?.['x-http-method'] || '';
+
+  if (/^web\/lists$/.test(path) && !method) {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    const id = nextMockId('cc00');
+    let base = '';
+    try { base = new URL(webBase).pathname.replace(/\/+$/, ''); } catch { /* keep '' */ }
+    const rootUrl = `${base}/Lists/${String(data.Title || 'List').replace(/\s+/g, '')}`;
+    const entry = {
+      Id: id, Title: data.Title, BaseTemplate: data.BaseTemplate ?? 100,
+      ContentTypesEnabled: !!data.ContentTypesEnabled, RootFolder: { ServerRelativeUrl: rootUrl },
+    };
+    writerState.lists.set(`${webBase}::${String(data.Title || '').toLowerCase()}`, entry);
+    writerState.fields.set(id, new Map());
+    writerState.views.set(id, new Map());
+    writerState.contentTypes.set(id, new Set());
+    return { Id: id, Title: entry.Title, RootFolder: entry.RootFolder };
+  }
+
+  const listIdMatch = /lists\(guid'([0-9a-f-]+)'\)/i.exec(path);
+  const listId = listIdMatch?.[1];
+
+  if (listId && path.includes('createfieldasxml')) {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    const xml = data?.parameters?.SchemaXml || '';
+    const optionsBits = Number(data?.parameters?.Options) || 0;
+    let internalName = xmlAttr(xml, 'Name') || xmlAttr(xml, 'StaticName');
+    const displayName = xmlAttr(xml, 'DisplayName') || internalName;
+    // Options bit 8 = AddFieldInternalNameHint. Without it, the mock mangles
+    // the internal name from the display name — mirroring the real gap in
+    // SPUtils' string-overload createFieldAsXml this port fixes by always
+    // sending Options; a test pins the flag by checking the mock mangles it.
+    if (!(optionsBits & 8)) internalName = displayName.replace(/[^A-Za-z0-9]+/g, '_x0020_');
+    const type = xmlAttr(xml, 'Type');
+    const fields = writerState.fields.get(listId) || new Map();
+    const id = nextMockId('ff00');
+    fields.set(internalName, { Id: id, InternalName: internalName, Title: displayName, TypeAsString: type });
+    writerState.fields.set(listId, fields);
+    return { Id: id, InternalName: internalName };
+  }
+
+  if (listId && path.includes('addavailablecontenttype')) {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    const cts = writerState.contentTypes.get(listId) || new Set();
+    cts.add(data.contentTypeId);
+    writerState.contentTypes.set(listId, cts);
+    return {};
+  }
+
+  if (listId && /\/views$/.test(path) && !method) {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    const id = nextMockId('vv00');
+    const views = writerState.views.get(listId) || new Map();
+    views.set(id, { Id: id, Title: data.Title, fields: [] });
+    writerState.views.set(listId, views);
+    return { Id: id, Title: data.Title };
+  }
+
+  const viewMatch = /views\(guid'([0-9a-f-]+)'\)/i.exec(path);
+  if (listId && viewMatch && path.includes('removeallviewfields')) {
+    const view = writerState.views.get(listId)?.get(viewMatch[1]);
+    if (view) view.fields = [];
+    return {};
+  }
+  const addViewField = /addviewfield\('([^']*)'\)/i.exec(path);
+  if (listId && viewMatch && addViewField) {
+    const view = writerState.views.get(listId)?.get(viewMatch[1]);
+    if (view) view.fields.push(decodeURIComponent(addViewField[1]));
+    return {};
+  }
+
+  // Everything else (settings/validation MERGE, and anything not touched by
+  // the schema feature) falls back to the pad's own default mock behavior.
+  return defaultMockWriter(url, body, contentType, headers);
 }
 
 // List items, keyed by list id. Only the lists a Tier 2 view exercises need
@@ -699,8 +987,17 @@ export function mockResolver(rawUrl) {
   const webBase = url.slice(0, url.indexOf('/_api/')).replace(/[/]+$/, '');
   const classic = /[/]sites[/]classic$/i.test(webBase);
   const both = /[/]sites[/]both$/i.test(webBase);
-  const lists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : LISTS;
+  const schema = /[/]sites[/]schema$/i.test(webBase);
+  const target = /[/]sites[/]target$/i.test(webBase);
+  const staticLists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : schema ? SCHEMA_LISTS : target ? TARGET_LISTS : LISTS;
   const itemsByList = both ? BOTH_ITEMS : classic ? CLASSIC_ITEMS : ITEMS;
+  // A list the stateful mock writer created under this web (see mockWriter
+  // above) is visible to reads the moment it's written — a probe right after
+  // a mock `web/lists` POST must find it, not 404 against the static set.
+  const dynamicLists = [...writerState.lists.entries()]
+    .filter(([key]) => key.startsWith(`${webBase}::`))
+    .map(([, entry]) => entry);
+  const lists = [...staticLists, ...dynamicLists];
 
   // Classic pages carry their content in web parts, not item fields.
   const wpFile = /getfilebyserverrelativepath[(]decodedurl='([^']*)'[)][/]getlimitedwebpartmanager/
@@ -736,14 +1033,38 @@ export function mockResolver(rawUrl) {
       return { value: rows };
     }
     if (path.includes('/fields')) {
-      const perWeb = both ? BOTH_FIELDS : FIELDS;
+      const dyn = writerState.fields.get(found.Id);
+      if (dyn) return { value: [...dyn.values()] };
+      const perWeb = both ? BOTH_FIELDS : schema ? SCHEMA_FIELDS : target ? TARGET_FIELDS : FIELDS;
       return { value: perWeb[found.Id] || DEFAULT_FIELDS };
     }
     if (/\/views\(guid'/.test(path) && path.includes('/viewfields')) {
       return { Items: ['LinkTitle', 'ProjectStatus', 'DueDate'] };
     }
-    if (path.includes('/views')) return { value: VIEWS };
-    if (path.includes('/contenttypes')) return { value: CONTENT_TYPES };
+    if (path.includes('/views')) {
+      const dyn = writerState.views.get(found.Id);
+      if (dyn) {
+        return {
+          value: [...dyn.values()].map((v) => ({
+            Id: v.Id, Title: v.Title, DefaultView: false, PersonalView: false, Hidden: false,
+            RowLimit: 30, Paged: true, ViewQuery: '', ViewFields: { Items: v.fields },
+          })),
+        };
+      }
+      return { value: VIEWS_BY_LIST[found.Id] || VIEWS };
+    }
+    if (path.includes('/contenttypes')) {
+      const dyn = writerState.contentTypes.get(found.Id);
+      if (dyn) {
+        return {
+          value: [...dyn].map((id) => ({
+            Id: { StringValue: id }, Name: id, Group: '', Hidden: false, ReadOnly: false,
+            Sealed: false, Description: '',
+          })),
+        };
+      }
+      return { value: CONTENT_TYPES_BY_LIST[found.Id] || CONTENT_TYPES };
+    }
     if (path.includes('/roleassignments')) return { value: ROLE_ASSIGNMENTS };
     return found;
   }
@@ -798,6 +1119,12 @@ export function mockResolver(rawUrl) {
   if (path.startsWith('web/features')) return { value: FEATURES.web };
   if (path.startsWith('site/features')) return { value: FEATURES.site };
   if (path.startsWith('site')) return SITE;
+  // Ahead of the generic 'web' echo below (which would otherwise swallow
+  // this and hand back a bare web entity) — the Schema tab's Copy-to dialog
+  // (slice 2) probes this only on a content-types-enabled source.
+  if (path.startsWith('web/availablecontenttypes')) {
+    return { value: target ? TARGET_AVAILABLE_CTS : [] };
+  }
   if (path.startsWith('web')) {
     // Echo the requested web base back so mock site-switching behaves like
     // the real thing (connectWeb canonicalizes on the returned Url).

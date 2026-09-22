@@ -20,10 +20,11 @@ import {
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 // Built-in mock writer: record the call, answer with the minimal success
-// shape each endpoint's caller parses.
-function defaultMockWriter(url, body, contentType) {
+// shape each endpoint's caller parses. Exported so mock-data.js's stateful
+// writer can fall back to it for URLs it doesn't itself register.
+export function defaultMockWriter(url, body, contentType, headers) {
   const writes = (globalThis.__DCSPAD_WB_WRITES__ ||= []);
-  writes.push({ url, body, contentType });
+  writes.push({ url, body, contentType, headers });
   const lower = String(url).toLowerCase();
   if (lower.includes('validateupdatelistitem')) {
     let formValues = [];
@@ -49,11 +50,13 @@ export function createSpWriteClient({
 } = {}) {
   const isMock = () => !client.context().live;
 
-  async function post(url, { body, contentType = 'application/json;odata=nometadata' } = {}, {
+  // headers merges over the base set (Accept/Content-Type/digest) so a
+  // caller can add X-HTTP-Method/IF-MATCH (mergeJson) without repeating them.
+  async function post(url, { body, contentType = 'application/json;odata=nometadata', headers = {} } = {}, {
     fallback = 'SharePoint write failed', code = 'write',
   } = {}) {
     if (isMock()) {
-      return structuredClone((mockWriter || defaultMockWriter)(url, body, contentType));
+      return structuredClone((mockWriter || defaultMockWriter)(url, body, contentType, headers));
     }
     const attempt = async (forceDigest) => {
       const digest = await getDigest({ force: forceDigest, webUrl: client.webUrl() });
@@ -65,6 +68,7 @@ export function createSpWriteClient({
             Accept: ACCEPT_JSON,
             'Content-Type': contentType,
             'X-RequestDigest': digest,
+            ...headers,
           },
           body,
         });
@@ -77,6 +81,14 @@ export function createSpWriteClient({
     };
     let response = await attempt(false);
     if (response.status === 403) response = await attempt(true);
+    // Throttling: one retry honouring Retry-After, capped like sp-rest.js's
+    // read-side retry — a schema apply can throw dozens of writes at a list
+    // in a row and SPO's list-write throttle is real.
+    if (response.status === 429 || response.status === 503) {
+      const after = Number(response.headers.get('Retry-After')) || 2;
+      await new Promise((r) => setTimeout(r, Math.min(after, 30) * 1000));
+      response = await attempt(false);
+    }
     await requireOk(response, fallback, code);
     try { return unwrapJson(await response.json()) || {}; }
     catch { return {}; }   // a successful write may return no JSON body
@@ -231,13 +243,30 @@ export function createSpWriteClient({
 
   // Generic JSON POST against a /_api-relative path (group membership ops
   // and other small writes). Returns the parsed response body.
-  async function postJson(path, body = {}, { fallback = 'SharePoint write failed', code = 'write' } = {}) {
+  async function postJson(path, body = {}, {
+    fallback = 'SharePoint write failed', code = 'write', headers = {},
+  } = {}) {
     const url = `${client.webUrl()}/_api/${String(path).replace(/^\/+/, '')}`;
-    return post(url, { body: JSON.stringify(body) }, { fallback, code });
+    return post(url, { body: JSON.stringify(body), headers }, { fallback, code });
+  }
+
+  // SharePoint's REST MERGE: a POST carrying X-HTTP-Method: MERGE and
+  // IF-MATCH: * (unconditional — the caller isn't tracking an etag). Used
+  // for every partial-property update (list settings, field flags, view
+  // properties) so a plan step never has to know which properties want a
+  // full PUT versus a merge; on SharePoint everything here is a merge.
+  async function mergeJson(path, body = {}, {
+    fallback = 'SharePoint write failed', code = 'write', headers = {},
+  } = {}) {
+    const url = `${client.webUrl()}/_api/${String(path).replace(/^\/+/, '')}`;
+    return post(url, {
+      body: JSON.stringify(body),
+      headers: { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*', ...headers },
+    }, { fallback, code });
   }
 
   return {
-    validateUpdateListItem, uploadFile, checkOutFile, checkInFile, createFolder, postJson,
-    isMock,
+    validateUpdateListItem, uploadFile, checkOutFile, checkInFile, createFolder,
+    postJson, mergeJson, isMock,
   };
 }

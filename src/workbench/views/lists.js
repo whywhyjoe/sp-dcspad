@@ -3,8 +3,9 @@
 // types, and the raw entity rendered through the SP-aware inspector.
 
 import { showFailure } from '../denied.js';
-import { createGrid, encodeSpPath, bindNewTab } from '../grid.js?v=2';
+import { createGrid, encodeSpPath, bindNewTab, createMenuButton } from '../grid.js?v=2';
 import { copyText, downloadMarkdown } from '../export.js';
+import { downloadText } from '../../io.js?v=2';
 import {
   buildItemsMarkdown, contentFields, viewColumnFields,
   fieldText, itemTitle, personText,
@@ -14,6 +15,9 @@ import { principalTypeName } from '../perm-kinds.js';
 import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { toNode } from '../../inspect/to-node.js';
+import { captureListSchema } from '../list-schema-capture.js';
+import { schemaSummary, TAXONOMY_TYPES } from '../list-schema.js';
+import { toPnpPowerShellProvisioning, toPnpjs2Provisioning } from '../list-schema-script.js';
 
 // Friendly names for the templates that actually show up in day-to-day work;
 // anything else renders as its number.
@@ -165,8 +169,13 @@ export function parseItemsQuery(text) {
   return out;
 }
 
-export function createListsView({ client, navigate }) {
+export function createListsView({ client, navigate, updateRoute, inspectSite, createClient }) {
   const root = el('section', 'wb-view wb-view-lists');
+  // inspectSite/createClient are threaded through now so the Copy-to dialog
+  // (slice 2) only has to add a click handler, not a shell change — see
+  // openCopy() below, which stays a deliberate no-op for this slice.
+  void inspectSite;
+  void createClient;
 
   // Server-relative paths become real links: absolute against the inspected
   // web's origin, opened in a new tab (the cell text stays the relative path).
@@ -565,6 +574,215 @@ export function createListsView({ client, navigate }) {
     reload();
   }
 
+  // ---- Schema tab -----------------------------------------------------
+  // Chips compose .wb-info-chip (design/INFO-CHIP.md): quiet classification,
+  // never signal-coloured. Grids reuse createGrid for free sort/filter but
+  // carry no exportName/descriptor — the document export lives in the head's
+  // Export ▾ menu, not the per-row CSV/JSON a grid toolbar would otherwise
+  // offer for a shape that isn't really tabular data.
+  function fieldNote(f, fields) {
+    if (!f.custom) return 'system column — not copied';
+    if (TAXONOMY_TYPES.has(f.type)) return 'managed metadata — not recreated';
+    if (f.isDependentLookup) {
+      const primary = fields.find((p) => p.id === f.primaryFieldId);
+      return `dependent lookup of ${primary?.displayName || primary?.internalName || 'a primary column'}`;
+    }
+    if (f.isSelfLookup) return 'lookup to this list — rebinds to the copy';
+    return '';
+  }
+
+  function schemaChip(cls, text, title) {
+    const chip = el('span', `wb-info-chip ${cls}`, text);
+    if (title) chip.title = title;
+    return chip;
+  }
+
+  function copyableCell(text) {
+    const span = el('span', 'sp-copy', text);
+    span.title = 'Click to copy';
+    span.addEventListener('click', () => copyText(text, span));
+    return span;
+  }
+
+  function buildSettingsSection(doc) {
+    const section = el('div', 'wb-schema-section');
+    section.append(el('h3', '', 'Settings'));
+    const table = el('table', 'wb-table wb-schema-settings');
+    const tbody = el('tbody');
+    const rows = [
+      ['Description', doc.list.description || '—'],
+      ['Base template', `${BASE_TEMPLATE_NAMES[doc.list.baseTemplate] || 'Template'} (${doc.list.baseTemplate})`],
+      ['Versioning', doc.list.enableVersioning ? `on (major limit ${doc.list.majorVersionLimit ?? '—'})` : 'off'],
+      ['Content types', doc.list.contentTypesEnabled ? 'on' : 'off'],
+      ['Attachments', doc.list.enableAttachments ? 'on' : 'off'],
+      ['Folder creation', doc.list.enableFolderCreation ? 'on' : 'off'],
+      ['Moderation', doc.list.enableModeration ? 'on' : 'off'],
+      ['Force checkout', doc.list.forceCheckout ? 'on' : 'off'],
+      ['Validation formula', doc.list.validationFormula || '—'],
+      ['On Quick Launch', doc.list.onQuickLaunch ? 'yes' : 'no'],
+    ];
+    for (const [label, value] of rows) {
+      const tr = el('tr');
+      tr.append(el('td', '', label));
+      const td = el('td');
+      td.append(copyableCell(String(value)));
+      tr.append(td);
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    section.append(table);
+    return section;
+  }
+
+  function buildFieldsSection(doc) {
+    const section = el('div', 'wb-schema-section');
+    section.append(el('h3', '', 'Fields'));
+    const fieldsGrid = createGrid({
+      columns: [
+        { key: 'displayName', label: 'Title' },
+        { key: 'internalName', label: 'Internal name', mono: true, copyable: true },
+        { key: 'type', label: 'Type' },
+        { key: 'custom', label: 'Custom' },
+        { key: 'required', label: 'Required' },
+        { key: 'indexed', label: 'Indexed' },
+        { key: 'lookupList', label: 'Lookup target', value: (f) => f.lookupList || '' },
+        { key: 'note', label: 'Note', value: (f) => fieldNote(f, doc.fields) },
+      ],
+      rowKey: 'internalName',
+      emptyText: 'No fields.',
+      filterPlaceholder: 'Filter fields…',
+    });
+    fieldsGrid.setRows(doc.fields);
+    section.append(fieldsGrid.el);
+    return section;
+  }
+
+  function buildViewsSection(doc) {
+    const section = el('div', 'wb-schema-section');
+    section.append(el('h3', '', 'Views'));
+    const viewsGrid = createGrid({
+      columns: [
+        { key: 'title', label: 'Title' },
+        { key: 'defaultView', label: 'Default' },
+        { key: 'columns', label: 'Columns', value: (v) => (v.fields || []).length, num: true },
+        { key: 'rowLimit', label: 'Row limit', num: true },
+        { key: 'paged', label: 'Paged' },
+        { key: 'customFormatter', label: 'Formatting', value: (v) => (v.customFormatter ? 'yes' : '') },
+        { key: 'viewQuery', label: 'CAML query', mono: true, copyable: true },
+      ],
+      rowKey: 'title',
+      emptyText: 'No views.',
+      filterPlaceholder: 'Filter views…',
+    });
+    viewsGrid.setRows(doc.views);
+    section.append(viewsGrid.el);
+    return section;
+  }
+
+  function buildContentTypesSection(doc) {
+    const section = el('div', 'wb-schema-section');
+    section.append(el('h3', '', 'Content types'));
+    if (!doc.list.contentTypesEnabled) {
+      section.append(el('p', 'wb-schema-note', 'Content types are exported for reference — they are not recreated unless enabled on the target.'));
+    }
+    const ctGrid = createGrid({
+      columns: [
+        { key: 'name', label: 'Name' },
+        { key: 'id', label: 'Id', mono: true, copyable: true },
+        { key: 'group', label: 'Group' },
+        { key: 'sealed', label: 'Sealed' },
+      ],
+      rowKey: 'id',
+      emptyText: 'No content types.',
+      filterPlaceholder: 'Filter content types…',
+    });
+    ctGrid.setRows(doc.contentTypes);
+    section.append(ctGrid.el);
+    return section;
+  }
+
+  function buildWarningsSection(doc) {
+    const section = el('div', 'wb-schema-section');
+    section.append(el('h3', '', 'Warnings'));
+    const list = el('ul', 'wb-grid-notice');
+    for (const w of doc.warnings) list.append(el('li', '', w));
+    section.append(list);
+    return section;
+  }
+
+  // The Copy-to dialog is slice 2 — this stays a named no-op so the button's
+  // wiring (and its gating) can ship now without a dynamic import to a
+  // module that doesn't exist yet.
+  function openCopy(doc) { void doc; }
+
+  function renderSchemaPane(doc, listTitle) {
+    const summary = schemaSummary(doc);
+    const stem = fileStem(listTitle);
+
+    const head = el('div', 'wb-schema-head');
+    const chips = el('div', 'wb-schema-chips');
+    chips.append(
+      schemaChip('wb-schema-kind', summary.kind, `BaseTemplate ${doc.list.baseTemplate}`),
+      schemaChip('wb-schema-fields', summary.fieldsText, `${doc.fields.length} total fields, ${doc.fields.filter((f) => f.custom).length} custom`),
+      schemaChip('wb-schema-views', summary.viewsText),
+      schemaChip('wb-schema-cts', summary.contentTypesText, doc.list.contentTypesEnabled
+        ? 'Content types are enabled on this list.' : 'Content types are not enabled on this list.'),
+      schemaChip('wb-schema-versioning', summary.versioningText),
+    );
+    if (summary.isLibrary) {
+      chips.append(schemaChip('wb-schema-libkind', 'document library',
+        'Copying a document library arrives in stage 2 — export works now.'));
+    }
+
+    const actions = el('span', 'wb-schema-actions');
+    actions.append(createMenuButton('Export ▾', 'Export this list’s schema', [
+      ['Download schema .json', () => downloadText(`schema-${stem}.json`, JSON.stringify(doc, null, 2), 'application/json')],
+      ['Copy schema JSON', (btn) => copyText(JSON.stringify(doc, null, 2), btn)],
+      ['Copy as PnP.PowerShell (provision)', (btn) => copyText(toPnpPowerShellProvisioning(doc, { targetWebUrl: client.webUrl() }), btn)],
+      ['Copy as PnPjs 2 (provision)', (btn) => copyText(toPnpjs2Provisioning(doc, {}), btn)],
+    ]));
+    const copyBtn = el('button', 'btn btn-xs wb-schema-copy', 'Copy to…');
+    copyBtn.type = 'button';
+    // Stage 1a copies generic lists only. Libraries get their own sentence
+    // (stage 2 is planned for them); any other template is simply out of
+    // scope, and saying "stage 2" there would promise something unplanned.
+    const gated = doc.list.baseTemplate !== 100;
+    copyBtn.disabled = gated;
+    copyBtn.title = !gated
+      ? 'Create a new list from this schema, on this site or another one.'
+      : summary.isLibrary
+        ? 'Copying a document library arrives in stage 2 — export works now.'
+        : `Only generic lists can be copied — this is a ${summary.kind.toLowerCase()}. Export works now.`;
+    copyBtn.addEventListener('click', () => openCopy(doc));
+    actions.append(copyBtn);
+
+    head.append(chips, actions);
+
+    const sections = el('div', 'wb-schema-sections');
+    sections.append(buildSettingsSection(doc));
+    sections.append(buildFieldsSection(doc));
+    sections.append(buildViewsSection(doc));
+    if (doc.contentTypes.length) sections.append(buildContentTypesSection(doc));
+    if (doc.warnings.length) sections.append(buildWarningsSection(doc));
+
+    const root = el('div', 'wb-schema');
+    root.append(head, sections);
+    return root;
+  }
+
+  function buildSchemaPane(wrap, listId, listTitle) {
+    const status = el('div', 'wb-grid-status', 'Reading the list schema…');
+    wrap.append(status);
+    cached(listId, 'schema', () => captureListSchema(client, listId))
+      .then(({ doc }) => {
+        status.remove();
+        wrap.append(renderSchemaPane(doc, listTitle));
+      })
+      .catch((err) => {
+        showFailure(status, err, 'this list’s schema');
+      });
+  }
+
   const TABS = [
     {
       id: 'fields',
@@ -619,6 +837,7 @@ export function createListsView({ client, navigate }) {
         query: { path: guidPath(listId, '/contenttypes'), options: { select: CT_SELECT } },
       }),
     },
+    { id: 'schema', label: 'Schema' },
     {
       id: 'permissions',
       label: 'Permissions',
@@ -689,6 +908,9 @@ export function createListsView({ client, navigate }) {
       }
       body.textContent = '';
       body.append(pane(tab));
+      // Every tab, not just the ones that already needed it — the active tab
+      // must survive a reload the same way the list itself does.
+      updateRoute?.({ tab: tab.id });
     }
 
     function pane(tab) {
@@ -698,6 +920,11 @@ export function createListsView({ client, navigate }) {
 
       if (tab.id === 'items') {
         buildItemsPane(wrap, listId, route.listTitle || 'List');
+        return wrap;
+      }
+
+      if (tab.id === 'schema') {
+        buildSchemaPane(wrap, listId, route.listTitle || 'List');
         return wrap;
       }
 
