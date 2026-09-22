@@ -862,7 +862,7 @@ await check('schema: the tab sits after Content types, before Permissions, and w
   const tabs = await schemaPage.locator('.wb-tab').allTextContents();
   const route = await schemaPage.evaluate(() =>
     JSON.parse(sessionStorage.getItem('dcspad.workbench.route') || '{}'));
-  return tabs.join(',') === 'Fields,Views,Content types,Schema,Permissions,Items,Raw' && route.tab === 'schema';
+  return tabs.join(',') === 'Fields,Views,Content types,Schema,Permissions,Items,Tools,Raw' && route.tab === 'schema';
 });
 
 await check('schema: chips show the five schema facts for Requests', async () => {
@@ -893,17 +893,44 @@ await check('schema: the Fields section notes system columns, managed metadata, 
     && text.includes('dependent lookup of');
 });
 
-await check('schema: the Export menu offers exactly the four document actions', async () => {
-  await schemaPage.locator('.wb-schema-actions .wb-menu-wrap button', { hasText: 'Export' }).click();
-  const items = await schemaPage.locator('.wb-schema-actions .wb-menu-item').allTextContents();
+await check('schema: the head has no Export/Copy controls, and shows the Tools-tab hint', async () => {
+  const controls = await schemaPage.locator('.wb-schema-actions').count();
+  const copyBtn = await schemaPage.locator('.wb-schema-copy').count();
+  const hint = await schemaPage.locator('.wb-schema-hint').textContent();
+  return controls === 0 && copyBtn === 0 && hint.trim() === 'Export and copy this list from the Tools tab.';
+});
+
+// ---- Tools tab (moved from the read-only Schema head, and from the Items
+// tab's whole-list exports — see design/INFO-CHIP.md's register split for
+// why "why not" reads as plain text here, never coloured) ------------------
+
+await check('tools: the tab sits after Items, before Raw, and writes the route', async () => {
+  await schemaPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await schemaPage.waitForSelector('.wb-tool-card');
+  const tabs = await schemaPage.locator('.wb-tab').allTextContents();
+  const route = await schemaPage.evaluate(() =>
+    JSON.parse(sessionStorage.getItem('dcspad.workbench.route') || '{}'));
+  return tabs.indexOf('Items') === tabs.indexOf('Tools') - 1
+    && tabs.indexOf('Tools') === tabs.indexOf('Raw') - 1
+    && route.tab === 'tools';
+});
+
+await check('tools: the four cards render in order', async () => {
+  const titles = await schemaPage.locator('.wb-tool-card h3').allTextContents();
+  return titles.join(',') === 'Copy this list…,Export schema,Export data,Import data into this list';
+});
+
+await check('tools: the Export schema card offers exactly the four document actions', async () => {
+  await schemaPage.locator('.wb-tool-export-schema .wb-menu-wrap button', { hasText: 'Export' }).click();
+  const items = await schemaPage.locator('.wb-tool-export-schema .wb-menu-item').allTextContents();
   return items.join(',') === 'Download schema .json,Copy schema JSON,'
     + 'Copy as PnP.PowerShell (provision),Copy as PnPjs 2 (provision)';
 });
 
-await check('schema: Download schema .json parses back as a v2 document for this list', async () => {
+await check('tools: Export schema → Download schema .json parses back as a v2 document for this list', async () => {
   const [download] = await Promise.all([
     schemaPage.waitForEvent('download'),
-    schemaPage.locator('.wb-schema-actions .wb-menu-item', { hasText: 'Download schema .json' }).click(),
+    schemaPage.locator('.wb-tool-export-schema .wb-menu-item', { hasText: 'Download schema .json' }).click(),
   ]);
   const bytes = readFileSync(await download.path());
   const doc = JSON.parse(bytes.toString('utf8'));
@@ -911,36 +938,44 @@ await check('schema: Download schema .json parses back as a v2 document for this
     && doc.kind === 'dcspad-sputils-list-schema' && doc.version === 2 && doc.list.title === 'Requests';
 });
 
-await check('schema: Copy schema JSON flashes the copied state on the Export trigger', async () => {
+await check('tools: Export schema → Copy schema JSON flashes the copied state on the trigger', async () => {
   // Stub the clipboard so the copy is deterministic in the sandbox (no
   // clipboard-write permission grant needed, matching workbench.mjs).
   await schemaPage.evaluate(() => {
     navigator.clipboard.writeText = (t) => { window.__COPIED = t; return Promise.resolve(); };
   });
-  await schemaPage.locator('.wb-schema-actions .wb-menu-wrap button', { hasText: 'Export' }).click();
-  await schemaPage.locator('.wb-schema-actions .wb-menu-item', { hasText: 'Copy schema JSON' }).click();
-  return (await schemaPage.locator('.wb-schema-actions .wb-menu-wrap button.copied').count()) === 1;
+  await schemaPage.locator('.wb-tool-export-schema .wb-menu-wrap button', { hasText: 'Export' }).click();
+  await schemaPage.locator('.wb-tool-export-schema .wb-menu-item', { hasText: 'Copy schema JSON' }).click();
+  return (await schemaPage.locator('.wb-tool-export-schema .wb-menu-wrap button.copied').count()) === 1;
 });
 
-await check('schema: Copy to… is enabled for a generic list, with the working title', async () => {
-  const btn = schemaPage.locator('.wb-schema-copy');
+await check('tools: Copy this list… is enabled for a generic list, with the working title', async () => {
+  const btn = schemaPage.locator('.wb-tools-copy');
   const disabled = await btn.isDisabled();
   const title = await btn.getAttribute('title');
   return !disabled && title === 'Create a new list from this schema, on this site or another one.';
 });
 
-await check('schema: a document library shows the library chip, and Copy to… is enabled (stage 2)', async () => {
+await check('tools: Import data into this list is enabled for a generic list', async () =>
+  !(await schemaPage.locator('.wb-tools-import').isDisabled()));
+
+await check('items: the Export ▾ menu no longer lists the whole-list data entries (moved to Tools)', async () => {
+  await schemaPage.locator('.wb-tab', { hasText: 'Items' }).click();
+  await schemaPage.waitForSelector('.wb-items-grid .wb-table tbody tr');
+  await schemaPage.locator('.wb-items-grid .wb-grid-actions .wb-menu-wrap button', { hasText: 'Export' }).click();
+  const items = await schemaPage.locator('.wb-items-grid .wb-grid-actions .wb-menu-item').allTextContents();
+  const hasDataEntries = items.some((t) => t.includes('data .json') || t.includes('data JSON'));
+  return !hasDataEntries && items.includes('Download .md') && items.includes('Copy .md');
+});
+
+await check('schema: a document library still shows the library chip (read-only)', async () => {
   await schemaPage.locator('.wb-back').click();
   await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Documents' });
   await schemaPage.locator('.wb-table tbody tr', { hasText: 'Documents' }).locator('td').first().click();
   await schemaPage.waitForSelector('.wb-tab');
   await schemaPage.locator('.wb-tab', { hasText: 'Schema' }).click();
   await schemaPage.waitForSelector('.wb-schema-chips .wb-schema-kind');
-  const libChip = await schemaPage.locator('.wb-schema-libkind').count();
-  const disabled = await schemaPage.locator('.wb-schema-copy').isDisabled();
-  const title = await schemaPage.locator('.wb-schema-copy').getAttribute('title');
-  return libChip === 1 && !disabled
-    && title === 'Create a new list from this schema, on this site or another one.';
+  return (await schemaPage.locator('.wb-schema-libkind').count()) === 1;
 });
 
 await check('schema: the Documents warnings section names the non-default per-library Forms template', async () => {
@@ -948,8 +983,20 @@ await check('schema: the Documents warnings section names the non-default per-li
   return text.includes('Per-library Forms template');
 });
 
-await check('dialog: Copy to… on a library shows the files-not-copied line and hides the item checkboxes', async () => {
-  await schemaPage.locator('.wb-schema-copy').click();
+await check('tools: on a document library, Copy this list… is enabled and Import data is disabled with its reason (stage 2)', async () => {
+  await schemaPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await schemaPage.waitForSelector('.wb-tool-card');
+  const copyDisabled = await schemaPage.locator('.wb-tools-copy').isDisabled();
+  const copyTitle = await schemaPage.locator('.wb-tools-copy').getAttribute('title');
+  const importDisabled = await schemaPage.locator('.wb-tools-import').isDisabled();
+  const reason = await schemaPage.locator('.wb-tool-import-data .wb-tool-reason').textContent();
+  return !copyDisabled && copyTitle === 'Create a new list from this schema, on this site or another one.'
+    && importDisabled
+    && reason.trim() === 'Item import into a document library isn’t supported — a library copy is schema only.';
+});
+
+await check('dialog: Copy this list… on a library shows the files-not-copied line and hides the item checkboxes', async () => {
+  await schemaPage.locator('.wb-tools-copy').click();
   await schemaPage.waitForSelector('.wb-schema-dialog');
   await schemaPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
   const note = await schemaPage.locator('.wb-schema-items-note').textContent();
@@ -1014,7 +1061,7 @@ const LIVE_DENIED_ID = '33333333-0000-4000-8000-000000000003';
 const LIVE_NEW_LIST_ID = '33333333-0000-4000-8000-000000000009';
 const liveReads = [];   // { url, accept }
 const liveDialogWrites = [];   // { url, method, body } — the dialog's own 401 test, below
-const liveDialogFlags = { expireOnField: null };
+const liveDialogFlags = { expireOnField: null, expireOnImport: null };
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 await live.addInitScript(() => {
@@ -1066,13 +1113,29 @@ await live.route('**/_api/**', async (route) => {
     return route.fulfill({ json: { value: [
       {
         Id: 'f1', Title: 'Title', InternalName: 'Title', TypeAsString: 'Text',
-        FromBaseType: true, CanBeDeleted: false, SchemaXml: '<Field Name="Title" Type="Text"/>',
+        FromBaseType: true, CanBeDeleted: false, ReadOnlyField: false, SchemaXml: '<Field Name="Title" Type="Text"/>',
       },
       {
         Id: 'f2', Title: 'Region', InternalName: 'Region', TypeAsString: 'Lookup',
-        FromBaseType: false, CanBeDeleted: true, LookupList: LIVE_LOOKUP_ID, LookupField: 'Title',
+        FromBaseType: false, CanBeDeleted: true, ReadOnlyField: false, LookupList: LIVE_LOOKUP_ID, LookupField: 'Title',
         SchemaXml: `<Field Name="Region" Type="Lookup" List="{${LIVE_LOOKUP_ID}}"/>`,
       },
+    ] } });
+  }
+  // Tools tab → Import data: writes an item into LiveRequests. Its own 401
+  // test (below) sets expireOnImport to make exactly the next write fail,
+  // the same one-shot pattern liveDialogFlags.expireOnField uses for the
+  // schema dialog's own 401 test.
+  if (method === 'POST' && url.includes(`lists(guid'${LIVE_LIST_ID}')/AddValidateUpdateItemUsingPath`)) {
+    if (liveDialogFlags.expireOnImport) {
+      liveDialogFlags.expireOnImport = null;
+      return route.fulfill({ status: 401, json: { 'odata.error': { message: { value: 'The security token is expired.' } } } });
+    }
+    const data = JSON.parse(request.postData() || '{}');
+    const formValues = Array.isArray(data.formValues) ? data.formValues : [];
+    return route.fulfill({ json: { value: [
+      ...formValues.map((fv) => ({ FieldName: fv.FieldName, FieldValue: fv.FieldValue, HasException: false, ErrorMessage: null })),
+      { FieldName: 'Id', FieldValue: '9001', HasException: false, ErrorMessage: null },
     ] } });
   }
   if (url.includes(`lists(guid'${LIVE_LIST_ID}')/views`)) {
@@ -2315,8 +2378,8 @@ await dialogPage.locator('.wb-rail-btn', { hasText: 'Lists' }).click();
 await dialogPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
 await dialogPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
 await dialogPage.waitForSelector('.wb-tab');
-await dialogPage.locator('.wb-tab', { hasText: 'Schema' }).click();
-await dialogPage.waitForSelector('.wb-schema-copy');
+await dialogPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+await dialogPage.waitForSelector('.wb-tools-copy');
 
 // Every dialog below except the final one (Dialog A) targets /sites/target
 // or an invalid URL, so the /sites/schema all-lists grid still shows exactly
@@ -2326,7 +2389,7 @@ await dialogPage.waitForSelector('.wb-schema-copy');
 
 // -- Dialog B: cross-web target (/sites/target) — lookups, dry run, create ordering
 
-await dialogPage.locator('.wb-schema-copy').click();
+await dialogPage.locator('.wb-tools-copy').click();
 await dialogPage.waitForSelector('.wb-schema-dialog');
 // Wait out the dialog's own auto-connect (to the same web) before driving it
 // further — racing a second connect() against the boot-time one is exactly
@@ -2425,7 +2488,7 @@ await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
 
 // -- Dialog C: cross-tenant URL is refused, Create stays disabled
 
-await dialogPage.locator('.wb-schema-copy').click();
+await dialogPage.locator('.wb-tools-copy').click();
 await dialogPage.waitForSelector('.wb-schema-dialog');
 await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
 await check('dialog: a cross-tenant URL shows the different-tenant sentence and Create stays disabled', async () => {
@@ -2441,7 +2504,7 @@ await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
 
 // -- Dialog D: an existing title on the target gates reconcile behind the consent box
 
-await dialogPage.locator('.wb-schema-copy').click();
+await dialogPage.locator('.wb-tools-copy').click();
 await dialogPage.waitForSelector('.wb-schema-dialog');
 await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
 await dialogPage.fill('.wb-schema-target', '/sites/target');
@@ -2530,11 +2593,11 @@ await dialogPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
 // re-selection of the 'Requests' row ambiguous.
 
 await dialogPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
-await dialogPage.locator('.wb-tab', { hasText: 'Schema' }).click();
-await dialogPage.waitForSelector('.wb-schema-copy');
+await dialogPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+await dialogPage.waitForSelector('.wb-tools-copy');
 
-await check('dialog: Copy to… on the same web defaults the title to ‘Requests Copy’', async () => {
-  await dialogPage.locator('.wb-schema-copy').click();
+await check('dialog: Copy this list… on the same web defaults the title to ‘Requests Copy’', async () => {
+  await dialogPage.locator('.wb-tools-copy').click();
   await dialogPage.waitForSelector('.wb-schema-dialog');
   await dialogPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Requests Copy');
   return true;
@@ -2566,13 +2629,37 @@ await dialogPage.close();
 await check('live-dialog: a 401 mid-run shows EXPIRED_SESSION_NOTE', async () => {
   await live.locator('.wb-back').click();
   await live.locator('.wb-table tbody tr', { hasText: 'LiveRequests' }).locator('td').first().click();
-  await live.locator('.wb-tab', { hasText: 'Schema' }).click();
-  await live.waitForSelector('.wb-schema-copy');
+  await live.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await live.waitForSelector('.wb-tools-copy');
   liveDialogFlags.expireOnField = true;
-  await live.locator('.wb-schema-copy').click();
+  await live.locator('.wb-tools-copy').click();
   await live.waitForSelector('.wb-schema-dialog');
   await live.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
   await live.locator('.wb-schema-create').click();
+  await live.waitForSelector('.wb-schema-report:not([hidden])');
+  const headline = await live.locator('.wb-schema-report-headline').textContent();
+  return headline.includes('expired') && headline.includes('reload the page');
+});
+
+await live.locator('.wb-schema-close').click();
+await live.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+
+await check('live-tools: Import data → a 401 mid-run shows EXPIRED_SESSION_NOTE', async () => {
+  await live.waitForSelector('.wb-tools-import');
+  const liveImportDataDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'LiveRequests', siteUrl: 'https://live.example' },
+    fields: { Title: { type: 'Text', custom: false } },
+    items: [{ Id: 601, Title: 'Live import one' }],
+    folders: [], users: [], warnings: [],
+  };
+  await live.setInputFiles('.wb-tools-import-file', [
+    { name: 'live-data.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(liveImportDataDoc)) },
+  ]);
+  await live.waitForSelector('.wb-import-data-dialog');
+  await live.locator('.wb-import-data-dialog .sp-metadata-consent input[type="checkbox"]').check();
+  liveDialogFlags.expireOnImport = true;
+  await live.locator('.wb-import-run').click();
   await live.waitForSelector('.wb-schema-report:not([hidden])');
   const headline = await live.locator('.wb-schema-report-headline').textContent();
   return headline.includes('expired') && headline.includes('reload the page');
@@ -2777,19 +2864,22 @@ await check('live: captureListData reads items with an unprojected $select=* (ne
       && itemsCall?.capOpts?.allowLargeCap === true && itemsCall?.capOpts?.cap === 100000;
   }));
 
-// ---- Stage 1b-a: mock UI — Items tab whole-list data export ---------------
+// ---- Stage 1b-a: mock UI — Tools tab whole-list data export ---------------
+// Was 'items: Download data .json exports the whole list via
+// captureListData, not just the grid's visible rows' — the whole-list
+// export moved off the Items tab's Export ▾ menu onto the Tools tab's
+// Export data card; this is that same check, driven from there.
 
-await check('items: Download data .json exports the whole list via captureListData, not just the grid’s visible rows', async () => {
+await check('tools: Export data → Download data .json exports the whole list, not just the Items grid’s visible rows', async () => {
   await schemaPage.locator('.wb-back').click();
   await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
   await schemaPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
   await schemaPage.waitForSelector('.wb-tab');
-  await schemaPage.locator('.wb-tab', { hasText: 'Items' }).click();
-  await schemaPage.waitForSelector('.wb-items-grid .wb-table tbody tr');
-  await schemaPage.locator('.wb-items-grid .wb-grid-actions .wb-menu-wrap button', { hasText: 'Export' }).click();
+  await schemaPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await schemaPage.waitForSelector('.wb-tool-export-data');
   const [download] = await Promise.all([
     schemaPage.waitForEvent('download'),
-    schemaPage.locator('.wb-menu-item', { hasText: 'Download data .json' }).click(),
+    schemaPage.locator('.wb-tool-export-data button', { hasText: 'Download data .json' }).click(),
   ]);
   const bytes = readFileSync(await download.path());
   const doc = JSON.parse(bytes.toString('utf8'));
@@ -2925,13 +3015,13 @@ await check('pure: applyListData refuses a document-library target (library-item
 
 // ---- Mock UI: item copy through the apply dialog (Requests → target) ------
 
-await check('dialog: Copy to… with Include items copies items to a NEW target list and the report counts them', async () => {
+await check('dialog: Copy this list… with Include items copies items to a NEW target list and the report counts them', async () => {
   await schemaPage.locator('.wb-back').click();
   await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
   await schemaPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
-  await schemaPage.locator('.wb-tab', { hasText: 'Schema' }).click();
-  await schemaPage.waitForSelector('.wb-schema-copy');
-  await schemaPage.locator('.wb-schema-copy').click();
+  await schemaPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+  await schemaPage.waitForSelector('.wb-tools-copy');
+  await schemaPage.locator('.wb-tools-copy').click();
   await schemaPage.waitForSelector('.wb-schema-dialog');
   await schemaPage.fill('.wb-schema-target', '/sites/target');
   await schemaPage.locator('.wb-schema-connect').click();
@@ -2990,6 +3080,96 @@ await check('dialog: New from schema… enables Include items when a matching da
   await schemaPage.locator('.wb-schema-close').click();
   await schemaPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
   return mismatchRefused && itemsEnabled;
+});
+
+// ---- Tools tab: Import data into this list (new) --------------------------
+// Own list detail (Requests, on /sites/schema) so this never collides with
+// the counts the earlier "Copy this list… with Include items" run left
+// behind on /sites/target. schemaPage is already back on the all-lists grid
+// (the last few checks drove "New from schema…" from there directly).
+
+await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
+await schemaPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
+await schemaPage.waitForSelector('.wb-tab');
+await schemaPage.locator('.wb-tab', { hasText: 'Tools' }).click();
+await schemaPage.waitForSelector('.wb-tools-import');
+const requestsListId = await schemaPage.locator('.wb-detail-id').textContent();
+
+async function pickImportFile(name, mimeType, buffer) {
+  const dismissBtn = schemaPage.locator('.wb-tool-import-notice button', { hasText: 'Dismiss' });
+  if (await dismissBtn.count()) await dismissBtn.click();
+  await schemaPage.setInputFiles('.wb-tools-import-file', [{ name, mimeType, buffer }]);
+}
+
+await check('tools: Import data refuses an oversized file inline', async () => {
+  const big = Buffer.alloc(6 * 1024 * 1024, 'a');
+  await pickImportFile('too-big.json', 'application/json', big);
+  await schemaPage.waitForSelector('.wb-tool-import-notice:not([hidden])');
+  const text = await schemaPage.locator('.wb-tool-import-notice').textContent();
+  return text.includes('MB') && text.includes('5 MB import limit');
+});
+
+await check('tools: Import data refuses a non-JSON file inline', async () => {
+  await pickImportFile('not-json.json', 'application/json', Buffer.from('not json at all'));
+  await schemaPage.waitForSelector('.wb-tool-import-notice:not([hidden])');
+  const text = await schemaPage.locator('.wb-tool-import-notice').textContent();
+  return text.includes('isn’t valid JSON');
+});
+
+await check('tools: Import data refuses the wrong document kind inline', async () => {
+  const schemaKindDoc = {
+    kind: 'dcspad-sputils-list-schema', version: 2,
+    source: { listTitle: 'Requests' }, list: { title: 'Requests', baseTemplate: 100 },
+    fields: [], views: [], contentTypes: [], warnings: [],
+  };
+  await pickImportFile('wrong-kind.json', 'application/json', Buffer.from(JSON.stringify(schemaKindDoc)));
+  await schemaPage.waitForSelector('.wb-tool-import-notice:not([hidden])');
+  const text = await schemaPage.locator('.wb-tool-import-notice').textContent();
+  return text.includes('not a list data document') && text.includes('dcspad-sputils-list-data');
+});
+
+const importDataDoc = {
+  kind: 'dcspad-sputils-list-data', version: 2,
+  source: { listTitle: 'Requests', siteUrl: '/sites/schema', listId: 'requests-src-id' },
+  fields: { Title: { type: 'Text', custom: false } },
+  items: [
+    { Id: 501, Title: 'Imported one' },
+    { Id: 502, Title: 'Imported two' },
+  ],
+  folders: [], users: [], warnings: [],
+};
+
+await check('dialog: a valid data doc opens the import dialog with counts and the field table', async () => {
+  await pickImportFile('requests-data.json', 'application/json', Buffer.from(JSON.stringify(importDataDoc)));
+  await schemaPage.waitForSelector('.wb-import-data-dialog');
+  const context = await schemaPage.locator('.wb-import-data-dialog .app-dialog__context').textContent();
+  const counts = await schemaPage.locator('.wb-import-data-dialog .wb-schema-note').first().textContent();
+  await schemaPage.waitForSelector('.wb-import-fields tbody tr');
+  const fieldRows = await schemaPage.locator('.wb-import-fields tbody tr').count();
+  return context.includes('Requests') && counts.includes('2 items') && fieldRows > 0;
+});
+
+await check('dialog: Import stays disabled until the consent box is checked', async () => {
+  const disabledBefore = await schemaPage.locator('.wb-import-run').isDisabled();
+  await schemaPage.locator('.wb-import-data-dialog .sp-metadata-consent input[type="checkbox"]').check();
+  const disabledAfter = await schemaPage.locator('.wb-import-run').isDisabled();
+  return disabledBefore && !disabledAfter;
+});
+
+await check('dialog: a mock run records AddValidateUpdateItemUsingPath writes into THIS list and the report counts items', async () => {
+  await schemaPage.evaluate(() => { window.__DCSPAD_WB_WRITES__ = []; });
+  await schemaPage.locator('.wb-import-run').click();
+  await schemaPage.waitForSelector('.wb-schema-report:not([hidden])');
+  const headline = await schemaPage.locator('.wb-schema-report-headline').textContent();
+  const countsText = await schemaPage.locator('.wb-import-data-dialog .wb-schema-report-counts').textContent();
+  const wrotesIntoThisList = await schemaPage.evaluate((listId) =>
+    (window.__DCSPAD_WB_WRITES__ || []).filter((w) =>
+      String(w.url).toLowerCase().includes('addvalidateupdateitemusingpath')
+      && String(w.url).toLowerCase().includes(`lists(guid'${listId.toLowerCase()}')`)).length, requestsListId);
+  const ok = headline.includes('2 items added') && countsText.includes('2 added') && wrotesIntoThisList === 2;
+  await schemaPage.locator('.wb-schema-close').click();
+  await schemaPage.waitForSelector('.wb-import-data-dialog', { state: 'detached' });
+  return ok;
 });
 
 // ---- Stubbed live: AddValidateUpdateItemUsingPath body shape + ensureuser -

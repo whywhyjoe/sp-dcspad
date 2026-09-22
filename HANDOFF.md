@@ -491,6 +491,34 @@ content types on a CT-enabled list live; the 429 path under real
 throttling; a SPUtils ⇄ Workbench document round-trip in both directions;
 a reconcile (Add to existing list) run live.
 
+## SP Workbench: list Tools tab (2026-09-22)
+
+New **Tools** tab in the list drilldown (after Items, before Raw), built
+from a small data-driven registry (`list-tools.js`: `LIST_TOOLS`, one entry
+per card, composing the Panels view's `.wb-linkgroup` card look) so a future
+tool is one entry, not a new tab layout. Four cards: **Copy this list…**
+(the same BaseType-aware gate the old Schema-head "Copy to…" carried, now
+here), **Export schema** (the same four document actions the old Schema-head
+"Export ▾" carried), **Export data** (the whole-list data-document export
+that moved off the Items tab's own "Export ▾" menu), and **Import data into
+this list** (new — reads a data `.json` this Workbench or SPUtils exported,
+refuses a non-JSON/oversized/wrong-kind file inline, shows a
+`writableFields()`-driven written-vs-dropped column table against a fresh
+read of this list's own fields, a consent-gated run through
+`applyListData()`, and a report panel; disabled with a stated reason on a
+document library, since item import into a library isn't supported). The
+Schema tab is now **read-only** — its head lost the Export/Copy controls and
+gained a one-line "Export and copy this list from the Tools tab" hint;
+chips, sections and warnings are unchanged. New module
+`list-data-import-dialog.js` is the Import dialog itself: same recipe as
+`list-schema-dialog.js` (two-phase exit, a report panel) but smaller — the
+target is fixed to the open list, so there is no target-site connect or dry
+run. `tests/workbench-schema.mjs` grew from 116 to 129 checks (moved/renamed
+the Schema-head Export/Copy checks and the Items-tab whole-list-export check
+onto the Tools tab, added the Import dialog's refusal/consent/mock-write/
+401 checks); the suite total is 564. Not built or deployed — `dcspad.app.js`
+and `dcspad.workbench.js` are unchanged by this work.
+
 ## Roadmap (seams reserved)
 
 - **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).

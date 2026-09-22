@@ -137,7 +137,7 @@ await check('drill: opening a list shows the detail tabs', async () => {
   await page.locator('.wb-table tbody tr', { hasText: 'Projects' }).locator('td').first().click();
   await page.waitForSelector('.wb-tab');
   const tabs = await page.locator('.wb-tab').allTextContents();
-  return tabs.join(',') === 'Fields,Views,Content types,Schema,Permissions,Items,Raw';
+  return tabs.join(',') === 'Fields,Views,Content types,Schema,Permissions,Items,Tools,Raw';
 });
 
 await check('drill: fields grid lists internal names and joined choices', async () => {

@@ -49,6 +49,7 @@ same engine · **2** document libraries (schema only; no file transfer).
       `deploy/Sync-Live.ps1 -Environment dev`, then walk the Workbench against a real list.
 - [x] Stage 1b: item data export/import — shipped 2026-09-22 (HANDOFF "stages 1b + 2").
 - [x] Stage 2: document libraries, schema only — shipped 2026-09-22.
+- [x] List drilldown Tools tab (Copy this list…, Export schema, Export data, Import data into this list) — the Schema tab is now read-only; shipped 2026-09-22 (HANDOFF "SP Workbench: list Tools tab").
 - [ ] Remaining live checks (HANDOFF "Still open"): attachments/folders, content types, 429, SPUtils round-trip, reconcile.
 - [ ] Delete the `zz-schema-*` test lists on the dev tenant (by hand).
 
