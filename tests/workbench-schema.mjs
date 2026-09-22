@@ -547,6 +547,14 @@ await check('pure: a v1 publishing Pages (850) schema plans as a library, and a 
       && base && base.payload.displayName === 'Summary' && base.payload.description === 'What this page is about';
   }));
 
+await check('pure: validateDataDoc refuses fields given as an array (they would be keyed by index and silently dropped)', () =>
+  page.evaluate(async () => {
+    const { validateDataDoc, DATA_KIND } = await import('/src/workbench/list-data.js').then(async (m) => ({ ...m, DATA_KIND: (await import('/src/workbench/list-schema.js')).DATA_KIND }));
+    const asArray = validateDataDoc({ kind: DATA_KIND, version: 1, items: [], fields: [{ internalName: 'Title', type: 'Text' }] });
+    const asObject = validateDataDoc({ kind: DATA_KIND, version: 1, items: [], fields: { Title: { type: 'Text' } } });
+    return /keyed by internal name/.test(asArray) && asObject === '';
+  }));
+
 await check('pure: defaultTargetTitle keeps the source title when free, appends Copy when taken', () =>
   page.evaluate(async () => {
     const { defaultTargetTitle, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
@@ -2846,19 +2854,19 @@ await check('pure: folderOrder sorts parents before children, stable within a de
 // Findings #6: a RIGHT-KIND doc that's otherwise malformed — normalizeDataDoc
 // alone would silently coerce these into an empty/degenerate import
 // (missing arrays default to []); validateDataDoc catches them first.
-await check('pure: validateDataDoc accepts v1/v2 shapes (array or object fields) and rejects a bad version/items/fields/folders', () =>
+await check('pure: validateDataDoc accepts v1/v2 shapes (fields keyed by internal name) and rejects a bad version/items/fields/folders', () =>
   page.evaluate(async () => {
     const { validateDataDoc, DATA_KIND } = await import('/src/workbench/list-data.js');
     const base = { kind: DATA_KIND, items: [], fields: { Title: { type: 'Text' } }, folders: [] };
     const okNoVersion = validateDataDoc({ ...base }) === '';       // absent -> defaults to 1
     const okV1 = validateDataDoc({ ...base, version: 1 }) === '';
     const okV2 = validateDataDoc({ ...base, version: 2 }) === '';
-    const okArrayFields = validateDataDoc({ ...base, fields: [] }) === '';   // SPUtils v1 shape is an object, but an array must not be refused either
+    const arrayFieldsRefused = validateDataDoc({ ...base, fields: [] }) !== '';   // SPUtils writes an object; an array would be keyed by index downstream
     const badVersion = validateDataDoc({ ...base, version: 999 });
     const badItems = validateDataDoc({ ...base, items: 'nope' });
     const badFields = validateDataDoc({ ...base, fields: 'nope' });
     const badFolders = validateDataDoc({ ...base, folders: 'nope' });
-    return okNoVersion && okV1 && okV2 && okArrayFields
+    return okNoVersion && okV1 && okV2 && arrayFieldsRefused
       && badVersion.includes('999') && badItems.toLowerCase().includes('items')
       && badFields.toLowerCase().includes('fields') && badFolders.toLowerCase().includes('folders');
   }));

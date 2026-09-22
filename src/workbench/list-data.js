@@ -148,7 +148,11 @@ export function validateDataDoc(doc) {
   const version = doc.version == null ? 1 : Number(doc.version);
   if (!(version === 1 || version === 2)) return `unsupported version ${doc.version}`;
   if (!Array.isArray(doc.items)) return '"items" must be an array';
-  if (doc.fields != null && typeof doc.fields !== 'object') return '"fields" must be an array or object';
+  // SPUtils writes fields as an object keyed by internal name; an array
+  // would be keyed "0", "1"… downstream and every column silently dropped.
+  if (doc.fields != null && (typeof doc.fields !== 'object' || Array.isArray(doc.fields))) {
+    return '"fields" must be an object keyed by internal name';
+  }
   if (doc.folders != null && !Array.isArray(doc.folders)) return '"folders" must be an array';
   return '';
 }

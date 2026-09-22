@@ -75,6 +75,8 @@ function buildFieldTable(dataDoc, targetFieldRows, writable, preserveAuthorship)
   const byName = new Map(targetFieldRows.map((f) => [f.InternalName, f]));
   const writtenNames = new Set(writable.map((w) => w.name));
   for (const [name, meta] of Object.entries(dataDoc.fields || {})) {
+    // Authorship columns get the single option-driven row below.
+    if (AUTHORSHIP_FIELD_NAMES.includes(name)) continue;
     const tr = el('tr');
     tr.append(el('td', '', name));
     const status = writtenNames.has(name) ? 'written' : dropReason(name, meta, byName.get(name));
@@ -266,11 +268,12 @@ export function openImportDataDialog({
     // moment items were added or folders created — regardless of how the
     // run ended (finished clean, cancelled after writing, or 401'd
     // mid-write) — never gated on the outcome string the dialog resolves
-    // with. Idempotent: Close anyway (below) always invalidates too, and a
-    // run that later settles on its own must not invalidate a second time.
+    // with. Not once-only: Close anyway invalidates at close, and a detached
+    // run that later settles must invalidate AGAIN — the operator may have
+    // reopened Items (and re-cached the unchanged list) in between.
     const mutated = (report) => Boolean(report && ((report.items?.added || 0) > 0 || (report.folders?.created || 0) > 0));
+    let detached = false;
     function invalidateOnce() {
-      if (invalidated) return;
       invalidated = true;
       invalidateItems?.();
     }
@@ -439,6 +442,8 @@ export function openImportDataDialog({
         renderReport(report);
         if (mutated(report)) invalidateOnce();
       } catch (err) {
+        // A detached run that threw may still have written some items.
+        if (detached) { invalidateOnce(); return; }
         hideCloseAnyway();
         setPhase('form');
         importBtn.disabled = false;
@@ -457,6 +462,7 @@ export function openImportDataDialog({
       // running after this — its eventual report (or throw) lands on a
       // detached dialog and is discarded; invalidateOnce() already covers
       // the Items tab regardless of what that report turns out to say.
+      detached = true;
       invalidateOnce();
       finish('closed-during-run');
     });
