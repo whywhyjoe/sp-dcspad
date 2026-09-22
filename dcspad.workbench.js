@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "180" : "dev";
-var injectedRevision = true ? "ff97edd6" : "";
+var injectedBuild = true ? "185" : "dev";
+var injectedRevision = true ? "8c6f9088" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -5266,6 +5266,17 @@ function normalizeDataDoc(doc) {
     _sourceVersion: sourceVersion
   };
 }
+function validateDataDoc(doc) {
+  if (!doc || typeof doc !== "object") return "not a JSON object";
+  const version = doc.version == null ? 1 : Number(doc.version);
+  if (!(version === 1 || version === 2)) return `unsupported version ${doc.version}`;
+  if (!Array.isArray(doc.items)) return '"items" must be an array';
+  if (doc.fields != null && (typeof doc.fields !== "object" || Array.isArray(doc.fields))) {
+    return '"fields" must be an object keyed by internal name';
+  }
+  if (doc.folders != null && !Array.isArray(doc.folders)) return '"folders" must be an array';
+  return "";
+}
 function folderOrder(folders) {
   const depthOf = (f) => {
     const path = f?._folderPath || f?.folderPath || "";
@@ -5434,448 +5445,6 @@ function partitionPasses(items, fields) {
     pass2: selfLookupFields.length ? { items: (items || []).filter(hasSelfLookupRef), fields: selfLookupFields } : { items: [], fields: [] },
     pass3: { items: (items || []).filter(hasAuthorship), fields: ["Author", "Editor", "Created", "Modified"] }
   };
-}
-
-// ../src/workbench/list-data-capture.js
-var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
-var DATA_CAP = 1e5;
-var ATTACHMENT_FILE_CAP = 10 * 1024 * 1024;
-var ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024;
-var toIdList2 = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]).filter((x) => x != null);
-async function fetchAttachmentBytes(client2, serverRelativeUrl2) {
-  let origin = "";
-  try {
-    origin = new URL(client2.webUrl()).origin;
-  } catch {
-  }
-  const abs = /^https?:/i.test(serverRelativeUrl2) ? serverRelativeUrl2 : `${origin}${serverRelativeUrl2}`;
-  let res;
-  try {
-    res = await fetch(abs, { credentials: "same-origin" });
-  } catch (cause) {
-    throw new SpFileError(`Could not reach the source site (${cause.message || cause}).`, { code: "network", cause });
-  }
-  if (!res.ok) {
-    throw new SpFileError(`The source attachment could not be read (HTTP ${res.status}).`, {
-      code: res.status === 401 ? "auth" : "network",
-      status: res.status
-    });
-  }
-  return res.arrayBuffer();
-}
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 32768) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
-  }
-  return btoa(binary);
-}
-async function captureAttachment(client2, rawFile, warnings, totalState) {
-  const name = rawFile?.FileName || "";
-  const url = rawFile?.ServerRelativeUrl || "";
-  if (!name) return null;
-  if (totalState.bytes >= ATTACHMENT_TOTAL_CAP) {
-    warnings.push(`Attachment "${name}" was not embedded \u2014 the ${ATTACHMENT_TOTAL_CAP / (1024 * 1024)} MB total attachment cap was reached; exported as a link only.`);
-    return { name, url };
-  }
-  let bytes;
-  try {
-    bytes = await fetchAttachmentBytes(client2, url);
-  } catch (err) {
-    if (isExpiredSession(err)) throw err;
-    warnings.push(`Attachment "${name}" could not be read (${err.message || err}); exported as a link only.`);
-    return { name, url };
-  }
-  if (bytes.byteLength > ATTACHMENT_FILE_CAP) {
-    warnings.push(`Attachment "${name}" was not embedded \u2014 it is larger than the ${ATTACHMENT_FILE_CAP / (1024 * 1024)} MB per-file cap; exported as a link only.`);
-    return { name, url };
-  }
-  if (totalState.bytes + bytes.byteLength > ATTACHMENT_TOTAL_CAP) {
-    warnings.push(`Attachment "${name}" was not embedded \u2014 the ${ATTACHMENT_TOTAL_CAP / (1024 * 1024)} MB total attachment cap was reached; exported as a link only.`);
-    return { name, url };
-  }
-  totalState.bytes += bytes.byteLength;
-  return { name, base64: arrayBufferToBase64(bytes) };
-}
-async function captureListData(client2, listId, { schemaDoc = null, maxItems = null } = {}) {
-  const warnings = [];
-  const schema = schemaDoc && schemaDoc.kind === SCHEMA_KIND ? schemaDoc : (await captureListSchema(client2, listId)).doc;
-  const rootFolder = String(schema.source?.rootFolder || "").replace(/\/+$/, "");
-  const relPath = (serverRelative) => {
-    const p = String(serverRelative || "");
-    if (!rootFolder || !p.toLowerCase().startsWith(rootFolder.toLowerCase())) return "";
-    return p.slice(rootFolder.length).replace(/^\/+/, "");
-  };
-  const cap = maxItems ? Math.max(1, Math.min(Number(maxItems) || DATA_CAP, DATA_CAP)) : DATA_CAP;
-  const hasAttachments = schema.fields.some((f) => f.type === "Attachments");
-  const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
-  const { items: rawRows, partial } = await client2.getAll(
-    guidPath2(listId, "/items"),
-    { select: ["*", "FSObjType", "FileDirRef", "FileRef", ...expand], expand, orderby: "ID asc" },
-    { cap, allowLargeCap: true }
-  );
-  if (partial) {
-    warnings.push(`Only the first ${rawRows.length} item(s) were read \u2014 the list has more than the ${cap}-item cap.`);
-  }
-  const userFields = schema.fields.filter((f) => USER_TYPES.has(f.type) && (f.custom || f.internalName === "Author" || f.internalName === "Editor"));
-  const lookupFields = schema.fields.filter((f) => LOOKUP_TYPES.has(f.type) && f.custom);
-  const lookupValues = /* @__PURE__ */ new Map();
-  for (const f of lookupFields) {
-    if (!f.lookupListId) continue;
-    try {
-      const { items: targetRows, partial: partial2 } = await client2.getAll(
-        guidPath2(f.lookupListId, "/items"),
-        { select: ["Id", f.lookupField || "Title"] },
-        { cap: DATA_CAP, allowLargeCap: true }
-      );
-      lookupValues.set(f.internalName, new Map(targetRows.map((r) => [r.Id, r[f.lookupField || "Title"]])));
-      if (partial2) {
-        warnings.push(`Lookup \u201C${f.internalName}\u201D: the target list has more items than could be indexed at once \u2014 values for ids beyond that are looked up individually.`);
-      }
-    } catch (err) {
-      if (isExpiredSession(err)) throw err;
-      warnings.push(`Lookup \u201C${f.internalName}\u201D: target list could not be read (${err?.message || err}); ids exported without values.`);
-    }
-  }
-  let siteUsersById = null;
-  const ensureSiteUsers = async () => {
-    if (siteUsersById) return siteUsersById;
-    siteUsersById = /* @__PURE__ */ new Map();
-    try {
-      const { items: items2 } = await client2.getAll("web/siteusers", { select: ["Id", "Email", "LoginName", "Title"] });
-      for (const u of items2) siteUsersById.set(u.Id, u);
-    } catch (err) {
-      if (isExpiredSession(err)) throw err;
-      warnings.push(`Site users could not be read (${err?.message || err}); person fields resolve one id at a time instead.`);
-    }
-    return siteUsersById;
-  };
-  const referencedUserIds = /* @__PURE__ */ new Set();
-  const resolveUser = async (id) => {
-    const users2 = await ensureSiteUsers();
-    referencedUserIds.add(id);
-    if (!users2.has(id)) {
-      try {
-        const u2 = await client2.get(`web/siteusers/getbyid(${Number(id)})`, { select: ["Id", "Email", "LoginName", "Title"] });
-        users2.set(id, u2);
-      } catch (err) {
-        if (isExpiredSession(err)) throw err;
-        users2.set(id, null);
-      }
-    }
-    const u = users2.get(id);
-    return u ? { Id: u.Id, Email: u.Email || "", LoginName: u.LoginName || "", Title: u.Title || "" } : { Id: id, Email: "", LoginName: "", Title: "" };
-  };
-  const resolveLookupValue = async (f, id) => {
-    const map = lookupValues.get(f.internalName);
-    if (!map) return null;
-    if (map.has(id)) return map.get(id) ?? null;
-    try {
-      const row = await client2.get(guidPath2(f.lookupListId, `/items(${id})`), { select: ["Id", f.lookupField || "Title"] });
-      const value = row ? row[f.lookupField || "Title"] ?? null : null;
-      map.set(id, value);
-      return value;
-    } catch (err) {
-      if (isExpiredSession(err)) throw err;
-      return null;
-    }
-  };
-  const items = [];
-  const folders = [];
-  const attachmentTotal = { bytes: 0 };
-  for (const raw of rawRows) {
-    const resolved = {};
-    for (const f of userFields) {
-      const ids = toIdList2(raw[`${f.internalName}Id`]);
-      if (ids.length) resolved[f.internalName] = await Promise.all(ids.map(resolveUser));
-    }
-    for (const f of lookupFields) {
-      const ids = toIdList2(raw[`${f.internalName}Id`]);
-      if (ids.length) {
-        resolved[f.internalName] = await Promise.all(
-          ids.map(async (id) => ({ Id: id, value: await resolveLookupValue(f, id) }))
-        );
-      }
-    }
-    const rawFiles = Array.isArray(raw.AttachmentFiles) ? raw.AttachmentFiles : raw.AttachmentFiles?.results || [];
-    const attachments = [];
-    for (const f of rawFiles) {
-      const a = await captureAttachment(client2, f, warnings, attachmentTotal);
-      if (a) attachments.push(a);
-    }
-    const { AttachmentFiles: _omit, ...rest } = raw;
-    const isFolder = Number(raw.FSObjType) === 1;
-    const row = { ...rest, _resolved: resolved, _dir: relPath(raw.FileDirRef) };
-    if (attachments.length) row._attachments = attachments;
-    if (isFolder) {
-      row._folder = true;
-      row._folderPath = relPath(raw.FileRef);
-      folders.push(row);
-    } else {
-      items.push(row);
-    }
-  }
-  const fieldMap = {};
-  for (const f of schema.fields) {
-    fieldMap[f.internalName] = {
-      type: f.type,
-      custom: f.custom,
-      readOnly: f.readOnly,
-      lookupList: f.lookupList,
-      lookupListId: f.lookupListId,
-      lookupField: f.lookupField,
-      isSelfLookup: f.isSelfLookup,
-      allowMultipleValues: f.allowMultipleValues
-    };
-  }
-  const users = siteUsersById ? [...referencedUserIds].map((id) => siteUsersById.get(id)).filter(Boolean).map((u) => ({ Id: u.Id, Email: u.Email || "", LoginName: u.LoginName || "", Title: u.Title || "" })) : [];
-  const source = {
-    siteUrl: client2.webUrl(),
-    listTitle: schema.source.listTitle,
-    listId: schema.source.listId,
-    rootFolder: schema.source.rootFolder ?? null,
-    itemCount: schema.source.itemCount ?? null
-  };
-  const doc = buildDataDoc({
-    source,
-    fields: fieldMap,
-    items,
-    folders,
-    users,
-    warnings,
-    generatorBuild: APP_BUILD_INFO.build
-  });
-  return { doc, raw: { items: rawRows } };
-}
-
-// ../src/workbench/list-schema-script.js
-var TEMPLATE_NAMES = { 100: "GenericList", 101: "DocumentLibrary" };
-function planFor(doc, opts = {}) {
-  const lookupMap = opts.lookupMap || {};
-  const assumed = [...new Set((doc?.fields || []).filter((f) => f.lookupList && !f.isSelfLookup).map((f) => lookupMapGet(lookupMap, f.lookupList) ?? lookupMapGet(lookupMap, f.lookupListId) ?? f.lookupList))].map((title) => ({ title }));
-  const assumedContentTypes = [...new Set((doc?.contentTypes || []).map((ct) => ct.parentId || parentContentTypeId(ct.id)).filter((parentId) => !isBuiltinParent(parentId)))].map((id) => ({ id }));
-  return buildApplyPlan(doc, {
-    title: opts.title,
-    description: opts.description,
-    lookupMap,
-    missingLookup: opts.missingLookup
-  }, opts.probe || { targetLists: assumed, availableContentTypes: assumedContentTypes });
-}
-var isDone = (step2) => !["skipped", "failed", "blocked"].includes(step2.status);
-var LIST_TOKEN = "{lookuplist}";
-var PRIMARY_TOKEN = "{primaryfield}";
-function fieldXml(step2) {
-  const f = step2.payload.field;
-  if (step2.payload.asText) return textFallbackXml(f);
-  const refs = step2.refs || {};
-  return scrubSchemaXml(f.schemaXml, {
-    fieldType: f.type,
-    lookupListId: refs.lookupListId ? "lookuplist" : null,
-    primaryFieldId: refs.primaryFieldId ? "primaryfield" : null
-  });
-}
-var FIELD_OPTIONS = 8;
-var psEsc = (s) => String(s ?? "").replaceAll("'", "''");
-var psLit = (s) => `'${psEsc(s)}'`;
-function psCsomValue(v) {
-  if (typeof v === "boolean") return v ? "$true" : "$false";
-  if (typeof v === "number") return String(v);
-  return psLit(v);
-}
-function psHashtable(obj) {
-  const parts = Object.entries(obj).map(([k, v]) => {
-    if (typeof v === "boolean") return `${k}=$${v}`;
-    if (typeof v === "number") return `${k}=${v}`;
-    return `${k}=${psLit(v)}`;
-  });
-  return `@{ ${parts.join("; ")} }`;
-}
-var psArray = (arr) => `@(${(arr || []).map((s) => psLit(s)).join(", ")})`;
-function pushCsomBlock(lines, plan, props) {
-  const entries = Object.entries(props).filter(([, v]) => v != null);
-  if (!entries.length) return;
-  lines.push(`$l = Get-PnPList -Identity ${psLit(plan.title)}`);
-  for (const [k, v] of entries) lines.push(`$l.${k} = ${psCsomValue(v)}`);
-  lines.push("$l.Update()");
-  lines.push("Invoke-PnPQuery");
-}
-function toPnpPowerShellProvisioning(doc, opts = {}) {
-  const plan = planFor(doc, opts);
-  const connect = `Connect-PnPOnline -Url "${opts.targetWebUrl || "https://tenant.sharepoint.com/sites/yoursite"}" -Interactive`;
-  const lines = ["# PnP.PowerShell provisioning", `# ${plan.title}`, connect, `$list = ${psLit(plan.title)}`, ""];
-  for (const step2 of plan.steps) {
-    if (!isDone(step2)) {
-      lines.push(`# SKIP ${step2.label}${step2.error ? ` \u2014 ${step2.error}` : ""}`);
-      continue;
-    }
-    switch (step2.kind) {
-      case "list.create": {
-        const template = TEMPLATE_NAMES[step2.payload.baseTemplate] || step2.payload.baseTemplate;
-        lines.push(`New-PnPList -Title ${psLit(step2.payload.title)} -Template ${template}${step2.payload.contentTypesEnabled ? " -EnableContentTypes" : ""}`);
-        break;
-      }
-      case "list.adopt":
-        lines.push(`# Using existing list "${step2.payload.title}"`);
-        break;
-      case "list.settings":
-        pushCsomBlock(lines, plan, { ...step2.payload.groupA, ...step2.payload.groupB });
-        break;
-      case "ct.attach":
-        lines.push(`Add-PnPContentTypeToList -List ${psLit(plan.title)} -ContentType ${psLit(step2.payload.contentTypeId)}`);
-        break;
-      case "field.create": {
-        let xmlExpr = psLit(fieldXml(step2));
-        const refs = step2.refs || {};
-        if (refs.lookupListId) {
-          const listIdentity = refs.lookupListId.self ? plan.title : refs.lookupListId.id || refs.lookupListId.list;
-          xmlExpr = `(${xmlExpr}).Replace('${LIST_TOKEN}', ('{' + (Get-PnPList -Identity ${psLit(listIdentity)}).Id + '}'))`;
-        }
-        if (refs.primaryFieldId) {
-          xmlExpr = `(${xmlExpr}).Replace('${PRIMARY_TOKEN}', ('{' + (Get-PnPField -List ${psLit(plan.title)} -Identity ${psLit(refs.primaryFieldId.field)}).Id + '}'))`;
-        }
-        lines.push(`Add-PnPFieldFromXml -List ${psLit(plan.title)} -FieldXml ${xmlExpr}`);
-        break;
-      }
-      case "field.merge":
-        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step2.payload.internalName)} -Values ${psHashtable(step2.payload.merges)}`);
-        break;
-      case "field.base": {
-        const values = { Title: step2.payload.displayName };
-        if (step2.payload.internalName === "Title") values.Required = step2.payload.required;
-        if (step2.payload.description) values.Description = step2.payload.description;
-        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step2.payload.internalName)} -Values ${psHashtable(values)}`);
-        break;
-      }
-      case "view.upsert": {
-        const titleLit = psLit(step2.payload.title);
-        lines.push(`$v = Get-PnPView -List $list -Identity ${titleLit} -ErrorAction SilentlyContinue`);
-        if (step2.payload.defaultView) {
-          lines.push("if (-not $v) { $v = Get-PnPView -List $list | Where-Object DefaultView }");
-        }
-        lines.push("if ($v) {");
-        lines.push(`  Set-PnPView -List $list -Identity $v -Fields ${psArray(step2.payload.fields)} -Values ${psHashtable({ ViewQuery: step2.payload.viewQuery, RowLimit: step2.payload.rowLimit, Paged: step2.payload.paged })}`);
-        lines.push("} else {");
-        lines.push(`  Add-PnPView -List $list -Title ${titleLit} -Fields ${psArray(step2.payload.fields)} -Query ${psLit(step2.payload.viewQuery)} -RowLimit ${step2.payload.rowLimit}${step2.payload.paged ? " -Paged" : ""} -SetAsDefault:$${step2.payload.defaultView ? "true" : "false"}`);
-        lines.push("}");
-        break;
-      }
-      case "list.validation":
-        pushCsomBlock(lines, plan, {
-          ValidationFormula: step2.payload.validationFormula,
-          ValidationMessage: step2.payload.validationMessage
-        });
-        break;
-      default:
-        break;
-    }
-  }
-  return lines.join("\n");
-}
-function toPnpjs2Provisioning(doc, opts = {}) {
-  const plan = planFor(doc, opts);
-  const lines = [
-    "// PnPjs 2.x \u2014 paste into the DCSPad JS pane (pnpjs2 framework enabled)",
-    `// ${plan.title}`,
-    ""
-  ];
-  for (const step2 of plan.steps) {
-    if (!isDone(step2)) {
-      lines.push(`// SKIP ${step2.label}${step2.error ? ` \u2014 ${step2.error}` : ""}`);
-      continue;
-    }
-    switch (step2.kind) {
-      case "list.create":
-        lines.push(`const newList = (await sp.web.lists.add(${JSON.stringify(step2.payload.title)}, ${JSON.stringify(step2.payload.description || "")}, ${step2.payload.baseTemplate}, ${step2.payload.contentTypesEnabled})).list;`);
-        lines.push('const newListId = (await newList.select("Id")()).Id;');
-        break;
-      case "list.adopt":
-        lines.push(`const newList = sp.web.lists.getById(${JSON.stringify(step2.payload.listId)});`);
-        lines.push(`const newListId = ${JSON.stringify(step2.payload.listId)};`);
-        break;
-      case "list.settings": {
-        const settings = { ...step2.payload.groupA, ...step2.payload.groupB };
-        if (Object.keys(settings).length) lines.push(`await newList.update(${JSON.stringify(settings, null, 2)});`);
-        break;
-      }
-      case "ct.attach":
-        lines.push(`await newList.contentTypes.addAvailableContentType(${JSON.stringify(step2.payload.contentTypeId)});`);
-        break;
-      case "field.create": {
-        const refs = step2.refs || {};
-        let xmlExpr = JSON.stringify(fieldXml(step2));
-        const pre = [];
-        if (refs.lookupListId) {
-          if (refs.lookupListId.self) {
-            pre.push("  const lookupId = newListId;");
-          } else if (refs.lookupListId.id) {
-            pre.push(`  const lookupId = ${JSON.stringify(refs.lookupListId.id)};`);
-          } else {
-            pre.push(`  const lookupId = (await sp.web.lists.getByTitle(${JSON.stringify(refs.lookupListId.list)}).select("Id")()).Id;`);
-          }
-          xmlExpr += `.replace(${JSON.stringify(LIST_TOKEN)}, \`{\${lookupId}}\`)`;
-        }
-        if (refs.primaryFieldId) {
-          pre.push(`  const primaryId = (await newList.fields.getByInternalNameOrTitle(${JSON.stringify(refs.primaryFieldId.field)}).select("Id")()).Id;`);
-          xmlExpr += `.replace(${JSON.stringify(PRIMARY_TOKEN)}, \`{\${primaryId}}\`)`;
-        }
-        lines.push(
-          "{",
-          ...pre,
-          `  await newList.fields.createFieldAsXml({ SchemaXml: ${xmlExpr}, Options: ${step2.payload.options ?? FIELD_OPTIONS} });`,
-          "}"
-        );
-        break;
-      }
-      case "field.merge":
-        lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step2.payload.internalName)}).update(${JSON.stringify(step2.payload.merges)});`);
-        break;
-      case "field.base": {
-        const values = { Title: step2.payload.displayName };
-        if (step2.payload.internalName === "Title") values.Required = step2.payload.required;
-        if (step2.payload.description) values.Description = step2.payload.description;
-        lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step2.payload.internalName)}).update(${JSON.stringify(values)});`);
-        break;
-      }
-      case "view.upsert": {
-        const titleJson = JSON.stringify(step2.payload.title);
-        const settingsJson = JSON.stringify({
-          ViewQuery: step2.payload.viewQuery,
-          RowLimit: step2.payload.rowLimit,
-          Paged: step2.payload.paged
-        });
-        lines.push("{");
-        lines.push("  let existing = null;");
-        lines.push(`  try { existing = await newList.views.getByTitle(${titleJson})(); } catch { existing = null; }`);
-        if (step2.payload.defaultView) {
-          lines.push("  if (!existing) existing = await newList.defaultView();");
-        }
-        lines.push("  let view;");
-        lines.push("  if (existing) {");
-        lines.push("    view = newList.views.getByTitle(existing.Title);");
-        lines.push(`    await view.update(${settingsJson});`);
-        lines.push("  } else {");
-        lines.push(`    view = (await newList.views.add(${titleJson}, false, ${settingsJson})).view;`);
-        lines.push("  }");
-        lines.push("  await view.fields.removeAll();");
-        for (const name of step2.payload.fields) lines.push(`  await view.fields.add(${JSON.stringify(name)});`);
-        if (step2.payload.defaultView) {
-          lines.push("  await view.update({ DefaultView: true });");
-        }
-        lines.push("}");
-        break;
-      }
-      case "list.validation":
-        lines.push(`await newList.update(${JSON.stringify({
-          ValidationFormula: step2.payload.validationFormula,
-          ValidationMessage: step2.payload.validationMessage
-        })});`);
-        break;
-      default:
-        break;
-    }
-  }
-  return lines.join("\n");
 }
 
 // ../src/workbench/list-schema-apply.js
@@ -6477,6 +6046,219 @@ async function runPlan(plan, ctx2 = {}) {
     }
   }
   return report;
+}
+
+// ../src/workbench/list-data-capture.js
+var guidPath2 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var DATA_CAP = 1e5;
+var ATTACHMENT_FILE_CAP = 10 * 1024 * 1024;
+var ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024;
+var toIdList2 = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]).filter((x) => x != null);
+async function fetchAttachmentBytes(client2, serverRelativeUrl2) {
+  let origin = "";
+  try {
+    origin = new URL(client2.webUrl()).origin;
+  } catch {
+  }
+  const abs = /^https?:/i.test(serverRelativeUrl2) ? serverRelativeUrl2 : `${origin}${serverRelativeUrl2}`;
+  let res;
+  try {
+    res = await fetch(abs, { credentials: "same-origin" });
+  } catch (cause) {
+    throw new SpFileError(`Could not reach the source site (${cause.message || cause}).`, { code: "network", cause });
+  }
+  if (!res.ok) {
+    throw new SpFileError(`The source attachment could not be read (HTTP ${res.status}).`, {
+      code: res.status === 401 ? "auth" : "network",
+      status: res.status
+    });
+  }
+  return res.arrayBuffer();
+}
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 32768) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+  }
+  return btoa(binary);
+}
+async function captureAttachment(client2, rawFile, warnings, totalState) {
+  const name = rawFile?.FileName || "";
+  const url = rawFile?.ServerRelativeUrl || "";
+  if (!name) return null;
+  if (totalState.bytes >= ATTACHMENT_TOTAL_CAP) {
+    warnings.push(`Attachment "${name}" was not embedded \u2014 the ${ATTACHMENT_TOTAL_CAP / (1024 * 1024)} MB total attachment cap was reached; exported as a link only.`);
+    return { name, url };
+  }
+  let bytes;
+  try {
+    bytes = await fetchAttachmentBytes(client2, url);
+  } catch (err) {
+    if (isExpiredSession(err)) throw err;
+    warnings.push(`Attachment "${name}" could not be read (${err.message || err}); exported as a link only.`);
+    return { name, url };
+  }
+  if (bytes.byteLength > ATTACHMENT_FILE_CAP) {
+    warnings.push(`Attachment "${name}" was not embedded \u2014 it is larger than the ${ATTACHMENT_FILE_CAP / (1024 * 1024)} MB per-file cap; exported as a link only.`);
+    return { name, url };
+  }
+  if (totalState.bytes + bytes.byteLength > ATTACHMENT_TOTAL_CAP) {
+    warnings.push(`Attachment "${name}" was not embedded \u2014 the ${ATTACHMENT_TOTAL_CAP / (1024 * 1024)} MB total attachment cap was reached; exported as a link only.`);
+    return { name, url };
+  }
+  totalState.bytes += bytes.byteLength;
+  return { name, base64: arrayBufferToBase64(bytes) };
+}
+async function captureListData(client2, listId, { schemaDoc = null, maxItems = null } = {}) {
+  const warnings = [];
+  const schema = schemaDoc && schemaDoc.kind === SCHEMA_KIND ? schemaDoc : (await captureListSchema(client2, listId)).doc;
+  const rootFolder = String(schema.source?.rootFolder || "").replace(/\/+$/, "");
+  const relPath = (serverRelative) => {
+    const p = String(serverRelative || "");
+    if (!rootFolder || !p.toLowerCase().startsWith(rootFolder.toLowerCase())) return "";
+    return p.slice(rootFolder.length).replace(/^\/+/, "");
+  };
+  const cap = maxItems ? Math.max(1, Math.min(Number(maxItems) || DATA_CAP, DATA_CAP)) : DATA_CAP;
+  const hasAttachments = schema.fields.some((f) => f.type === "Attachments");
+  const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
+  const { items: rawRows, partial } = await client2.getAll(
+    guidPath2(listId, "/items"),
+    { select: ["*", "FSObjType", "FileDirRef", "FileRef", ...expand], expand, orderby: "ID asc" },
+    { cap, allowLargeCap: true }
+  );
+  if (partial) {
+    warnings.push(`Only the first ${rawRows.length} item(s) were read \u2014 the list has more than the ${cap}-item cap.`);
+  }
+  const userFields = schema.fields.filter((f) => USER_TYPES.has(f.type) && (f.custom || f.internalName === "Author" || f.internalName === "Editor"));
+  const lookupFields = schema.fields.filter((f) => LOOKUP_TYPES.has(f.type) && f.custom);
+  const lookupValues = /* @__PURE__ */ new Map();
+  for (const f of lookupFields) {
+    if (!f.lookupListId) continue;
+    try {
+      const { items: targetRows, partial: partial2 } = await client2.getAll(
+        guidPath2(f.lookupListId, "/items"),
+        { select: ["Id", f.lookupField || "Title"] },
+        { cap: DATA_CAP, allowLargeCap: true }
+      );
+      lookupValues.set(f.internalName, new Map(targetRows.map((r) => [r.Id, r[f.lookupField || "Title"]])));
+      if (partial2) {
+        warnings.push(`Lookup \u201C${f.internalName}\u201D: the target list has more items than could be indexed at once \u2014 values for ids beyond that are looked up individually.`);
+      }
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      warnings.push(`Lookup \u201C${f.internalName}\u201D: target list could not be read (${err?.message || err}); ids exported without values.`);
+    }
+  }
+  let siteUsersById = null;
+  const ensureSiteUsers = async () => {
+    if (siteUsersById) return siteUsersById;
+    siteUsersById = /* @__PURE__ */ new Map();
+    try {
+      const { items: items2 } = await client2.getAll("web/siteusers", { select: ["Id", "Email", "LoginName", "Title"] });
+      for (const u of items2) siteUsersById.set(u.Id, u);
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      warnings.push(`Site users could not be read (${err?.message || err}); person fields resolve one id at a time instead.`);
+    }
+    return siteUsersById;
+  };
+  const referencedUserIds = /* @__PURE__ */ new Set();
+  const resolveUser = async (id) => {
+    const users2 = await ensureSiteUsers();
+    referencedUserIds.add(id);
+    if (!users2.has(id)) {
+      try {
+        const u2 = await client2.get(`web/siteusers/getbyid(${Number(id)})`, { select: ["Id", "Email", "LoginName", "Title"] });
+        users2.set(id, u2);
+      } catch (err) {
+        if (isExpiredSession(err)) throw err;
+        users2.set(id, null);
+      }
+    }
+    const u = users2.get(id);
+    return u ? { Id: u.Id, Email: u.Email || "", LoginName: u.LoginName || "", Title: u.Title || "" } : { Id: id, Email: "", LoginName: "", Title: "" };
+  };
+  const resolveLookupValue = async (f, id) => {
+    const map = lookupValues.get(f.internalName);
+    if (!map) return null;
+    if (map.has(id)) return map.get(id) ?? null;
+    try {
+      const row = await client2.get(guidPath2(f.lookupListId, `/items(${id})`), { select: ["Id", f.lookupField || "Title"] });
+      const value = row ? row[f.lookupField || "Title"] ?? null : null;
+      map.set(id, value);
+      return value;
+    } catch (err) {
+      if (isExpiredSession(err)) throw err;
+      return null;
+    }
+  };
+  const items = [];
+  const folders = [];
+  const attachmentTotal = { bytes: 0 };
+  for (const raw of rawRows) {
+    const resolved = {};
+    for (const f of userFields) {
+      const ids = toIdList2(raw[`${f.internalName}Id`]);
+      if (ids.length) resolved[f.internalName] = await Promise.all(ids.map(resolveUser));
+    }
+    for (const f of lookupFields) {
+      const ids = toIdList2(raw[`${f.internalName}Id`]);
+      if (ids.length) {
+        resolved[f.internalName] = await Promise.all(
+          ids.map(async (id) => ({ Id: id, value: await resolveLookupValue(f, id) }))
+        );
+      }
+    }
+    const rawFiles = Array.isArray(raw.AttachmentFiles) ? raw.AttachmentFiles : raw.AttachmentFiles?.results || [];
+    const attachments = [];
+    for (const f of rawFiles) {
+      const a = await captureAttachment(client2, f, warnings, attachmentTotal);
+      if (a) attachments.push(a);
+    }
+    const { AttachmentFiles: _omit, ...rest } = raw;
+    const isFolder = Number(raw.FSObjType) === 1;
+    const row = { ...rest, _resolved: resolved, _dir: relPath(raw.FileDirRef) };
+    if (attachments.length) row._attachments = attachments;
+    if (isFolder) {
+      row._folder = true;
+      row._folderPath = relPath(raw.FileRef);
+      folders.push(row);
+    } else {
+      items.push(row);
+    }
+  }
+  const fieldMap = {};
+  for (const f of schema.fields) {
+    fieldMap[f.internalName] = {
+      type: f.type,
+      custom: f.custom,
+      readOnly: f.readOnly,
+      lookupList: f.lookupList,
+      lookupListId: f.lookupListId,
+      lookupField: f.lookupField,
+      isSelfLookup: f.isSelfLookup,
+      allowMultipleValues: f.allowMultipleValues
+    };
+  }
+  const users = siteUsersById ? [...referencedUserIds].map((id) => siteUsersById.get(id)).filter(Boolean).map((u) => ({ Id: u.Id, Email: u.Email || "", LoginName: u.LoginName || "", Title: u.Title || "" })) : [];
+  const source = {
+    siteUrl: client2.webUrl(),
+    listTitle: schema.source.listTitle,
+    listId: schema.source.listId,
+    rootFolder: schema.source.rootFolder ?? null,
+    itemCount: schema.source.itemCount ?? null
+  };
+  const doc = buildDataDoc({
+    source,
+    fields: fieldMap,
+    items,
+    folders,
+    users,
+    warnings,
+    generatorBuild: APP_BUILD_INFO.build
+  });
+  return { doc, raw: { items: rawRows } };
 }
 
 // ../src/workbench/list-data-apply.js
@@ -7143,6 +6925,12 @@ function pushRecent({ url = "", title = "" } = {}) {
 }
 
 // ../src/workbench/grid.js
+var el4 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
 function bindNewTab2(a) {
   a.target = "_blank";
   a.rel = "noopener";
@@ -7154,9 +6942,35 @@ function bindNewTab2(a) {
   });
   return a;
 }
+function createMenuButton2(label, title, items) {
+  const wrap = el4("span", "wb-menu-wrap");
+  const btn = el4("button", "btn btn-xs", label);
+  btn.type = "button";
+  btn.title = title;
+  const menu = el4("div", "wb-menu");
+  menu.hidden = true;
+  for (const [itemLabel, run] of items) {
+    const item2 = el4("button", "wb-menu-item", itemLabel);
+    item2.type = "button";
+    item2.addEventListener("click", () => {
+      menu.hidden = true;
+      run(btn);
+    });
+    menu.append(item2);
+  }
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  document.addEventListener("click", () => {
+    menu.hidden = true;
+  });
+  wrap.append(btn, menu);
+  return wrap;
+}
 
 // ../src/workbench/list-schema-dialog.js
-var el4 = (tag, cls, text) => {
+var el5 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -7255,123 +7069,123 @@ function openSchemaApplyDialog({
     let abortController = null;
     let titleTouched = false;
     let lastCollisionKey = null;
-    const dialog = el4("dialog", "app-dialog sp-metadata-dialog wb-schema-dialog");
-    const panel = el4("div", "app-dialog__panel");
-    const head = el4("div", "app-dialog__head");
-    head.append(el4("h2", "", mode === "copy" ? "Copy list to\u2026" : "New list from schema"));
-    const closeBtn = el4("button", "btn btn-ghost btn-xs wb-schema-close", "\u2715");
+    const dialog = el5("dialog", "app-dialog sp-metadata-dialog wb-schema-dialog");
+    const panel = el5("div", "app-dialog__panel");
+    const head = el5("div", "app-dialog__head");
+    head.append(el5("h2", "", mode === "copy" ? "Copy list to\u2026" : "New list from schema"));
+    const closeBtn = el5("button", "btn btn-ghost btn-xs wb-schema-close", "\u2715");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close");
     head.append(closeBtn);
-    const context = el4("p", "app-dialog__context", mode === "copy" ? `Copy the schema of \u2018${d.list.title}\u2019 to a new or existing list.` : `Create a list from the imported schema for \u2018${d.list.title}\u2019.`);
+    const context = el5("p", "app-dialog__context", mode === "copy" ? `Copy the schema of \u2018${d.list.title}\u2019 to a new or existing list.` : `Create a list from the imported schema for \u2018${d.list.title}\u2019.`);
     panel.append(head, context);
-    const targetField = el4("div", "app-dialog__field wb-schema-target-row");
-    targetField.append(el4("label", "", "Target site"));
-    const targetRow = el4("div", "wb-schema-target-inputrow");
-    const targetInput = el4("input", "wb-schema-target");
+    const targetField = el5("div", "app-dialog__field wb-schema-target-row");
+    targetField.append(el5("label", "", "Target site"));
+    const targetRow = el5("div", "wb-schema-target-inputrow");
+    const targetInput = el5("input", "wb-schema-target");
     targetInput.type = "text";
     targetInput.autocomplete = "off";
     targetInput.setAttribute("list", "wb-schema-target-list");
-    const datalist = el4("datalist");
+    const datalist = el5("datalist");
     datalist.id = "wb-schema-target-list";
     targetRow.append(targetInput, datalist);
-    const connectBtn = el4("button", "btn btn-xs wb-schema-connect", "Connect");
+    const connectBtn = el5("button", "btn btn-xs wb-schema-connect", "Connect");
     connectBtn.type = "button";
     targetRow.append(connectBtn);
     targetField.append(targetRow);
-    const targetStatus = el4("div", "wb-schema-target-status");
+    const targetStatus = el5("div", "wb-schema-target-status");
     targetStatus.hidden = true;
     targetField.append(targetStatus);
     panel.append(targetField);
     function fillDatalist() {
       datalist.textContent = "";
-      const host = el4("option", "", "This site (host web)");
+      const host = el5("option", "", "This site (host web)");
       host.value = "";
       datalist.append(host);
       for (const fav of getFavorites()) {
-        const opt = el4("option", "", fav.title || fav.url);
+        const opt = el5("option", "", fav.title || fav.url);
         opt.value = fav.url;
         datalist.append(opt);
       }
       for (const rec of getRecents()) {
-        const opt = el4("option", "", rec.title || rec.url);
+        const opt = el5("option", "", rec.title || rec.url);
         opt.value = rec.url;
         datalist.append(opt);
       }
     }
     fillDatalist();
-    const titleField = el4("div", "app-dialog__field wb-schema-title-row");
-    titleField.append(el4("label", "", "Title"));
-    const titleInput = el4("input", "wb-schema-title");
+    const titleField = el5("div", "app-dialog__field wb-schema-title-row");
+    titleField.append(el5("label", "", "Title"));
+    const titleInput = el5("input", "wb-schema-title");
     titleInput.type = "text";
     titleInput.autocomplete = "off";
     titleField.append(titleInput);
-    const titleStatus = el4("div", "wb-schema-title-status");
+    const titleStatus = el5("div", "wb-schema-title-status");
     titleField.append(titleStatus);
     panel.append(titleField);
-    const descField = el4("div", "app-dialog__field wb-schema-description-row");
-    descField.append(el4("label", "", "Description"));
-    const descInput = el4("textarea", "wb-schema-description");
+    const descField = el5("div", "app-dialog__field wb-schema-description-row");
+    descField.append(el5("label", "", "Description"));
+    const descInput = el5("textarea", "wb-schema-description");
     descInput.rows = 2;
     descInput.value = d.list.description || "";
     descField.append(descInput);
     panel.append(descField);
-    const lookupSection = el4("div", "wb-schema-lookups-section");
+    const lookupSection = el5("div", "wb-schema-lookups-section");
     lookupSection.hidden = true;
-    lookupSection.append(el4("h3", "", "Lookup targets"));
-    const lookupTable = el4("table", "wb-table wb-schema-lookups");
-    const lookupHead = el4("thead");
-    const headRow = el4("tr");
-    headRow.append(el4("th", "", "Column"), el4("th", "", "Source list"), el4("th", "", "Target list"));
+    lookupSection.append(el5("h3", "", "Lookup targets"));
+    const lookupTable = el5("table", "wb-table wb-schema-lookups");
+    const lookupHead = el5("thead");
+    const headRow = el5("tr");
+    headRow.append(el5("th", "", "Column"), el5("th", "", "Source list"), el5("th", "", "Target list"));
     lookupHead.append(headRow);
-    const lookupBody = el4("tbody");
+    const lookupBody = el5("tbody");
     lookupTable.append(lookupHead, lookupBody);
     lookupSection.append(lookupTable);
-    const policyRow = el4("div", "wb-schema-lookup-policy");
+    const policyRow = el5("div", "wb-schema-lookup-policy");
     policyRow.hidden = true;
-    const policyLabel = el4("div", "", "When a lookup target is missing on the target:");
-    const skipLabel = el4("label", "wb-schema-lookup-policy-opt");
-    const skipRadio = el4("input");
+    const policyLabel = el5("div", "", "When a lookup target is missing on the target:");
+    const skipLabel = el5("label", "wb-schema-lookup-policy-opt");
+    const skipRadio = el5("input");
     skipRadio.type = "radio";
     skipRadio.name = "wb-schema-missing-lookup";
     skipRadio.value = "skip";
     skipRadio.checked = true;
-    skipLabel.append(skipRadio, el4("span", "", "Skip the column"));
-    const textLabel = el4("label", "wb-schema-lookup-policy-opt");
-    const textRadio = el4("input");
+    skipLabel.append(skipRadio, el5("span", "", "Skip the column"));
+    const textLabel = el5("label", "wb-schema-lookup-policy-opt");
+    const textRadio = el5("input");
     textRadio.type = "radio";
     textRadio.name = "wb-schema-missing-lookup";
     textRadio.value = "text";
-    textLabel.append(textRadio, el4("span", "", "Create it as a single line of text"));
+    textLabel.append(textRadio, el5("span", "", "Create it as a single line of text"));
     policyRow.append(policyLabel, skipLabel, textLabel);
     lookupSection.append(policyRow);
     panel.append(lookupSection);
-    const ctSection = el4("div", "wb-schema-cts-section");
+    const ctSection = el5("div", "wb-schema-cts-section");
     ctSection.hidden = true;
-    ctSection.append(el4("h3", "", "Content types"));
-    const ctList = el4("ul", "wb-schema-cts-list");
+    ctSection.append(el5("h3", "", "Content types"));
+    const ctList = el5("ul", "wb-schema-cts-list");
     ctSection.append(ctList);
-    ctSection.append(el4("p", "wb-schema-note", "Missing content types are not created in this stage."));
+    ctSection.append(el5("p", "wb-schema-note", "Missing content types are not created in this stage."));
     panel.append(ctSection);
-    const itemsFieldset = el4("fieldset", "wb-schema-items");
-    const legend = el4("legend", "", "Items");
+    const itemsFieldset = el5("fieldset", "wb-schema-items");
+    const legend = el5("legend", "", "Items");
     itemsFieldset.append(legend);
-    const itemsRow = el4("div", "wb-schema-items-row");
-    const includeItemsCb = el4("input");
+    const itemsRow = el5("div", "wb-schema-items-row");
+    const includeItemsCb = el5("input");
     includeItemsCb.type = "checkbox";
-    const includeItemsLabel = el4("label", "wb-schema-items-opt");
-    includeItemsLabel.append(includeItemsCb, el4("span", "", "Include items"));
-    const includeAttachmentsCb = el4("input");
+    const includeItemsLabel = el5("label", "wb-schema-items-opt");
+    includeItemsLabel.append(includeItemsCb, el5("span", "", "Include items"));
+    const includeAttachmentsCb = el5("input");
     includeAttachmentsCb.type = "checkbox";
-    const includeAttachmentsLabel = el4("label", "wb-schema-items-opt");
-    includeAttachmentsLabel.append(includeAttachmentsCb, el4("span", "", "Include attachments"));
-    const preserveAuthorshipCb = el4("input");
+    const includeAttachmentsLabel = el5("label", "wb-schema-items-opt");
+    includeAttachmentsLabel.append(includeAttachmentsCb, el5("span", "", "Include attachments"));
+    const preserveAuthorshipCb = el5("input");
     preserveAuthorshipCb.type = "checkbox";
-    const preserveAuthorshipLabel = el4("label", "wb-schema-items-opt");
-    preserveAuthorshipLabel.append(preserveAuthorshipCb, el4("span", "", "Preserve authorship"));
+    const preserveAuthorshipLabel = el5("label", "wb-schema-items-opt");
+    preserveAuthorshipLabel.append(preserveAuthorshipCb, el5("span", "", "Preserve authorship"));
     itemsRow.append(includeItemsLabel, includeAttachmentsLabel, preserveAuthorshipLabel);
     itemsFieldset.append(itemsRow);
-    const itemsNote = el4("p", "wb-schema-note wb-schema-items-note");
+    const itemsNote = el5("p", "wb-schema-note wb-schema-items-note");
     itemsFieldset.append(itemsNote);
     panel.append(itemsFieldset);
     function updateItemsAvailability() {
@@ -7390,65 +7204,65 @@ function openSchemaApplyDialog({
     }
     includeItemsCb.addEventListener("change", updateItemsAvailability);
     updateItemsAvailability();
-    const existingSection = el4("div", "wb-schema-existing sp-metadata-consent");
+    const existingSection = el5("div", "wb-schema-existing sp-metadata-consent");
     existingSection.hidden = true;
-    const newTitleLabel = el4("label", "sp-metadata-consent__row");
-    const newTitleRadio = el4("input");
+    const newTitleLabel = el5("label", "sp-metadata-consent__row");
+    const newTitleRadio = el5("input");
     newTitleRadio.type = "radio";
     newTitleRadio.name = "wb-schema-existing-policy";
     newTitleRadio.value = "new";
     newTitleRadio.checked = true;
-    newTitleLabel.append(newTitleRadio, el4("span", "sp-metadata-consent__label", "Choose another title"));
-    const resumeLabel = el4("label", "sp-metadata-consent__row");
-    const resumeRadio = el4("input");
+    newTitleLabel.append(newTitleRadio, el5("span", "sp-metadata-consent__label", "Choose another title"));
+    const resumeLabel = el5("label", "sp-metadata-consent__row");
+    const resumeRadio = el5("input");
     resumeRadio.type = "radio";
     resumeRadio.name = "wb-schema-existing-policy";
     resumeRadio.value = "resume";
-    resumeLabel.append(resumeRadio, el4("span", "sp-metadata-consent__label", "Add missing fields and views to the existing list"));
+    resumeLabel.append(resumeRadio, el5("span", "sp-metadata-consent__label", "Add missing fields and views to the existing list"));
     existingSection.append(newTitleLabel, resumeLabel);
-    const gateRow = el4("label", "sp-metadata-consent__row wb-schema-gate");
+    const gateRow = el5("label", "sp-metadata-consent__row wb-schema-gate");
     gateRow.hidden = true;
-    const gateBox = el4("input");
+    const gateBox = el5("input");
     gateBox.type = "checkbox";
-    const gateLabel = el4("span", "sp-metadata-consent__label");
+    const gateLabel = el5("span", "sp-metadata-consent__label");
     gateRow.append(gateBox, gateLabel);
     existingSection.append(gateRow);
     panel.append(existingSection);
-    const planPanel = el4("div", "wb-schema-plan");
+    const planPanel = el5("div", "wb-schema-plan");
     planPanel.hidden = true;
-    const planHeading = el4("p", "wb-schema-plan-heading");
+    const planHeading = el5("p", "wb-schema-plan-heading");
     planPanel.append(planHeading);
-    const stepsList = el4("ol", "wb-schema-steps");
+    const stepsList = el5("ol", "wb-schema-steps");
     planPanel.append(stepsList);
-    const masterLine = el4("p", "wb-schema-master");
+    const masterLine = el5("p", "wb-schema-master");
     masterLine.hidden = true;
     planPanel.append(masterLine);
     panel.append(planPanel);
-    const reportPanel = el4("div", "wb-schema-report");
+    const reportPanel = el5("div", "wb-schema-report");
     reportPanel.hidden = true;
-    const reportHeadline = el4("p", "wb-schema-report-headline");
-    const reportCounts = el4("table", "wb-table wb-schema-report-counts");
-    const reportFailed = el4("div", "wb-schema-report-failed");
-    const reportWarnings = el4("div", "wb-schema-report-warnings");
-    const reportLinks = el4("div", "wb-schema-report-links");
+    const reportHeadline = el5("p", "wb-schema-report-headline");
+    const reportCounts = el5("table", "wb-table wb-schema-report-counts");
+    const reportFailed = el5("div", "wb-schema-report-failed");
+    const reportWarnings = el5("div", "wb-schema-report-warnings");
+    const reportLinks = el5("div", "wb-schema-report-links");
     reportPanel.append(reportHeadline, reportCounts, reportFailed, reportWarnings, reportLinks);
     panel.append(reportPanel);
-    const error = el4("div", "sp-files-error");
+    const error = el5("div", "sp-files-error");
     error.setAttribute("role", "alert");
     error.hidden = true;
     panel.append(error);
-    const actions = el4("div", "app-dialog__actions sp-metadata-actions wb-schema-actions-row");
-    const cancelBtn = el4("button", "btn btn-ghost wb-schema-cancel", "Cancel");
+    const actions = el5("div", "app-dialog__actions sp-metadata-actions wb-schema-actions-row");
+    const cancelBtn = el5("button", "btn btn-ghost wb-schema-cancel", "Cancel");
     cancelBtn.type = "button";
-    const dryRunBtn = el4("button", "btn btn-xs wb-schema-dryrun", "Dry run");
+    const dryRunBtn = el5("button", "btn btn-xs wb-schema-dryrun", "Dry run");
     dryRunBtn.type = "button";
-    const retryBtn = el4("button", "btn btn-xs wb-schema-retry", "Retry failed steps");
+    const retryBtn = el5("button", "btn btn-xs wb-schema-retry", "Retry failed steps");
     retryBtn.type = "button";
     retryBtn.hidden = true;
-    const downloadBtn = el4("button", "btn btn-xs wb-schema-report-download", "Download report .md");
+    const downloadBtn = el5("button", "btn btn-xs wb-schema-report-download", "Download report .md");
     downloadBtn.type = "button";
     downloadBtn.hidden = true;
-    const createBtn = el4("button", "btn btn-run wb-schema-create", "Create list");
+    const createBtn = el5("button", "btn btn-run wb-schema-create", "Create list");
     createBtn.type = "button";
     actions.append(cancelBtn, dryRunBtn, retryBtn, downloadBtn, createBtn);
     panel.append(actions);
@@ -7522,19 +7336,19 @@ function openSchemaApplyDialog({
       lookupBody.textContent = "";
       let anyMissing = false;
       for (const f of lookups) {
-        const tr = el4("tr");
-        tr.append(el4("td", "", f.displayName || f.internalName));
-        tr.append(el4("td", "", f.lookupList || f.lookupListId || "\u2014"));
-        const td = el4("td");
+        const tr = el5("tr");
+        tr.append(el5("td", "", f.displayName || f.internalName));
+        tr.append(el5("td", "", f.lookupList || f.lookupListId || "\u2014"));
+        const td = el5("td");
         if (f.isSelfLookup) {
-          td.append(el4("span", "", "(this list)"));
+          td.append(el5("span", "", "(this list)"));
         } else {
-          const select = el4("select", "wb-schema-lookup-target");
-          const emptyOpt = el4("option", "", "\u2014 missing \u2014");
+          const select = el5("select", "wb-schema-lookup-target");
+          const emptyOpt = el5("option", "", "\u2014 missing \u2014");
           emptyOpt.value = "";
           select.append(emptyOpt);
           for (const l of probe.targetLists || []) {
-            const opt = el4("option", "", l.title);
+            const opt = el5("option", "", l.title);
             opt.value = l.title;
             select.append(opt);
           }
@@ -7562,7 +7376,7 @@ function openSchemaApplyDialog({
         if (isBuiltinParent(parentId) || seen.has(parentId)) continue;
         seen.add(parentId);
         const status = already.has(parentId) ? "already on the target" : available.has(parentId) ? "available on the target" : "missing on the target; will be skipped";
-        ctList.append(el4("li", "", `${ct.name} \u2014 ${status}`));
+        ctList.append(el5("li", "", `${ct.name} \u2014 ${status}`));
       }
     }
     function canDryRun() {
@@ -7675,7 +7489,7 @@ function openSchemaApplyDialog({
       stepsList.textContent = "";
       liById = /* @__PURE__ */ new Map();
       for (const step2 of steps) {
-        const li = el4("li", "", stepLine(step2));
+        const li = el5("li", "", stepLine(step2));
         li.dataset.state = STATE_MAP[step2.status] || "pending";
         stepsList.append(li);
         liById.set(step2.id, li);
@@ -7913,7 +7727,7 @@ function openSchemaApplyDialog({
     }
     function renderReportCounts(report) {
       reportCounts.textContent = "";
-      const tbody = el4("tbody");
+      const tbody = el5("tbody");
       const rows = [
         ["Fields", `${report.fields.added} added \xB7 ${report.fields.skipped} skipped \xB7 ${report.fields.failed.length} failed`],
         ["Views", `${report.views.added} added \xB7 ${report.views.updated} updated \xB7 ${report.views.failed.length} failed`],
@@ -7937,8 +7751,8 @@ function openSchemaApplyDialog({
         rows.push(["Items", report.itemsHeld]);
       }
       for (const [label, value] of rows) {
-        const tr = el4("tr");
-        tr.append(el4("td", "", label), el4("td", "", value));
+        const tr = el5("tr");
+        tr.append(el5("td", "", label), el5("td", "", value));
         tbody.append(tr);
       }
       reportCounts.append(tbody);
@@ -7947,12 +7761,12 @@ function openSchemaApplyDialog({
       reportFailed.textContent = "";
       const failed = report.steps.filter((s) => s.status === "failed");
       if (failed.length) {
-        reportFailed.append(el4("h3", "", "Failed steps"));
-        const table2 = el4("table", "wb-table");
-        const tbody = el4("tbody");
+        reportFailed.append(el5("h3", "", "Failed steps"));
+        const table2 = el5("table", "wb-table");
+        const tbody = el5("tbody");
         for (const s of failed) {
-          const tr = el4("tr");
-          tr.append(el4("td", "", s.label), el4("td", "", s.error || ""));
+          const tr = el5("tr");
+          tr.append(el5("td", "", s.label), el5("td", "", s.error || ""));
           tbody.append(tr);
         }
         table2.append(tbody);
@@ -7960,28 +7774,28 @@ function openSchemaApplyDialog({
       }
       const failedItems = report.itemsReport?.items.failed;
       if (failedItems?.length) {
-        reportFailed.append(el4("h3", "", "Failed items"));
-        const itable = el4("table", "wb-table");
-        const itbody = el4("tbody");
+        reportFailed.append(el5("h3", "", "Failed items"));
+        const itable = el5("table", "wb-table");
+        const itbody = el5("tbody");
         for (const f of failedItems) {
-          const tr = el4("tr");
-          tr.append(el4("td", "", `Source id ${f.sourceId}`), el4("td", "", f.error || ""));
+          const tr = el5("tr");
+          tr.append(el5("td", "", `Source id ${f.sourceId}`), el5("td", "", f.error || ""));
           itbody.append(tr);
         }
         itable.append(itbody);
         reportFailed.append(itable);
         if (report.itemsReport.items.failedTruncated) {
-          reportFailed.append(el4("p", "wb-schema-note", `+${report.itemsReport.items.failedTruncated} more not shown.`));
+          reportFailed.append(el5("p", "wb-schema-note", `+${report.itemsReport.items.failedTruncated} more not shown.`));
         }
       }
       const itemFieldErrors = report.itemsReport?.fieldErrors;
       if (itemFieldErrors?.length) {
-        reportFailed.append(el4("h3", "", "Item field errors"));
-        const ftable = el4("table", "wb-table");
-        const ftbody = el4("tbody");
+        reportFailed.append(el5("h3", "", "Item field errors"));
+        const ftable = el5("table", "wb-table");
+        const ftbody = el5("tbody");
         for (const fe of itemFieldErrors) {
-          const tr = el4("tr");
-          tr.append(el4("td", "", `Source id ${fe.sourceId} \u2014 ${fe.field}`), el4("td", "", fe.message || ""));
+          const tr = el5("tr");
+          tr.append(el5("td", "", `Source id ${fe.sourceId} \u2014 ${fe.field}`), el5("td", "", fe.message || ""));
           ftbody.append(tr);
         }
         ftable.append(ftbody);
@@ -7992,9 +7806,9 @@ function openSchemaApplyDialog({
       reportWarnings.textContent = "";
       const warnings = [...report.warnings || [], ...report.itemsReport?.warnings || []];
       if (!warnings.length) return;
-      reportWarnings.append(el4("h3", "", "Warnings"));
-      const list2 = el4("ul", "wb-grid-notice");
-      for (const w of warnings) list2.append(el4("li", "", w));
+      reportWarnings.append(el5("h3", "", "Warnings"));
+      const list2 = el5("ul", "wb-grid-notice");
+      for (const w of warnings) list2.append(el5("li", "", w));
       reportWarnings.append(list2);
     }
     function renderReportLinks(report) {
@@ -8002,7 +7816,7 @@ function openSchemaApplyDialog({
       if (!report.listId) return;
       const sameWeb = canonUrl(targetClient.webUrl()) === canonUrl(client2.webUrl());
       if (sameWeb) {
-        const openBtn = el4("button", "btn btn-xs wb-schema-report-open", "Open the new list");
+        const openBtn = el5("button", "btn btn-xs wb-schema-report-open", "Open the new list");
         openBtn.type = "button";
         openBtn.addEventListener("click", () => {
           navigate({ view: "lists", listId: report.listId, listTitle: report.title });
@@ -8010,10 +7824,10 @@ function openSchemaApplyDialog({
         });
         reportLinks.append(openBtn);
       } else {
-        const settingsLink = el4("a", "btn btn-xs wb-schema-report-settings", "Open list settings \u2197");
+        const settingsLink = el5("a", "btn btn-xs wb-schema-report-settings", "Open list settings \u2197");
         settingsLink.href = linkUrl(targetClient.webUrl(), LIST_SETTINGS, { guid: report.listId });
         bindNewTab2(settingsLink);
-        const inspectBtn = el4("button", "btn btn-xs wb-schema-report-inspect", "Inspect the target site");
+        const inspectBtn = el5("button", "btn btn-xs wb-schema-report-inspect", "Inspect the target site");
         inspectBtn.type = "button";
         inspectBtn.addEventListener("click", async () => {
           await inspectSite2(targetClient.webUrl());
@@ -8038,8 +7852,8 @@ function openSchemaApplyDialog({
     retryBtn.addEventListener("click", runRetry);
     downloadBtn.addEventListener("click", () => {
       if (!lastReport) return;
-      const stem = String(lastReport.title || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
-      downloadText(`schema-report-${stem}.md`, buildApplyReport({ report: lastReport, doc: d, targetWebUrl: lastReport.targetWebUrl }), "text/markdown");
+      const stem2 = String(lastReport.title || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+      downloadText(`schema-report-${stem2}.md`, buildApplyReport({ report: lastReport, doc: d, targetWebUrl: lastReport.targetWebUrl }), "text/markdown");
     });
     cancelBtn.addEventListener("click", () => {
       if (phase === "running") {
@@ -8071,6 +7885,849 @@ function openSchemaApplyDialog({
     targetInput.value = client2.webUrl();
     connect(client2.webUrl());
   });
+}
+
+// ../src/workbench/list-schema-script.js
+var TEMPLATE_NAMES = { 100: "GenericList", 101: "DocumentLibrary" };
+function planFor(doc, opts = {}) {
+  const lookupMap = opts.lookupMap || {};
+  const assumed = [...new Set((doc?.fields || []).filter((f) => f.lookupList && !f.isSelfLookup).map((f) => lookupMapGet(lookupMap, f.lookupList) ?? lookupMapGet(lookupMap, f.lookupListId) ?? f.lookupList))].map((title) => ({ title }));
+  const assumedContentTypes = [...new Set((doc?.contentTypes || []).map((ct) => ct.parentId || parentContentTypeId(ct.id)).filter((parentId) => !isBuiltinParent(parentId)))].map((id) => ({ id }));
+  return buildApplyPlan(doc, {
+    title: opts.title,
+    description: opts.description,
+    lookupMap,
+    missingLookup: opts.missingLookup
+  }, opts.probe || { targetLists: assumed, availableContentTypes: assumedContentTypes });
+}
+var isDone = (step2) => !["skipped", "failed", "blocked"].includes(step2.status);
+var LIST_TOKEN = "{lookuplist}";
+var PRIMARY_TOKEN = "{primaryfield}";
+function fieldXml(step2) {
+  const f = step2.payload.field;
+  if (step2.payload.asText) return textFallbackXml(f);
+  const refs = step2.refs || {};
+  return scrubSchemaXml(f.schemaXml, {
+    fieldType: f.type,
+    lookupListId: refs.lookupListId ? "lookuplist" : null,
+    primaryFieldId: refs.primaryFieldId ? "primaryfield" : null
+  });
+}
+var FIELD_OPTIONS = 8;
+var psEsc = (s) => String(s ?? "").replaceAll("'", "''");
+var psLit = (s) => `'${psEsc(s)}'`;
+function psCsomValue(v) {
+  if (typeof v === "boolean") return v ? "$true" : "$false";
+  if (typeof v === "number") return String(v);
+  return psLit(v);
+}
+function psHashtable(obj) {
+  const parts = Object.entries(obj).map(([k, v]) => {
+    if (typeof v === "boolean") return `${k}=$${v}`;
+    if (typeof v === "number") return `${k}=${v}`;
+    return `${k}=${psLit(v)}`;
+  });
+  return `@{ ${parts.join("; ")} }`;
+}
+var psArray = (arr) => `@(${(arr || []).map((s) => psLit(s)).join(", ")})`;
+function pushCsomBlock(lines, plan, props) {
+  const entries = Object.entries(props).filter(([, v]) => v != null);
+  if (!entries.length) return;
+  lines.push(`$l = Get-PnPList -Identity ${psLit(plan.title)}`);
+  for (const [k, v] of entries) lines.push(`$l.${k} = ${psCsomValue(v)}`);
+  lines.push("$l.Update()");
+  lines.push("Invoke-PnPQuery");
+}
+function toPnpPowerShellProvisioning(doc, opts = {}) {
+  const plan = planFor(doc, opts);
+  const connect = `Connect-PnPOnline -Url "${opts.targetWebUrl || "https://tenant.sharepoint.com/sites/yoursite"}" -Interactive`;
+  const lines = ["# PnP.PowerShell provisioning", `# ${plan.title}`, connect, `$list = ${psLit(plan.title)}`, ""];
+  for (const step2 of plan.steps) {
+    if (!isDone(step2)) {
+      lines.push(`# SKIP ${step2.label}${step2.error ? ` \u2014 ${step2.error}` : ""}`);
+      continue;
+    }
+    switch (step2.kind) {
+      case "list.create": {
+        const template = TEMPLATE_NAMES[step2.payload.baseTemplate] || step2.payload.baseTemplate;
+        lines.push(`New-PnPList -Title ${psLit(step2.payload.title)} -Template ${template}${step2.payload.contentTypesEnabled ? " -EnableContentTypes" : ""}`);
+        break;
+      }
+      case "list.adopt":
+        lines.push(`# Using existing list "${step2.payload.title}"`);
+        break;
+      case "list.settings":
+        pushCsomBlock(lines, plan, { ...step2.payload.groupA, ...step2.payload.groupB });
+        break;
+      case "ct.attach":
+        lines.push(`Add-PnPContentTypeToList -List ${psLit(plan.title)} -ContentType ${psLit(step2.payload.contentTypeId)}`);
+        break;
+      case "field.create": {
+        let xmlExpr = psLit(fieldXml(step2));
+        const refs = step2.refs || {};
+        if (refs.lookupListId) {
+          const listIdentity = refs.lookupListId.self ? plan.title : refs.lookupListId.id || refs.lookupListId.list;
+          xmlExpr = `(${xmlExpr}).Replace('${LIST_TOKEN}', ('{' + (Get-PnPList -Identity ${psLit(listIdentity)}).Id + '}'))`;
+        }
+        if (refs.primaryFieldId) {
+          xmlExpr = `(${xmlExpr}).Replace('${PRIMARY_TOKEN}', ('{' + (Get-PnPField -List ${psLit(plan.title)} -Identity ${psLit(refs.primaryFieldId.field)}).Id + '}'))`;
+        }
+        lines.push(`Add-PnPFieldFromXml -List ${psLit(plan.title)} -FieldXml ${xmlExpr}`);
+        break;
+      }
+      case "field.merge":
+        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step2.payload.internalName)} -Values ${psHashtable(step2.payload.merges)}`);
+        break;
+      case "field.base": {
+        const values = { Title: step2.payload.displayName };
+        if (step2.payload.internalName === "Title") values.Required = step2.payload.required;
+        if (step2.payload.description) values.Description = step2.payload.description;
+        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step2.payload.internalName)} -Values ${psHashtable(values)}`);
+        break;
+      }
+      case "view.upsert": {
+        const titleLit = psLit(step2.payload.title);
+        lines.push(`$v = Get-PnPView -List $list -Identity ${titleLit} -ErrorAction SilentlyContinue`);
+        if (step2.payload.defaultView) {
+          lines.push("if (-not $v) { $v = Get-PnPView -List $list | Where-Object DefaultView }");
+        }
+        lines.push("if ($v) {");
+        lines.push(`  Set-PnPView -List $list -Identity $v -Fields ${psArray(step2.payload.fields)} -Values ${psHashtable({ ViewQuery: step2.payload.viewQuery, RowLimit: step2.payload.rowLimit, Paged: step2.payload.paged })}`);
+        lines.push("} else {");
+        lines.push(`  Add-PnPView -List $list -Title ${titleLit} -Fields ${psArray(step2.payload.fields)} -Query ${psLit(step2.payload.viewQuery)} -RowLimit ${step2.payload.rowLimit}${step2.payload.paged ? " -Paged" : ""} -SetAsDefault:$${step2.payload.defaultView ? "true" : "false"}`);
+        lines.push("}");
+        break;
+      }
+      case "list.validation":
+        pushCsomBlock(lines, plan, {
+          ValidationFormula: step2.payload.validationFormula,
+          ValidationMessage: step2.payload.validationMessage
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return lines.join("\n");
+}
+function toPnpjs2Provisioning(doc, opts = {}) {
+  const plan = planFor(doc, opts);
+  const lines = [
+    "// PnPjs 2.x \u2014 paste into the DCSPad JS pane (pnpjs2 framework enabled)",
+    `// ${plan.title}`,
+    ""
+  ];
+  for (const step2 of plan.steps) {
+    if (!isDone(step2)) {
+      lines.push(`// SKIP ${step2.label}${step2.error ? ` \u2014 ${step2.error}` : ""}`);
+      continue;
+    }
+    switch (step2.kind) {
+      case "list.create":
+        lines.push(`const newList = (await sp.web.lists.add(${JSON.stringify(step2.payload.title)}, ${JSON.stringify(step2.payload.description || "")}, ${step2.payload.baseTemplate}, ${step2.payload.contentTypesEnabled})).list;`);
+        lines.push('const newListId = (await newList.select("Id")()).Id;');
+        break;
+      case "list.adopt":
+        lines.push(`const newList = sp.web.lists.getById(${JSON.stringify(step2.payload.listId)});`);
+        lines.push(`const newListId = ${JSON.stringify(step2.payload.listId)};`);
+        break;
+      case "list.settings": {
+        const settings = { ...step2.payload.groupA, ...step2.payload.groupB };
+        if (Object.keys(settings).length) lines.push(`await newList.update(${JSON.stringify(settings, null, 2)});`);
+        break;
+      }
+      case "ct.attach":
+        lines.push(`await newList.contentTypes.addAvailableContentType(${JSON.stringify(step2.payload.contentTypeId)});`);
+        break;
+      case "field.create": {
+        const refs = step2.refs || {};
+        let xmlExpr = JSON.stringify(fieldXml(step2));
+        const pre = [];
+        if (refs.lookupListId) {
+          if (refs.lookupListId.self) {
+            pre.push("  const lookupId = newListId;");
+          } else if (refs.lookupListId.id) {
+            pre.push(`  const lookupId = ${JSON.stringify(refs.lookupListId.id)};`);
+          } else {
+            pre.push(`  const lookupId = (await sp.web.lists.getByTitle(${JSON.stringify(refs.lookupListId.list)}).select("Id")()).Id;`);
+          }
+          xmlExpr += `.replace(${JSON.stringify(LIST_TOKEN)}, \`{\${lookupId}}\`)`;
+        }
+        if (refs.primaryFieldId) {
+          pre.push(`  const primaryId = (await newList.fields.getByInternalNameOrTitle(${JSON.stringify(refs.primaryFieldId.field)}).select("Id")()).Id;`);
+          xmlExpr += `.replace(${JSON.stringify(PRIMARY_TOKEN)}, \`{\${primaryId}}\`)`;
+        }
+        lines.push(
+          "{",
+          ...pre,
+          `  await newList.fields.createFieldAsXml({ SchemaXml: ${xmlExpr}, Options: ${step2.payload.options ?? FIELD_OPTIONS} });`,
+          "}"
+        );
+        break;
+      }
+      case "field.merge":
+        lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step2.payload.internalName)}).update(${JSON.stringify(step2.payload.merges)});`);
+        break;
+      case "field.base": {
+        const values = { Title: step2.payload.displayName };
+        if (step2.payload.internalName === "Title") values.Required = step2.payload.required;
+        if (step2.payload.description) values.Description = step2.payload.description;
+        lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step2.payload.internalName)}).update(${JSON.stringify(values)});`);
+        break;
+      }
+      case "view.upsert": {
+        const titleJson = JSON.stringify(step2.payload.title);
+        const settingsJson = JSON.stringify({
+          ViewQuery: step2.payload.viewQuery,
+          RowLimit: step2.payload.rowLimit,
+          Paged: step2.payload.paged
+        });
+        lines.push("{");
+        lines.push("  let existing = null;");
+        lines.push(`  try { existing = await newList.views.getByTitle(${titleJson})(); } catch { existing = null; }`);
+        if (step2.payload.defaultView) {
+          lines.push("  if (!existing) existing = await newList.defaultView();");
+        }
+        lines.push("  let view;");
+        lines.push("  if (existing) {");
+        lines.push("    view = newList.views.getByTitle(existing.Title);");
+        lines.push(`    await view.update(${settingsJson});`);
+        lines.push("  } else {");
+        lines.push(`    view = (await newList.views.add(${titleJson}, false, ${settingsJson})).view;`);
+        lines.push("  }");
+        lines.push("  await view.fields.removeAll();");
+        for (const name of step2.payload.fields) lines.push(`  await view.fields.add(${JSON.stringify(name)});`);
+        if (step2.payload.defaultView) {
+          lines.push("  await view.update({ DefaultView: true });");
+        }
+        lines.push("}");
+        break;
+      }
+      case "list.validation":
+        lines.push(`await newList.update(${JSON.stringify({
+          ValidationFormula: step2.payload.validationFormula,
+          ValidationMessage: step2.payload.validationMessage
+        })});`);
+        break;
+      default:
+        break;
+    }
+  }
+  return lines.join("\n");
+}
+
+// ../src/workbench/list-data-import-dialog.js
+var DEFAULT_CLOSE_ANYWAY_MS = 15e3;
+var closeAnywayMs = DEFAULT_CLOSE_ANYWAY_MS;
+var CLOSE_ANYWAY_NOTE = "The current request is still in flight \u2014 closing leaves it running; the Items tab will refresh.";
+var el6 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var guidPath4 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var FIELD_SELECT = [
+  "Id",
+  "InternalName",
+  "TypeAsString",
+  "ReadOnlyField",
+  "LookupList",
+  "LookupField",
+  "DisplayFormat"
+];
+var stem = (s) => String(s || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+var plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+function dropReason(name, meta, targetFieldRow) {
+  if (!targetFieldRow) return "missing on this list";
+  if (targetFieldRow.ReadOnlyField) return "read-only on this list";
+  if (NEVER_WRITE.has(name) || NEVER_WRITE_TYPES.has(targetFieldRow.TypeAsString)) return "system column \u2014 not imported";
+  if (!(meta?.custom || name === "Title")) return "system column \u2014 not imported";
+  return "not writable";
+}
+var AUTHORSHIP_FIELD_NAMES = ["Author", "Editor", "Created", "Modified"];
+function buildFieldTable(dataDoc, targetFieldRows, writable, preserveAuthorship) {
+  const table2 = el6("table", "wb-table wb-import-fields");
+  const thead = el6("thead");
+  const headRow = el6("tr");
+  headRow.append(el6("th", "", "Column"), el6("th", "", "Status"));
+  thead.append(headRow);
+  const tbody = el6("tbody");
+  const byName = new Map(targetFieldRows.map((f) => [f.InternalName, f]));
+  const writtenNames = new Set(writable.map((w) => w.name));
+  for (const [name, meta] of Object.entries(dataDoc.fields || {})) {
+    if (AUTHORSHIP_FIELD_NAMES.includes(name)) continue;
+    const tr = el6("tr");
+    tr.append(el6("td", "", name));
+    const status = writtenNames.has(name) ? "written" : dropReason(name, meta, byName.get(name));
+    const td = el6("td");
+    td.className = writtenNames.has(name) ? "" : "wb-import-dropped";
+    td.textContent = status;
+    tr.append(td);
+    tbody.append(tr);
+  }
+  for (const name of AUTHORSHIP_FIELD_NAMES) {
+    const tr = el6("tr", "wb-import-authorship-row");
+    tr.append(el6("td", "", name));
+    const td = el6("td");
+    td.className = preserveAuthorship ? "" : "wb-import-dropped";
+    td.textContent = preserveAuthorship ? "written \u2014 preserve authorship" : "not written (authorship off)";
+    tr.append(td);
+    tbody.append(tr);
+  }
+  table2.append(thead, tbody);
+  return table2;
+}
+function itemFailureSummary(items) {
+  const total = (items.failed?.length || 0) + (items.failedTruncated || 0);
+  return items.failedTruncated ? `${total} failed (${items.failedTruncated} not itemised below)` : `${plural2(total, "failure")}`;
+}
+function buildHeadline2(report, { listTitle, isMock }) {
+  if (report.aborted === "auth") return EXPIRED_SESSION_NOTE;
+  if (report.aborted === "user") return "Import cancelled.";
+  let headline = `Imported into \u2018${listTitle}\u2019 \u2014 ${plural2(report.items.added, "item")} added, ${itemFailureSummary(report.items)}.`;
+  if (isMock) headline += " (mock mode \u2014 the fixture web does not change).";
+  return headline;
+}
+function buildReportMarkdown(report, { listTitle }) {
+  const lines = [`# Import report \u2014 ${listTitle}`, "", buildHeadline2(report, { listTitle, isMock: false }), ""];
+  lines.push("## Counts", "");
+  lines.push(`- Items: ${report.items.added} added, ${itemFailureSummary(report.items)}`);
+  lines.push(`- Folders: ${report.folders.created} created, ${report.folders.failed} failed`);
+  lines.push(`- Attachments: ${report.attachments.added} added, ${report.attachments.skipped} skipped, ${report.attachments.failed} failed`);
+  lines.push(`- Authorship: ${report.authorship.applied} applied, ${report.authorship.failed} failed`);
+  lines.push("");
+  if (report.items.failed.length) {
+    lines.push("## Failed items", "");
+    for (const f of report.items.failed) lines.push(`- Source id ${f.sourceId}: ${f.error}`);
+    lines.push("");
+  }
+  if (report.fieldErrors.length) {
+    lines.push("## Field errors", "");
+    for (const fe of report.fieldErrors) lines.push(`- Source id ${fe.sourceId} \u2014 ${fe.field}: ${fe.message}`);
+    lines.push("");
+  }
+  if (report.warnings.length) {
+    lines.push("## Warnings", "");
+    for (const w of report.warnings) lines.push(`- ${w}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+function openImportDataDialog({
+  dataDoc,
+  client: client2,
+  listId,
+  listTitle,
+  mockWriter: mockWriter2,
+  invalidateItems
+} = {}) {
+  return new Promise((resolve) => {
+    const isMock = !client2.context().live;
+    const spWrite = createSpWriteClient({ client: client2, mockWriter: isMock ? mockWriter2 : void 0 });
+    const dialog = el6("dialog", "app-dialog sp-metadata-dialog wb-schema-dialog wb-import-data-dialog");
+    const panel = el6("div", "app-dialog__panel");
+    const head = el6("div", "app-dialog__head");
+    head.append(el6("h2", "", "Import data"));
+    const closeBtn = el6("button", "btn btn-ghost btn-xs wb-schema-close", "\u2715");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    head.append(closeBtn);
+    const context = el6(
+      "p",
+      "app-dialog__context",
+      `Add items from \u2018${dataDoc.source?.listTitle || "a list"}\u2019${dataDoc.source?.siteUrl ? ` (${dataDoc.source.siteUrl})` : ""} to \u2018${listTitle}\u2019.`
+    );
+    panel.append(head, context);
+    const countsLine = el6(
+      "p",
+      "wb-schema-note",
+      `${plural2(dataDoc.items.length, "item")}, ${plural2(dataDoc.folders.length, "folder")} in the source file.`
+    );
+    panel.append(countsLine);
+    const fieldsSection = el6("div", "wb-schema-section");
+    fieldsSection.append(el6("h3", "", "Columns"));
+    const fieldsStatus = el6("p", "wb-schema-note", "Reading this list\u2019s columns\u2026");
+    fieldsSection.append(fieldsStatus);
+    panel.append(fieldsSection);
+    const optsFieldset = el6("fieldset", "wb-schema-items");
+    optsFieldset.append(el6("legend", "", "Options"));
+    const optsRow = el6("div", "wb-schema-items-row");
+    const attachCb = el6("input");
+    attachCb.type = "checkbox";
+    const attachLabel = el6("label", "wb-schema-items-opt");
+    attachLabel.append(attachCb, el6("span", "", "Include attachments"));
+    const authorshipCb = el6("input");
+    authorshipCb.type = "checkbox";
+    const authorshipLabel = el6("label", "wb-schema-items-opt");
+    authorshipLabel.append(authorshipCb, el6("span", "", "Preserve authorship"));
+    optsRow.append(attachLabel, authorshipLabel);
+    optsFieldset.append(optsRow);
+    panel.append(optsFieldset);
+    const consentSection = el6("div", "sp-metadata-consent");
+    const consentLabel = el6("label", "sp-metadata-consent__row");
+    const consentBox = el6("input");
+    consentBox.type = "checkbox";
+    const consentText = el6(
+      "span",
+      "sp-metadata-consent__label",
+      `I understand this adds ${dataDoc.items.length} item${dataDoc.items.length === 1 ? "" : "s"} to \u2018${listTitle}\u2019. Existing items are not changed or de-duplicated.`
+    );
+    consentLabel.append(consentBox, consentText);
+    consentSection.append(consentLabel);
+    panel.append(consentSection);
+    const planPanel = el6("div", "wb-schema-plan");
+    planPanel.hidden = true;
+    const masterLine = el6("p", "wb-schema-master");
+    const closeAnywayNote = el6("p", "wb-schema-note wb-import-closeanyway-note", CLOSE_ANYWAY_NOTE);
+    closeAnywayNote.hidden = true;
+    const closeAnywayBtn = el6("button", "btn btn-xs wb-import-closeanyway", "Close anyway");
+    closeAnywayBtn.type = "button";
+    closeAnywayBtn.hidden = true;
+    planPanel.append(masterLine, closeAnywayNote, closeAnywayBtn);
+    panel.append(planPanel);
+    const reportPanel = el6("div", "wb-schema-report");
+    reportPanel.hidden = true;
+    const reportHeadline = el6("p", "wb-schema-report-headline");
+    const reportCounts = el6("table", "wb-table wb-schema-report-counts");
+    const reportFailed = el6("div", "wb-schema-report-failed");
+    const reportWarnings = el6("div", "wb-schema-report-warnings");
+    reportPanel.append(reportHeadline, reportCounts, reportFailed, reportWarnings);
+    panel.append(reportPanel);
+    const error = el6("div", "sp-files-error");
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+    panel.append(error);
+    const actions = el6("div", "app-dialog__actions sp-metadata-actions wb-schema-actions-row");
+    const cancelBtn = el6("button", "btn btn-ghost wb-schema-cancel", "Cancel");
+    cancelBtn.type = "button";
+    const downloadBtn = el6("button", "btn btn-xs wb-schema-report-download", "Download report .md");
+    downloadBtn.type = "button";
+    downloadBtn.hidden = true;
+    const importBtn = el6("button", "btn btn-run wb-import-run", "Import");
+    importBtn.type = "button";
+    importBtn.disabled = true;
+    actions.append(cancelBtn, downloadBtn, importBtn);
+    panel.append(actions);
+    dialog.append(panel);
+    document.body.append(dialog);
+    let phase = "form";
+    let lastReport = null;
+    let abortController = null;
+    let cancelRequested = false;
+    let closeAnywayTimer = null;
+    let invalidated = false;
+    let previewOk = false;
+    let fieldsTableEl = null;
+    let cachedTargetFieldRows = null;
+    let cachedWritable = null;
+    const finish = (outcome) => {
+      dialog.close();
+      dialog.remove();
+      resolve(outcome);
+    };
+    const mutated = (report) => Boolean(report && ((report.items?.added || 0) > 0 || (report.folders?.created || 0) > 0));
+    let detached = false;
+    function invalidateOnce() {
+      invalidated = true;
+      invalidateItems?.();
+    }
+    function hideCloseAnyway() {
+      closeAnywayNote.hidden = true;
+      closeAnywayBtn.hidden = true;
+      if (closeAnywayTimer) {
+        clearTimeout(closeAnywayTimer);
+        closeAnywayTimer = null;
+      }
+    }
+    function requestCancel() {
+      if (phase !== "running" || cancelRequested) return;
+      cancelRequested = true;
+      abortController?.abort();
+      closeAnywayTimer = setTimeout(() => {
+        closeAnywayTimer = null;
+        if (phase === "running") {
+          closeAnywayNote.hidden = false;
+          closeAnywayBtn.hidden = false;
+        }
+      }, closeAnywayMs);
+    }
+    function setPhase(next) {
+      phase = next;
+      const inForm = next === "form";
+      const inReport = next === "report";
+      countsLine.hidden = !inForm;
+      fieldsSection.hidden = !inForm;
+      optsFieldset.hidden = !inForm;
+      consentSection.hidden = !inForm;
+      planPanel.hidden = next !== "running";
+      reportPanel.hidden = !inReport;
+      importBtn.hidden = !inForm;
+      downloadBtn.hidden = !inReport;
+      cancelBtn.textContent = inReport ? "Close" : "Cancel";
+      closeBtn.hidden = next === "running";
+    }
+    function updateImportEnabled() {
+      importBtn.disabled = !(consentBox.checked && previewOk);
+    }
+    consentBox.addEventListener("change", updateImportEnabled);
+    function rebuildFieldsTable() {
+      if (!cachedTargetFieldRows) return;
+      fieldsTableEl?.remove();
+      fieldsTableEl = buildFieldTable(dataDoc, cachedTargetFieldRows, cachedWritable, authorshipCb.checked);
+      fieldsSection.append(fieldsTableEl);
+    }
+    authorshipCb.addEventListener("change", rebuildFieldsTable);
+    client2.getAll(guidPath4(listId, "/fields"), { select: FIELD_SELECT }).then(({ items: targetFieldRows }) => {
+      fieldsStatus.remove();
+      cachedTargetFieldRows = targetFieldRows;
+      cachedWritable = writableFields(dataDoc.fields, targetFieldRows);
+      rebuildFieldsTable();
+      previewOk = true;
+      updateImportEnabled();
+    }).catch((err) => {
+      previewOk = false;
+      showFailure(fieldsStatus, err, "this list\u2019s columns");
+      updateImportEnabled();
+    });
+    function renderReportCounts(report) {
+      reportCounts.textContent = "";
+      const tbody = el6("tbody");
+      const rows = [
+        ["Items", `${report.items.added} added \xB7 ${itemFailureSummary(report.items)}`],
+        ["Folders", `${report.folders.created} created \xB7 ${report.folders.failed} failed`]
+      ];
+      if (attachCb.checked) rows.push(["Attachments", `${report.attachments.added} added \xB7 ${report.attachments.skipped} skipped \xB7 ${report.attachments.failed} failed`]);
+      if (authorshipCb.checked) rows.push(["Authorship", `${report.authorship.applied} applied \xB7 ${report.authorship.failed} failed`]);
+      for (const [label, value] of rows) {
+        const tr = el6("tr");
+        tr.append(el6("td", "", label), el6("td", "", value));
+        tbody.append(tr);
+      }
+      reportCounts.append(tbody);
+    }
+    function renderReportFailed(report) {
+      reportFailed.textContent = "";
+      if (report.items.failed.length) {
+        reportFailed.append(el6("h3", "", "Failed items"));
+        const table2 = el6("table", "wb-table");
+        const tbody = el6("tbody");
+        for (const f of report.items.failed) {
+          const tr = el6("tr");
+          tr.append(el6("td", "", `Source id ${f.sourceId}`), el6("td", "", f.error || ""));
+          tbody.append(tr);
+        }
+        table2.append(tbody);
+        reportFailed.append(table2);
+        if (report.items.failedTruncated) {
+          reportFailed.append(el6("p", "wb-schema-note", `+${report.items.failedTruncated} more not shown.`));
+        }
+      }
+      if (report.fieldErrors.length) {
+        reportFailed.append(el6("h3", "", "Field errors"));
+        const table2 = el6("table", "wb-table");
+        const tbody = el6("tbody");
+        for (const fe of report.fieldErrors) {
+          const tr = el6("tr");
+          tr.append(el6("td", "", `Source id ${fe.sourceId} \u2014 ${fe.field}`), el6("td", "", fe.message || ""));
+          tbody.append(tr);
+        }
+        table2.append(tbody);
+        reportFailed.append(table2);
+      }
+    }
+    function renderReportWarnings(report) {
+      reportWarnings.textContent = "";
+      if (!report.warnings?.length) return;
+      reportWarnings.append(el6("h3", "", "Warnings"));
+      const list2 = el6("ul", "wb-grid-notice");
+      for (const w of report.warnings) list2.append(el6("li", "", w));
+      reportWarnings.append(list2);
+    }
+    function renderReport(report) {
+      reportHeadline.textContent = buildHeadline2(report, { listTitle, isMock });
+      reportHeadline.classList.toggle("wb-schema-report-auth", report.aborted === "auth");
+      renderReportCounts(report);
+      renderReportFailed(report);
+      renderReportWarnings(report);
+      downloadBtn.hidden = false;
+    }
+    importBtn.addEventListener("click", async () => {
+      if (importBtn.disabled) return;
+      error.hidden = true;
+      importBtn.disabled = true;
+      cancelRequested = false;
+      hideCloseAnyway();
+      setPhase("running");
+      masterLine.textContent = "Importing\u2026";
+      abortController = new AbortController();
+      try {
+        const report = await applyListData({
+          dataDoc,
+          client: client2,
+          spWrite,
+          listId,
+          options: { includeAttachments: attachCb.checked, preserveAuthorship: authorshipCb.checked },
+          onStep: (info) => {
+            masterLine.textContent = info.label;
+          },
+          signal: abortController.signal
+        });
+        hideCloseAnyway();
+        lastReport = report;
+        setPhase("report");
+        renderReport(report);
+        if (mutated(report)) invalidateOnce();
+      } catch (err) {
+        if (detached) {
+          invalidateOnce();
+          return;
+        }
+        hideCloseAnyway();
+        setPhase("form");
+        importBtn.disabled = false;
+        error.textContent = err?.message || String(err);
+        error.hidden = false;
+      }
+    });
+    downloadBtn.addEventListener("click", () => {
+      if (!lastReport) return;
+      downloadText(`import-report-${stem(listTitle)}.md`, buildReportMarkdown(lastReport, { listTitle }), "text/markdown");
+    });
+    closeAnywayBtn.addEventListener("click", () => {
+      detached = true;
+      invalidateOnce();
+      finish("closed-during-run");
+    });
+    cancelBtn.addEventListener("click", () => {
+      if (phase === "running") {
+        requestCancel();
+        return;
+      }
+      if (phase === "report") {
+        finish(lastReport && !lastReport.aborted ? "imported" : "cancelled");
+        return;
+      }
+      finish("cancelled");
+    });
+    closeBtn.addEventListener("click", () => {
+      if (phase === "running") return;
+      finish(phase === "report" && lastReport && !lastReport.aborted ? "imported" : "cancelled");
+    });
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      if (phase === "running") {
+        requestCancel();
+        return;
+      }
+      finish(phase === "report" && lastReport && !lastReport.aborted ? "imported" : "cancelled");
+    });
+    setPhase("form");
+    dialog.showModal();
+  });
+}
+
+// ../src/workbench/list-tools.js
+var el7 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var fileStem = (s) => String(s || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+function copyEligible(doc) {
+  const bt = schemaBaseType(doc);
+  return bt === 0 && Number(doc.list.baseTemplate) === 100 || bt === 1;
+}
+function cardShell(id, title, description) {
+  const node = el7("div", `wb-linkgroup wb-tool-card wb-tool-${id}`);
+  node.append(el7("h3", "", title));
+  node.append(el7("p", "wb-tool-desc", description));
+  const body = el7("div", "wb-tool-body");
+  node.append(body);
+  return { node, body };
+}
+function disabledLine(reason) {
+  const line = el7("p", "wb-tool-reason", reason);
+  return line;
+}
+var copyTool = {
+  id: "copy",
+  title: "Copy this list\u2026",
+  description: "Create a new list or library from this one\u2019s schema, on this site or another.",
+  render(card, ctx2) {
+    const { body } = card;
+    const status = el7("p", "wb-tool-status", "Reading the list schema\u2026");
+    body.append(status);
+    ctx2.getSchema().then(({ doc }) => {
+      status.remove();
+      const summary = schemaSummary(doc);
+      if (copyEligible(doc)) {
+        const btn = el7("button", "btn btn-xs wb-tools-copy", "Copy to\u2026");
+        btn.type = "button";
+        btn.title = "Create a new list from this schema, on this site or another one.";
+        btn.addEventListener("click", () => ctx2.openCopy(doc));
+        body.append(btn);
+      } else {
+        const btn = el7("button", "btn btn-xs wb-tools-copy", "Copy to\u2026");
+        btn.type = "button";
+        btn.disabled = true;
+        body.append(btn);
+        body.append(disabledLine(
+          `Only generic lists and document libraries can be copied \u2014 this is a ${summary.kind.toLowerCase()}.`
+        ));
+      }
+    }).catch((err) => showFailure(status, err, "this list\u2019s schema"));
+  }
+};
+var exportSchemaTool = {
+  id: "export-schema",
+  title: "Export schema",
+  description: "Download or copy this list\u2019s schema, or generate a provisioning script.",
+  render(card, ctx2) {
+    const { body } = card;
+    const status = el7("p", "wb-tool-status", "Reading the list schema\u2026");
+    body.append(status);
+    ctx2.getSchema().then(({ doc }) => {
+      status.remove();
+      const stem2 = fileStem(ctx2.listTitle);
+      body.append(createMenuButton2("Export \u25BE", "Export this list\u2019s schema", [
+        ["Download schema .json", () => downloadText(`schema-${stem2}.json`, JSON.stringify(doc, null, 2), "application/json")],
+        ["Copy schema JSON", (btn) => copyText(JSON.stringify(doc, null, 2), btn)],
+        ["Copy as PnP.PowerShell (provision)", (btn) => copyText(toPnpPowerShellProvisioning(doc, { targetWebUrl: ctx2.client.webUrl() }), btn)],
+        ["Copy as PnPjs 2 (provision)", (btn) => copyText(toPnpjs2Provisioning(doc, {}), btn)]
+      ]));
+    }).catch((err) => showFailure(status, err, "this list\u2019s schema"));
+  }
+};
+var exportDataTool = {
+  id: "export-data",
+  title: "Export data",
+  description: "Read every item in this list (not just what\u2019s on screen elsewhere) and export it as JSON.",
+  render(card, ctx2) {
+    const { body } = card;
+    const stem2 = fileStem(ctx2.listTitle);
+    const status = el7("div", "wb-grid-status wb-tool-status");
+    status.hidden = true;
+    let busy = false;
+    async function run(useDoc) {
+      if (busy) return;
+      busy = true;
+      status.hidden = false;
+      status.classList.remove("wb-error", "wb-denied");
+      status.removeAttribute("title");
+      let n = null;
+      try {
+        const { doc: schemaDoc } = await ctx2.getSchema();
+        n = schemaDoc?.source?.itemCount;
+        status.textContent = n != null ? `Reading ${n} item${n === 1 ? "" : "s"}\u2026` : "Reading items\u2026";
+        const { doc } = await captureListData(ctx2.client, ctx2.listId, { schemaDoc });
+        status.hidden = true;
+        useDoc(doc);
+      } catch (err) {
+        showFailure(status, err, "this list\u2019s item data");
+      } finally {
+        busy = false;
+      }
+    }
+    const downloadBtn = el7("button", "btn btn-xs", "Download data .json");
+    downloadBtn.type = "button";
+    downloadBtn.addEventListener("click", () => run((doc) => downloadText(`data-${stem2}.json`, JSON.stringify(doc, null, 2), "application/json")));
+    const copyBtn = el7("button", "btn btn-xs", "Copy data JSON");
+    copyBtn.type = "button";
+    copyBtn.addEventListener("click", () => run((doc) => copyText(JSON.stringify(doc, null, 2), copyBtn)));
+    body.append(downloadBtn, copyBtn, status);
+  }
+};
+function showInlineNotice(host, message) {
+  host.textContent = "";
+  host.hidden = false;
+  host.classList.add("wb-consent-error");
+  host.append(el7("span", "wb-consent-text", message));
+  const dismiss = el7("button", "btn btn-xs", "Dismiss");
+  dismiss.type = "button";
+  dismiss.addEventListener("click", () => {
+    host.hidden = true;
+  });
+  host.append(dismiss);
+}
+var importDataTool = {
+  id: "import-data",
+  title: "Import data into this list",
+  description: "Add items from a data .json exported by this Workbench, or by SPUtils.",
+  render(card, ctx2) {
+    const { body } = card;
+    const status = el7("p", "wb-tool-status", "Reading the list schema\u2026");
+    body.append(status);
+    ctx2.getSchema().then(({ doc: schemaDoc }) => {
+      status.remove();
+      const isLibrary = schemaBaseType(schemaDoc) === 1;
+      const btn = el7("button", "btn btn-xs wb-tools-import", "Choose data .json\u2026");
+      btn.type = "button";
+      const input = el7("input", "wb-tools-import-file");
+      input.type = "file";
+      input.accept = ".json";
+      input.hidden = true;
+      const notice = el7("div", "wb-consent wb-tool-import-notice");
+      notice.hidden = true;
+      if (isLibrary) {
+        btn.disabled = true;
+        body.append(btn, disabledLine(
+          "Item import into a document library isn\u2019t supported \u2014 a library copy is schema only."
+        ));
+        return;
+      }
+      btn.addEventListener("click", () => input.click());
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        input.value = "";
+        if (!file) return;
+        notice.hidden = true;
+        if (file.size > MAX_IMPORT_BYTES) {
+          showInlineNotice(notice, `\u2018${file.name}\u2019 is ${(file.size / 1048576).toFixed(1)} MB \u2014 above the 5 MB import limit.`);
+          return;
+        }
+        let json;
+        try {
+          json = JSON.parse(await file.text());
+        } catch {
+          showInlineNotice(notice, `\u2018${file.name}\u2019 isn\u2019t valid JSON.`);
+          return;
+        }
+        let dataDoc;
+        try {
+          dataDoc = normalizeDataDoc(json);
+        } catch {
+          showInlineNotice(notice, `\u2018${file.name}\u2019 is not a list data document (expected kind ${DATA_KIND}).`);
+          return;
+        }
+        const problem = validateDataDoc(json);
+        if (problem) {
+          showInlineNotice(notice, `\u2018${file.name}\u2019 is not a usable list data document (${problem}).`);
+          return;
+        }
+        await openImportDataDialog({
+          dataDoc,
+          client: ctx2.client,
+          listId: ctx2.listId,
+          listTitle: ctx2.listTitle,
+          mockWriter: ctx2.mockWriter,
+          invalidateItems: ctx2.invalidateItems
+        });
+      });
+      body.append(btn, input, notice);
+    }).catch((err) => showFailure(status, err, "this list\u2019s schema"));
+  }
+};
+var LIST_TOOLS = [copyTool, exportSchemaTool, exportDataTool, importDataTool];
+function buildToolsPane(wrap, ctx2) {
+  const grid = el7("div", "wb-tools");
+  wrap.append(grid);
+  for (const tool of LIST_TOOLS) {
+    const shell2 = cardShell(tool.id, tool.title, tool.description);
+    grid.append(shell2.node);
+    tool.render(shell2, ctx2);
+  }
 }
 
 // ../src/workbench/views/lists.js
@@ -8128,7 +8785,7 @@ function isInternalList(list2) {
   const path = String(list2?.RootFolder?.ServerRelativeUrl || "").toLowerCase();
   return Boolean(list2?.Hidden) || Boolean(list2?.IsCatalog) || INTERNAL_TEMPLATES.has(list2?.BaseTemplate) || path.includes("/_catalogs") || path.endsWith("/formservertemplates") || INTERNAL_TITLES.has(list2?.Title);
 }
-var FIELD_SELECT = [
+var FIELD_SELECT2 = [
   "Id",
   "Title",
   "InternalName",
@@ -8161,14 +8818,14 @@ var choicesText = (v) => {
   const arr = Array.isArray(v) ? v : v?.results;
   return Array.isArray(arr) ? arr.join(" | ") : "";
 };
-var fileStem = (s) => String(s || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
-var el5 = (tag, cls, text) => {
+var fileStem2 = (s) => String(s || "list").toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "list";
+var el8 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
   return n;
 };
-var guidPath4 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var guidPath5 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function parseItemsQuery(text) {
   const out = { filter: "", orderby: "", error: "" };
   const raw = String(text || "").trim().replace(/^\?/, "");
@@ -8219,7 +8876,7 @@ function createListsView({
   createClient,
   mockWriter: mockWriter2
 }) {
-  const root = el5("section", "wb-view wb-view-lists");
+  const root = el8("section", "wb-view wb-view-lists");
   const webOrigin = () => {
     try {
       return new URL(client2.webUrl()).origin;
@@ -8228,8 +8885,8 @@ function createListsView({
     }
   };
   const absUrl = (rel) => rel ? `${webOrigin()}${encodeSpPath(rel)}` : "";
-  const gridPane = el5("div", "wb-pane");
-  const head = el5("div", "wb-view-head");
+  const gridPane = el8("div", "wb-pane");
+  const head = el8("div", "wb-view-head");
   head.innerHTML = '<h2>Lists &amp; libraries</h2><p class="wb-view-hint">Every list in this web \u2014 SharePoint-internal plumbing sits behind the expander below the grid. Click a row for fields, views, content types, and items.</p>';
   const grid = createGrid({
     columns: [
@@ -8269,15 +8926,15 @@ function createListsView({
       webUrl: client2.webUrl()
     }
   });
-  const moreBtn = el5("button", "btn btn-xs wb-lists-more");
+  const moreBtn = el8("button", "btn btn-xs wb-lists-more");
   moreBtn.type = "button";
   moreBtn.hidden = true;
-  const importNotice = el5("div", "wb-consent wb-schema-import-notice");
+  const importNotice = el8("div", "wb-consent wb-schema-import-notice");
   importNotice.hidden = true;
   gridPane.append(head, importNotice, grid.el, moreBtn);
-  const newFromSchemaBtn = el5("button", "btn btn-xs wb-schema-new", "New from schema\u2026");
+  const newFromSchemaBtn = el8("button", "btn btn-xs wb-schema-new", "New from schema\u2026");
   newFromSchemaBtn.type = "button";
-  const schemaFileInput = el5("input", "wb-schema-file");
+  const schemaFileInput = el8("input", "wb-schema-file");
   schemaFileInput.type = "file";
   schemaFileInput.accept = ".json";
   schemaFileInput.multiple = true;
@@ -8288,8 +8945,8 @@ function createListsView({
     importNotice.textContent = "";
     importNotice.hidden = false;
     importNotice.classList.add("wb-consent-error");
-    importNotice.append(el5("span", "wb-consent-text", message));
-    const dismiss = el5("button", "btn btn-xs", "Dismiss");
+    importNotice.append(el8("span", "wb-consent-text", message));
+    const dismiss = el8("button", "btn btn-xs", "Dismiss");
     dismiss.type = "button";
     dismiss.addEventListener("click", () => {
       importNotice.hidden = true;
@@ -8357,7 +9014,7 @@ function createListsView({
     }
   });
   grid.actionsEl.prepend(newFromSchemaBtn, schemaFileInput);
-  const detailPane = el5("div", "wb-pane");
+  const detailPane = el8("div", "wb-pane");
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
   let listsLoaded = false;
@@ -8409,38 +9066,36 @@ function createListsView({
     return tabCache.get(key2);
   }
   function buildItemsPane(wrap, listId, listTitle) {
-    const controls = el5("span", "wb-items-controls");
-    const viewLabel = el5("label", "wb-items-label", "Columns ");
-    const viewSel = el5("select", "wb-items-view");
+    const controls = el8("span", "wb-items-controls");
+    const viewLabel = el8("label", "wb-items-label", "Columns ");
+    const viewSel = el8("select", "wb-items-view");
     viewSel.setAttribute("aria-label", "Column source: a view or all columns");
     viewLabel.append(viewSel);
-    const maxLabel = el5("label", "wb-items-label", "Max ");
-    const maxIn = el5("input", "wb-items-max");
+    const maxLabel = el8("label", "wb-items-label", "Max ");
+    const maxIn = el8("input", "wb-items-max");
     maxIn.type = "number";
     maxIn.min = "1";
     maxIn.max = "5000";
     maxIn.value = "500";
     maxIn.setAttribute("aria-label", "Maximum items to fetch");
     maxLabel.append(maxIn);
-    const queryToggle = el5("button", "wb-items-querytoggle", "Query \u25BE");
+    const queryToggle = el8("button", "wb-items-querytoggle", "Query \u25BE");
     queryToggle.type = "button";
     const QUERY_HINT = "Advanced: raw OData clauses for the item query \u2014 $filter=\u2026 and/or $orderby=\u2026, joined with &. A bare expression counts as $filter. Order defaults to ID desc.";
     queryToggle.title = QUERY_HINT;
     queryToggle.setAttribute("aria-expanded", "false");
-    const queryWrap = el5("span", "wb-items-querywrap");
+    const queryWrap = el8("span", "wb-items-querywrap");
     queryWrap.hidden = true;
-    const queryIn = el5("input", "wb-items-query");
+    const queryIn = el8("input", "wb-items-query");
     queryIn.type = "text";
     queryIn.placeholder = "$filter=Status eq 'Active'&$orderby=DueDate desc";
     queryIn.setAttribute("aria-label", "OData $filter and $orderby for the item query");
     queryIn.title = QUERY_HINT;
-    const queryErr = el5("span", "wb-items-error");
+    const queryErr = el8("span", "wb-items-error");
     queryWrap.append(queryIn, queryErr);
     controls.append(viewLabel, maxLabel, queryToggle, queryWrap);
-    const dataStatus = el5("div", "wb-grid-status wb-items-data-status");
-    dataStatus.hidden = true;
-    const gridBox = el5("div", "wb-items-grid");
-    wrap.append(dataStatus, gridBox);
+    const gridBox = el8("div", "wb-items-grid");
+    wrap.append(gridBox);
     function setQueryOpen(open) {
       queryWrap.hidden = !open;
       queryToggle.textContent = open ? "Query \u25B4" : "Query \u25BE";
@@ -8478,27 +9133,6 @@ function createListsView({
       filter: current.filter,
       orderby: current.orderby
     }) : "";
-    let dataBusy = false;
-    async function exportData(useDoc) {
-      if (dataBusy) return;
-      dataBusy = true;
-      const row = allLists.find((l) => l.Id === listId);
-      const n = row?.ItemCount;
-      dataStatus.hidden = false;
-      dataStatus.classList.remove("wb-error", "wb-denied");
-      dataStatus.removeAttribute("title");
-      dataStatus.textContent = n != null ? `Reading ${n} item${n === 1 ? "" : "s"}\u2026` : "Reading items\u2026";
-      try {
-        const { doc: schemaDoc } = await cached2(listId, "schema", () => captureListSchema(client2, listId));
-        const { doc } = await captureListData(client2, listId, { schemaDoc });
-        dataStatus.hidden = true;
-        useDoc(doc);
-      } catch (err) {
-        showFailure(dataStatus, err, "this list\u2019s item data");
-      } finally {
-        dataBusy = false;
-      }
-    }
     function markApplied() {
       const applied = Boolean(current && (current.filter || current.orderby));
       queryToggle.classList.toggle("wb-applied", applied);
@@ -8515,7 +9149,7 @@ function createListsView({
         itemsGrid.setLoading("Loading items\u2026");
       } else {
         gridBox.textContent = "";
-        status = el5("div", "wb-grid-status", "Loading items\u2026");
+        status = el8("div", "wb-grid-status", "Loading items\u2026");
         gridBox.append(status);
       }
       let fields = null;
@@ -8523,31 +9157,31 @@ function createListsView({
       let query = null;
       try {
         const [fieldsResult, { items: views }] = await Promise.all([
-          cached2(listId, "fields", () => client2.getAll(guidPath4(listId, "/fields"), { select: FIELD_SELECT })),
-          cached2(listId, "views", () => client2.getAll(guidPath4(listId, "/views"), { select: VIEW_SELECT }))
+          cached2(listId, "fields", () => client2.getAll(guidPath5(listId, "/fields"), { select: FIELD_SELECT2 })),
+          cached2(listId, "views", () => client2.getAll(guidPath5(listId, "/views"), { select: VIEW_SELECT }))
         ]);
         fields = fieldsResult.items;
         if (!viewsFilled) {
           viewsFilled = true;
-          const none = el5("option", "", "All columns");
+          const none = el8("option", "", "All columns");
           none.value = "";
           viewSel.append(none);
           for (const view of views.filter((v) => !v.PersonalView)) {
-            const opt = el5("option", "", view.DefaultView ? `${view.Title} (default)` : view.Title);
+            const opt = el8("option", "", view.DefaultView ? `${view.Title} (default)` : view.Title);
             opt.value = view.Id;
             viewSel.append(opt);
           }
         }
         let viewTitle = "";
         if (viewSel.value) {
-          const vf = await cached2(listId, `viewfields::${viewSel.value}`, () => client2.get(guidPath4(listId, `/views(guid'${viewSel.value}')/viewfields`)));
+          const vf = await cached2(listId, `viewfields::${viewSel.value}`, () => client2.get(guidPath5(listId, `/views(guid'${viewSel.value}')/viewfields`)));
           viewFieldNames = vf?.Items?.results || vf?.Items || [];
           viewTitle = views.find((v) => v.Id === viewSel.value)?.Title || "";
         }
         const hasAttachments = fields.some((f) => f.TypeAsString === "Attachments");
         const expand = ["FieldValuesAsText", ...hasAttachments ? ["AttachmentFiles"] : []];
         const query2 = {
-          path: guidPath4(listId, "/items"),
+          path: guidPath5(listId, "/items"),
           options: {
             select: ["*", ...expand],
             expand,
@@ -8625,24 +9259,18 @@ function createListsView({
         emptyText: "No items in this list.",
         subject: "this list\u2019s items",
         filterPlaceholder: "Filter items\u2026",
-        exportName: `items-${fileStem(listTitle)}`,
+        exportName: `items-${fileStem2(listTitle)}`,
         descriptor: query ? { ...query, webUrl: client2.webUrl() } : null,
         selectable: true,
         toolbarExtras: controls,
         exportExtras: [
           ["Download .md", () => {
             const md = exportDoc();
-            if (md) downloadMarkdown(`items-${fileStem(listTitle)}`, md);
+            if (md) downloadMarkdown(`items-${fileStem2(listTitle)}`, md);
           }],
           ["Copy .md", (btn) => {
             const md = exportDoc();
             if (md) copyText(md, btn);
-          }],
-          ["Download data .json (whole list, not just these rows)", () => {
-            exportData((doc) => downloadText(`data-${fileStem(listTitle)}.json`, JSON.stringify(doc, null, 2), "application/json"));
-          }],
-          ["Copy data JSON (whole list, not just these rows)", (btn) => {
-            exportData((doc) => copyText(JSON.stringify(doc, null, 2), btn));
           }]
         ]
       });
@@ -8671,21 +9299,21 @@ function createListsView({
     return "";
   }
   function schemaChip(cls, text, title) {
-    const chip = el5("span", `wb-info-chip ${cls}`, text);
+    const chip = el8("span", `wb-info-chip ${cls}`, text);
     if (title) chip.title = title;
     return chip;
   }
   function copyableCell(text) {
-    const span = el5("span", "sp-copy", text);
+    const span = el8("span", "sp-copy", text);
     span.title = "Click to copy";
     span.addEventListener("click", () => copyText(text, span));
     return span;
   }
   function buildSettingsSection(doc) {
-    const section = el5("div", "wb-schema-section");
-    section.append(el5("h3", "", "Settings"));
-    const table2 = el5("table", "wb-table wb-schema-settings");
-    const tbody = el5("tbody");
+    const section = el8("div", "wb-schema-section");
+    section.append(el8("h3", "", "Settings"));
+    const table2 = el8("table", "wb-table wb-schema-settings");
+    const tbody = el8("tbody");
     const rows = [
       ["Description", doc.list.description || "\u2014"],
       ["Base template", `${BASE_TEMPLATE_NAMES[doc.list.baseTemplate] || "Template"} (${doc.list.baseTemplate})`],
@@ -8699,9 +9327,9 @@ function createListsView({
       ["On Quick Launch", doc.list.onQuickLaunch ? "yes" : "no"]
     ];
     for (const [label, value] of rows) {
-      const tr = el5("tr");
-      tr.append(el5("td", "", label));
-      const td = el5("td");
+      const tr = el8("tr");
+      tr.append(el8("td", "", label));
+      const td = el8("td");
       td.append(copyableCell(String(value)));
       tr.append(td);
       tbody.append(tr);
@@ -8711,8 +9339,8 @@ function createListsView({
     return section;
   }
   function buildFieldsSection(doc) {
-    const section = el5("div", "wb-schema-section");
-    section.append(el5("h3", "", "Fields"));
+    const section = el8("div", "wb-schema-section");
+    section.append(el8("h3", "", "Fields"));
     const fieldsGrid = createGrid({
       columns: [
         { key: "displayName", label: "Title" },
@@ -8733,8 +9361,8 @@ function createListsView({
     return section;
   }
   function buildViewsSection(doc) {
-    const section = el5("div", "wb-schema-section");
-    section.append(el5("h3", "", "Views"));
+    const section = el8("div", "wb-schema-section");
+    section.append(el8("h3", "", "Views"));
     const viewsGrid = createGrid({
       columns: [
         { key: "title", label: "Title" },
@@ -8754,10 +9382,10 @@ function createListsView({
     return section;
   }
   function buildContentTypesSection(doc) {
-    const section = el5("div", "wb-schema-section");
-    section.append(el5("h3", "", "Content types"));
+    const section = el8("div", "wb-schema-section");
+    section.append(el8("h3", "", "Content types"));
     if (!doc.list.contentTypesEnabled) {
-      section.append(el5("p", "wb-schema-note", "Content types are exported for reference \u2014 they are not recreated unless enabled on the target."));
+      section.append(el8("p", "wb-schema-note", "Content types are exported for reference \u2014 they are not recreated unless enabled on the target."));
     }
     const ctGrid = createGrid({
       columns: [
@@ -8775,10 +9403,10 @@ function createListsView({
     return section;
   }
   function buildWarningsSection(doc) {
-    const section = el5("div", "wb-schema-section");
-    section.append(el5("h3", "", "Warnings"));
-    const list2 = el5("ul", "wb-grid-notice");
-    for (const w of doc.warnings) list2.append(el5("li", "", w));
+    const section = el8("div", "wb-schema-section");
+    section.append(el8("h3", "", "Warnings"));
+    const list2 = el8("ul", "wb-grid-notice");
+    for (const w of doc.warnings) list2.append(el8("li", "", w));
     section.append(list2);
     return section;
   }
@@ -8793,11 +9421,10 @@ function createListsView({
       mockWriter: mockWriter2
     });
   }
-  function renderSchemaPane(doc, listTitle) {
+  function renderSchemaPane(doc) {
     const summary = schemaSummary(doc);
-    const stem = fileStem(listTitle);
-    const head2 = el5("div", "wb-schema-head");
-    const chips = el5("div", "wb-schema-chips");
+    const head2 = el8("div", "wb-schema-head");
+    const chips = el8("div", "wb-schema-chips");
     chips.append(
       schemaChip("wb-schema-kind", summary.kind, `BaseTemplate ${doc.list.baseTemplate}`),
       schemaChip("wb-schema-fields", summary.fieldsText, `${doc.fields.length} total fields, ${doc.fields.filter((f) => f.custom).length} custom`),
@@ -8812,39 +9439,24 @@ function createListsView({
         "A library copy carries the schema only \u2014 files are not copied."
       ));
     }
-    const actions = el5("span", "wb-schema-actions");
-    actions.append(createMenuButton("Export \u25BE", "Export this list\u2019s schema", [
-      ["Download schema .json", () => downloadText(`schema-${stem}.json`, JSON.stringify(doc, null, 2), "application/json")],
-      ["Copy schema JSON", (btn) => copyText(JSON.stringify(doc, null, 2), btn)],
-      ["Copy as PnP.PowerShell (provision)", (btn) => copyText(toPnpPowerShellProvisioning(doc, { targetWebUrl: client2.webUrl() }), btn)],
-      ["Copy as PnPjs 2 (provision)", (btn) => copyText(toPnpjs2Provisioning(doc, {}), btn)]
-    ]));
-    const copyBtn = el5("button", "btn btn-xs wb-schema-copy", "Copy to\u2026");
-    copyBtn.type = "button";
-    const docBaseType = schemaBaseType(doc);
-    const isEligible = docBaseType === 0 && doc.list.baseTemplate === 100 || docBaseType === 1;
-    const gated = !isEligible;
-    copyBtn.disabled = gated;
-    copyBtn.title = !gated ? "Create a new list from this schema, on this site or another one." : `Only generic lists and document libraries can be copied \u2014 this is a ${summary.kind.toLowerCase()}. Export works now.`;
-    copyBtn.addEventListener("click", () => openCopy(doc));
-    actions.append(copyBtn);
-    head2.append(chips, actions);
-    const sections = el5("div", "wb-schema-sections");
+    const hint = el8("p", "wb-schema-hint", "Export and copy this list from the Tools tab.");
+    head2.append(chips, hint);
+    const sections = el8("div", "wb-schema-sections");
     sections.append(buildSettingsSection(doc));
     sections.append(buildFieldsSection(doc));
     sections.append(buildViewsSection(doc));
     if (doc.contentTypes.length) sections.append(buildContentTypesSection(doc));
     if (doc.warnings.length) sections.append(buildWarningsSection(doc));
-    const root2 = el5("div", "wb-schema");
+    const root2 = el8("div", "wb-schema");
     root2.append(head2, sections);
     return root2;
   }
-  function buildSchemaPane(wrap, listId, listTitle) {
-    const status = el5("div", "wb-grid-status", "Reading the list schema\u2026");
+  function buildSchemaPane(wrap, listId) {
+    const status = el8("div", "wb-grid-status", "Reading the list schema\u2026");
     wrap.append(status);
     cached2(listId, "schema", () => captureListSchema(client2, listId)).then(({ doc }) => {
       status.remove();
-      wrap.append(renderSchemaPane(doc, listTitle));
+      wrap.append(renderSchemaPane(doc));
     }).catch((err) => {
       showFailure(status, err, "this list\u2019s schema");
     });
@@ -8865,8 +9477,8 @@ function createListsView({
           { key: "DefaultValue", label: "Default" },
           { key: "Group", label: "Group" }
         ],
-        exportName: `fields-${fileStem(title)}`,
-        query: { path: guidPath4(listId, "/fields"), options: { select: FIELD_SELECT } }
+        exportName: `fields-${fileStem2(title)}`,
+        query: { path: guidPath5(listId, "/fields"), options: { select: FIELD_SELECT2 } }
       })
     },
     {
@@ -8882,8 +9494,8 @@ function createListsView({
           { key: "ServerRelativeUrl", label: "Url", mono: true, copyable: true, link: absUrl },
           { key: "ViewQuery", label: "CAML query", mono: true, copyable: true }
         ],
-        exportName: `views-${fileStem(title)}`,
-        query: { path: guidPath4(listId, "/views"), options: { select: VIEW_SELECT } }
+        exportName: `views-${fileStem2(title)}`,
+        query: { path: guidPath5(listId, "/views"), options: { select: VIEW_SELECT } }
       })
     },
     {
@@ -8899,8 +9511,8 @@ function createListsView({
           { key: "Sealed", label: "Sealed" },
           { key: "Description", label: "Description" }
         ],
-        exportName: `contenttypes-${fileStem(title)}`,
-        query: { path: guidPath4(listId, "/contenttypes"), options: { select: CT_SELECT } }
+        exportName: `contenttypes-${fileStem2(title)}`,
+        query: { path: guidPath5(listId, "/contenttypes"), options: { select: CT_SELECT } }
       })
     },
     { id: "schema", label: "Schema" },
@@ -8918,9 +9530,9 @@ function createListsView({
             value: (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ")
           }
         ],
-        exportName: `permissions-${fileStem(title)}`,
+        exportName: `permissions-${fileStem2(title)}`,
         query: {
-          path: guidPath4(listId, "/roleassignments"),
+          path: guidPath5(listId, "/roleassignments"),
           options: {
             expand: ["Member", "RoleDefinitionBindings"],
             select: [
@@ -8937,6 +9549,7 @@ function createListsView({
       })
     },
     { id: "items", label: "Items" },
+    { id: "tools", label: "Tools" },
     { id: "raw", label: "Raw" }
   ];
   function showDetail(route) {
@@ -8944,22 +9557,22 @@ function createListsView({
     detailPane.hidden = false;
     detailPane.textContent = "";
     const listId = route.listId;
-    const back = el5("button", "btn btn-xs wb-back", "\u2190 All lists");
+    const back = el8("button", "btn btn-xs wb-back", "\u2190 All lists");
     back.type = "button";
     back.addEventListener("click", () => navigate({ view: "lists" }));
-    const title = el5("h2", "", route.listTitle || "List");
-    const sub = el5("span", "wb-detail-id sp-copy", listId);
+    const title = el8("h2", "", route.listTitle || "List");
+    const sub = el8("span", "wb-detail-id sp-copy", listId);
     sub.title = "Click to copy the list id";
     sub.addEventListener("click", () => copyText(listId, sub));
-    const settingsLink = el5("a", "btn btn-xs wb-detail-settings", "List settings \u2197");
+    const settingsLink = el8("a", "btn btn-xs wb-detail-settings", "List settings \u2197");
     settingsLink.href = linkUrl(client2.webUrl(), LIST_SETTINGS, { guid: listId });
     bindNewTab(settingsLink);
     settingsLink.title = "Open this list\u2019s settings page in a new tab";
-    const headRow = el5("div", "wb-detail-head");
+    const headRow = el8("div", "wb-detail-head");
     headRow.append(back, title, sub, settingsLink);
-    const tabsBar = el5("div", "wb-tabs");
+    const tabsBar = el8("div", "wb-tabs");
     tabsBar.setAttribute("role", "tablist");
-    const body = el5("div", "wb-tab-body");
+    const body = el8("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     let activeTab = null;
     function activate(tab) {
@@ -8974,23 +9587,44 @@ function createListsView({
     }
     function pane(tab) {
       if (panes.has(tab.id)) return panes.get(tab.id);
-      const wrap = el5("div", "wb-tab-pane");
+      const wrap = el8("div", "wb-tab-pane");
       panes.set(tab.id, wrap);
       if (tab.id === "items") {
         buildItemsPane(wrap, listId, route.listTitle || "List");
         return wrap;
       }
       if (tab.id === "schema") {
-        buildSchemaPane(wrap, listId, route.listTitle || "List");
+        buildSchemaPane(wrap, listId);
+        return wrap;
+      }
+      if (tab.id === "tools") {
+        buildToolsPane(wrap, {
+          client: client2,
+          listId,
+          listTitle: route.listTitle || "List",
+          getSchema: () => cached2(listId, "schema", () => captureListSchema(client2, listId)),
+          openCopy,
+          createClient,
+          navigate,
+          inspectSite: inspectSite2,
+          mockWriter: mockWriter2,
+          // Drops the Items tab's own built pane so it rebuilds — and
+          // reloads its rows — the next time it's opened. Never touches
+          // buildItemsPane's private itemsCache directly; deleting the
+          // cached pane is the one seam this tab needs into a sibling.
+          invalidateItems: () => {
+            panes.delete("items");
+          }
+        });
         return wrap;
       }
       if (tab.id === "raw") {
-        const status = el5("div", "wb-grid-status", "Loading raw list entity\u2026");
+        const status = el8("div", "wb-grid-status", "Loading raw list entity\u2026");
         wrap.append(status);
-        cached2(listId, "raw", () => client2.get(guidPath4(listId))).then((json) => {
+        cached2(listId, "raw", () => client2.get(guidPath5(listId))).then((json) => {
           status.remove();
           const node = toNode(json, 0, { maxDepth: 8, maxItems: 250 });
-          const inspector = el5("div", "wb-raw");
+          const inspector = el8("div", "wb-raw");
           inspector.append(enhance(node) ?? renderValue(node));
           wrap.append(inspector);
         }).catch((err) => {
@@ -9012,7 +9646,7 @@ function createListsView({
       return wrap;
     }
     for (const tab of TABS) {
-      const btn = el5("button", "wb-tab", tab.label);
+      const btn = el8("button", "wb-tab", tab.label);
       btn.type = "button";
       btn.dataset.tab = tab.id;
       btn.setAttribute("role", "tab");
@@ -9036,7 +9670,7 @@ function createListsView({
 }
 
 // ../src/workbench/views/security.js
-var el6 = (tag, cls, text) => {
+var el9 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -9044,25 +9678,25 @@ var el6 = (tag, cls, text) => {
 };
 var roleNames = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
 function createSecurityView({ client: client2 }) {
-  const root = el6("section", "wb-view wb-view-security");
+  const root = el9("section", "wb-view wb-view-security");
   const spWrite = createSpWriteClient({ client: client2 });
-  const head = el6("div", "wb-view-head");
+  const head = el9("div", "wb-view-head");
   head.innerHTML = '<h2>Permissions</h2><p class="wb-view-hint">Site groups, membership, role definitions, and who holds what on this web. The inheritance scan is on-demand \u2014 it makes SharePoint evaluate security per list.</p>';
-  const headLinks = el6("div", "wb-head-links");
+  const headLinks = el9("div", "wb-head-links");
   const permGroup = LINK_GROUPS.find((g) => g.title === "Permissions & people");
   for (const link of (permGroup?.links || []).filter((l) => l.label !== "Access requests")) {
-    const a = el6("a", "btn btn-xs wb-head-link", `${link.label} \u2197`);
+    const a = el9("a", "btn btn-xs wb-head-link", `${link.label} \u2197`);
     bindNewTab(a);
     a.dataset.path = link.path;
     headLinks.append(a);
   }
   head.append(headLinks);
-  const tabsBar = el6("div", "wb-tabs");
-  const body = el6("div", "wb-tab-body");
+  const tabsBar = el9("div", "wb-tabs");
+  const body = el9("div", "wb-tab-body");
   root.append(head, tabsBar, body);
   const panes = /* @__PURE__ */ new Map();
   function groupsPane() {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el9("div", "wb-tab-pane");
     const groupsQuery = {
       path: "web/sitegroups",
       options: { select: ["Id", "Title", "Description", "OwnerTitle", "PrincipalType", "OnlyAllowMembersViewMembership"] }
@@ -9082,10 +9716,10 @@ function createSecurityView({ client: client2 }) {
       exportName: "sp-groups",
       descriptor: { ...groupsQuery, webUrl: client2.webUrl() }
     });
-    const membersBox = el6("div", "wb-subpanel");
+    const membersBox = el9("div", "wb-subpanel");
     membersBox.hidden = true;
-    const membersTitle = el6("h3", "wb-subpanel-title", "");
-    const membersHost = el6("div", "wb-subpanel-body");
+    const membersTitle = el9("h3", "wb-subpanel-title", "");
+    const membersHost = el9("div", "wb-subpanel-body");
     membersBox.append(membersTitle, membersHost);
     wrap.append(grid.el, membersBox);
     grid.setLoading("Loading site groups\u2026");
@@ -9119,16 +9753,16 @@ function createSecurityView({ client: client2 }) {
     return wrap;
   }
   function membersPane() {
-    const wrap = el6("div", "wb-tab-pane");
-    const notice = el6("div", "wb-consent");
+    const wrap = el9("div", "wb-tab-pane");
+    const notice = el9("div", "wb-consent");
     notice.hidden = true;
     function showNotice(message, { isError = false, confirm = null } = {}) {
       notice.textContent = "";
       notice.hidden = false;
       notice.classList.toggle("wb-consent-error", isError);
-      notice.append(el6("span", "wb-consent-text", message));
+      notice.append(el9("span", "wb-consent-text", message));
       if (confirm) {
-        const yes = el6("button", "btn btn-xs", confirm.label);
+        const yes = el9("button", "btn btn-xs", confirm.label);
         yes.type = "button";
         yes.addEventListener("click", () => {
           notice.hidden = true;
@@ -9136,22 +9770,22 @@ function createSecurityView({ client: client2 }) {
         });
         notice.append(yes);
       }
-      const dismiss = el6("button", "btn btn-xs", confirm ? "Cancel" : "Dismiss");
+      const dismiss = el9("button", "btn btn-xs", confirm ? "Cancel" : "Dismiss");
       dismiss.type = "button";
       dismiss.addEventListener("click", () => {
         notice.hidden = true;
       });
       notice.append(dismiss);
     }
-    const addBar = el6("div", "wb-members-add");
-    const groupSelect = el6("select", "wb-members-group");
+    const addBar = el9("div", "wb-members-add");
+    const groupSelect = el9("select", "wb-members-group");
     groupSelect.setAttribute("aria-label", "Group to add the user to");
-    const loginInput = el6("input", "wb-members-login");
+    const loginInput = el9("input", "wb-members-login");
     loginInput.type = "text";
     loginInput.placeholder = "user@tenant.com or i:0#.f|membership|\u2026";
-    const addBtn = el6("button", "btn btn-xs", "Add to group");
+    const addBtn = el9("button", "btn btn-xs", "Add to group");
     addBtn.type = "button";
-    addBar.append(el6("span", "wb-qb-label", "Add user"), groupSelect, loginInput, addBtn);
+    addBar.append(el9("span", "wb-qb-label", "Add user"), groupSelect, loginInput, addBtn);
     const grid = createGrid({
       rowKey: "Key",
       columns: [
@@ -9199,7 +9833,7 @@ function createSecurityView({ client: client2 }) {
         groups = items;
         groupSelect.textContent = "";
         for (const group of groups) {
-          const opt = el6("option", "", group.Title);
+          const opt = el9("option", "", group.Title);
           opt.value = String(group.Id);
           groupSelect.append(opt);
         }
@@ -9262,7 +9896,7 @@ function createSecurityView({ client: client2 }) {
     return wrap;
   }
   function roleDefsPane() {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el9("div", "wb-tab-pane");
     const grid = createGrid({
       columns: [
         { key: "Name", label: "Role" },
@@ -9292,10 +9926,10 @@ function createSecurityView({ client: client2 }) {
         webUrl: client2.webUrl()
       }
     });
-    const decodeBox = el6("div", "wb-subpanel");
+    const decodeBox = el9("div", "wb-subpanel");
     decodeBox.hidden = true;
-    const decodeTitle = el6("h3", "wb-subpanel-title", "");
-    const decodeBody = el6("div", "wb-subpanel-body wb-flags");
+    const decodeTitle = el9("h3", "wb-subpanel-title", "");
+    const decodeBody = el9("div", "wb-subpanel-body wb-flags");
     decodeBox.append(decodeTitle, decodeBody);
     wrap.append(grid.el, decodeBox);
     grid.setLoading("Loading role definitions\u2026");
@@ -9307,13 +9941,13 @@ function createSecurityView({ client: client2 }) {
       const d = decodeBasePermissions(role.BasePermissions);
       decodeTitle.textContent = `${role.Name} \u2014 ${d.isFullControl ? "full control" : `${d.flags.length} permission flags`}`;
       decodeBody.textContent = "";
-      for (const flag of d.flags) decodeBody.append(el6("span", "wb-flag", flag));
-      if (d.isEmpty) decodeBody.append(el6("span", "wb-view-hint", "No permission bits set."));
+      for (const flag of d.flags) decodeBody.append(el9("span", "wb-flag", flag));
+      if (d.isEmpty) decodeBody.append(el9("span", "wb-view-hint", "No permission bits set."));
     }
     return wrap;
   }
   function assignmentsPane() {
-    const wrap = el6("div", "wb-tab-pane");
+    const wrap = el9("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "PrincipalId",
       columns: [
@@ -9349,11 +9983,11 @@ function createSecurityView({ client: client2 }) {
     return wrap;
   }
   function inheritancePane() {
-    const wrap = el6("div", "wb-tab-pane");
-    const bar = el6("div", "wb-scan-bar");
-    const btn = el6("button", "btn", "Scan lists for unique permissions");
+    const wrap = el9("div", "wb-tab-pane");
+    const bar = el9("div", "wb-scan-bar");
+    const btn = el9("button", "btn", "Scan lists for unique permissions");
     btn.type = "button";
-    const hint = el6(
+    const hint = el9(
       "span",
       "wb-view-hint",
       "Asks SharePoint for HasUniqueRoleAssignments on every list \u2014 slow on large sites, so it only runs on demand."
@@ -9413,7 +10047,7 @@ function createSecurityView({ client: client2 }) {
     body.append(panes.get(tab.id));
   }
   for (const tab of TABS) {
-    const btn = el6("button", "wb-tab", tab.label);
+    const btn = el9("button", "wb-tab", tab.label);
     btn.type = "button";
     btn.dataset.tab = tab.id;
     btn.addEventListener("click", () => activate(tab));
@@ -9429,7 +10063,7 @@ function createSecurityView({ client: client2 }) {
 }
 
 // ../src/workbench/views/site.js
-var el7 = (tag, cls, text) => {
+var el10 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -9459,7 +10093,7 @@ var WEB_SELECT = [
 ];
 var SITE_SELECT = ["Id", "Url", "ServerRelativeUrl", "ReadOnly", "ShareByEmailEnabled"];
 function createSiteView({ client: client2 }) {
-  const root = el7("section", "wb-view wb-view-site");
+  const root = el10("section", "wb-view wb-view-site");
   const absUrl = (rel) => {
     try {
       return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
@@ -9467,14 +10101,14 @@ function createSiteView({ client: client2 }) {
       return "";
     }
   };
-  const head = el7("div", "wb-view-head");
+  const head = el10("div", "wb-view-head");
   head.innerHTML = '<h2>Site overview</h2><p class="wb-view-hint">Web and site collection properties, features, subwebs, and the property bag.</p>';
-  const tabsBar = el7("div", "wb-tabs");
-  const body = el7("div", "wb-tab-body");
+  const tabsBar = el10("div", "wb-tabs");
+  const body = el10("div", "wb-tab-body");
   root.append(head, tabsBar, body);
   const panes = /* @__PURE__ */ new Map();
   function sheetPane(query, extraSections = []) {
-    const wrap = el7("div", "wb-tab-pane");
+    const wrap = el10("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "Property",
       columns: [
@@ -9491,10 +10125,10 @@ function createSiteView({ client: client2 }) {
     grid.setLoading("Loading\u2026");
     client2.get(query.path, query.options).then((entity2) => grid.setRows(entityRows(entity2))).catch((err) => grid.setError(err));
     for (const extra of extraSections) {
-      const box = el7("div", "wb-subpanel");
+      const box = el10("div", "wb-subpanel");
       box.hidden = false;
-      box.append(el7("h3", "wb-subpanel-title", extra.title));
-      const hostEl = el7("div", "wb-subpanel-body");
+      box.append(el10("h3", "wb-subpanel-title", extra.title));
+      const hostEl = el10("div", "wb-subpanel-body");
       box.append(hostEl);
       const extraGrid = createGrid({
         rowKey: "Property",
@@ -9515,7 +10149,7 @@ function createSiteView({ client: client2 }) {
     return wrap;
   }
   function featuresPane() {
-    const wrap = el7("div", "wb-tab-pane");
+    const wrap = el10("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "DefinitionId",
       columns: [
@@ -9549,7 +10183,7 @@ function createSiteView({ client: client2 }) {
     return wrap;
   }
   function subwebsPane() {
-    const wrap = el7("div", "wb-tab-pane");
+    const wrap = el10("div", "wb-tab-pane");
     const query = {
       path: "web/webs",
       options: { select: ["Id", "Title", "ServerRelativeUrl", "WebTemplate", "Created", "Language"] }
@@ -9575,7 +10209,7 @@ function createSiteView({ client: client2 }) {
     return wrap;
   }
   function propertyBagPane() {
-    const wrap = el7("div", "wb-tab-pane");
+    const wrap = el10("div", "wb-tab-pane");
     const grid = createGrid({
       rowKey: "RawKey",
       columns: [
@@ -9637,7 +10271,7 @@ function createSiteView({ client: client2 }) {
     body.append(panes.get(tab.id));
   }
   for (const tab of TABS) {
-    const btn = el7("button", "wb-tab", tab.label);
+    const btn = el10("button", "wb-tab", tab.label);
     btn.type = "button";
     btn.dataset.tab = tab.id;
     btn.addEventListener("click", () => activate(tab));
@@ -9650,7 +10284,7 @@ function createSiteView({ client: client2 }) {
 }
 
 // ../src/workbench/views/site-home.js
-var el8 = (tag, cls, text) => {
+var el11 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -9658,7 +10292,7 @@ var el8 = (tag, cls, text) => {
 };
 var fmtDate2 = (v) => v ? String(v).slice(0, 10) : "";
 function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSite2 }) {
-  const root = el8("section", "wb-view wb-view-sitehome");
+  const root = el11("section", "wb-view wb-view-sitehome");
   const absUrl = (rel) => {
     try {
       return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
@@ -9666,20 +10300,20 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
       return "";
     }
   };
-  const head = el8("div", "wb-view-head");
+  const head = el11("div", "wb-view-head");
   head.innerHTML = '<h2>Site</h2><p class="wb-view-hint">The inspected web at a glance. Full property sheets are under Advanced.</p>';
-  const cards = el8("div", "wb-home-cards");
-  const webCard = el8("div", "wb-home-card");
-  const userCard = el8("div", "wb-home-card");
+  const cards = el11("div", "wb-home-cards");
+  const webCard = el11("div", "wb-home-card");
+  const userCard = el11("div", "wb-home-card");
   cards.append(webCard, userCard);
-  const subwebsBox = el8("div", "wb-home-subwebs");
+  const subwebsBox = el11("div", "wb-home-subwebs");
   root.append(head, cards, subwebsBox);
   let loadedForWeb = "";
-  const failureRow = (err, subject) => showFailure(el8("div", "wb-grid-status"), err, subject);
+  const failureRow = (err, subject) => showFailure(el11("div", "wb-grid-status"), err, subject);
   function factRow(label, value, { copyFull = "" } = {}) {
-    const row = el8("div", "wb-home-fact");
-    row.append(el8("span", "wb-home-fact-label", label));
-    const v = el8("span", copyFull ? "wb-home-fact-value sp-copy" : "wb-home-fact-value", value || "\u2014");
+    const row = el11("div", "wb-home-fact");
+    row.append(el11("span", "wb-home-fact-label", label));
+    const v = el11("span", copyFull ? "wb-home-fact-value sp-copy" : "wb-home-fact-value", value || "\u2014");
     if (copyFull) {
       v.title = "Click to copy the full URL";
       v.addEventListener("click", () => copyText(copyFull, v));
@@ -9692,9 +10326,9 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
     if (loadedForWeb === webUrl) return;
     loadedForWeb = webUrl;
     webCard.textContent = "";
-    webCard.append(el8("h3", "wb-home-card-title", "This web"));
+    webCard.append(el11("h3", "wb-home-card-title", "This web"));
     userCard.textContent = "";
-    userCard.append(el8("h3", "wb-home-card-title", "You"));
+    userCard.append(el11("h3", "wb-home-card-title", "You"));
     subwebsBox.textContent = "";
     try {
       const web = await client2.get("web", {
@@ -9729,9 +10363,9 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
         factRow("Email", user2.Email),
         factRow("Login", user2.LoginName)
       );
-      const roleRow = el8("div", "wb-home-fact");
-      roleRow.append(el8("span", "wb-home-fact-label", "Role"));
-      roleRow.append(el8(
+      const roleRow = el11("div", "wb-home-fact");
+      roleRow.append(el11("span", "wb-home-fact-label", "Role"));
+      roleRow.append(el11(
         "span",
         user2.IsSiteAdmin ? "wb-role-chip wb-role-admin" : "wb-role-chip wb-role-user",
         user2.IsSiteAdmin ? "Site admin" : "Site user"
@@ -9775,7 +10409,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
         webUrl: client2.webUrl()
       }
     });
-    subwebsBox.append(el8("h3", "wb-home-card-title", "Subwebs"), grid.el);
+    subwebsBox.append(el11("h3", "wb-home-card-title", "Subwebs"), grid.el);
     grid.setLoading("Loading subwebs\u2026");
     client2.getAll("web/webs", {
       select: ["Id", "Title", "ServerRelativeUrl", "Created", "WebTemplate"]
@@ -9789,30 +10423,30 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
 }
 
 // ../src/workbench/views/links.js
-var el9 = (tag, cls, text) => {
+var el12 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
   return n;
 };
 function createLinksView({ client: client2 }) {
-  const root = el9("section", "wb-view wb-view-links");
-  const head = el9("div", "wb-view-head");
+  const root = el12("section", "wb-view wb-view-links");
+  const head = el12("div", "wb-view-head");
   head.innerHTML = '<h2>Panels</h2><p class="wb-view-hint">Quick jumps to the SharePoint configuration panels you actually reach for. Links open in a new tab; hover for the underlying page.</p>';
-  const body = el9("div", "wb-links");
+  const body = el12("div", "wb-links");
   root.append(head, body);
   function load2() {
     const webUrl = client2.webUrl();
     body.textContent = "";
     for (const group of LINK_GROUPS) {
-      const card = el9("div", "wb-linkgroup");
-      card.append(el9("h3", "", group.title));
+      const card = el12("div", "wb-linkgroup");
+      card.append(el12("h3", "", group.title));
       for (const link of group.links) {
-        const row = el9("a", "wb-link");
+        const row = el12("a", "wb-link");
         row.href = linkUrl(webUrl, link);
         bindNewTab(row);
-        row.append(el9("span", "wb-link-label", link.label));
-        row.append(el9("span", "wb-link-go", "\u2197"));
+        row.append(el12("span", "wb-link-label", link.label));
+        row.append(el12("span", "wb-link-go", "\u2197"));
         row.title = link.hint ? `${link.path}
 ${link.hint}` : link.path;
         card.append(row);
@@ -9827,7 +10461,7 @@ ${link.hint}` : link.path;
 var QUERY_KEY = "dcspad.workbench.query";
 var DEFAULT_TOP = 100;
 var MAX_TOP = 5e3;
-var FIELD_SELECT2 = [
+var FIELD_SELECT3 = [
   "Id",
   "Title",
   "InternalName",
@@ -9849,7 +10483,7 @@ var OPERATORS = [
   ["startswith", "starts with"],
   ["substringof", "contains"]
 ];
-var el10 = (tag, cls, text) => {
+var el13 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -9953,104 +10587,104 @@ function writeSaved(webUrl, state2) {
   }
 }
 function createQueryView({ client: client2 }) {
-  const root = el10("section", "wb-view wb-view-query");
-  const head = el10("div", "wb-view-head");
+  const root = el13("section", "wb-view wb-view-query");
+  const head = el13("div", "wb-view-head");
   head.innerHTML = '<h2>Query builder</h2><p class="wb-view-hint">Compose an OData query against any list \u2014 or any /_api endpoint \u2014 and run it. \u201CCopy as\u201D turns the query into a script.</p>';
-  const composer = el10("div", "wb-qb");
-  const targetRow = el10("div", "wb-qb-row");
-  const listSelect = el10("select", "wb-qb-list");
+  const composer = el13("div", "wb-qb");
+  const targetRow = el13("div", "wb-qb-row");
+  const listSelect = el13("select", "wb-qb-list");
   listSelect.setAttribute("aria-label", "Query target list");
-  const endpointInput = el10("input", "wb-qb-endpoint");
+  const endpointInput = el13("input", "wb-qb-endpoint");
   endpointInput.type = "text";
   endpointInput.placeholder = "web/currentuser \u2014 path after /_api/";
   endpointInput.hidden = true;
-  targetRow.append(el10("span", "wb-qb-label", "Target"), listSelect, endpointInput);
-  const fieldsBox = el10("div", "wb-qb-fields");
-  const fieldsList = el10("div", "wb-qb-fieldlist");
-  fieldsBox.append(el10("span", "wb-qb-label", "$select"), fieldsList);
-  const filtersBox = el10("div", "wb-qb-filters");
-  const filterRows = el10("div", "wb-qb-filterrows");
-  const addFilter = el10("button", "btn btn-xs", "+ Filter");
+  targetRow.append(el13("span", "wb-qb-label", "Target"), listSelect, endpointInput);
+  const fieldsBox = el13("div", "wb-qb-fields");
+  const fieldsList = el13("div", "wb-qb-fieldlist");
+  fieldsBox.append(el13("span", "wb-qb-label", "$select"), fieldsList);
+  const filtersBox = el13("div", "wb-qb-filters");
+  const filterRows = el13("div", "wb-qb-filterrows");
+  const addFilter = el13("button", "btn btn-xs", "+ Filter");
   addFilter.type = "button";
-  filtersBox.append(el10("span", "wb-qb-label", "$filter"), filterRows, addFilter);
-  const optionsRow = el10("div", "wb-qb-row");
-  const orderSelect = el10("select", "wb-qb-order");
-  const orderDir = el10("select", "wb-qb-orderdir");
+  filtersBox.append(el13("span", "wb-qb-label", "$filter"), filterRows, addFilter);
+  const optionsRow = el13("div", "wb-qb-row");
+  const orderSelect = el13("select", "wb-qb-order");
+  const orderDir = el13("select", "wb-qb-orderdir");
   for (const [v, label] of [["asc", "ascending"], ["desc", "descending"]]) {
-    const opt = el10("option", "", label);
+    const opt = el13("option", "", label);
     opt.value = v;
     orderDir.append(opt);
   }
-  const topInput = el10("input", "wb-qb-top");
+  const topInput = el13("input", "wb-qb-top");
   topInput.type = "number";
   topInput.min = "1";
   topInput.max = String(MAX_TOP);
   topInput.value = String(DEFAULT_TOP);
-  const expandInput = el10("input", "wb-qb-expand");
+  const expandInput = el13("input", "wb-qb-expand");
   expandInput.type = "text";
   expandInput.placeholder = "extra $expand (comma-separated)";
   optionsRow.append(
-    el10("span", "wb-qb-label", "$orderby"),
+    el13("span", "wb-qb-label", "$orderby"),
     orderSelect,
     orderDir,
-    el10("span", "wb-qb-label", "$top"),
+    el13("span", "wb-qb-label", "$top"),
     topInput,
-    el10("span", "wb-qb-label", "$expand"),
+    el13("span", "wb-qb-label", "$expand"),
     expandInput
   );
-  const rawRow = el10("div", "wb-qb-rawrow");
-  const rawArea = el10("textarea", "wb-qb-raw");
+  const rawRow = el13("div", "wb-qb-rawrow");
+  const rawArea = el13("textarea", "wb-qb-raw");
   rawArea.spellcheck = false;
   rawArea.setAttribute("aria-label", "Raw query");
-  const rawNote = el10("span", "wb-qb-rawnote", "Editing the raw query overrides the builder.");
+  const rawNote = el13("span", "wb-qb-rawnote", "Editing the raw query overrides the builder.");
   rawNote.hidden = true;
-  const runBtn = el10("button", "btn btn-xs wb-qb-run wb-primary", "Run \u25B6");
+  const runBtn = el13("button", "btn btn-xs wb-qb-run wb-primary", "Run \u25B6");
   runBtn.type = "button";
-  const backToBuilder = el10("button", "btn btn-xs", "Back to builder");
+  const backToBuilder = el13("button", "btn btn-xs", "Back to builder");
   backToBuilder.type = "button";
   backToBuilder.hidden = true;
   rawRow.append(rawArea, rawNote, runBtn, backToBuilder);
   composer.append(targetRow, fieldsBox, filtersBox, optionsRow, rawRow);
-  const results = el10("div", "wb-qb-results");
+  const results = el13("div", "wb-qb-results");
   root.append(head, composer, results);
   let lists = [];
   let fields = [];
   let rawMode = false;
   let loadedForWeb = "";
   const fieldByName = (name) => fields.find((f) => f.InternalName === name);
-  const guidPath6 = (listId) => `web/lists(guid'${listId}')/items`;
+  const guidPath7 = (listId) => `web/lists(guid'${listId}')/items`;
   function pickedListId() {
     return listSelect.value === "::endpoint" ? "" : listSelect.value;
   }
   function addFilterRow(saved = {}) {
-    const row = el10("div", "wb-qb-filterrow");
-    const join2 = el10("select", "wb-qb-join");
+    const row = el13("div", "wb-qb-filterrow");
+    const join2 = el13("select", "wb-qb-join");
     for (const [v, label] of [["and", "AND"], ["or", "OR"]]) {
-      const opt = el10("option", "", label);
+      const opt = el13("option", "", label);
       opt.value = v;
       join2.append(opt);
     }
     join2.value = saved.join || "and";
     if (!filterRows.childElementCount) join2.classList.add("wb-qb-join-first");
-    const fieldSel = el10("select", "wb-qb-field");
+    const fieldSel = el13("select", "wb-qb-field");
     for (const f of fields) {
-      const opt = el10("option", "", f.InternalName);
+      const opt = el13("option", "", f.InternalName);
       opt.value = f.InternalName;
       fieldSel.append(opt);
     }
     if (saved.field) fieldSel.value = saved.field;
-    const opSel = el10("select", "wb-qb-op");
+    const opSel = el13("select", "wb-qb-op");
     for (const [v, label] of OPERATORS) {
-      const opt = el10("option", "", label);
+      const opt = el13("option", "", label);
       opt.value = v;
       opSel.append(opt);
     }
     if (saved.op) opSel.value = saved.op;
-    const valueInput = el10("input", "wb-qb-value");
+    const valueInput = el13("input", "wb-qb-value");
     valueInput.type = "text";
     valueInput.placeholder = "value";
     valueInput.value = saved.value || "";
-    const remove = el10("button", "btn btn-xs", "\xD7");
+    const remove = el13("button", "btn btn-xs", "\xD7");
     remove.type = "button";
     remove.title = "Remove this filter";
     remove.addEventListener("click", () => {
@@ -10099,7 +10733,7 @@ function createQueryView({ client: client2 }) {
     }
     const top = Math.min(Math.max(Number(topInput.value) || DEFAULT_TOP, 1), MAX_TOP);
     options.top = top;
-    const path = listId ? guidPath6(listId) : String(endpointInput.value || "").trim().replace(/^\/+/, "");
+    const path = listId ? guidPath7(listId) : String(endpointInput.value || "").trim().replace(/^\/+/, "");
     if (!path) return null;
     return { path, options, webUrl: client2.webUrl() };
   }
@@ -10127,22 +10761,22 @@ function createQueryView({ client: client2 }) {
   function renderFieldList(savedSelect = null) {
     fieldsList.textContent = "";
     orderSelect.textContent = "";
-    const blank = el10("option", "", "(no ordering)");
+    const blank = el13("option", "", "(no ordering)");
     blank.value = "";
     orderSelect.append(blank);
     const wanted = new Set(savedSelect || ["Id", "Title"]);
     for (const f of fields) {
       const entry = EXPANDABLE_TYPES.has(f.TypeAsString) ? `${f.InternalName}/Title` : f.InternalName;
-      const label = el10("label", "wb-qb-fieldopt");
-      const box = el10("input");
+      const label = el13("label", "wb-qb-fieldopt");
+      const box = el13("input");
       box.type = "checkbox";
       box.value = entry;
       box.checked = wanted.has(entry);
       box.addEventListener("change", onBuilderChange);
       label.append(box, document.createTextNode(entry));
-      label.append(el10("span", "wb-qb-fieldtype", f.TypeAsString));
+      label.append(el13("span", "wb-qb-fieldtype", f.TypeAsString));
       fieldsList.append(label);
-      const opt = el10("option", "", f.InternalName);
+      const opt = el13("option", "", f.InternalName);
       opt.value = f.InternalName;
       orderSelect.append(opt);
     }
@@ -10156,10 +10790,10 @@ function createQueryView({ client: client2 }) {
       onBuilderChange();
       return;
     }
-    fieldsList.append(el10("div", "wb-qb-loading", "Loading fields\u2026"));
+    fieldsList.append(el13("div", "wb-qb-loading", "Loading fields\u2026"));
     try {
       const { items } = await client2.getAll(`web/lists(guid'${listId}')/fields`, {
-        select: FIELD_SELECT2
+        select: FIELD_SELECT3
       });
       fields = items.filter((f) => !f.Hidden);
       renderFieldList(saved?.select);
@@ -10169,17 +10803,17 @@ function createQueryView({ client: client2 }) {
       onBuilderChange();
     } catch (err) {
       fieldsList.textContent = "";
-      fieldsList.append(showFailure(el10("div", "wb-qb-loading"), err, "this list\u2019s fields"));
+      fieldsList.append(showFailure(el13("div", "wb-qb-loading"), err, "this list\u2019s fields"));
     }
   }
   function renderListPicker(savedListId = "") {
     listSelect.textContent = "";
     for (const list2 of lists) {
-      const opt = el10("option", "", list2.Hidden ? `${list2.Title} (hidden)` : list2.Title);
+      const opt = el13("option", "", list2.Hidden ? `${list2.Title} (hidden)` : list2.Title);
       opt.value = list2.Id;
       listSelect.append(opt);
     }
-    const endpoint = el10("option", "", "\u2014 arbitrary endpoint \u2014");
+    const endpoint = el13("option", "", "\u2014 arbitrary endpoint \u2014");
     endpoint.value = "::endpoint";
     listSelect.append(endpoint);
     if (savedListId && lists.some((l) => l.Id === savedListId)) listSelect.value = savedListId;
@@ -10253,7 +10887,7 @@ function createQueryView({ client: client2 }) {
     } catch (err) {
       lists = [];
       results.textContent = "";
-      results.append(showFailure(el10("div", "wb-grid-status"), err, "the lists in this web"));
+      results.append(showFailure(el13("div", "wb-grid-status"), err, "the lists in this web"));
     }
     const saved = readSaved(webUrl);
     renderListPicker(saved?.listId || "");
@@ -10521,7 +11155,7 @@ function sanitizeHtml(html) {
 }
 
 // ../src/workbench/field-editor.js
-var el11 = (tag, cls, text) => {
+var el14 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -10613,18 +11247,18 @@ function fromItemValue(field2, itemValue) {
 function createFieldEditor(field2, initialValue) {
   const type = String(field2.TypeAsString || "");
   const initial = fromItemValue(field2, initialValue);
-  const row = el11("div", "wb-editor-row");
+  const row = el14("div", "wb-editor-row");
   row.dataset.internal = field2.InternalName || "";
-  const label = el11("label", "wb-editor-label", field2.Title || field2.InternalName);
-  const typeBadge = el11("span", "wb-editor-type", type);
+  const label = el14("label", "wb-editor-label", field2.Title || field2.InternalName);
+  const typeBadge = el14("span", "wb-editor-type", type);
   label.append(typeBadge);
-  const control = el11("div", "wb-editor-control");
-  const error = el11("div", "wb-editor-error");
+  const control = el14("div", "wb-editor-control");
+  const error = el14("div", "wb-editor-error");
   error.hidden = true;
   row.append(label, control, error);
   let getValue = () => "";
   const textInput = (tag, value) => {
-    const input = el11(tag === "textarea" ? "textarea" : "input");
+    const input = el14(tag === "textarea" ? "textarea" : "input");
     if (tag !== "textarea") input.type = tag;
     input.value = value ?? "";
     control.append(input);
@@ -10637,18 +11271,18 @@ function createFieldEditor(field2, initialValue) {
       break;
     }
     case "Choice": {
-      const select = el11("select");
+      const select = el14("select");
       const options = choicesOf(field2);
-      const blank = el11("option", "", "\u2014");
+      const blank = el14("option", "", "\u2014");
       blank.value = "";
       select.append(blank);
       for (const choice of options) {
-        const opt = el11("option", "", choice);
+        const opt = el14("option", "", choice);
         opt.value = choice;
         select.append(opt);
       }
       if (initial && !options.includes(initial)) {
-        const opt = el11("option", "", `${initial} (current)`);
+        const opt = el14("option", "", `${initial} (current)`);
         opt.value = initial;
         select.append(opt);
       }
@@ -10664,12 +11298,12 @@ function createFieldEditor(field2, initialValue) {
       break;
     }
     case "MultiChoice": {
-      const listBox = el11("div", "wb-editor-choices");
+      const listBox = el14("div", "wb-editor-choices");
       const initialSet = new Set(Array.isArray(initial) ? initial : []);
       const boxes = [];
       for (const choice of choicesOf(field2)) {
-        const lab = el11("label", "wb-editor-choice");
-        const box = el11("input");
+        const lab = el14("label", "wb-editor-choice");
+        const box = el14("input");
         box.type = "checkbox";
         box.value = choice;
         box.checked = initialSet.has(choice);
@@ -10682,7 +11316,7 @@ function createFieldEditor(field2, initialValue) {
       break;
     }
     case "Boolean": {
-      const box = el11("input");
+      const box = el14("input");
       box.type = "checkbox";
       box.checked = Boolean(initial);
       control.append(box);
@@ -10731,18 +11365,18 @@ function createFieldEditor(field2, initialValue) {
   };
 }
 function readOnlyRow(field2, displayText) {
-  const row = el11("div", "wb-editor-row wb-editor-readonly");
+  const row = el14("div", "wb-editor-row wb-editor-readonly");
   row.dataset.internal = field2.InternalName || "";
-  const label = el11("label", "wb-editor-label", field2.Title || field2.InternalName);
-  label.append(el11("span", "wb-editor-type", String(field2.TypeAsString || "")));
-  const value = el11("div", "wb-editor-static", displayText || "");
+  const label = el14("label", "wb-editor-label", field2.Title || field2.InternalName);
+  label.append(el14("span", "wb-editor-type", String(field2.TypeAsString || "")));
+  const value = el14("div", "wb-editor-static", displayText || "");
   value.title = field2.ReadOnlyField ? "Read-only field" : "Not editable in the workbench";
   row.append(label, value);
   return row;
 }
 function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSave }) {
-  const root = el11("div", "wb-editor-form");
-  const rows = el11("div", "wb-editor-rows");
+  const root = el14("div", "wb-editor-form");
+  const rows = el14("div", "wb-editor-rows");
   const editors = [];
   const shown = (fields || []).filter((f) => !f.Hidden);
   for (const field2 of shown) {
@@ -10756,10 +11390,10 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
       rows.append(readOnlyRow(field2, String(display ?? "")));
     }
   }
-  const bar = el11("div", "wb-editor-bar");
-  const save = el11("button", "btn btn-xs", "Save metadata");
+  const bar = el14("div", "wb-editor-bar");
+  const save = el14("button", "btn btn-xs", "Save metadata");
   save.type = "button";
-  const status = el11("span", "wb-editor-status");
+  const status = el14("span", "wb-editor-status");
   bar.append(save, status);
   root.append(rows, bar);
   function dirtyFormValues() {
@@ -10969,11 +11603,11 @@ function dedupeEntryNames(names) {
       return name;
     }
     const dot = name.lastIndexOf(".");
-    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const stem2 = dot > 0 ? name.slice(0, dot) : name;
     const ext = dot > 0 ? name.slice(dot) : "";
     let n = 2;
-    while (seen.has(`${stem}-${n}${ext}`)) n += 1;
-    const unique = `${stem}-${n}${ext}`;
+    while (seen.has(`${stem2}-${n}${ext}`)) n += 1;
+    const unique = `${stem2}-${n}${ext}`;
     seen.add(unique);
     return unique;
   });
@@ -11358,7 +11992,7 @@ var DETAIL_SELECT = [
   "LayoutWebpartsContent"
 ];
 var CLASSIC_DETAIL_SELECT = ["*", "Author/Title", "Editor/Title"];
-var FIELD_SELECT3 = [
+var FIELD_SELECT4 = [
   "Id",
   "Title",
   "InternalName",
@@ -11396,7 +12030,7 @@ function pagesLibraryCandidates(items) {
 }
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
-var el12 = (tag, cls, text) => {
+var el15 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -11409,24 +12043,24 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
     return encodeURIComponent(segment);
   }
 }).join("/");
-var guidPath5 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
+var guidPath6 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function reducedChip(lost, where, because = "") {
-  const chip = el12("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
+  const chip = el15("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
   chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read.` + (because ? `
 
 SharePoint said: ${because}` : "");
   return chip;
 }
 function createPagesView({ client: client2, navigate, updateRoute }) {
-  const root = el12("section", "wb-view wb-view-pages");
+  const root = el15("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
-  const gridPane = el12("div", "wb-pane");
-  const head = el12("div", "wb-view-head");
+  const gridPane = el15("div", "wb-pane");
+  const head = el15("div", "wb-view-head");
   head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Every page in this web\u2019s pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
-  const strip = el12("div", "wb-lib-strip");
-  strip.append(el12("span", "wb-lib-wait", "locating library\u2026"));
+  const strip = el15("div", "wb-lib-strip");
+  strip.append(el15("span", "wb-lib-wait", "locating library\u2026"));
   head.append(strip);
-  const libraryLink = el12("a", "btn btn-xs wb-head-link", "Open \u2197");
+  const libraryLink = el15("a", "btn btn-xs wb-head-link", "Open \u2197");
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
   strip.append(libraryLink);
@@ -11438,11 +12072,11 @@ function createPagesView({ client: client2, navigate, updateRoute }) {
     strip.hidden = false;
     strip.textContent = "";
     if (libraries.length > 1) {
-      const select = el12("select", "wb-lib-select wb-lib-picker");
+      const select = el15("select", "wb-lib-select wb-lib-picker");
       select.setAttribute("aria-label", "Pages library to inspect");
       select.title = `This web has ${libraries.length} pages libraries \u2014 pick which one to inspect.`;
       for (const lib of libraries) {
-        const opt = el12("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
+        const opt = el15("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
         opt.value = lib.listId;
         if (lib.listId === current.listId) opt.selected = true;
         select.append(opt);
@@ -11452,7 +12086,7 @@ function createPagesView({ client: client2, navigate, updateRoute }) {
       });
       strip.append(select);
     } else {
-      const name = el12("span", "wb-lib-name sp-copy", current.title);
+      const name = el15("span", "wb-lib-name sp-copy", current.title);
       if (current.rootPath) {
         name.title = `Click to copy the library path
 ${current.rootPath}`;
@@ -11460,7 +12094,7 @@ ${current.rootPath}`;
       }
       strip.append(name);
     }
-    const kind = el12(
+    const kind = el15(
       "span",
       `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
       libraryKindLabel(current.kind)
@@ -11477,10 +12111,10 @@ ${current.rootPath}` : "");
     }
     strip.append(libraryLink);
   }
-  const masterStatus = el12("div", "wb-grid-status");
+  const masterStatus = el15("div", "wb-grid-status");
   masterStatus.hidden = true;
   gridPane.append(head, masterStatus);
-  const detailPane = el12("div", "wb-pane");
+  const detailPane = el15("div", "wb-pane");
   detailPane.hidden = true;
   root.append(gridPane, detailPane);
   let librariesPromise = null;
@@ -11668,7 +12302,7 @@ ${current.rootPath}` : "");
       if (!grid) {
         const plan = await queryPlan(sitePages);
         const paging = { orderby: "FileLeafRef", top: 5e3 };
-        const query = { path: guidPath5(sitePages.listId, "/items") };
+        const query = { path: guidPath6(sitePages.listId, "/items") };
         const descriptor = {
           ...query,
           options: { ...plan.gridShapes[0].options, ...paging },
@@ -11760,7 +12394,7 @@ ${current.rootPath}` : "");
   }
   function pageItem(listId, pageId, shapes) {
     const key2 = `${listId}:${pageId}`;
-    const path = guidPath5(listId, `/items(${pageId})`);
+    const path = guidPath6(listId, `/items(${pageId})`);
     if (!detailCache.has(key2)) {
       detailCache.set(
         key2,
@@ -11790,7 +12424,7 @@ ${current.rootPath}` : "");
   }
   function listFields(listId) {
     if (!fieldsPromise) {
-      fieldsPromise = client2.getAll(guidPath5(listId, "/fields"), { select: FIELD_SELECT3 }).then(({ items }) => items).catch((err) => {
+      fieldsPromise = client2.getAll(guidPath6(listId, "/fields"), { select: FIELD_SELECT4 }).then(({ items }) => items).catch((err) => {
         fieldsPromise = null;
         throw err;
       });
@@ -11798,26 +12432,26 @@ ${current.rootPath}` : "");
     return fieldsPromise;
   }
   function structurePane(parsed) {
-    const wrap = el12("div", "wb-tab-pane");
-    const tree = el12("div", "wb-canvas-tree");
+    const wrap = el15("div", "wb-tab-pane");
+    const tree = el15("div", "wb-canvas-tree");
     const { sections, unplaced } = buildSectionTree(parsed.controls);
     if (!sections.length && !unplaced.length) {
-      tree.append(el12("div", "wb-grid-status", "No canvas sections on this page."));
+      tree.append(el15("div", "wb-grid-status", "No canvas sections on this page."));
     }
     sections.forEach((section, i) => {
       const bits = [`${section.columns.length} column${section.columns.length === 1 ? "" : "s"}`];
       if (section.emphasis) bits.push(`emphasis ${section.emphasis}`);
       if (section.vertical) bits.push("vertical");
       if (section.collapsible) bits.push("collapsible");
-      tree.append(el12("div", "wb-canvas-section", `Section ${i + 1} \u2014 ${bits.join(", ")}`));
+      tree.append(el15("div", "wb-canvas-section", `Section ${i + 1} \u2014 ${bits.join(", ")}`));
       for (const column of section.columns) {
-        const row = el12("div", "wb-canvas-column");
+        const row = el15("div", "wb-canvas-column");
         const width = typeof column.sectionFactor === "number" ? `${column.sectionFactor}/12` : "auto";
-        row.append(el12("span", "wb-canvas-width", width));
-        if (!column.controls.length) row.append(el12("span", "wb-canvas-chip wb-canvas-empty", "empty"));
+        row.append(el15("span", "wb-canvas-width", width));
+        if (!column.controls.length) row.append(el15("span", "wb-canvas-chip wb-canvas-empty", "empty"));
         for (const control of column.controls) {
           const chipLabel = control.kind === "text" ? "Text" : control.kind === "webpart" ? control.webPartData.title || webPartName(control.webPartId) : control.kind;
-          const chip = el12("span", "wb-canvas-chip", chipLabel);
+          const chip = el15("span", "wb-canvas-chip", chipLabel);
           chip.title = control.kind === "webpart" ? `${webPartName(control.webPartId)} \xB7 ${control.webPartId}` : textOfControl(control).slice(0, 200);
           row.append(chip);
         }
@@ -11825,10 +12459,10 @@ ${current.rootPath}` : "");
       }
     });
     if (unplaced.length) {
-      tree.append(el12("div", "wb-canvas-section", `Unplaced entries (${unplaced.length})`));
+      tree.append(el15("div", "wb-canvas-section", `Unplaced entries (${unplaced.length})`));
       for (const control of unplaced) {
-        const row = el12("div", "wb-canvas-column");
-        row.append(el12("span", "wb-canvas-chip", control.kind));
+        const row = el15("div", "wb-canvas-column");
+        row.append(el15("span", "wb-canvas-chip", control.kind));
         tree.append(row);
       }
     }
@@ -11836,7 +12470,7 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function webPartsPane(parsed) {
-    const wrap = el12("div", "wb-tab-pane");
+    const wrap = el15("div", "wb-tab-pane");
     const rows = parsed.controls.filter((c) => c.kind === "webpart").map((c, i) => ({
       Id: c.id || String(i),
       Title: c.webPartData.title,
@@ -11862,9 +12496,9 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function classicWebPartsPane(webParts, error) {
-    const wrap = el12("div", "wb-tab-pane");
+    const wrap = el15("div", "wb-tab-pane");
     if (error) {
-      const notice = el12(
+      const notice = el15(
         "div",
         "wb-grid-notice",
         "\u26A0 The page\u2019s web parts could not be read \u2014 " + (error.message || String(error))
@@ -11899,24 +12533,24 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function textPane(parts, notice) {
-    const wrap = el12("div", "wb-tab-pane wb-text-pane");
+    const wrap = el15("div", "wb-tab-pane wb-text-pane");
     if (notice) wrap.append(notice);
     if (!parts.length) {
-      wrap.append(el12("div", "wb-grid-status", "No readable content on this page."));
+      wrap.append(el15("div", "wb-grid-status", "No readable content on this page."));
       return wrap;
     }
-    const contentBlock = el12("div", "wb-text-block");
-    contentBlock.append(el12("div", "wb-subpanel-title", "Content"));
-    const rendered = el12("div", "wb-text-rendered");
+    const contentBlock = el15("div", "wb-text-block");
+    contentBlock.append(el15("div", "wb-subpanel-title", "Content"));
+    const rendered = el15("div", "wb-text-rendered");
     for (const part of parts) {
-      rendered.append(el12("h3", "wb-text-part", part.label));
+      rendered.append(el15("h3", "wb-text-part", part.label));
       if (part.kind === "text") {
-        const body = el12("div", "wb-text-body");
+        const body = el15("div", "wb-text-body");
         body.innerHTML = sanitizeHtml(part.html);
         rendered.append(body);
       } else {
-        const list2 = el12("ul", "wb-text-lines");
-        for (const line of part.lines) list2.append(el12("li", "", line));
+        const list2 = el15("ul", "wb-text-lines");
+        for (const line of part.lines) list2.append(el15("li", "", line));
         rendered.append(list2);
       }
     }
@@ -11924,9 +12558,9 @@ ${current.rootPath}` : "");
     wrap.append(contentBlock);
     const withHtml = parts.filter((p) => p.kind === "text");
     if (withHtml.length) {
-      const htmlBlock = el12("div", "wb-text-block");
-      htmlBlock.append(el12("div", "wb-subpanel-title", "HTML"));
-      htmlBlock.append(el12(
+      const htmlBlock = el15("div", "wb-text-block");
+      htmlBlock.append(el15("div", "wb-subpanel-title", "HTML"));
+      htmlBlock.append(el15(
         "pre",
         "wb-text-raw",
         withHtml.map((p) => `<!-- ${p.label} -->
@@ -11937,22 +12571,22 @@ ${p.html}`).join("\n\n")
     return wrap;
   }
   function metadataPane(listId, pageId) {
-    const wrap = el12("div", "wb-tab-pane");
-    const status = el12("div", "wb-grid-status", "Loading metadata\u2026");
+    const wrap = el15("div", "wb-tab-pane");
+    const status = el15("div", "wb-grid-status", "Loading metadata\u2026");
     wrap.append(status);
     (async () => {
       const fields = await listFields(listId);
       let item2;
       let itemAsText = {};
       try {
-        item2 = await client2.get(guidPath5(listId, `/items(${pageId})`), {
+        item2 = await client2.get(guidPath6(listId, `/items(${pageId})`), {
           expand: "FieldValuesAsText"
         });
         itemAsText = item2.FieldValuesAsText || {};
       } catch {
-        item2 = await client2.get(guidPath5(listId, `/items(${pageId})`));
+        item2 = await client2.get(guidPath6(listId, `/items(${pageId})`));
         try {
-          itemAsText = await client2.get(guidPath5(listId, `/items(${pageId})/FieldValuesAsText`));
+          itemAsText = await client2.get(guidPath6(listId, `/items(${pageId})/FieldValuesAsText`));
         } catch {
           itemAsText = {};
         }
@@ -11971,11 +12605,11 @@ ${p.html}`).join("\n\n")
     return wrap;
   }
   function rawPane(item2, parsed, webParts = []) {
-    const wrap = el12("div", "wb-tab-pane");
+    const wrap = el15("div", "wb-tab-pane");
     const payload = { item: item2, parsedCanvas: parsed.controls };
     if (webParts.length) payload.webParts = webParts;
     const node = toNode(payload, 0, { maxDepth: 10, maxItems: 400 });
-    const inspector = el12("div", "wb-raw");
+    const inspector = el15("div", "wb-raw");
     inspector.append(enhance(node) ?? renderValue(node));
     wrap.append(inspector);
     return wrap;
@@ -11985,14 +12619,14 @@ ${p.html}`).join("\n\n")
     gridPane.hidden = true;
     detailPane.hidden = false;
     detailPane.textContent = "";
-    const back = el12("button", "btn btn-xs wb-back", "\u2190 All pages");
+    const back = el15("button", "btn btn-xs wb-back", "\u2190 All pages");
     back.type = "button";
     back.addEventListener("click", () => navigate({ view: "pages", libId: current?.listId }));
-    const title = el12("h2", "", route.pageName || `Page ${route.pageId}`);
-    const headRow = el12("div", "wb-detail-head");
+    const title = el15("h2", "", route.pageName || `Page ${route.pageId}`);
+    const headRow = el15("div", "wb-detail-head");
     headRow.append(back, title);
     detailPane.append(headRow);
-    const status = el12("div", "wb-grid-status", "Loading page\u2026");
+    const status = el15("div", "wb-grid-status", "Loading page\u2026");
     detailPane.append(status);
     let sitePages;
     let item2;
@@ -12024,7 +12658,7 @@ ${p.html}`).join("\n\n")
         }
       })();
       const fullUrl = `${origin}${encodedServerPath(item2.FileRef)}`;
-      const frag = el12("span", "wb-detail-id sp-copy", item2.FileRef);
+      const frag = el15("span", "wb-detail-id sp-copy", item2.FileRef);
       frag.title = `Click to copy the full URL
 ${fullUrl}`;
       frag.addEventListener("click", () => copyText(fullUrl, frag));
@@ -12045,20 +12679,20 @@ ${fullUrl}`;
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
     const displayKind = !isCanvas && contentKind === "empty" && readingParts.length ? "webparts" : contentKind;
-    const kindChip = el12("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
+    const kindChip = el15("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
-    const actions = el12("span", "wb-detail-actions");
-    const exportContent = el12("button", "btn btn-xs", "Export content");
+    const actions = el15("span", "wb-detail-actions");
+    const exportContent = el15("button", "btn btn-xs", "Export content");
     exportContent.type = "button";
     exportContent.title = "One human-readable file: metadata, merged web-part content, full metadata";
-    const exportRaw = el12("button", "btn btn-xs", "Export raw");
+    const exportRaw = el15("button", "btn btn-xs", "Export raw");
     exportRaw.type = "button";
     exportRaw.title = "Item + parsed canvas controls as JSON, for scripts";
     actions.append(exportContent, exportRaw);
     if (item2.FileRef) {
-      const open = el12("a", "btn btn-xs", "Open page \u2197");
+      const open = el15("a", "btn btn-xs", "Open page \u2197");
       open.href = item2.FileRef;
       bindNewTab(open);
       actions.append(open);
@@ -12079,7 +12713,7 @@ ${fullUrl}`;
       );
     });
     if (isCanvas && parsed.errors.length) {
-      const notice = el12(
+      const notice = el15(
         "div",
         "wb-grid-notice",
         `\u26A0 ${parsed.errors.length} canvas entr${parsed.errors.length === 1 ? "y" : "ies"} could not be fully parsed \u2014 shown raw where possible.`
@@ -12087,15 +12721,15 @@ ${fullUrl}`;
       notice.title = parsed.errors.join("\n");
       detailPane.append(notice);
     }
-    const tabsBar = el12("div", "wb-tabs");
+    const tabsBar = el15("div", "wb-tabs");
     tabsBar.setAttribute("role", "tablist");
-    const body = el12("div", "wb-tab-body");
+    const body = el15("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     const TABS = [
       {
         id: "text",
         label: "Extract",
-        build: () => textPane(readingParts, webPartError ? el12(
+        build: () => textPane(readingParts, webPartError ? el15(
           "div",
           "wb-grid-notice",
           `\u26A0 This page\u2019s web parts could not be read, so embedded content may be missing \u2014 ${webPartError.message || String(webPartError)}`
@@ -12120,7 +12754,7 @@ ${fullUrl}`;
       body.append(panes.get(tab.id));
     }
     for (const tab of TABS) {
-      const btn = el12("button", "wb-tab", tab.label);
+      const btn = el15("button", "wb-tab", tab.label);
       btn.type = "button";
       btn.dataset.tab = tab.id;
       btn.setAttribute("role", "tab");
@@ -12211,7 +12845,7 @@ function metadataFieldStates(libraryFields) {
   return states;
 }
 var anyMetadataAvailable = (states) => Object.values(states || {}).some((s) => s.available);
-var el13 = (tag, cls, text) => {
+var el16 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -12226,30 +12860,30 @@ function openUploadMetadataDialog({
   doMetadata
 }) {
   return new Promise((resolve, reject) => {
-    const dialog = el13("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
-    const panel = el13("div", "app-dialog__panel");
-    const head = el13("div", "app-dialog__head");
-    head.append(el13("h2", "", "File metadata"));
-    const closeBtn = el13("button", "btn btn-ghost btn-xs", "\u2715");
+    const dialog = el16("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
+    const panel = el16("div", "app-dialog__panel");
+    const head = el16("div", "app-dialog__head");
+    head.append(el16("h2", "", "File metadata"));
+    const closeBtn = el16("button", "btn btn-ghost btn-xs", "\u2715");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close");
     head.append(closeBtn);
-    const context = el13("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
+    const context = el16("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
     panel.append(head, context);
     const inputs = {};
     for (const state2 of Object.values(states)) {
-      const label = el13(
+      const label = el16(
         "label",
         `app-dialog__field sp-metadata-field ${state2.available ? "available" : "unavailable"}`
       );
-      const headRow = el13("span", "sp-metadata-field__head");
-      headRow.append(el13("span", "", state2.label));
-      headRow.append(el13(
+      const headRow = el16("span", "sp-metadata-field__head");
+      headRow.append(el16("span", "", state2.label));
+      headRow.append(el16(
         "span",
         "sp-metadata-field__state",
         state2.available ? "Available" : "Unavailable"
       ));
-      const input = state2.key === "description" ? el13("textarea") : el13("input");
+      const input = state2.key === "description" ? el16("textarea") : el16("input");
       if (state2.key === "description") input.rows = 4;
       else {
         input.type = "text";
@@ -12259,21 +12893,21 @@ function openUploadMetadataDialog({
       input.className = `wb-upload-meta-${state2.key}`;
       input.disabled = !state2.available;
       input.value = state2.available ? String(values[state2.key] ?? "") : "";
-      const hint = el13("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
+      const hint = el16("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
       label.append(headRow, input, hint);
       panel.append(label);
       inputs[state2.key] = input;
     }
-    const error = el13("div", "sp-files-error");
+    const error = el16("div", "sp-files-error");
     error.setAttribute("role", "alert");
     error.hidden = true;
-    const actions = el13("div", "app-dialog__actions sp-metadata-actions");
-    const cancel = el13("button", "btn btn-ghost", "Cancel");
+    const actions = el16("div", "app-dialog__actions sp-metadata-actions");
+    const cancel = el16("button", "btn btn-ghost", "Cancel");
     cancel.type = "button";
-    const keep = el13("button", "btn wb-upload-meta-keep", "Keep file without metadata");
+    const keep = el16("button", "btn wb-upload-meta-keep", "Keep file without metadata");
     keep.type = "button";
     keep.hidden = true;
-    const primary = el13("button", "btn btn-run wb-upload-meta-go", "Upload file");
+    const primary = el16("button", "btn btn-run wb-upload-meta-go", "Upload file");
     primary.type = "button";
     actions.append(cancel, keep, primary);
     panel.append(error, actions);
@@ -12349,7 +12983,7 @@ function openUploadMetadataDialog({
 }
 
 // ../src/workbench/views/browser.js?v=4
-var FIELD_SELECT4 = [
+var FIELD_SELECT5 = [
   "Id",
   "Title",
   "InternalName",
@@ -12377,7 +13011,7 @@ var FILE_SELECT = [
   "UIVersionLabel",
   "CheckOutType"
 ];
-var el14 = (tag, cls, text) => {
+var el17 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -12453,19 +13087,19 @@ function normalizedPath2(value) {
   return path;
 }
 function createBrowserView({ client: client2, navigate }) {
-  const root = el14("section", "wb-view wb-view-files");
+  const root = el17("section", "wb-view wb-view-files");
   const spWrite = createSpWriteClient({ client: client2 });
-  const head = el14("div", "wb-view-head");
+  const head = el17("div", "wb-view-head");
   head.innerHTML = '<h2>Files</h2><p class="wb-view-hint">Browse any library or folder of this web \u2014 every file type, with download, binary upload, folder creation, and full metadata editing.</p>';
-  const bar = el14("div", "wb-crumbs-bar");
-  const librarySelect = el14("select", "wb-lib-select");
+  const bar = el17("div", "wb-crumbs-bar");
+  const librarySelect = el17("select", "wb-lib-select");
   librarySelect.setAttribute("aria-label", "Jump to a document library");
-  const crumbs = el14("div", "wb-crumbs");
+  const crumbs = el17("div", "wb-crumbs");
   bar.append(librarySelect, crumbs);
-  const consent = el14("div", "wb-consent");
+  const consent = el17("div", "wb-consent");
   consent.hidden = true;
-  const gridWrap = el14("div", "wb-files-grid");
-  const metaPanel = el14("div", "wb-subpanel wb-file-meta");
+  const gridWrap = el17("div", "wb-files-grid");
+  const metaPanel = el17("div", "wb-subpanel wb-file-meta");
   metaPanel.hidden = true;
   root.append(head, bar, consent, gridWrap, metaPanel);
   let libraries = [];
@@ -12502,7 +13136,7 @@ function createBrowserView({ client: client2, navigate }) {
     const rootPath = webRootPath();
     const segments = currentPath === "/" ? [] : currentPath.slice(1).split("/");
     let acc = "";
-    const rootBtn = el14("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
+    const rootBtn = el17("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
     rootBtn.type = "button";
     rootBtn.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
     let started = rootPath === "/";
@@ -12512,16 +13146,16 @@ function createBrowserView({ client: client2, navigate }) {
       if (!started) {
         if (normalizedPath2(acc) === rootPath) {
           started = true;
-          const btn2 = el14("button", "wb-crumb", rootPath);
+          const btn2 = el17("button", "wb-crumb", rootPath);
           btn2.type = "button";
           btn2.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
           crumbs.append(btn2);
         }
         continue;
       }
-      crumbs.append(el14("span", "wb-crumb-sep", "/"));
+      crumbs.append(el17("span", "wb-crumb-sep", "/"));
       const target = acc;
-      const btn = el14("button", "wb-crumb", segment);
+      const btn = el17("button", "wb-crumb", segment);
       btn.type = "button";
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
@@ -12549,13 +13183,13 @@ function createBrowserView({ client: client2, navigate }) {
       libraries = [];
     }
     librarySelect.textContent = "";
-    const blank = el14("option", "", "Libraries\u2026");
+    const blank = el17("option", "", "Libraries\u2026");
     blank.value = "";
     librarySelect.append(blank);
     for (const lib of libraries) {
       const url = lib.RootFolder?.ServerRelativeUrl;
       if (!url) continue;
-      const opt = el14("option", "", lib.Title);
+      const opt = el17("option", "", lib.Title);
       opt.value = url;
       librarySelect.append(opt);
     }
@@ -12571,10 +13205,10 @@ function createBrowserView({ client: client2, navigate }) {
           label: "Name",
           value: (row) => row.Name,
           render: (name, row) => {
-            const wrap = el14("span", `wb-file-name wb-node-${fileRole(row)}`);
+            const wrap = el17("span", `wb-file-name wb-node-${fileRole(row)}`);
             const glyph = icon(row.kind === "folder" ? "folder" : "file");
             glyph.classList.add("wb-node");
-            wrap.append(glyph, el14("span", "wb-file-name-text", name));
+            wrap.append(glyph, el17("span", "wb-file-name-text", name));
             return wrap;
           }
         },
@@ -12627,9 +13261,9 @@ function createBrowserView({ client: client2, navigate }) {
       exportName: "sp-files",
       toolbarExtras: bar
     });
-    const uploadBtn = el14("button", "btn btn-xs wb-primary", "Upload\u2026");
+    const uploadBtn = el17("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";
-    const fileInput = el14("input");
+    const fileInput = el17("input");
     fileInput.type = "file";
     fileInput.hidden = true;
     fileInput.setAttribute("aria-label", "Choose a file to upload");
@@ -12638,10 +13272,10 @@ function createBrowserView({ client: client2, navigate }) {
       if (fileInput.files?.length) startUpload(fileInput.files[0]);
       fileInput.value = "";
     });
-    const newFolderBtn = el14("button", "btn btn-xs wb-newfolder", "New folder\u2026");
+    const newFolderBtn = el17("button", "btn btn-xs wb-newfolder", "New folder\u2026");
     newFolderBtn.type = "button";
     newFolderBtn.addEventListener("click", promptNewFolder);
-    const refreshBtn = el14("button", "btn btn-xs", "Refresh");
+    const refreshBtn = el17("button", "btn btn-xs", "Refresh");
     refreshBtn.type = "button";
     refreshBtn.addEventListener("click", () => listFolder(currentPath, { force: true }));
     grid.actionsEl.prepend(uploadBtn, fileInput, newFolderBtn, refreshBtn);
@@ -12680,28 +13314,28 @@ function createBrowserView({ client: client2, navigate }) {
   function showConsent(message, onConfirm, { gate = "" } = {}) {
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el14("span", "wb-consent-text", message));
-    const replace = el14("button", "btn btn-xs", "Replace");
+    consent.append(el17("span", "wb-consent-text", message));
+    const replace = el17("button", "btn btn-xs", "Replace");
     replace.type = "button";
     replace.addEventListener("click", () => {
       consent.hidden = true;
       onConfirm();
     });
-    const cancel = el14("button", "btn btn-xs", "Cancel");
+    const cancel = el17("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
     });
     if (gate) {
       replace.disabled = true;
-      const row = el14("label", "sp-metadata-consent__row wb-consent-gate");
-      const box = el14("input");
+      const row = el17("label", "sp-metadata-consent__row wb-consent-gate");
+      const box = el17("input");
       box.type = "checkbox";
       box.className = "wb-consent-checkout";
       box.addEventListener("change", () => {
         replace.disabled = !box.checked;
       });
-      row.append(box, el14("span", "sp-metadata-consent__label", gate));
+      row.append(box, el17("span", "sp-metadata-consent__label", gate));
       consent.append(row);
     }
     consent.append(replace, cancel);
@@ -12710,8 +13344,8 @@ function createBrowserView({ client: client2, navigate }) {
     consent.textContent = "";
     consent.hidden = false;
     consent.classList.toggle("wb-consent-error", isError);
-    consent.append(el14("span", "wb-consent-text", message));
-    const dismiss = el14("button", "btn btn-xs", "Dismiss");
+    consent.append(el17("span", "wb-consent-text", message));
+    const dismiss = el17("button", "btn btn-xs", "Dismiss");
     dismiss.type = "button";
     dismiss.addEventListener("click", () => {
       consent.hidden = true;
@@ -12927,14 +13561,14 @@ function createBrowserView({ client: client2, navigate }) {
     consent.classList.remove("wb-consent-error");
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el14("span", "wb-consent-text", `New folder in ${folderPath}:`));
-    const nameIn = el14("input", "wb-folder-name");
+    consent.append(el17("span", "wb-consent-text", `New folder in ${folderPath}:`));
+    const nameIn = el17("input", "wb-folder-name");
     nameIn.type = "text";
     nameIn.placeholder = "Folder name";
     nameIn.setAttribute("aria-label", "New folder name");
-    const create = el14("button", "btn btn-xs wb-primary", "Create");
+    const create = el17("button", "btn btn-xs wb-primary", "Create");
     create.type = "button";
-    const cancel = el14("button", "btn btn-xs", "Cancel");
+    const cancel = el17("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
@@ -12990,7 +13624,7 @@ function createBrowserView({ client: client2, navigate }) {
   function listFields(listId) {
     if (!fieldsCache.has(listId)) {
       fieldsCache.set(listId, client2.getAll(`web/lists(guid'${listId}')/fields`, {
-        select: FIELD_SELECT4
+        select: FIELD_SELECT5
       }).then(({ items }) => items).catch((err) => {
         fieldsCache.delete(listId);
         throw err;
@@ -13001,18 +13635,18 @@ function createBrowserView({ client: client2, navigate }) {
   async function openMetadata(row) {
     metaPanel.hidden = false;
     metaPanel.textContent = "";
-    const titleRow = el14("div", "wb-file-meta-head");
-    titleRow.append(el14("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
-    const close = el14("button", "btn btn-xs", "Close");
+    const titleRow = el17("div", "wb-file-meta-head");
+    titleRow.append(el17("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
+    const close = el17("button", "btn btn-xs", "Close");
     close.type = "button";
     close.addEventListener("click", () => {
       metaPanel.hidden = true;
     });
     titleRow.append(close);
     metaPanel.append(titleRow);
-    const body = el14("div", "wb-subpanel-body");
+    const body = el17("div", "wb-subpanel-body");
     metaPanel.append(body);
-    const status = el14("div", "wb-grid-status", "Loading metadata\u2026");
+    const status = el17("div", "wb-grid-status", "Loading metadata\u2026");
     body.append(status);
     try {
       const listId = await parentListId(currentPath);
