@@ -11,7 +11,8 @@
 import { getSpContext } from '../bridge/sp-context.js';
 import { ACCEPT_JSON, SpFileError, requireOk } from '../sp-odata.js';
 
-const PAGE_CAP = 5000;          // max items accumulated across pages
+const PAGE_CAP = 5000;          // max items accumulated across pages (default ceiling)
+const LARGE_PAGE_CAP = 100000;  // opt-in ceiling — see getAll's allowLargeCap
 const MAX_CONCURRENT = 3;       // polite ceiling for parallel view loads
 const RETRY_STATUSES = new Set([429, 503]);
 
@@ -177,9 +178,14 @@ export function createSpRestClient({
 
   // Full collection: follows paging links up to `cap` items (default and
   // ceiling PAGE_CAP — callers can only lower it, e.g. a max-items export).
-  // Returns { items, partial } — partial=true means more rows remained.
-  async function getAll(path, opts, { cap = PAGE_CAP } = {}) {
-    const limit = Math.min(Math.max(1, Number(cap) || PAGE_CAP), PAGE_CAP);
+  // `allowLargeCap` is an explicit, opt-in escape hatch for one caller (the
+  // list-data capture, which can legitimately need every item in a large
+  // list): it raises the ceiling to LARGE_PAGE_CAP without changing the
+  // default 5000 ceiling anyone else sees. Returns { items, partial } —
+  // partial=true means more rows remained.
+  async function getAll(path, opts, { cap = PAGE_CAP, allowLargeCap = false } = {}) {
+    const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
+    const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
     let url = apiUrl(path, opts);
     const items = [];
     let partial = false;

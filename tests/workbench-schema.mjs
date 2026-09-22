@@ -2147,6 +2147,229 @@ await check('live-dialog: a 401 mid-run shows EXPIRED_SESSION_NOTE', async () =>
   return headline.includes('expired') && headline.includes('reload the page');
 });
 
+// ---- Stage 1b-a: list item DATA capture + export (pure list-data.js) ------
+
+await check('pure: a v1 data document normalizes to v2 (items/folders split, warnings kept); the wrong kind is refused', () =>
+  page.evaluate(async () => {
+    const { normalizeDataDoc, DATA_KIND } = await import('/src/workbench/list-data.js');
+    const v1 = {
+      kind: DATA_KIND, version: 1,
+      source: { siteUrl: 'https://t', listTitle: 'Requests', listId: 'abc' },
+      fields: { Title: { type: 'Text', custom: false, readOnly: false } },
+      items: [
+        { Id: 1, ID: 1, Title: 'A', _resolved: {}, _dir: '' },
+        { Id: 2, ID: 2, Title: 'Sub', _folder: true, _folderPath: 'Sub', _resolved: {}, _dir: '' },
+      ],
+      warnings: ['a warning'],
+    };
+    const v2 = normalizeDataDoc(v1);
+    let refused = false;
+    try { normalizeDataDoc({ kind: 'not-a-data-doc' }); } catch (e) { refused = e?.code === 'bad-data'; }
+    return v2.version === 2 && v2.items.length === 1 && v2.items[0].Id === 1
+      && v2.folders.length === 1 && v2.folders[0]._folderPath === 'Sub'
+      && v2.warnings[0] === 'a warning' && refused;
+  }));
+
+await check('pure: folderOrder sorts parents before children, stable within a depth', () =>
+  page.evaluate(async () => {
+    const { folderOrder } = await import('/src/workbench/list-data.js');
+    const folders = [
+      { _folderPath: 'A/B/C' }, { _folderPath: 'A' }, { _folderPath: 'A/B' }, { _folderPath: 'X' },
+    ];
+    const order = folderOrder(folders).map((f) => f._folderPath);
+    return order.join(',') === 'A,X,A/B,A/B/C';
+  }));
+
+await check('pure: writableFields drops NEVER_WRITE names/types, read-only columns, and anything missing on the target', () =>
+  page.evaluate(async () => {
+    const { writableFields } = await import('/src/workbench/list-data.js');
+    const schemaFields = {
+      Title: { type: 'Text', custom: false },
+      Status: { type: 'Choice', custom: true },
+      ID: { type: 'Counter', custom: false },
+      Modified: { type: 'DateTime', custom: false },
+      Ghost: { type: 'Text', custom: true },
+      Locked: { type: 'Text', custom: true },
+    };
+    const targetFields = [
+      { InternalName: 'Title', TypeAsString: 'Text', ReadOnlyField: false },
+      { InternalName: 'Status', TypeAsString: 'Choice', ReadOnlyField: false },
+      { InternalName: 'ID', TypeAsString: 'Counter', ReadOnlyField: true },
+      { InternalName: 'Modified', TypeAsString: 'DateTime', ReadOnlyField: true },
+      { InternalName: 'Locked', TypeAsString: 'Text', ReadOnlyField: true },
+    ];
+    const names = writableFields(schemaFields, targetFields).map((x) => x.name);
+    return names.includes('Title') && names.includes('Status')
+      && !names.includes('ID') && !names.includes('Modified')
+      && !names.includes('Ghost') && !names.includes('Locked');
+  }));
+
+await check('pure: toImportFormValues ports SPUtils’ per-type FieldValue conventions (Choice, MultiChoice, Number, Boolean, calibrated DateTime, User, Lookup, LookupMulti, URL)', () =>
+  page.evaluate(async () => {
+    const { toImportFormValues } = await import('/src/workbench/list-data.js');
+    const fields = [
+      { name: 'Status', typeAsString: 'Choice' },
+      { name: 'Tags', typeAsString: 'MultiChoice' },
+      { name: 'Budget', typeAsString: 'Number' },
+      { name: 'Approved', typeAsString: 'Boolean' },
+      { name: 'Due', typeAsString: 'DateTime', tf: {} },
+      { name: 'Owner', typeAsString: 'User' },
+      { name: 'Client', typeAsString: 'Lookup' },
+      { name: 'Regions', typeAsString: 'LookupMulti' },
+      { name: 'Link', typeAsString: 'URL' },
+    ];
+    const item = {
+      Status: 'Active', Tags: ['A', 'B'], Budget: 42, Approved: true,
+      Due: '2026-03-04T05:06:00Z',
+      Link: { Url: 'https://example.com', Description: 'Example' },
+      _resolved: {
+        Owner: [{ Email: 'pat@mock.local', LoginName: 'i:0#.f|membership|pat@mock.local' }],
+        Client: [{ Id: 9, value: 'Acme' }],
+        Regions: [{ Id: 1, value: 'North' }, { Id: 2, value: 'South' }],
+      },
+    };
+    const userIds = new Map([['pat@mock.local', 'i:0#.f|membership|pat@mock.local']]);
+    const lookupIds = new Map([
+      ['Client', new Map([['Acme', [9]]])],
+      ['Regions', new Map([['North', [1]], ['South', [2]]])],
+    ]);
+    const { values, errors } = toImportFormValues(item, fields, {
+      dateFormat: { order: 'dmy', sep: '/', timeSep: ':', offsetMinutes: 0 },
+      userIds, lookupIds,
+    });
+    const byName = Object.fromEntries(values.map((v) => [v.FieldName, v.FieldValue]));
+    return errors.length === 0
+      && byName.Status === 'Active'
+      && byName.Tags === ';#A;#B;#'
+      && byName.Budget === '42'
+      && byName.Approved === '1'
+      && byName.Due === '04/03/2026 05:06'
+      && byName.Owner === JSON.stringify([{ Key: 'i:0#.f|membership|pat@mock.local' }])
+      && byName.Client === '9'
+      && byName.Regions === '1;#2;#'
+      && byName.Link === 'https://example.com, Example';
+  }));
+
+await check('pure: resolveLookupByShownValue resolves a unique match, accepts an ambiguous same-list match carrying the source id, and reports everything else', () =>
+  page.evaluate(async () => {
+    const { resolveLookupByShownValue } = await import('/src/workbench/list-data.js');
+    const unique = resolveLookupByShownValue('Acme', [9]);
+    const ambiguousSameList = resolveLookupByShownValue('Dup', [5, 7], { sourceId: 7, sameLookupList: true });
+    const ambiguousOtherList = resolveLookupByShownValue('Dup', [5, 7], { sourceId: 7, sameLookupList: false });
+    const notFound = resolveLookupByShownValue('Missing', [], { sourceId: 3 });
+    const empty = resolveLookupByShownValue('', [1, 2], { sourceId: 4 });
+    return unique.id === 9 && !unique.error
+      && ambiguousSameList.id === 7 && !ambiguousSameList.error
+      && ambiguousOtherList.id === null && ambiguousOtherList.error.includes('matches 2 items')
+      && notFound.id === null && notFound.error.includes('was not found')
+      && empty.id === null && empty.error.includes('had no shown value');
+  }));
+
+await check('pure: partitionPasses keeps self-lookups out of pass1 and only lists items that actually need pass2/pass3', () =>
+  page.evaluate(async () => {
+    const { partitionPasses } = await import('/src/workbench/list-data.js');
+    const fields = [
+      { name: 'Status', typeAsString: 'Choice', meta: { custom: true } },
+      { name: 'ParentRequest', typeAsString: 'Lookup', meta: { custom: true, isSelfLookup: true } },
+    ];
+    const items = [
+      { Id: 1, ID: 1, Status: 'A', _resolved: {} },
+      { Id: 2, ID: 2, Status: 'B', _resolved: { ParentRequest: [{ Id: 1, value: 'A' }] } },
+      { Id: 3, ID: 3, Status: 'C', Created: '2026-01-01T00:00:00Z', _resolved: { Author: [{ Email: 'x@y' }] } },
+    ];
+    const { pass1, pass2, pass3 } = partitionPasses(items, fields);
+    const pass1Names = pass1.fields.map((f) => f.name);
+    const pass2Ids = pass2.items.map((i) => i.Id);
+    const pass3Ids = pass3.items.map((i) => i.Id);
+    return pass1Names.includes('Status') && !pass1Names.includes('ParentRequest')
+      && pass1.items.length === 3
+      && pass2Ids.length === 1 && pass2Ids[0] === 2
+      && pass3Ids.includes(3) && !pass3Ids.includes(1);
+  }));
+
+await check('pure: sp-rest getAll follows odata.nextLink past the default 5000 cap only when allowLargeCap is set', () =>
+  page.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const PAGE = 3000;
+    const pageRows = (n) => Array.from({ length: PAGE }, (_, i) => ({ Id: n * PAGE + i + 1 }));
+    let callN = 0;
+    const fetchImpl = async () => {
+      const n = callN++;
+      const body = n < 2
+        ? { value: pageRows(n), 'odata.nextLink': `https://t/_api/next${n + 1}` }
+        : { value: pageRows(n) };
+      return {
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => body, clone() { return this; }, text: async () => '',
+      };
+    };
+    const client = createSpRestClient({
+      getContext: () => ({ live: true, pageContext: { webAbsoluteUrl: 'https://t/sites/x' } }),
+      fetchImpl,
+    });
+    const capped = await client.getAll("web/lists(guid'L1')/items", {});
+    callN = 0;
+    const large = await client.getAll("web/lists(guid'L1')/items", {}, { cap: 100000, allowLargeCap: true });
+    return capped.items.length === 5000 && capped.partial === true
+      && large.items.length === 9000 && large.partial === false;
+  }));
+
+await check('live: captureListData reads items with an unprojected $select=* (never a bare lookup/user internal name) and asks getAll for the opt-in 100000 cap', () =>
+  page.evaluate(async () => {
+    const { captureListData } = await import('/src/workbench/list-data-capture.js');
+    const { SCHEMA_KIND, DATA_KIND } = await import('/src/workbench/list-schema.js');
+    const schemaDoc = {
+      kind: SCHEMA_KIND, version: 2,
+      source: { siteUrl: 'https://t/sites/x', listTitle: 'Big', listId: 'L1', rootFolder: '/sites/x/Lists/Big', itemCount: 6000 },
+      list: { title: 'Big', baseTemplate: 100 },
+      fields: [
+        { internalName: 'Title', type: 'Text', custom: false, readOnly: false },
+        { internalName: 'Owner', type: 'User', custom: true, readOnly: false },
+      ],
+      views: [], contentTypes: [], warnings: [],
+    };
+    const calls = [];
+    const client = {
+      webUrl: () => 'https://t/sites/x',
+      get: async (path, opts) => { calls.push({ kind: 'get', path, opts }); return { Id: 'w1' }; },
+      getAll: async (path, opts, capOpts) => {
+        calls.push({ kind: 'getAll', path, opts, capOpts });
+        if (path.includes('/items')) return { items: [{ Id: 1, ID: 1, Title: 'One' }, { Id: 2, ID: 2, Title: 'Two' }], partial: false };
+        return { items: [] };
+      },
+    };
+    const { doc } = await captureListData(client, 'L1', { schemaDoc });
+    const itemsCall = calls.find((c) => c.kind === 'getAll' && c.path.includes('/items'));
+    const select = (itemsCall?.opts?.select || []).join(',');
+    return doc.kind === DATA_KIND
+      && select.includes('*') && !select.includes('Owner')
+      && itemsCall?.capOpts?.allowLargeCap === true && itemsCall?.capOpts?.cap === 100000;
+  }));
+
+// ---- Stage 1b-a: mock UI — Items tab whole-list data export ---------------
+
+await check('items: Download data .json exports the whole list via captureListData, not just the grid’s visible rows', async () => {
+  await schemaPage.locator('.wb-back').click();
+  await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
+  await schemaPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
+  await schemaPage.waitForSelector('.wb-tab');
+  await schemaPage.locator('.wb-tab', { hasText: 'Items' }).click();
+  await schemaPage.waitForSelector('.wb-items-grid .wb-table tbody tr');
+  await schemaPage.locator('.wb-items-grid .wb-grid-actions .wb-menu-wrap button', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    schemaPage.waitForEvent('download'),
+    schemaPage.locator('.wb-menu-item', { hasText: 'Download data .json' }).click(),
+  ]);
+  const bytes = readFileSync(await download.path());
+  const doc = JSON.parse(bytes.toString('utf8'));
+  return download.suggestedFilename() === 'data-requests.json'
+    && doc.kind === 'dcspad-sputils-list-data' && doc.version === 2
+    && doc.items.length === 3 && doc.folders.length === 1
+    && doc.items.some((i) => i.Title === 'Server upgrade — phase 2' && i._resolved?.ParentRequest?.[0]?.value === 'Server upgrade')
+    && doc.items.some((i) => i._attachments?.[0]?.name === 'quote.pdf')
+    && doc.folders[0]._folderPath === 'Archive';
+});
+
 await page.close();
 await schemaPage.close();
 await live.close();

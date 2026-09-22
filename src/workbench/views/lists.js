@@ -16,6 +16,7 @@ import { enhance } from '../../inspect/sp-shapes.js';
 import { renderValue } from '../../inspect/tree-view.js';
 import { toNode } from '../../inspect/to-node.js';
 import { captureListSchema } from '../list-schema-capture.js';
+import { captureListData } from '../list-data-capture.js';
 import { schemaSummary, TAXONOMY_TYPES, normalizeSchemaDoc, SCHEMA_KIND } from '../list-schema.js';
 import { toPnpPowerShellProvisioning, toPnpjs2Provisioning } from '../list-schema-script.js';
 import { openSchemaApplyDialog } from '../list-schema-dialog.js';
@@ -391,8 +392,15 @@ export function createListsView({
 
     controls.append(viewLabel, maxLabel, queryToggle, queryWrap);
 
+    // Whole-list data export status — separate from the grid's own loading
+    // state (which only ever reflects the preview rows on screen): a data
+    // export reads the ENTIRE list through captureListData, independent of
+    // the max-items/query controls above.
+    const dataStatus = el('div', 'wb-grid-status wb-items-data-status');
+    dataStatus.hidden = true;
+
     const gridBox = el('div', 'wb-items-grid');
-    wrap.append(gridBox);
+    wrap.append(dataStatus, gridBox);
 
     function setQueryOpen(open) {
       queryWrap.hidden = !open;
@@ -439,6 +447,33 @@ export function createListsView({
         orderby: current.orderby,
       })
       : '');
+
+    // Whole-list data export: reads every item via captureListData — NOT the
+    // grid's own preview rows, which are capped by the Max control above and
+    // may be filtered by the Query box. Reuses the Schema tab's cached
+    // capture when the operator already opened it (schema fields drive the
+    // person/lookup resolution captureListData needs).
+    let dataBusy = false;
+    async function exportData(useDoc) {
+      if (dataBusy) return;
+      dataBusy = true;
+      const row = allLists.find((l) => l.Id === listId);
+      const n = row?.ItemCount;
+      dataStatus.hidden = false;
+      dataStatus.classList.remove('wb-error', 'wb-denied');
+      dataStatus.removeAttribute('title');
+      dataStatus.textContent = n != null ? `Reading ${n} item${n === 1 ? '' : 's'}…` : 'Reading items…';
+      try {
+        const { doc: schemaDoc } = await cached(listId, 'schema', () => captureListSchema(client, listId));
+        const { doc } = await captureListData(client, listId, { schemaDoc });
+        dataStatus.hidden = true;
+        useDoc(doc);
+      } catch (err) {
+        showFailure(dataStatus, err, 'this list’s item data');
+      } finally {
+        dataBusy = false;
+      }
+    }
 
     function markApplied() {
       const applied = Boolean(current && (current.filter || current.orderby));
@@ -606,6 +641,12 @@ export function createListsView({
           ['Copy .md', (btn) => {
             const md = exportDoc();
             if (md) copyText(md, btn);
+          }],
+          ['Download data .json (whole list, not just these rows)', () => {
+            exportData((doc) => downloadText(`data-${fileStem(listTitle)}.json`, JSON.stringify(doc, null, 2), 'application/json'));
+          }],
+          ['Copy data JSON (whole list, not just these rows)', (btn) => {
+            exportData((doc) => copyText(JSON.stringify(doc, null, 2), btn));
           }],
         ],
       });

@@ -256,6 +256,45 @@ const SCHEMA_REQUESTS_CTS = [
 const VIEWS_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_VIEWS };
 const CONTENT_TYPES_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_CTS };
 
+// List Schema feature, stage 1b-a: a few Requests items exercising the
+// shapes captureListData has to carry — a plain item, a self-lookup
+// (ParentRequest) referencing another item, a User value (RequestOwner), an
+// attachment (metadata only — never bytes), and a folder (FSObjType 1) with
+// its own item row. `item()` (below, hoisted) supplies Id/ID/Title/Modified/
+// Created; every internal name here matches SCHEMA_REQUESTS_FIELDS above.
+const SCHEMA_REQUESTS_ITEMS = [
+  item(1, 'Server upgrade', {
+    Status: 'Active', Budget: 5000, RequestDue: '2026-09-01T00:00:00Z', Approved: true,
+    RequestOwnerId: 11, FSObjType: 0,
+    FileDirRef: SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl,
+    FileRef: `${SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl}/1_.000`,
+    FieldValuesAsText: { Status: 'Active', RequestOwner: 'Mock Developer', Budget: '5000', Approved: 'Yes' },
+  }),
+  item(2, 'Server upgrade — phase 2', {
+    Status: 'New', Budget: 2000, ParentRequestId: 1, Attachments: true, FSObjType: 0,
+    FileDirRef: SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl,
+    FileRef: `${SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl}/2_.000`,
+    AttachmentFiles: [{
+      FileName: 'quote.pdf',
+      ServerRelativeUrl: `${SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl}/Attachments/2/quote.pdf`,
+    }],
+    FieldValuesAsText: { Status: 'New', ParentRequest: 'Server upgrade' },
+  }),
+  item(3, 'Archive', {
+    FSObjType: 1,
+    FileDirRef: SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl,
+    FileRef: `${SCHEMA_REQUESTS_LIST.RootFolder.ServerRelativeUrl}/Archive`,
+  }),
+];
+const ITEMS_BY_SCHEMA_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_ITEMS };
+
+// Site users the schema web's captured User values resolve against (web/
+// siteusers) — same shape as CURRENT_USER below (Id, Email, LoginName, Title).
+const SCHEMA_SITE_USERS = [
+  user(11, 'Mock Developer', 'dev@mock.local', true),
+  user(14, 'Pat Example', 'pat@mock.local', false),
+];
+
 const TARGET_CLIENTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b01';
 const TARGET_TASKS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b02';
 const TARGET_DOCUMENTS_ID = '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d6b03';
@@ -1071,7 +1110,7 @@ export function mockResolver(rawUrl) {
   const schema = /[/]sites[/]schema$/i.test(webBase);
   const target = /[/]sites[/]target$/i.test(webBase);
   const staticLists = both ? BOTH_LISTS : classic ? CLASSIC_LISTS : schema ? SCHEMA_LISTS : target ? TARGET_LISTS : LISTS;
-  const itemsByList = both ? BOTH_ITEMS : classic ? CLASSIC_ITEMS : ITEMS;
+  const itemsByList = both ? BOTH_ITEMS : classic ? CLASSIC_ITEMS : schema ? ITEMS_BY_SCHEMA_LIST : ITEMS;
   // A list the stateful mock writer created under this web (see mockWriter
   // above) is visible to reads the moment it's written — a probe right after
   // a mock `web/lists` POST must find it, not 404 against the static set.
@@ -1168,6 +1207,16 @@ export function mockResolver(rawUrl) {
   if (path.startsWith('web/sitegroups')) return { value: GROUPS };
   if (path.startsWith('web/roledefinitions')) return { value: ROLE_DEFINITIONS };
   if (path.startsWith('web/roleassignments')) return { value: ROLE_ASSIGNMENTS };
+
+  // list-data-capture.js: bulk site-user read + the per-id fallback
+  // (resolveUser's getbyid escape hatch) it uses when a referenced id isn't
+  // in the bulk set.
+  const siteUserId = /^web\/siteusers\/getbyid\((\d+)\)/.exec(path)?.[1];
+  if (siteUserId !== undefined) {
+    const found = SCHEMA_SITE_USERS.find((u) => u.Id === Number(siteUserId));
+    return found || null;
+  }
+  if (path.startsWith('web/siteusers')) return { value: SCHEMA_SITE_USERS };
 
   // Files browser: ResourcePath folder/file endpoints. Paths arrive
   // percent-encoded inside the decodedUrl literal; decode before matching.
