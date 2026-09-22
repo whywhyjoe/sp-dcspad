@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "170-dirty" : "dev";
-var injectedRevision = true ? "e6b9fd1a-dirty" : "";
+var injectedBuild = true ? "171" : "dev";
+var injectedRevision = true ? "3e5839bf" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -4670,7 +4670,9 @@ async function captureListSchema(client2, listId, { includeHidden = false } = {}
       for (const key2 of missing) {
         try {
           Object.assign(list2, await client2.get(guidPath(listId), { select: [key2] }));
-        } catch {
+        } catch (err2) {
+          if (err2?.status !== 400) throw err2;
+          warnings.push(`List property ${key2} is not available on this tenant \u2014 it was not captured.`);
         }
       }
     }
@@ -5088,7 +5090,7 @@ async function readTargetState(ctx2) {
   ctx2.targetFields = await readTargetFields(ctx2);
   seedFieldIdMap(ctx2);
   ctx2.targetListsByTitle = await readTargetListsByTitle(ctx2);
-  ctx2.targetViews = await readTargetViews(ctx2);
+  if (ctx2.planHasViews) ctx2.targetViews = await readTargetViews(ctx2);
 }
 async function safeRead(ctx2, report, fn) {
   try {
@@ -5113,6 +5115,28 @@ function resolveListIdByTitle(ctx2, title) {
     );
   }
   return id;
+}
+function assignViews(steps, targetViews) {
+  const byId = /* @__PURE__ */ new Map();
+  const claimed = /* @__PURE__ */ new Set();
+  const views = steps.filter((s) => s.kind === "view.upsert" && !s.payload.viewId);
+  for (const s of steps) if (s.kind === "view.upsert" && s.payload.viewId) claimed.add(s.payload.viewId);
+  for (const s of views) {
+    const t = targetViews.find((tv) => !claimed.has(tv.id) && String(tv.title).toLowerCase() === String(s.payload.title).toLowerCase());
+    if (t) {
+      byId.set(s.id, t.id);
+      claimed.add(t.id);
+    }
+  }
+  for (const s of views) {
+    if (byId.has(s.id) || !s.payload.defaultView) continue;
+    const t = targetViews.find((tv) => tv.defaultView && !claimed.has(tv.id));
+    if (t) {
+      byId.set(s.id, t.id);
+      claimed.add(t.id);
+    }
+  }
+  return byId;
 }
 async function runListCreate(step2, ctx2, report) {
   const { title, description, baseTemplate, contentTypesEnabled, urlName } = step2.payload;
@@ -5162,7 +5186,7 @@ async function runListCreate(step2, ctx2, report) {
     try {
       await writeJson(ctx2.spWrite, "mergeJson", listPath(data.Id), { Title: title }, "SP.List", {});
     } catch (err) {
-      if (isExpiredSession(err)) throw err;
+      if (isExpiredSession(err)) ctx2.abortAfterStep = "auth";
       report.warnings.push(
         `The list was created under the URL name \u2018${urlName}\u2019 \u2014 renaming its title to \u2018${title}\u2019 failed (${err.message || err}).`
       );
@@ -5334,11 +5358,7 @@ async function runViewUpsert(step2, ctx2, report) {
     viewJoins
   } = step2.payload;
   let viewId = matchedViewId;
-  if (!viewId) {
-    const targetViews = ctx2.targetViews || [];
-    const found = targetViews.find((tv) => String(tv.title).toLowerCase() === String(title).toLowerCase()) || (defaultView ? targetViews.find((tv) => tv.defaultView) : null);
-    if (found) viewId = found.id;
-  }
+  if (!viewId) viewId = ctx2.viewAssignment?.get(step2.id) || null;
   let created = false;
   if (viewId) {
     await writeJson(
@@ -5418,6 +5438,15 @@ async function runViewUpsert(step2, ctx2, report) {
     throw err;
   }
   const propsMerge = {};
+  if (!created) {
+    Object.assign(propsMerge, {
+      Scope: scope ?? 0,
+      TabularView: tabularView !== false,
+      MobileView: !!mobileView,
+      MobileDefaultView: !!mobileDefaultView,
+      IncludeRootFolder: !!includeRootFolder
+    });
+  }
   if (scope != null && scope !== 0) propsMerge.Scope = scope;
   if (aggregations) propsMerge.Aggregations = aggregations;
   if (aggregationsStatus) propsMerge.AggregationsStatus = aggregationsStatus;
@@ -5516,6 +5545,8 @@ async function runPlan(plan, ctx2 = {}) {
   ctx2.targetFields = ctx2.targetFields || [];
   ctx2.targetListsByTitle = ctx2.targetListsByTitle || null;
   ctx2.targetViews = ctx2.targetViews || [];
+  ctx2.planHasViews = (plan.steps || []).some((st) => st.kind === "view.upsert");
+  ctx2.abortAfterStep = "";
   const report = newReport(plan);
   const steps = report.steps;
   const total = steps.length;
@@ -5554,6 +5585,7 @@ async function runPlan(plan, ctx2 = {}) {
         ctx2.targetViews = await readTargetViews(ctx2);
       });
       if (!ok) return report;
+      ctx2.viewAssignment = assignViews(steps, ctx2.targetViews);
     }
     s.status = "running";
     ctx2.onStep?.(s, i, total);
@@ -5578,6 +5610,10 @@ async function runPlan(plan, ctx2 = {}) {
     tallyStep(s, report);
     ctx2.onStep?.(s, i, total);
     if (aborted) break;
+    if (ctx2.abortAfterStep) {
+      report.aborted = ctx2.abortAfterStep;
+      break;
+    }
     if (s.status === "done" && (s.kind === "list.create" || s.kind === "list.adopt")) {
       const ok = await safeRead(ctx2, report, () => readTargetState(ctx2));
       if (!ok) return report;
@@ -6328,24 +6364,35 @@ function openSchemaApplyDialog({
     async function runCreate() {
       if (!canCreate()) return;
       showError("");
+      const client3 = targetClient;
+      const writer = spWrite;
+      const unlock = () => {
+        targetInput.disabled = false;
+        connectBtn.disabled = false;
+        dryRunBtn.disabled = false;
+        createBtn.disabled = false;
+      };
+      targetInput.disabled = true;
+      connectBtn.disabled = true;
       dryRunBtn.disabled = true;
       createBtn.disabled = true;
       let plan;
       try {
-        probe = await probeTarget(targetClient, { title: titleInput.value.trim(), doc: d });
+        probe = await probeTarget(client3, { title: titleInput.value.trim(), doc: d });
         plan = buildApplyPlan(d, buildOptions(), probe);
       } catch (err) {
         showError(err.message || String(err));
-        dryRunBtn.disabled = false;
-        createBtn.disabled = false;
+        unlock();
         return;
       }
+      targetInput.disabled = false;
+      connectBtn.disabled = false;
       setPhase("running");
-      planHeading.textContent = `Applying the plan to \u2018${targetClient.webUrl()}\u2019\u2026`;
+      planHeading.textContent = `Applying the plan to \u2018${client3.webUrl()}\u2019\u2026`;
       buildStepsList(plan.steps);
       listExists = false;
       abortController = new AbortController();
-      currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
+      currentCtx = { client: client3, spWrite: writer, onStep: handleStep, signal: abortController.signal };
       try {
         const report = await runPlan(plan, currentCtx);
         lastReport = report;
@@ -6363,8 +6410,22 @@ function openSchemaApplyDialog({
       showError("");
       retryBtn.disabled = true;
       let plan;
+      const client3 = currentCtx?.client || targetClient;
+      const writer = currentCtx?.spWrite || spWrite;
       try {
-        const resumeProbe = await probeTarget(targetClient, { title: lastReport.title, doc: d });
+        let resumeProbe = await probeTarget(client3, { title: lastReport.title, doc: d });
+        if (lastReport.listId) {
+          const wantedId = String(lastReport.listId).toLowerCase();
+          const byId = resumeProbe.targetLists.find((l) => String(l.id).toLowerCase() === wantedId);
+          if (!byId) {
+            showError(`The list \u2018${lastReport.title}\u2019 could not be found on the target anymore \u2014 retry cannot continue.`);
+            retryBtn.disabled = false;
+            return;
+          }
+          if (!resumeProbe.existingList || String(resumeProbe.existingList.id).toLowerCase() !== wantedId) {
+            resumeProbe = await probeTarget(client3, { title: byId.title, doc: d });
+          }
+        }
         if (resumeProbe.existingList) {
           plan = buildApplyPlan(
             d,
@@ -6388,7 +6449,7 @@ function openSchemaApplyDialog({
       buildStepsList(plan.steps);
       listExists = Boolean(plan.existingListId);
       abortController = new AbortController();
-      currentCtx = { client: targetClient, spWrite, onStep: handleStep, signal: abortController.signal };
+      currentCtx = { client: client3, spWrite: writer, onStep: handleStep, signal: abortController.signal };
       try {
         lastReport = await runPlan(plan, currentCtx);
       } catch (err) {
