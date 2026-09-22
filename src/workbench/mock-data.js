@@ -216,9 +216,63 @@ const SCHEMA_REQUESTS_LIST = {
 };
 const SCHEMA_CLIENTS_LIST = list('Clients', SCHEMA_CLIENTS_ID, 100, 0, 5, false, '/sites/schema/Lists/Clients');
 const SCHEMA_REGIONS_LIST = list('Regions', SCHEMA_REGIONS_ID, 100, 0, 4, false, '/sites/schema/Lists/Regions');
-const SCHEMA_DOCUMENTS_LIST = list('Documents', SCHEMA_DOCUMENTS_ID, 101, 1, 6, false, '/sites/schema/Documents');
+
+// Stage 2 (document libraries): enough on the library itself to exercise
+// group A/B settings that only apply to libraries (minor versions riding
+// group A, ForceCheckout, no EnableAttachments) — see list-schema.js
+// settingsPayload. A non-default Forms template exercises the
+// capture-only-with-warning path (list-schema-capture.js).
+const SCHEMA_DOCUMENTS_LIST = {
+  Id: SCHEMA_DOCUMENTS_ID, Title: 'Documents', BaseTemplate: 101, BaseType: 1, ItemCount: 6,
+  Hidden: false, Created: '2025-02-01T00:00:00Z', LastItemModifiedDate: '2026-08-01T00:00:00Z',
+  EntityTypeName: 'Documents', Description: 'Schema source library.',
+  DefaultViewUrl: '/sites/schema/Documents/Forms/AllItems.aspx',
+  RootFolder: { ServerRelativeUrl: '/sites/schema/Documents', Name: 'Documents' },
+  ContentTypesEnabled: true, EnableVersioning: true, MajorVersionLimit: 20,
+  EnableMinorVersions: true, MajorWithMinorVersionsLimit: 10, DraftVersionVisibility: 0,
+  ForceCheckout: true, EnableAttachments: true, EnableFolderCreation: true, EnableModeration: false,
+  OnQuickLaunch: true, ValidationFormula: '', ValidationMessage: '',
+  NoCrawl: false, DisableGridEditing: false, Ordered: false,
+  ReadSecurity: 1, WriteSecurity: 1, ListExperienceOptions: 0, EnableRequestSignOff: false,
+  DocumentTemplateUrl: '/sites/schema/Documents/Forms/custom-template.dotx', IrmEnabled: false,
+};
 
 const SCHEMA_LISTS = [SCHEMA_REQUESTS_LIST, SCHEMA_CLIENTS_LIST, SCHEMA_REGIONS_LIST, SCHEMA_DOCUMENTS_LIST];
+
+// A custom "Report" content type derived from the built-in Document parent
+// (0x0101) — exact 0x0101 is always built in (isBuiltinParent), but a
+// 0x0101-derived custom parent is something ct.attach has real work to do
+// with. List-scoped id = parent + "00" + 32 hex, same shape as
+// REQUEST_LIST_CT above.
+const DOC_PARENT_CT = '0x010100442912F2B6C7409A8FF25CE5504F1FE';
+const DOC_LIST_CT = `${DOC_PARENT_CT}00${'B'.repeat(32)}`;
+
+const SCHEMA_DOCUMENTS_FIELDS = [
+  schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false }),
+  schemaField('ID', 'ID', 'Counter', 5, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true }),
+  schemaField('Document category', 'DocCategory', 'Choice', 6, {
+    Choices: ['Contract', 'Report', 'Misc'], DefaultValue: 'Misc',
+  }),
+  schemaField('Name', 'LinkFilename', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, Hidden: false }),
+  schemaField('Type', 'DocIcon', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, Hidden: true }),
+  schemaField('File Size', 'FileSizeDisplay', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, Hidden: true }),
+  schemaField('Content Type', 'ContentType', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, Hidden: true, ReadOnlyField: true }),
+  schemaField('Created By', 'Author', 'User', 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: 'UserInfo' } }),
+];
+
+const SCHEMA_DOCUMENTS_VIEWS = [
+  {
+    Id: 'cc1e2c1d-6666-7777-bbbb-000000000001', Title: 'All Documents', DefaultView: true,
+    PersonalView: false, Hidden: false, ServerRelativeUrl: '/sites/schema/Documents/Forms/AllItems.aspx',
+    RowLimit: 30, Paged: true, ViewQuery: '',
+    ViewFields: { Items: ['DocIcon', 'LinkFilename', 'DocCategory', 'FileSizeDisplay', 'Modified'] },
+  },
+];
+
+const SCHEMA_DOCUMENTS_CTS = [
+  { Id: { StringValue: DOC_LIST_CT }, Name: 'Report', Group: 'Custom Content Types', Hidden: false, ReadOnly: false, Sealed: false, Description: 'A schema-source report document.' },
+  { Id: { StringValue: '0x0101' }, Name: 'Document', Group: 'Document Content Types', Hidden: false, ReadOnly: false, Sealed: false, Description: 'Create a new document.' },
+];
 
 const SCHEMA_FIELDS = {
   [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_FIELDS,
@@ -227,7 +281,7 @@ const SCHEMA_FIELDS = {
     schemaField('Client code', 'ClientCode', 'Text', 2, {}),
   ],
   [SCHEMA_REGIONS_ID]: [schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false })],
-  [SCHEMA_DOCUMENTS_ID]: [schemaField('Title', 'Title', 'Text', 2, {})],
+  [SCHEMA_DOCUMENTS_ID]: SCHEMA_DOCUMENTS_FIELDS,
 };
 
 const SCHEMA_REQUESTS_VIEWS = [
@@ -253,8 +307,8 @@ const SCHEMA_REQUESTS_CTS = [
   { Id: { StringValue: '0x01' }, Name: 'Item', Group: 'List Content Types', Hidden: false, ReadOnly: false, Sealed: false, Description: 'Create a new list item.' },
 ];
 
-const VIEWS_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_VIEWS };
-const CONTENT_TYPES_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_CTS };
+const VIEWS_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_VIEWS, [SCHEMA_DOCUMENTS_ID]: SCHEMA_DOCUMENTS_VIEWS };
+const CONTENT_TYPES_BY_LIST = { [SCHEMA_REQUESTS_ID]: SCHEMA_REQUESTS_CTS, [SCHEMA_DOCUMENTS_ID]: SCHEMA_DOCUMENTS_CTS };
 
 // List Schema feature, stage 1b-a: a few Requests items exercising the
 // shapes captureListData has to carry — a plain item, a self-lookup
@@ -317,11 +371,13 @@ const TARGET_FIELDS = {
   ],
   [TARGET_CLIENTS_ID]: [schemaField('Title', 'Title', 'Text', 2, { FromBaseType: true, CanBeDeleted: false })],
 };
-// Carries the Requests parent content type (so attach-CT can find it
-// available) but deliberately no second source content type.
+// Carries the Requests parent content type and the Documents library's
+// custom 0x0101-derived one (so ct.attach can find both available) but
+// deliberately no second, unrelated source content type.
 const TARGET_AVAILABLE_CTS = [
   { StringId: REQUEST_PARENT_CT, Name: 'Request', Group: 'Custom Content Types' },
   { StringId: '0x0101', Name: 'Document', Group: 'Document Content Types' },
+  { StringId: DOC_PARENT_CT, Name: 'Report', Group: 'Custom Content Types' },
 ];
 
 // ---- List Schema feature: stateful mock writer -----------------------------
@@ -394,13 +450,18 @@ export function mockWriter(url, body, contentType, headers = {}) {
     const id = nextMockId('cc00');
     let base = '';
     try { base = new URL(webBase).pathname.replace(/\/+$/, ''); } catch { /* keep '' */ }
-    const rootUrl = `${base}/Lists/${String(data.Title || 'List').replace(/\s+/g, '')}`;
+    const isLib = Number(data.BaseTemplate) === 101;
+    const urlName = String(data.Title || 'List').replace(/\s+/g, '');
+    // A document library's root folder sits directly under the web, no
+    // /Lists/ segment — matches the executor's own GetList pre-check URL
+    // (list-schema-apply.js runListCreate).
+    const rootUrl = isLib ? `${base}/${urlName}` : `${base}/Lists/${urlName}`;
     const entry = {
       Id: id, Title: data.Title, BaseTemplate: data.BaseTemplate ?? 100,
-      // Stage 1b-b's library gate (list-data-apply.js) reads BaseType off the
-      // target list before importing items — a schema-created list is always
-      // a generic list (BaseTemplate 100), never a library.
-      BaseType: 0,
+      // BaseType follows BaseTemplate: a document library (101) is BaseType
+      // 1, so stage 1b-b's library gate (list-data-apply.js, still refusing
+      // item import into a library) sees the created list correctly.
+      BaseType: isLib ? 1 : 0,
       ContentTypesEnabled: !!data.ContentTypesEnabled, RootFolder: { ServerRelativeUrl: rootUrl },
     };
     writerState.lists.set(`${webBase}::${String(data.Title || '').toLowerCase()}`, entry);

@@ -423,9 +423,10 @@ export function isBuiltinParent(parentId) {
 // (attachments, folders) and leaves every other setting alone — SPUtils'
 // rule, and the one the consent sentence promises.
 function settingsPayload(list, { reconcile = false } = {}) {
+  const library = isLibrary(list) || Number(list.baseTemplate) === 101;
   if (reconcile) {
     const groupA = {};
-    if (list.enableAttachments && !isLibrary(list)) groupA.EnableAttachments = true;
+    if (list.enableAttachments && !library) groupA.EnableAttachments = true;
     if (list.enableFolderCreation) groupA.EnableFolderCreation = true;
     return { groupA, groupB: {} };
   }
@@ -450,14 +451,23 @@ function settingsPayload(list, { reconcile = false } = {}) {
   // adopting an existing list must not change what's already there.
   const groupB = {};
   if (list.enableVersioning && list.majorVersionLimit) groupB.MajorVersionLimit = list.majorVersionLimit;
-  if (list.enableVersioning && list.enableMinorVersions) {
+  if (library) {
+    // Libraries: EnableMinorVersions is a group-A flag (stage 2 decision —
+    // it rides the same settings MERGE as ForceCheckout), still gated the
+    // same way group B gates it for a generic list. MajorWithMinorVersionsLimit
+    // and DraftVersionVisibility stay group B, under their own flags, same
+    // as always.
+    if (list.enableVersioning && list.enableMinorVersions) {
+      groupA.EnableMinorVersions = true;
+      if (list.majorWithMinorVersionsLimit) groupB.MajorWithMinorVersionsLimit = list.majorWithMinorVersionsLimit;
+    }
+  } else if (list.enableVersioning && list.enableMinorVersions) {
     groupB.EnableMinorVersions = true;
     if (list.majorWithMinorVersionsLimit) groupB.MajorWithMinorVersionsLimit = list.majorWithMinorVersionsLimit;
   }
   if (list.enableModeration || list.enableMinorVersions) groupB.DraftVersionVisibility = list.draftVersionVisibility;
-  // Libraries 400 on EnableAttachments (stage 2 carries the rest of the
-  // library-only set).
-  if (isLibrary(list) || Number(list.baseTemplate) === 101) delete groupA.EnableAttachments;
+  // Libraries 400 on EnableAttachments.
+  if (library) delete groupA.EnableAttachments;
   const defined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v != null));
   return { groupA: defined(groupA), groupB: defined(groupB) };
 }
@@ -507,13 +517,15 @@ function pushMergeStep(steps, mergeStepIds, f, dependsOnId, merges) {
 //          availableContentTypes, targetLists }
 export function buildApplyPlan(doc, options = {}, probe = {}) {
   const d = normalizeSchemaDoc(doc);
-  // Eligibility: stage 1a copies generic lists only — a document library (or
-  // any other template) is refused before any probe-dependent decision, so
-  // an imported library doc opens the dialog (it can still be inspected/
-  // exported) but never gets far enough to plan a write.
-  if (Number(d.list.baseTemplate) !== 100) {
+  // Eligibility: generic lists (100) and document libraries (101, schema
+  // only — no file transfer) — anything else is refused before any
+  // probe-dependent decision, so an imported doc of another template opens
+  // the dialog (it can still be inspected/exported) but never gets far
+  // enough to plan a write.
+  const isLib = Number(d.list.baseTemplate) === 101;
+  if (Number(d.list.baseTemplate) !== 100 && !isLib) {
     throw new SpFileError(
-      'Only generic lists can be created in this stage — document libraries arrive in stage 2.',
+      'Only generic lists and document libraries can be created from a schema.',
       { code: 'unsupported-template' },
     );
   }
@@ -724,17 +736,56 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
     }
   }
 
-  // ---- Title column fix-up (display name / required) -------------------
-  const titleField = d.fields.find((f) => f.internalName === 'Title');
-  if (titleField && (titleField.displayName !== 'Title' || titleField.required === false)) {
-    steps.push(step('title', 'field.base', `Set the Title column’s display name and required flag`, {
-      dependsOn: ['list'],
-      payload: { displayName: titleField.displayName, required: titleField.required },
-      optional: true,
-    }));
+  // ---- base-field tweaks (Title / _ExtendedDescription) -----------------
+  // Only Title and _ExtendedDescription ever carry a per-list customisation
+  // (list-schema.js baseTweakFor — a display name, required flag, and
+  // description on an otherwise base-type column). Read straight off the
+  // field's own top-level displayName/required/description: identical to
+  // baseTweak.* for a fresh capture, and still present on a v1 (SPUtils) or
+  // hand-built doc that never set baseTweak at all — the v1 field-key
+  // contract this plan must keep reading. A library's Title is never
+  // required (it's optional on every document library) — clamped here even
+  // if a captured doc somehow says otherwise, so the fix-up step can never
+  // force Required:true onto a library's Title.
+  const BASE_TWEAKABLE_NAMES = new Set(['Title', '_ExtendedDescription']);
+  for (const f of d.fields) {
+    if (f.custom || !BASE_TWEAKABLE_NAMES.has(f.internalName)) continue;
+    const isTitleField = f.internalName === 'Title';
+    const required = (isTitleField && isLib) ? false : Boolean(f.required);
+    // A fresh list's own default: Title starts required on a generic list,
+    // optional on a library; every other base-tweakable column (just
+    // _ExtendedDescription today) starts optional. The step is only worth a
+    // write when something actually deviates from that default.
+    const defaultRequired = isTitleField && !isLib;
+    const changed = f.displayName !== f.internalName
+      || required !== defaultRequired
+      || Boolean(f.description);
+    if (!changed) continue;
+    steps.push(step(isTitleField ? 'title' : `base:${f.internalName}`, 'field.base',
+      isTitleField
+        ? 'Set the Title column’s display name and required flag'
+        : `Set the ${f.displayName || f.internalName} column’s display name${f.description ? ' and description' : ''}`,
+      {
+        dependsOn: ['list'],
+        payload: {
+          internalName: f.internalName, displayName: f.displayName, required,
+          description: f.description || '',
+        },
+        optional: true,
+      }));
   }
 
   // ---- views -------------------------------------------------------------
+  // System/computed columns that commonly carry Hidden:true on the source —
+  // capture filters Hidden by default, so these never reach doc.fields, and
+  // baseFieldNames below (built from doc.fields) can't see them — but they
+  // are legitimate view columns present on any fresh document library, the
+  // same way the base Title/ID/Created/Modified/Author set already is
+  // assumed present. The live target-field re-read right before the
+  // executor's view steps (list-schema-apply.js readTargetFields) is the
+  // authoritative check; this only keeps the plan (and its dry-run preview)
+  // from warning about columns that will, in fact, be there.
+  const ALWAYS_PRESENT_LIBRARY_VIEW_FIELDS = new Set(['LinkFilename', 'DocIcon', 'FileSizeDisplay']);
   for (const v of d.views.filter((view) => !view.hidden)) {
     const id = `view:${v.title}`;
     // Title match first; the source's default view also matches the target's
@@ -745,7 +796,8 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
       || null;
     const wanted = v.fields.filter((name) => createdInternalNames.has(name)
       || existingFields.some((ef) => ef.internalName === name)
-      || baseFieldNames.has(name));
+      || baseFieldNames.has(name)
+      || (isLib && ALWAYS_PRESENT_LIBRARY_VIEW_FIELDS.has(name)));
     const missing = v.fields.filter((name) => !wanted.includes(name));
     if (missing.length) {
       warnings.push(`View ‘${v.title}’: columns not on the target were left out: ${missing.join(', ')}.`);

@@ -165,6 +165,16 @@ export async function captureListSchema(client, listId, { includeHidden = false 
   const normalizedList = normalizeList(list);
   normalizedList.contentTypeOrder = contentTypes.filter((ct) => !ct.hidden).map((ct) => ct.id);
 
+  // A library's default-new-document template (list.library.documentTemplateUrl,
+  // stage 2) is capture-only — nothing in the apply plan uploads a file — so
+  // a customised one (not SharePoint's own OOTB Forms/template.dotx) is worth
+  // a warning: the target library will use its own default template unless
+  // someone uploads this one by hand.
+  const templateUrl = normalizedList.library?.documentTemplateUrl || '';
+  if (templateUrl && !/\/forms\/template\.dotx$/i.test(templateUrl)) {
+    warnings.push('Per-library Forms template — upload it after the copy.');
+  }
+
   const doc = buildSchemaDoc({
     source,
     list: normalizedList,

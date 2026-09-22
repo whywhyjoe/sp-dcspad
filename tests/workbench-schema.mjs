@@ -310,12 +310,15 @@ await check('pure: settingsPayload never sends Description — list.create alrea
     return !('Description' in freshSettings) && !('Description' in adoptSettings);
   }));
 
-await check('pure: buildApplyPlan refuses a document-library doc (unsupported-template) and a same-title base-type mismatch (base-type-mismatch)', () =>
+await check('pure: buildApplyPlan refuses an unsupported template (unsupported-template — generic lists and libraries are fine, a survey is not) and a same-title base-type mismatch (base-type-mismatch)', () =>
   page.evaluate(async () => {
     const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    // 101 (document library) is stage 2 — supported. 102 (Survey) never was.
     const libDoc = buildSchemaDoc({ list: { title: 'Documents', baseTemplate: 101 }, fields: [], views: [] });
-    let libCode = null;
-    try { buildApplyPlan(libDoc, { title: 'Documents' }, {}); } catch (e) { libCode = e.code; }
+    const libPlan = buildApplyPlan(libDoc, { title: 'Documents' }, { targetLists: [] });
+    const surveyDoc = buildSchemaDoc({ list: { title: 'Poll', baseTemplate: 102 }, fields: [], views: [] });
+    let surveyCode = null;
+    try { buildApplyPlan(surveyDoc, { title: 'Poll' }, {}); } catch (e) { surveyCode = e.code; }
 
     const genericDoc = buildSchemaDoc({ list: { title: 'Requests', baseTemplate: 100 }, fields: [], views: [] });
     let mismatchCode = null;
@@ -324,13 +327,21 @@ await check('pure: buildApplyPlan refuses a document-library doc (unsupported-te
         existingList: { id: 'x', title: 'Requests', baseTemplate: 101 },
       });
     } catch (e) { mismatchCode = e.code; }
+    // The reverse direction: a library doc refused onto an existing generic list.
+    let reverseMismatchCode = null;
+    try {
+      buildApplyPlan(libDoc, { title: 'Documents' }, {
+        existingList: { id: 'y', title: 'Documents', baseTemplate: 100 },
+      });
+    } catch (e) { reverseMismatchCode = e.code; }
     // A hand-built probe that never carries baseTemplate at all (as several
     // other pure fixtures in this file do) must not be treated as a
     // mismatch — the check is opt-in on the probe actually saying so.
     const noTemplateInProbe = buildApplyPlan(genericDoc, { title: 'Requests', existing: 'resume' },
       { existingList: { id: 'x', title: 'Requests' }, targetLists: [{ title: 'Requests' }] });
 
-    return libCode === 'unsupported-template' && mismatchCode === 'base-type-mismatch'
+    return libPlan.steps[0].kind === 'list.create' && surveyCode === 'unsupported-template'
+      && mismatchCode === 'base-type-mismatch' && reverseMismatchCode === 'base-type-mismatch'
       && noTemplateInProbe.steps[0].kind === 'list.adopt';
   }));
 
@@ -552,6 +563,151 @@ await check('pure: PS emits an UPSERT view (Get-PnPView/$l.Update()/Invoke-PnPQu
       && compiles && !js.includes('// SKIP') && js.includes('Options: 12') && js.includes('newList.defaultView');
   }));
 
+// ---- Pure: stage 2 (document libraries) ------------------------------------
+
+await check('pure: a library settings plan drops EnableAttachments, moves EnableMinorVersions into group A alongside ForceCheckout, and keeps MajorWithMinorVersionsLimit/DraftVersionVisibility in group B', () =>
+  page.evaluate(async () => {
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const doc = buildSchemaDoc({
+      list: {
+        title: 'Docs', baseTemplate: 101, enableVersioning: true, enableMinorVersions: true,
+        majorWithMinorVersionsLimit: 5, draftVersionVisibility: 1, forceCheckout: true,
+        enableAttachments: true, majorVersionLimit: 20,
+      },
+      fields: [], views: [],
+    });
+    const plan = buildApplyPlan(doc, { title: 'Docs' }, { targetLists: [] });
+    const { groupA, groupB } = plan.steps.find((s) => s.id === 'settings').payload;
+    // A generic list, for contrast: EnableAttachments stays, EnableMinorVersions
+    // stays in group B (unchanged pre-stage-2 behaviour).
+    const listDoc = buildSchemaDoc({
+      list: {
+        title: 'Reqs', baseTemplate: 100, enableVersioning: true, enableMinorVersions: true,
+        enableAttachments: true,
+      },
+      fields: [], views: [],
+    });
+    const listPlan = buildApplyPlan(listDoc, { title: 'Reqs' }, { targetLists: [] });
+    const listGroups = listPlan.steps.find((s) => s.id === 'settings').payload;
+    return !('EnableAttachments' in groupA) && groupA.ForceCheckout === true && groupA.EnableMinorVersions === true
+      && groupB.MajorWithMinorVersionsLimit === 5 && groupB.DraftVersionVisibility === 1
+      && groupB.MajorVersionLimit === 20 && !('EnableMinorVersions' in groupB)
+      && listGroups.groupA.EnableAttachments === true && !('EnableMinorVersions' in listGroups.groupA)
+      && listGroups.groupB.EnableMinorVersions === true;
+  }));
+
+await check('pure: the base-field fix-up never forces Required:true onto a library’s Title, even when the source captured it required', () =>
+  page.evaluate(async () => {
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const doc = buildSchemaDoc({
+      list: { title: 'Docs', baseTemplate: 101 },
+      fields: [{
+        internalName: 'Title', displayName: 'Document title', required: true, custom: false,
+        fromBaseType: true, baseTweak: { title: 'Document title', required: true, description: '' },
+      }],
+      views: [],
+    });
+    const plan = buildApplyPlan(doc, { title: 'Docs' }, { targetLists: [] });
+    const titleStep = plan.steps.find((s) => s.id === 'title');
+    // The same fixture on a generic list must still forward the captured
+    // Required:true untouched — the clamp is library-only.
+    const listDoc = buildSchemaDoc({
+      list: { title: 'Reqs', baseTemplate: 100 },
+      fields: [{
+        internalName: 'Title', displayName: 'Request title', required: true, custom: false,
+        fromBaseType: true, baseTweak: { title: 'Request title', required: true, description: '' },
+      }],
+      views: [],
+    });
+    const listPlan = buildApplyPlan(listDoc, { title: 'Reqs' }, { targetLists: [] });
+    const listTitleStep = listPlan.steps.find((s) => s.id === 'title');
+    return Boolean(titleStep) && titleStep.kind === 'field.base' && titleStep.payload.internalName === 'Title'
+      && titleStep.payload.required === false && titleStep.payload.displayName === 'Document title'
+      && Boolean(listTitleStep) && listTitleStep.payload.required === true;
+  }));
+
+await check('pure: isBuiltinParent treats exact 0x0101 as built in but a 0x0101-derived custom parent as attachable', () =>
+  page.evaluate(async () => {
+    const { isBuiltinParent, parentContentTypeId } = await import('/src/workbench/list-schema.js');
+    const customParent = '0x010100AABBCCDDEEFF00112233445566';
+    const listScoped = `${customParent}00${'C'.repeat(32)}`;
+    return isBuiltinParent('0x0101') === true && isBuiltinParent('0x0120') === true
+      && isBuiltinParent(parentContentTypeId(listScoped)) === false
+      && parentContentTypeId(listScoped) === customParent;
+  }));
+
+await check('pure: a library view naming LinkFilename/DocIcon/FileSizeDisplay keeps them even though capture filtered the Hidden base columns out of doc.fields — a generic list gets no such free pass', () =>
+  page.evaluate(async () => {
+    const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const libDoc = buildSchemaDoc({
+      list: { title: 'Docs', baseTemplate: 101 },
+      fields: [{ internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true }],
+      views: [{
+        title: 'All Documents', hidden: false, fields: ['LinkFilename', 'DocIcon', 'FileSizeDisplay'],
+        rowLimit: 30, paged: true, viewQuery: '',
+      }],
+    });
+    const libPlan = buildApplyPlan(libDoc, { title: 'Docs' }, { targetLists: [] });
+    const libViewStep = libPlan.steps.find((s) => s.kind === 'view.upsert');
+
+    const listDoc = buildSchemaDoc({
+      list: { title: 'Reqs', baseTemplate: 100 },
+      fields: [{ internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true }],
+      views: [{ title: 'All Items', hidden: false, fields: ['DocIcon'], rowLimit: 30, paged: true, viewQuery: '' }],
+    });
+    const listPlan = buildApplyPlan(listDoc, { title: 'Reqs' }, { targetLists: [] });
+    const listViewStep = listPlan.steps.find((s) => s.kind === 'view.upsert');
+
+    return libViewStep.payload.fields.includes('LinkFilename') && libViewStep.payload.fields.includes('DocIcon')
+      && libViewStep.payload.fields.includes('FileSizeDisplay') && libPlan.warnings.length === 0
+      && !listViewStep.payload.fields.includes('DocIcon')
+      && listPlan.warnings.some((w) => w.includes('DocIcon'));
+  }));
+
+await check('pure: capture warns about a non-default per-library Forms template, and stays quiet for SharePoint’s own OOTB default', () =>
+  page.evaluate(async () => {
+    const { captureListSchema } = await import('/src/workbench/list-schema-capture.js');
+    function makeClient(templateUrl) {
+      return {
+        webUrl: () => 'https://t/sites/x',
+        get: async (path) => {
+          if (path === 'web') return { Id: 'w1', Title: 'W', Url: 'https://t/sites/x', ServerRelativeUrl: '/sites/x', Language: 1033 };
+          return {
+            Id: 'L1', Title: 'Docs', BaseTemplate: 101, BaseType: 1, ItemCount: 0,
+            RootFolder: { ServerRelativeUrl: '/sites/x/Docs' }, ContentTypesEnabled: false,
+            DocumentTemplateUrl: templateUrl, EnableVersioning: false, EnableAttachments: true,
+            ValidationFormula: '', ValidationMessage: '', OnQuickLaunch: false, ReadSecurity: null, WriteSecurity: null,
+          };
+        },
+        getAll: async () => ({ items: [] }),
+      };
+    }
+    const custom = await captureListSchema(makeClient('/sites/x/Docs/Forms/custom.dotx'), 'L1');
+    const stock = await captureListSchema(makeClient('/sites/x/Docs/Forms/template.dotx'), 'L1');
+    const none = await captureListSchema(makeClient(''), 'L1');
+    return custom.doc.warnings.some((w) => w.includes('Per-library Forms template'))
+      && !stock.doc.warnings.some((w) => w.includes('Per-library Forms template'))
+      && !none.doc.warnings.some((w) => w.includes('Per-library Forms template'));
+  }));
+
+await check('pure: script emitters use DocumentLibrary for a 101 plan, and never emit EnableAttachments', () =>
+  page.evaluate(async () => {
+    const { toPnpPowerShellProvisioning, toPnpjs2Provisioning } = await import('/src/workbench/list-schema-script.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const doc = buildSchemaDoc({
+      list: {
+        title: 'Docs', baseTemplate: 101, enableVersioning: true, enableMinorVersions: true,
+        forceCheckout: true, enableAttachments: true,
+      },
+      fields: [], views: [],
+    });
+    const ps = toPnpPowerShellProvisioning(doc, {});
+    const js = toPnpjs2Provisioning(doc, {});
+    return ps.includes('-Template DocumentLibrary') && !ps.includes('EnableAttachments')
+      && ps.includes('ForceCheckout') && ps.includes('EnableMinorVersions')
+      && !js.includes('EnableAttachments') && js.includes('ForceCheckout');
+  }));
+
 // ---- Mock UI: the Schema tab on /sites/schema ------------------------------
 
 const schemaPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -639,7 +795,7 @@ await check('schema: Copy to… is enabled for a generic list, with the working 
   return !disabled && title === 'Create a new list from this schema, on this site or another one.';
 });
 
-await check('schema: a document library shows the library chip and gates Copy to… behind stage 2', async () => {
+await check('schema: a document library shows the library chip, and Copy to… is enabled (stage 2)', async () => {
   await schemaPage.locator('.wb-back').click();
   await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Documents' });
   await schemaPage.locator('.wb-table tbody tr', { hasText: 'Documents' }).locator('td').first().click();
@@ -649,7 +805,52 @@ await check('schema: a document library shows the library chip and gates Copy to
   const libChip = await schemaPage.locator('.wb-schema-libkind').count();
   const disabled = await schemaPage.locator('.wb-schema-copy').isDisabled();
   const title = await schemaPage.locator('.wb-schema-copy').getAttribute('title');
-  return libChip === 1 && disabled && title.includes('stage 2');
+  return libChip === 1 && !disabled
+    && title === 'Create a new list from this schema, on this site or another one.';
+});
+
+await check('schema: the Documents warnings section names the non-default per-library Forms template', async () => {
+  const text = await schemaPage.locator('.wb-schema-section', { hasText: 'Warnings' }).textContent();
+  return text.includes('Per-library Forms template');
+});
+
+await check('dialog: Copy to… on a library shows the files-not-copied line and hides the item checkboxes', async () => {
+  await schemaPage.locator('.wb-schema-copy').click();
+  await schemaPage.waitForSelector('.wb-schema-dialog');
+  await schemaPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
+  const note = await schemaPage.locator('.wb-schema-items-note').textContent();
+  const rowHidden = await schemaPage.locator('.wb-schema-items-row').isHidden();
+  const fieldsetDisabled = await schemaPage.evaluate(() => document.querySelector('.wb-schema-items')?.disabled);
+  return note.trim() === 'Files are not copied — a library copy is schema only.' && rowHidden && fieldsetDisabled === true;
+});
+
+await check('dialog: a library Create on /sites/target posts BaseTemplate 101, no EnableAttachments, ForceCheckout true, and attaches the 0x0101-derived content type', async () => {
+  await schemaPage.fill('.wb-schema-target', '/sites/target');
+  await schemaPage.locator('.wb-schema-connect').click();
+  await schemaPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Documents Copy');
+  await schemaPage.evaluate(() => { window.__DCSPAD_WB_WRITES__ = []; });
+  await schemaPage.locator('.wb-schema-create').click();
+  await schemaPage.waitForSelector('.wb-schema-report:not([hidden])');
+  const result = await schemaPage.evaluate(() => {
+    const writes = window.__DCSPAD_WB_WRITES__ || [];
+    const method = (w) => w.headers?.['X-HTTP-Method'] || w.headers?.['x-http-method'] || '';
+    const lower = (w) => w.url.toLowerCase();
+    const create = writes.find((w) => /\/web\/lists$/.test(lower(w)) && !method(w));
+    const createBody = create ? JSON.parse(create.body) : {};
+    const settings = writes.find((w) => method(w) === 'MERGE' && /lists\(guid'[0-9a-f-]+'\)$/.test(lower(w)));
+    const settingsBody = settings ? JSON.parse(settings.body) : {};
+    const ctAttach = writes.some((w) => lower(w).includes('addavailablecontenttype'));
+    return {
+      baseTemplate: createBody.BaseTemplate, hasEnableAttachments: 'EnableAttachments' in settingsBody,
+      forceCheckout: settingsBody.ForceCheckout, ctAttach,
+    };
+  });
+  // Close the report so later schemaPage checks (which start from the
+  // all-lists grid) aren't blocked by this dialog's own overlay.
+  await schemaPage.locator('.wb-schema-cancel').click();
+  await schemaPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+  return result.baseTemplate === 101 && !result.hasEnableAttachments
+    && result.forceCheckout === true && result.ctAttach === true;
 });
 
 // ---- Stubbed live: capture request shapes ----------------------------------
@@ -1495,6 +1696,72 @@ await check('live-apply: a failing urlName→title rename MERGE leaves the list 
   }));
 
 await urlNameApply.close();
+
+// ---- Stubbed live: a library's GetList pre-check URL has no /Lists/ segment ----
+
+const libraryCreateApply = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await libraryCreateApply.addInitScript(() => {
+  window.__DCSPAD_SP_CONTEXT__ = { webAbsoluteUrl: location.origin, userDisplayName: 'Stub User' };
+});
+const libraryGetListUrls = [];
+await libraryCreateApply.route('**/_api/**', async (route) => {
+  const request = route.request();
+  const url = request.url();
+  const httpMethod = request.method();
+  const xHttpMethod = request.headers()['x-http-method'] || '';
+  if (url.includes('/_api/contextinfo')) {
+    return route.fulfill({
+      json: { FormDigestValue: 'LIB-DIGEST', FormDigestTimeoutSeconds: 1800, WebFullUrl: new URL(url).origin },
+    });
+  }
+  if (httpMethod === 'GET') {
+    if (/\/_api\/web(\?|$)/.test(url) && !url.includes('/_api/web/')) {
+      const base = url.slice(0, url.indexOf('/_api/'));
+      return route.fulfill({ json: { Id: 'web-id', Title: 'Library Web', Url: base, ServerRelativeUrl: '/sites/librarytarget' } });
+    }
+    if (url.includes('/GetList(@listUrl)')) {
+      libraryGetListUrls.push(url);
+      return route.fulfill({ status: 404, json: { 'odata.error': { message: { value: 'List not found.' } } } });
+    }
+    return route.fulfill({ json: { value: [] } });
+  }
+  if (/\/_api\/web\/lists$/.test(url) && !xHttpMethod) {
+    return route.fulfill({ json: {
+      Id: 'library-list-id', Title: JSON.parse(request.postData() || '{}').Title,
+      RootFolder: { ServerRelativeUrl: '/sites/librarytarget/Reports' },
+    } });
+  }
+  return route.fulfill({ json: {} });
+});
+await libraryCreateApply.goto(WB_URL);
+await libraryCreateApply.waitForSelector('.wb-home-cards');
+
+await check('live-apply: a library create’s GetList pre-check URL sits directly under the web (no /Lists/ segment), unlike a generic list’s', () =>
+  libraryCreateApply.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    const { buildSchemaDoc } = await import('/src/workbench/list-schema.js');
+    const { applyListSchema } = await import('/src/workbench/list-schema-apply.js');
+    const target = createSpRestClient({});
+    await target.connectWeb('/sites/librarytarget');
+    const spWrite = createSpWriteClient({ client: target });
+
+    const libDoc = buildSchemaDoc({ list: { title: 'Reports', baseTemplate: 101 }, fields: [], views: [] });
+    await applyListSchema({ doc: libDoc, client: target, spWrite, options: { title: 'Reports' } });
+
+    const listDoc = buildSchemaDoc({ list: { title: 'Reports', baseTemplate: 100 }, fields: [], views: [] });
+    await applyListSchema({ doc: listDoc, client: target, spWrite, options: { title: 'Reports' } });
+    return true;
+  }).then(() => {
+    // @listUrl='…' is a query-string literal (odataPathLiteral encodes it,
+    // slashes included) — decode before checking the path shape.
+    const [libUrl, listUrl] = libraryGetListUrls.map((u) => decodeURIComponent(u));
+    return Boolean(libUrl) && Boolean(listUrl)
+      && libUrl.includes('/sites/librarytarget/Reports') && !libUrl.includes('/Lists/')
+      && listUrl.includes('/sites/librarytarget/Lists/Reports');
+  }));
+
+await libraryCreateApply.close();
 
 // ---- Stubbed live: verbose-odata retry nests __metadata correctly ---------
 

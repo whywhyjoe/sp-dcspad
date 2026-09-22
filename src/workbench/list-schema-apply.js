@@ -158,6 +158,7 @@ function assignViews(steps, targetViews) {
 async function runListCreate(step, ctx, report) {
   const { title, description, baseTemplate, contentTypesEnabled, urlName } = step.payload;
   const proposedUrlName = urlName || String(title || '').replace(/\s+/g, '');
+  const isLib = Number(baseTemplate) === 101;
 
   // The mock's generic 'web' echo fallback would answer this GET with the
   // web entity (wrong Title), misreporting every mock create as a URL
@@ -165,7 +166,10 @@ async function runListCreate(step, ctx, report) {
   if (!ctx.spWrite.isMock()) {
     let webRel = '';
     try { webRel = new URL(ctx.client.webUrl()).pathname.replace(/\/+$/, ''); } catch { /* keep '' */ }
-    const listUrl = `${webRel}/Lists/${proposedUrlName}`;
+    // A document library's root folder sits directly under the web
+    // (`<webRel>/<urlName>`, e.g. `/sites/target/Requests`) — no `/Lists/`
+    // segment, unlike a generic list.
+    const listUrl = isLib ? `${webRel}/${proposedUrlName}` : `${webRel}/Lists/${proposedUrlName}`;
     try {
       const existing = await ctx.client.get(
         `web/GetList(@listUrl)?@listUrl='${odataPathLiteral(listUrl)}'&$select=Id,Title`,
@@ -332,10 +336,16 @@ async function runFieldMerge(step, ctx, report) {
 }
 
 async function runFieldBase(step, ctx) {
-  const { displayName, required } = step.payload;
-  return writeJson(ctx.spWrite, 'mergeJson', `${listPath(ctx.listId)}/fields/getbyinternalnameortitle('Title')`,
-    { Title: displayName, Required: !!required }, 'SP.Field',
-    { fallback: 'Could not update the Title column', code: 'write' });
+  const { internalName, displayName, required, description } = step.payload;
+  // Required is only ever meaningful on Title — _ExtendedDescription (the
+  // other base-tweakable column, stage 2) has no required flag of its own.
+  const body = { Title: displayName };
+  if (internalName === 'Title') body.Required = !!required;
+  if (description) body.Description = description;
+  return writeJson(ctx.spWrite, 'mergeJson',
+    `${listPath(ctx.listId)}/fields/getbyinternalnameortitle('${odataPathLiteral(internalName)}')`,
+    body, 'SP.Field',
+    { fallback: `Could not update the ${internalName} column`, code: 'write' });
 }
 
 async function runViewUpsert(step, ctx, report) {

@@ -850,7 +850,7 @@ export function createListsView({
     );
     if (summary.isLibrary) {
       chips.append(schemaChip('wb-schema-libkind', 'document library',
-        'Copying a document library arrives in stage 2 — export works now.'));
+        'A library copy carries the schema only — files are not copied.'));
     }
 
     const actions = el('span', 'wb-schema-actions');
@@ -862,16 +862,14 @@ export function createListsView({
     ]));
     const copyBtn = el('button', 'btn btn-xs wb-schema-copy', 'Copy to…');
     copyBtn.type = 'button';
-    // Stage 1a copies generic lists only. Libraries get their own sentence
-    // (stage 2 is planned for them); any other template is simply out of
-    // scope, and saying "stage 2" there would promise something unplanned.
-    const gated = doc.list.baseTemplate !== 100;
+    // Generic lists (100) and document libraries (101, schema only) can be
+    // copied. Any other template is out of scope — a plain sentence, since
+    // there's no stage planned to promise there.
+    const gated = doc.list.baseTemplate !== 100 && doc.list.baseTemplate !== 101;
     copyBtn.disabled = gated;
     copyBtn.title = !gated
       ? 'Create a new list from this schema, on this site or another one.'
-      : summary.isLibrary
-        ? 'Copying a document library arrives in stage 2 — export works now.'
-        : `Only generic lists can be copied — this is a ${summary.kind.toLowerCase()}. Export works now.`;
+      : `Only generic lists and document libraries can be copied — this is a ${summary.kind.toLowerCase()}. Export works now.`;
     copyBtn.addEventListener('click', () => openCopy(doc));
     actions.append(copyBtn);
 

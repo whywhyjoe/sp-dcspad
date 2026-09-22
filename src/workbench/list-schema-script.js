@@ -140,9 +140,13 @@ export function toPnpPowerShellProvisioning(doc, opts = {}) {
       case 'field.merge':
         lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step.payload.internalName)} -Values ${psHashtable(step.payload.merges)}`);
         break;
-      case 'field.base':
-        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity 'Title' -Values ${psHashtable({ Title: step.payload.displayName, Required: step.payload.required })}`);
+      case 'field.base': {
+        const values = { Title: step.payload.displayName };
+        if (step.payload.internalName === 'Title') values.Required = step.payload.required;
+        if (step.payload.description) values.Description = step.payload.description;
+        lines.push(`Set-PnPField -List ${psLit(plan.title)} -Identity ${psLit(step.payload.internalName)} -Values ${psHashtable(values)}`);
         break;
+      }
       case 'view.upsert': {
         const titleLit = psLit(step.payload.title);
         lines.push(`$v = Get-PnPView -List $list -Identity ${titleLit} -ErrorAction SilentlyContinue`);
@@ -226,9 +230,13 @@ export function toPnpjs2Provisioning(doc, opts = {}) {
       case 'field.merge':
         lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step.payload.internalName)}).update(${JSON.stringify(step.payload.merges)});`);
         break;
-      case 'field.base':
-        lines.push(`await newList.fields.getByInternalNameOrTitle("Title").update(${JSON.stringify({ Title: step.payload.displayName, Required: step.payload.required })});`);
+      case 'field.base': {
+        const values = { Title: step.payload.displayName };
+        if (step.payload.internalName === 'Title') values.Required = step.payload.required;
+        if (step.payload.description) values.Description = step.payload.description;
+        lines.push(`await newList.fields.getByInternalNameOrTitle(${JSON.stringify(step.payload.internalName)}).update(${JSON.stringify(values)});`);
         break;
+      }
       case 'view.upsert': {
         // Block-scoped: every view gets its own `view` binding. Upsert by
         // title, falling back to the list's own default view when the

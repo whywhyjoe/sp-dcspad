@@ -114,6 +114,10 @@ export function openSchemaApplyDialog({
 } = {}) {
   return new Promise((resolve) => {
     const d = normalizeSchemaDoc(doc);
+    // Stage 2: a library copy is schema only — files are never transferred,
+    // so the Items fieldset has nothing to offer for one, ever (not even in
+    // 'copy' mode with a live source client).
+    const isLibraryDoc = Number(d.list.baseTemplate) === 101;
     // Replaced per connect (see connect()); closures read the current one.
     let targetClient = createClient();
     const isMockMode = !targetClient.context().live;
@@ -285,6 +289,13 @@ export function openSchemaApplyDialog({
     panel.append(itemsFieldset);
 
     function updateItemsAvailability() {
+      if (isLibraryDoc) {
+        itemsFieldset.disabled = true;
+        itemsRow.hidden = true;
+        itemsNote.textContent = 'Files are not copied — a library copy is schema only.';
+        return;
+      }
+      itemsRow.hidden = false;
       const available = mode === 'copy' || Boolean(dataDoc);
       itemsFieldset.disabled = !available;
       itemsNote.textContent = available ? ''
@@ -391,7 +402,7 @@ export function openSchemaApplyDialog({
         && Number(probe.existingList.baseTemplate) !== Number(d.list.baseTemplate);
     }
     function eligible() {
-      return Number(d.list.baseTemplate) === 100 && !baseTypeMismatch();
+      return (Number(d.list.baseTemplate) === 100 || Number(d.list.baseTemplate) === 101) && !baseTypeMismatch();
     }
 
     function updateTitleStatus() {
@@ -533,8 +544,8 @@ export function openSchemaApplyDialog({
       // of waiting for a Dry run/Create click to discover them.
       if (baseTypeMismatch()) {
         showError(`‘${probe.existingList.title}’ already exists on the target as a different type of list — it can’t be used for this schema.`);
-      } else if (Number(d.list.baseTemplate) !== 100) {
-        showError('Only generic lists can be created in this stage — document libraries arrive in stage 2.');
+      } else if (Number(d.list.baseTemplate) !== 100 && Number(d.list.baseTemplate) !== 101) {
+        showError('Only generic lists and document libraries can be created from a schema.');
       } else {
         showError('');
       }
