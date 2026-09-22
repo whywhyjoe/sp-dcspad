@@ -12,6 +12,10 @@ import {
   createAlpineHtmlCompletionProvider,
 } from './intelligence/alpine.js';
 import {
+  SP_UTILS_JS_LIBRARIES,
+  SP_UTILS_PACK_ID,
+} from './intelligence/sp-utils.js';
+import {
   BSP_PACK_ID,
   createBspCssCompletionProvider,
   createBspCssHoverProvider,
@@ -204,6 +208,21 @@ export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFon
     }
     applyJsLibraries();
     applyHtmlData();
+  }
+
+  // DCSPad SP Utilities (window.SPUtils): JavaScript declarations only —
+  // the runtime is a console-first script with no HTML surface.
+  function setSpUtilsIntelligenceEnabled(enabled) {
+    if (enabled) {
+      jsLibraryPacks.set(SP_UTILS_PACK_ID, SP_UTILS_JS_LIBRARIES);
+      enabledIntelligence.add(SP_UTILS_PACK_ID);
+      document.documentElement.dataset.spUtilsIntelligence = 'ready';
+    } else {
+      jsLibraryPacks.delete(SP_UTILS_PACK_ID);
+      enabledIntelligence.delete(SP_UTILS_PACK_ID);
+      document.documentElement.dataset.spUtilsIntelligence = 'disabled';
+    }
+    applyJsLibraries();
   }
 
   const alpineCompletionRegistration = monaco.languages.registerCompletionItemProvider(
@@ -458,6 +477,7 @@ export async function initEditors({ onChange, onRunShortcut, onTogglePane, onFon
   function setIntelligencePacks(packIds) {
     const requested = new Set(packIds || []);
     setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
+    setSpUtilsIntelligenceEnabled(requested.has(SP_UTILS_PACK_ID));
     setPnpTypesEnabled(requested.has('pnpjs-2.15.0'));
     setBspIntelligenceEnabled(requested.has(BSP_PACK_ID));
     setFluentIconIntelligenceEnabled(requested.has(FLUENT_ICONS_PACK_ID));

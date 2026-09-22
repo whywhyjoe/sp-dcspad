@@ -1,5 +1,5 @@
 // Monaco-specific integration suite: model switching, keyboard action,
-// diagnostics, PnPjs 2.15.0 completion, asset routing, and worker failure.
+// diagnostics, PnPjs 2.15.0 + SPUtils completion, asset routing, and worker failure.
 
 import { launchBrowser, check, exitWithResult, APP_URL } from './lib.mjs';
 import { readFile } from 'node:fs/promises';
@@ -327,6 +327,74 @@ await check('Alpine JavaScript completion includes data/store/plugin', async () 
   }
   return true;
 });
+
+await check('SP Utilities intelligence survives custom catalog URLs', () =>
+  page.evaluate(async () => {
+    const { isSpUtilsRuntime } = await import('/src/libraries.js');
+    return isSpUtilsRuntime({ id: 'sp-utils', name: 'preset', js: 'utilities/dcspad-sp-utilities.js' })
+      && isSpUtilsRuntime({ id: 'custom', name: 'copy', js: 'https://tenant.example.test/Code/lib/dcspad-sp-utilities.js?v=3' })
+      && !isSpUtilsRuntime({ id: 'other', name: 'other', js: 'https://tenant.example.test/Code/lib/other.js' });
+  }));
+
+const spUtilsRow = page.locator('.lib-item', { hasText: 'DCSPad SP Utilities' });
+await spUtilsRow.locator('input[type="checkbox"]').check();
+await page.waitForFunction(() =>
+  document.documentElement.dataset.spUtilsIntelligence === 'ready');
+await check('SP Utilities intelligence follows the catalog checkbox', true);
+await check('SP Utilities preset resolves inside the deployed pad folder', () =>
+  page.evaluate(async () => {
+    const { getEnabledLibraries } = await import('/src/libraries.js');
+    const entry = getEnabledLibraries().find((lib) => lib.name === 'DCSPad SP Utilities (SPUtils)');
+    return Boolean(entry)
+      && /^https?:\/\//.test(entry.js)
+      && entry.js.endsWith('/utilities/dcspad-sp-utilities.js');
+  }));
+await check('SPUtils JavaScript completion offers setupContext, help, and getAllLists', async () => {
+  for (const [prefix, name] of [['se', 'setupContext'], ['he', 'help'], ['getAllL', 'getAllLists']]) {
+    await setDoc('js', `SPUtils.${prefix}`);
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Control+Space');
+    await page.waitForSelector('.suggest-widget.visible');
+    const suggestions = await page.locator('.suggest-widget .monaco-list-row').allTextContents();
+    await page.keyboard.press('Escape');
+    if (!suggestions.some((text) =>
+      new RegExp(`^${name}(?:\\b|\\s|\\()`).test(text))) return false;
+  }
+  return true;
+});
+await setDoc('js', 'SPUtils.setupContext("sites/Demo");\nSPUtils.getAllLists().then(() => SPUtils.help());');
+await page.waitForTimeout(750);
+await check('SPUtils global has no false JavaScript diagnostics', async () => {
+  const markers = await page.evaluate(async () => {
+    const monaco = await import('/vendor/monaco/monaco.js');
+    const resource = monaco.Uri.parse('file:///dcspad/script.js');
+    return monaco.editor.getModelMarkers({ resource });
+  });
+  if (markers.length) {
+    console.log(`      SPUtils markers: ${markers.map((marker) => marker.message).join(' | ')}`);
+  }
+  return markers.length === 0;
+});
+await check('every SPUtils runtime export is declared by the intelligence pack', async () => {
+  await setDoc('js', 'console.log("sputils-keys", Object.keys(SPUtils).sort().join(","));');
+  await focusEditor();
+  await page.keyboard.press('Control+Enter');
+  await page.waitForFunction(() =>
+    document.querySelector('#console-out')?.textContent.includes('sputils-keys'));
+  const consoleText = await page.locator('#console-out').textContent();
+  const runtimeKeys = consoleText.match(/sputils-keys ([\w,]+)/)?.[1] || '';
+  const declared = await page.evaluate(async () => {
+    const { SP_UTILS_FUNCTION_NAMES } = await import('/src/intelligence/sp-utils.js');
+    return [...SP_UTILS_FUNCTION_NAMES].sort().join(',');
+  });
+  if (runtimeKeys !== declared) {
+    console.log(`      runtime: ${runtimeKeys}\n      declared: ${declared}`);
+  }
+  return runtimeKeys.length > 0 && runtimeKeys === declared;
+});
+await spUtilsRow.locator('input[type="checkbox"]').uncheck();
+await page.waitForFunction(() =>
+  document.documentElement.dataset.spUtilsIntelligence === 'disabled');
 
 const pnpRow = page.locator('.lib-item', { hasText: 'PnPjs 2.15 (pnp2 bundle)' });
 await pnpRow.locator('input[type="checkbox"]').check();

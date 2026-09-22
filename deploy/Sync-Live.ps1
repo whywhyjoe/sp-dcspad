@@ -466,7 +466,7 @@ $topLevelDeploymentFiles = @(
     'workbench.webpart.html',
     'dcspad.workbench.js'
 )
-$deploymentDirectoryNames = @('src', 'styles', 'examples', 'vendor', 'lib-mirror')
+$deploymentDirectoryNames = @('src', 'styles', 'examples', 'vendor', 'lib-mirror', 'utilities')
 
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $stagingPath = Join-Path $tempRoot ("dcspad-deploy-" + [Guid]::NewGuid().ToString('N'))
@@ -532,7 +532,8 @@ try {
         (Join-Path $LivePath 'src\src'),
         (Join-Path $LivePath 'styles\styles'),
         (Join-Path $LivePath 'examples\examples'),
-        (Join-Path $LivePath 'vendor\vendor')
+        (Join-Path $LivePath 'vendor\vendor'),
+        (Join-Path $LivePath 'utilities\utilities')
     )
     foreach ($folder in $accidentalNestedFolders) {
         if (-not (Test-Path -LiteralPath $folder)) { continue }

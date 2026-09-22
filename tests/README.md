@@ -24,7 +24,7 @@ cd tests && python3 -m http.server 8643
 # terminal 3
 cd tests
 node smoke.mjs      # 76 checks: capture, isolation, Fluent preview runtime, rerun lifecycle, fragment links, inspector, network, REPL, filters, catalog + catalog files, snippets, project files, exports, storage errors, autosave
-node monaco.mjs     # 44 checks: models, diagnostics, scrollbar overview ruler, mirrored PnPjs 2.15 + Alpine 3.15.2 runtime/version policy, pnp/pnp2 + Alpine + BMO + Fluent completion/hover, generated catalogs, isolated snippet undo/redo, JSON language service (tokenization, trailing-comma validation, .json-URI adoption, schema-request policy), assets and worker degradation
+node monaco.mjs     # 50 checks: models, diagnostics, scrollbar overview ruler, mirrored PnPjs 2.15 + Alpine 3.15.2 runtime/version policy, pnp/pnp2 + Alpine + SPUtils + BMO + Fluent completion/hover, generated catalogs, isolated snippet undo/redo, JSON language service (tokenization, trailing-comma validation, .json-URI adoption, schema-request policy), assets and worker degradation
 node config.mjs     # 33 checks: config/Browser/Copilot behavior, additive SharePoint file types, same-tenant formats/history/refresh/rejection, framework/asset intelligence/runtime, and fallback
 node hosted.mjs     # 15 checks: early/delayed splash, SharePoint chrome reflow, exact boot/bundle/config path, hosted flag/base, versioned runtime/types/intelligence/Fluent bridge and same-origin worker
 node darkmode.mjs   #  8 checks: preview theme toggle + user-CSS-wins layering

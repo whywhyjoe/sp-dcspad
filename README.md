@@ -94,6 +94,11 @@ URLs without editing or rebuilding the application.
   PnPjs intelligence pack types both the rollup's `pnp2` global and its
   standardized `pnp` alias. Keep `pnp2.bundle.js.map` beside the bundle for
   browser debugging.
+- The **DCSPad SP Utilities (SPUtils)** entry is an `appAsset`: its path
+  (`utilities/dcspad-sp-utilities.js`) resolves against the pad's own deployed
+  folder, so it needs no `frameworks.items` override. Add one only to point it
+  at a separately hosted copy. It carries the `dcspad-sp-utilities`
+  intelligence pack and must stay below PnPjs in the catalog.
 - `assets.designSystem` and `assets.fluentIcons` hold local-review and eventual
   hosted base folders. Relative local paths resolve from `siteURL` when it is
   set, otherwise from `dcspad.config.json`; hosted locations may be absolute
@@ -285,6 +290,10 @@ Framework intelligence follows the enabled runtime checkbox.
 - **PnPjs:** enable **PnPjs 2.15 (pnp2 bundle)**, type either `pnp.sp.w` or
   `pnp2.sp.w` in JavaScript, then press `Ctrl+Space`; `web` should be offered
   for both globals.
+- **SPUtils:** enable **DCSPad SP Utilities (SPUtils)** (below PnPjs), type
+  `SPUtils.`, then press `Ctrl+Space`; `setupContext`, `help`, and the list,
+  group, and sharing helpers should be offered with documentation. Run
+  `SPUtils.help()` in the preview for the on-page usage panel.
 - **Alpine JavaScript:** enable **Alpine.js**, type `Alpine.d`, then press
   `Ctrl+Space`; `data` should be offered. `Alpine.s` and `Alpine.p` offer
   `store` and `plugin`.

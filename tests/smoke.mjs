@@ -652,7 +652,8 @@ await check('framework reset restores PRESETS and clears workspace selections', 
   }));
 
 // A v1 catalog should restore the maintained CSS pair, repair Fluent's old
-// origin-root URL, and adopt the built-in ordering once.
+// origin-root URL, gain the v3 SP Utilities entry directly below PnPjs, and
+// adopt the built-in ordering once.
 await page.evaluate(() => {
   const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
   stored.v = 1;
@@ -667,14 +668,17 @@ await page.evaluate(() => {
 });
 await page.reload();
 await page.waitForFunction(() =>
-  JSON.parse(localStorage.getItem('dcspad.v2.catalog'))?.v === 2);
+  JSON.parse(localStorage.getItem('dcspad.v2.catalog'))?.v === 3);
 await check('legacy framework catalog restores maintained CSS frameworks in order', () =>
   page.evaluate(() => {
     const stored = JSON.parse(localStorage.getItem('dcspad.v2.catalog'));
     const bspIndex = stored.items.findIndex((item) => item.id === 'bsp-design');
     const fluentIndex = stored.items.findIndex((item) => item.id === 'fluent');
-    return stored.v === 2
+    const pnpIndex = stored.items.findIndex((item) => item.id === 'pnpjs2');
+    const spUtilsIndex = stored.items.findIndex((item) => item.id === 'sp-utils');
+    return stored.v === 3
       && stored.items[2].id === 'dcs-standard'
+      && spUtilsIndex === pnpIndex + 1
       && bspIndex + 1 === fluentIndex
       && stored.items[fluentIndex].css === 'Code/fluent-icons/fonts/FluentSystemIcons-All.css'
       && stored.items.every((item, index) => item.order === index + 1);

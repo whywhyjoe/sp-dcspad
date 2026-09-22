@@ -18,13 +18,17 @@ import {
 } from './library-files.js';
 
 // Seed only — after first boot the stored catalog is the truth.
-const FRAMEWORK_CATALOG_VERSION = 2;
+const FRAMEWORK_CATALOG_VERSION = 3;
 export const PRESETS = [
   { id: 'dcs-standard', name: 'DCS Standard Include', order: 3, needsConfig: true,
     hint: 'Set your org include URL once; stored with your workspace.' },
   { id: 'pnpjs2', name: 'PnPjs 2.15 (pnp2 bundle)', js: 'lib-mirror/pnp2.bundle.js',
     intelligence: ['pnpjs-2.15.0'],
     hint: 'Exposes compatible globals pnp2 and pnp — use const { sp } = pnp;' },
+  { id: 'sp-utils', name: 'DCSPad SP Utilities (SPUtils)',
+    js: 'utilities/dcspad-sp-utilities.js', appAsset: true,
+    intelligence: ['dcspad-sp-utilities'],
+    hint: 'window.SPUtils — console-first admin helpers on PnPjs 2. Keep it below PnPjs. Run SPUtils.help().' },
   { id: 'alpine', name: 'Alpine.js 3.15.2', js: 'lib-mirror/alpine.js',
     intelligence: ['alpine-3'] },
   { id: 'bsp-design', name: 'BSP Design System', css: 'Code/bsp-design/styles.css' },
@@ -94,7 +98,7 @@ const defaultCatalog = () => ({
 // Catalog v2 restores the two maintained CSS frameworks. Persist the migration
 // version so a user may still remove or reorder either entry afterward.
 function migrateCatalogV2() {
-  if (Number(catalog.v) >= FRAMEWORK_CATALOG_VERSION) return false;
+  if (Number(catalog.v) >= 2) return false;
 
   const hadCompleteOrder = catalog.items
     .every((entry, index) => entry.order === index + 1);
@@ -118,9 +122,37 @@ function migrateCatalogV2() {
     catalog.items.splice(insertAt, 0, structuredClone(bspPreset));
   }
 
-  catalog.v = FRAMEWORK_CATALOG_VERSION;
+  catalog.v = 2;
   if (hadCompleteOrder) syncCatalogOrder();
   return true;
+}
+
+// Catalog v3 adds the DCSPad SP Utilities entry (utilities/ ships with the
+// pad, so the preset resolves against the deployed folder). Inserted directly
+// below PnPjs because the script expects pnp2 to exist when it loads.
+function migrateCatalogV3() {
+  if (Number(catalog.v) >= 3) return false;
+
+  const hadCompleteOrder = catalog.items
+    .every((entry, index) => entry.order === index + 1);
+  if (!catalog.items.some((entry) => entry.id === 'sp-utils')) {
+    const preset = PRESETS.find((entry) => entry.id === 'sp-utils');
+    const pnpIndex = catalog.items.findIndex((entry) => entry.id === 'pnpjs2');
+    const insertAt = pnpIndex !== -1 ? pnpIndex + 1 : catalog.items.length;
+    catalog.items.splice(insertAt, 0, structuredClone(preset));
+  }
+
+  catalog.v = 3;
+  if (hadCompleteOrder) syncCatalogOrder();
+  return true;
+}
+
+// Run every pending migration in order; true when any of them changed the
+// catalog. Each step stamps its own version so a partial history replays.
+function migrateCatalog() {
+  const v2 = migrateCatalogV2();
+  const v3 = migrateCatalogV3();
+  return v2 || v3;
 }
 
 const isCssUrl = (url) => /\.css(\?|$)/i.test(url);
@@ -142,7 +174,7 @@ export function initLibraries({ config, onChange, onStorageError }) {
   catalog = storedValidation?.ok ? storedValidation.doc : null;
 
   if (catalog) {
-    const migratedCatalog = migrateCatalogV2();
+    const migratedCatalog = migrateCatalog();
     const inheritedPresetOrder = inheritPresetOrders(catalog.items);
     const orderNeedsSync = migratedCatalog
       || inheritedPresetOrder
@@ -493,6 +525,9 @@ export function getEnabledLibraries() {
       continue;
     }
     const effective = applyFrameworkConfig(entry, appConfig);
+    if (entry.appAsset && effective.js && effective.js === entry.js) {
+      effective.js = appAssetUrl(entry.js);
+    }
     result.push({
       name: effective.name,
       js: effective.js,
@@ -526,6 +561,17 @@ fluent-icon {
   vertical-align: -0.125em;
 }
 `;
+
+// A catalog entry marked appAsset ships inside the pad's own deployed folder
+// (utilities/, lib-mirror/…). Its relative path is resolved against that
+// folder, never the SharePoint page, so it survives hosting. A
+// dcspad.config.json frameworks override still wins because the effective
+// entry's js will no longer equal the preset path.
+function appAssetUrl(path) {
+  const base = window.__DCSPAD_ASSET_BASE__
+    || new URL('../', import.meta.url).href;
+  return new URL(path, base).href;
+}
 
 function appSourceUrl(path) {
   const base = window.__DCSPAD_SRC_BASE__
@@ -594,6 +640,20 @@ export function isAlpine3Runtime(entry) {
     || url.includes('/alpinejs/3.'));
 }
 
+// The SP Utilities script is recognizable by its file name wherever a custom
+// catalog entry points at it, so imported catalogs gain the pack too.
+export function isSpUtilsRuntime(entry) {
+  if (entry?.intelligence?.includes('dcspad-sp-utilities')) return true;
+  if (entry?.id === 'sp-utils') return true;
+  const urls = [
+    entry?.js,
+    entry?.fallbackJs,
+    entry?.configuredSources?.local,
+    entry?.configuredSources?.cdn,
+  ].map((url) => String(url || '').toLowerCase());
+  return urls.some((url) => url.includes('dcspad-sp-utilities'));
+}
+
 export function hasEnabledPnpjs215Runtime() {
   const enabled = new Set(getState().libraries.enabled);
   return catalog.items.some((entry) =>
@@ -615,6 +675,7 @@ export function getEnabledIntelligence() {
     // explicit intelligence metadata existed.
     if (isPnpjs215Runtime(effective)) packs.add('pnpjs-2.15.0');
     if (isAlpine3Runtime(effective)) packs.add('alpine-3');
+    if (isSpUtilsRuntime(effective)) packs.add('dcspad-sp-utilities');
   }
   return [...packs];
 }
@@ -631,7 +692,7 @@ export function replaceCatalog(doc) {
   const validation = validateFrameworkCatalog(doc);
   if (!validation.ok) return false;
   catalog = validation.doc;
-  migrateCatalogV2();
+  migrateCatalog();
   catalog.items = materializeCatalogOrder(catalog.items);
   const items = catalog.items;
   persistCatalog();

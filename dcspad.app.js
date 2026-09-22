@@ -708,6 +708,310 @@ function createAlpineHtmlCompletionProvider(monaco, isEnabled) {
   };
 }
 
+// ../src/intelligence/sp-utils.js
+var SP_UTILS_PACK_ID = "dcspad-sp-utilities";
+var SP_UTILS_JS_LIBRARIES = [{
+  filePath: "file:///node_modules/@types/dcspad-sp-utilities/index.d.ts",
+  content: `/**
+ * DCSPad SP Utilities \u2014 console-first SharePoint admin helpers on PnPjs 2.
+ * Exposed as the global \`SPUtils\` by utilities/dcspad-sp-utilities.js.
+ * Requires PnPjs 2 on the page as \`pnp2\`. Call setupContext() first.
+ */
+
+/** One row of the usage registry that drives help() and the on-page panel. */
+interface SPUtilsUsageEntry {
+  /** Function name, e.g. "getAllLists". */
+  readonly name: string;
+  /** Signature as shown in the panel, e.g. "(listTitle)". */
+  readonly sig: string;
+  /** One-line purpose. */
+  readonly what: string;
+  /** A copyable example call. */
+  readonly example: string;
+}
+
+/** A list item as returned by the paging helpers (Id and Title plus any other field). */
+interface SPUtilsListItem {
+  Id: number;
+  Title?: string;
+  [field: string]: any;
+}
+
+/** Field metadata as returned by getListFields(). */
+interface SPUtilsFieldInfo {
+  InternalName: string;
+  Title: string;
+  TypeAsString: string;
+  Required: boolean;
+  ReadOnlyField: boolean;
+  Description?: string;
+  DefaultValue?: string | null;
+  Choices?: string[] | { results: string[] };
+  MaxLength?: number;
+}
+
+/** The migration schema produced by getListSchemaForMigration(). */
+interface SPUtilsListSchema {
+  /** ISO timestamp of the export. */
+  exported: string;
+  list: {
+    title: string;
+    description: string;
+    baseTemplate: number;
+    enableVersioning: boolean;
+    enableMinorVersions: boolean;
+    forceCheckout: boolean;
+    hidden: boolean;
+    contentTypesEnabled: boolean;
+    enableAttachments: boolean;
+  };
+  fields: Array<{
+    internalName: string;
+    displayName: string;
+    type: string;
+    required: boolean;
+    readOnly: boolean;
+    description?: string;
+    defaultValue?: string | null;
+    choices: string[];
+    maxLength?: number;
+    /** The field's SchemaXml, usable with createFieldAsXml after scrubbing ids. */
+    schemaXml: string;
+  }>;
+  contentTypes: Array<{ Name: string; StringId: string; Description?: string; Group?: string; Hidden?: boolean; ReadOnly?: boolean }>;
+  views: Array<{ Title: string; DefaultView: boolean; Paged: boolean; RowLimit: number; ViewQuery: string; Fields: string[] }>;
+}
+
+/** A column definition accepted by addFieldsToList(). */
+interface SPUtilsFieldSpec {
+  /** Display name; the internal name is derived from it unless \`name\` is given. */
+  displayName?: string;
+  /** Explicit internal name. */
+  name?: string;
+  /** One of: text, note, multiline, boolean, yes/no, choice, url, user, person. Defaults to text. */
+  type?: 'text' | 'note' | 'multiline' | 'boolean' | 'yes/no' | 'choice' | 'url' | 'user' | 'person';
+  /** Choice values; required when type is "choice". */
+  choices?: string[];
+}
+
+interface SPUtilsGroupFailure {
+  user: string;
+  group: string;
+  error: string;
+}
+
+interface SPUtilsPerGroupCounts {
+  attempted: number;
+  added: number;
+  skippedExisting: number;
+  failed: number;
+}
+
+/** Result of addUsersFromCSVToGroups(). */
+interface SPUtilsAddResult {
+  attempted: number;
+  added: number;
+  skippedExisting: number;
+  failed: SPUtilsGroupFailure[];
+  perGroup: Record<string, SPUtilsPerGroupCounts>;
+  dryRun: boolean;
+}
+
+/** Result of syncUsersFromCSVToGroups(). */
+interface SPUtilsSyncResult {
+  dryRun: boolean;
+  groups: number;
+  totals: {
+    addPlanned: number;
+    added: number;
+    removePlanned: number;
+    removed: number;
+    skippedExisting: number;
+  };
+  perGroup: Record<string, {
+    addPlanned: number;
+    added: number;
+    removePlanned: number;
+    removed: number;
+    skippedExisting: number;
+    errors: number;
+  }>;
+  failed: Array<{ email: string; group: string; action: 'add' | 'remove' | 'parse'; error: string }>;
+  attempted: number;
+  added: number;
+  skippedExisting: number;
+}
+
+/** Result of addFieldsToList(). */
+interface SPUtilsAddFieldsResult {
+  added: number;
+  skipped: number;
+  failed: Array<{ name: string; error: string }>;
+}
+
+interface SPUtilsApi {
+  /**
+   * Print every function to the console as a table and open the on-page
+   * usage panel. Returns the usage registry.
+   * @example SPUtils.help()
+   */
+  help(): SPUtilsUsageEntry[];
+
+  /** Empty the on-page status log. */
+  clearStatus(): void;
+
+  /**
+   * **Call first.** Point PnPjs at a site. Accepts a site path relative to the
+   * current tenant ("sites/Project", "teams/Marketing") or an absolute
+   * same-tenant URL. Every later call uses this context.
+   * @example SPUtils.setupContext("sites/Project")
+   */
+  setupContext(siteSubUrl: string): void;
+
+  /**
+   * Fetch every item in a list and print Id and Title as a table.
+   * @param listTitle Display name of the list.
+   * @param batchSize Items per request (default 100).
+   * @example await SPUtils.previewListItems("Requests")
+   */
+  previewListItems(listTitle: string, batchSize?: number): Promise<void>;
+
+  /**
+   * Batch-delete list items, optionally filtered by a predicate.
+   * Run with \`dryRun: true\` first: it prints what would be deleted and changes nothing.
+   * @example await SPUtils.deleteListItems("Requests", { dryRun: true, filterFn: i => /temp/i.test(i.Title) })
+   */
+  deleteListItems(listTitle: string, options?: {
+    /** Items per batch request (default 100). */
+    batchSize?: number;
+    /** Preview only; nothing is deleted (default false). */
+    dryRun?: boolean;
+    /** Keep only the items this returns true for. */
+    filterFn?: ((item: SPUtilsListItem) => boolean) | null;
+  }): Promise<void>;
+
+  /**
+   * Print every list on the site (Id, Title) as a table.
+   * @example await SPUtils.getAllLists()
+   */
+  getAllLists(): Promise<void>;
+
+  /**
+   * Print every site group (Id, Title) as a table.
+   * @example await SPUtils.getAllSecurityGroups()
+   */
+  getAllSecurityGroups(): Promise<void>;
+
+  /**
+   * Print each site member with the groups they belong to.
+   * @example await SPUtils.getSiteMembersWithGroups()
+   */
+  getSiteMembersWithGroups(): Promise<void>;
+
+  /**
+   * Print each group with its members, including job title and department
+   * from the user profile. System accounts are skipped.
+   * @example await SPUtils.getSiteGroupMembers()
+   */
+  getSiteGroupMembers(): Promise<void>;
+
+  /**
+   * Create a sharing link for a file and return its URL.
+   * @param filePath Server-relative path, e.g. "/sites/X/Shared Documents/a.pdf".
+   * @param canEdit true for an edit link, false for view (default false).
+   * @param expireInDays Days until expiry; 0 means no expiry (default 1).
+   * @example await SPUtils.getSharingLinkForItem("/sites/X/Shared Documents/a.pdf", false, 7)
+   */
+  getSharingLinkForItem(filePath: string, canEdit?: boolean, expireInDays?: number): Promise<string>;
+
+  /**
+   * Revoke every sharing link on a file. Does nothing unless \`areYouSure\` is true.
+   * @returns true on success; undefined when not confirmed.
+   * @example await SPUtils.removeAllSharingLinksForItem("/sites/X/Shared Documents/a.pdf", true)
+   */
+  removeAllSharingLinksForItem(filePath: string, areYouSure?: boolean): Promise<boolean | undefined>;
+
+  /**
+   * Add users to groups from a CSV stored in a library. The CSV has either
+   * "Email Address" and "Group" header columns, or two headerless columns
+   * (email, group). Lines starting with # are ignored.
+   * @param filePath Server-relative path to the CSV.
+   * @example await SPUtils.addUsersFromCSVToGroups("/sites/X/Shared Documents/users.csv", { dryRun: true })
+   */
+  addUsersFromCSVToGroups(filePath: string, options?: {
+    /** Preview only (default false). */
+    dryRun?: boolean;
+    /** Parallel adds (default 6). */
+    concurrency?: number;
+  }): Promise<SPUtilsAddResult>;
+
+  /**
+   * Make group membership match a master CSV: users in the CSV are added,
+   * members not in the CSV are **removed**. Rows whose Group is "ALL" join
+   * every group and are never removed. \`adminEmail\` is required and is
+   * always added, never removed. \`dryRun\` defaults to true.
+   * @example await SPUtils.syncUsersFromCSVToGroups("/sites/X/Shared Documents/master.csv", { dryRun: true, adminEmail: "me@contoso.com" })
+   */
+  syncUsersFromCSVToGroups(filePath: string, options: {
+    /** Email/UPN that is always added and never removed. Required. */
+    adminEmail: string;
+    /** Preview only (default true). */
+    dryRun?: boolean;
+    /** Parallelism per group (default 6). */
+    concurrency?: number;
+    /** Skip removals for obvious system accounts (default true). */
+    excludeSystem?: boolean;
+    /** A group synced to the union of every other group's members. */
+    umbrellaGroup?: string;
+  }): Promise<SPUtilsSyncResult>;
+
+  /**
+   * Create list columns from a JSON spec. Existing columns are skipped, so
+   * the call is safe to repeat.
+   * @param listServerRelativeUrl e.g. "/sites/X/Lists/Requests".
+   * @example await SPUtils.addFieldsToList("/sites/X/Lists/Requests", [{ displayName: "Priority", type: "choice", choices: ["Low", "High"] }], { dryRun: true })
+   */
+  addFieldsToList(listServerRelativeUrl: string, specs: SPUtilsFieldSpec[], options?: {
+    /** Log planned columns without creating them (default false). */
+    dryRun?: boolean;
+  }): Promise<SPUtilsAddFieldsResult>;
+
+  /**
+   * Download every item in a list as an .xlsx workbook with a field-metadata
+   * sheet. Requires ExcelJS on the page.
+   * @example await SPUtils.exportListToExcel("Requests")
+   */
+  exportListToExcel(listTitle: string, options?: {
+    /** Output file name (default: list title plus date). */
+    fileName?: string;
+  }): Promise<void>;
+
+  /**
+   * Fetch the visible fields of a list with type, required and read-only
+   * flags. Prints a table and returns the array.
+   * @example const fields = await SPUtils.getListFields("Requests")
+   */
+  getListFields(listTitle: string): Promise<SPUtilsFieldInfo[]>;
+
+  /**
+   * Capture list settings, field definitions (with SchemaXml), content types
+   * and views as one object, for rebuilding the list on another site.
+   * Item data is not included.
+   * @example const schema = await SPUtils.getListSchemaForMigration("Requests")
+   */
+  getListSchemaForMigration(listTitle: string): Promise<SPUtilsListSchema>;
+}
+
+/** DCSPad SP Utilities. Run \`SPUtils.help()\` for the function list. */
+declare const SPUtils: SPUtilsApi;
+
+interface Window {
+  /** DCSPad SP Utilities. Run \`SPUtils.help()\` for the function list. */
+  SPUtils: SPUtilsApi;
+}
+`
+}];
+
 // ../src/intelligence/bsp.js
 var BSP_PACK_ID = "bsp-design";
 var dataPromise = null;
@@ -1475,6 +1779,18 @@ async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }
     applyJsLibraries();
     applyHtmlData();
   }
+  function setSpUtilsIntelligenceEnabled(enabled) {
+    if (enabled) {
+      jsLibraryPacks.set(SP_UTILS_PACK_ID, SP_UTILS_JS_LIBRARIES);
+      enabledIntelligence.add(SP_UTILS_PACK_ID);
+      document.documentElement.dataset.spUtilsIntelligence = "ready";
+    } else {
+      jsLibraryPacks.delete(SP_UTILS_PACK_ID);
+      enabledIntelligence.delete(SP_UTILS_PACK_ID);
+      document.documentElement.dataset.spUtilsIntelligence = "disabled";
+    }
+    applyJsLibraries();
+  }
   const alpineCompletionRegistration = monaco.languages.registerCompletionItemProvider(
     "html",
     createAlpineHtmlCompletionProvider(
@@ -1710,6 +2026,7 @@ async function initEditors({ onChange, onRunShortcut, onTogglePane, onFontStep }
   function setIntelligencePacks(packIds) {
     const requested = new Set(packIds || []);
     setAlpineIntelligenceEnabled(requested.has(ALPINE_PACK_ID));
+    setSpUtilsIntelligenceEnabled(requested.has(SP_UTILS_PACK_ID));
     setPnpTypesEnabled(requested.has("pnpjs-2.15.0"));
     setBspIntelligenceEnabled(requested.has(BSP_PACK_ID));
     setFluentIconIntelligenceEnabled(requested.has(FLUENT_ICONS_PACK_ID));
@@ -2835,7 +3152,7 @@ function validateSnippetLibrary(doc2, { allowUnsignedEmpty = false } = {}) {
 }
 
 // ../src/libraries.js
-var FRAMEWORK_CATALOG_VERSION = 2;
+var FRAMEWORK_CATALOG_VERSION = 3;
 var PRESETS = [
   {
     id: "dcs-standard",
@@ -2850,6 +3167,14 @@ var PRESETS = [
     js: "lib-mirror/pnp2.bundle.js",
     intelligence: ["pnpjs-2.15.0"],
     hint: "Exposes compatible globals pnp2 and pnp \u2014 use const { sp } = pnp;"
+  },
+  {
+    id: "sp-utils",
+    name: "DCSPad SP Utilities (SPUtils)",
+    js: "utilities/dcspad-sp-utilities.js",
+    appAsset: true,
+    intelligence: ["dcspad-sp-utilities"],
+    hint: "window.SPUtils \u2014 console-first admin helpers on PnPjs 2. Keep it below PnPjs. Run SPUtils.help()."
   },
   {
     id: "alpine",
@@ -2911,7 +3236,7 @@ var defaultCatalog = () => ({
   items: materializeCatalogOrder(structuredClone(PRESETS))
 });
 function migrateCatalogV2() {
-  if (Number(catalog.v) >= FRAMEWORK_CATALOG_VERSION) return false;
+  if (Number(catalog.v) >= 2) return false;
   const hadCompleteOrder = catalog.items.every((entry, index) => entry.order === index + 1);
   const bspPreset = PRESETS.find((entry) => entry.id === "bsp-design");
   const fluentPreset = PRESETS.find((entry) => entry.id === "fluent");
@@ -2928,9 +3253,27 @@ function migrateCatalogV2() {
     const insertAt = fluentIndex !== -1 ? fluentIndex : Math.min(3, catalog.items.length);
     catalog.items.splice(insertAt, 0, structuredClone(bspPreset));
   }
-  catalog.v = FRAMEWORK_CATALOG_VERSION;
+  catalog.v = 2;
   if (hadCompleteOrder) syncCatalogOrder();
   return true;
+}
+function migrateCatalogV3() {
+  if (Number(catalog.v) >= 3) return false;
+  const hadCompleteOrder = catalog.items.every((entry, index) => entry.order === index + 1);
+  if (!catalog.items.some((entry) => entry.id === "sp-utils")) {
+    const preset = PRESETS.find((entry) => entry.id === "sp-utils");
+    const pnpIndex = catalog.items.findIndex((entry) => entry.id === "pnpjs2");
+    const insertAt = pnpIndex !== -1 ? pnpIndex + 1 : catalog.items.length;
+    catalog.items.splice(insertAt, 0, structuredClone(preset));
+  }
+  catalog.v = 3;
+  if (hadCompleteOrder) syncCatalogOrder();
+  return true;
+}
+function migrateCatalog() {
+  const v2 = migrateCatalogV2();
+  const v3 = migrateCatalogV3();
+  return v2 || v3;
 }
 var isCssUrl = (url) => /\.css(\?|$)/i.test(url);
 var entryFromUrl = (url, name) => ({
@@ -2947,7 +3290,7 @@ function initLibraries({ config, onChange, onStorageError }) {
   const storedValidation = storedCatalog ? validateFrameworkCatalog(storedCatalog, { allowUnsignedEmpty: true }) : null;
   catalog = storedValidation?.ok ? storedValidation.doc : null;
   if (catalog) {
-    const migratedCatalog = migrateCatalogV2();
+    const migratedCatalog = migrateCatalog();
     const inheritedPresetOrder = inheritPresetOrders(catalog.items);
     const orderNeedsSync = migratedCatalog || inheritedPresetOrder || catalog.items.some((entry, index) => entry.order !== index + 1);
     catalog.items = materializeCatalogOrder(catalog.items);
@@ -3265,6 +3608,9 @@ function getEnabledLibraries() {
       continue;
     }
     const effective = applyFrameworkConfig(entry, appConfig);
+    if (entry.appAsset && effective.js && effective.js === entry.js) {
+      effective.js = appAssetUrl(entry.js);
+    }
     result.push({
       name: effective.name,
       js: effective.js,
@@ -3297,6 +3643,10 @@ fluent-icon {
   vertical-align: -0.125em;
 }
 `;
+function appAssetUrl(path) {
+  const base = window.__DCSPAD_ASSET_BASE__ || new URL("../", import.meta.url).href;
+  return new URL(path, base).href;
+}
 function appSourceUrl(path) {
   const base = window.__DCSPAD_SRC_BASE__ || new URL("./", import.meta.url).href;
   const url = new URL(path, base);
@@ -3344,6 +3694,17 @@ function isAlpine3Runtime(entry) {
   ].map((url) => String(url || "").toLowerCase());
   return urls.some((url) => url.includes("/alpinejs@3") || url.includes("/alpinejs/3."));
 }
+function isSpUtilsRuntime(entry) {
+  if (entry?.intelligence?.includes("dcspad-sp-utilities")) return true;
+  if (entry?.id === "sp-utils") return true;
+  const urls = [
+    entry?.js,
+    entry?.fallbackJs,
+    entry?.configuredSources?.local,
+    entry?.configuredSources?.cdn
+  ].map((url) => String(url || "").toLowerCase());
+  return urls.some((url) => url.includes("dcspad-sp-utilities"));
+}
 function getEnabledIntelligence() {
   const enabled = new Set(getState().libraries.enabled);
   const packs = /* @__PURE__ */ new Set();
@@ -3356,6 +3717,7 @@ function getEnabledIntelligence() {
     for (const pack of effective.intelligence || []) packs.add(pack);
     if (isPnpjs215Runtime(effective)) packs.add("pnpjs-2.15.0");
     if (isAlpine3Runtime(effective)) packs.add("alpine-3");
+    if (isSpUtilsRuntime(effective)) packs.add("dcspad-sp-utilities");
   }
   return [...packs];
 }
@@ -3366,7 +3728,7 @@ function replaceCatalog(doc2) {
   const validation = validateFrameworkCatalog(doc2);
   if (!validation.ok) return false;
   catalog = validation.doc;
-  migrateCatalogV2();
+  migrateCatalog();
   catalog.items = materializeCatalogOrder(catalog.items);
   const items = catalog.items;
   persistCatalog();
@@ -5648,8 +6010,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "160" : "dev";
-var injectedRevision = true ? "2f7b5800" : "";
+var injectedBuild = true ? "163-dirty" : "dev";
+var injectedRevision = true ? "08902a2d-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
