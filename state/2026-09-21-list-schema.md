@@ -45,6 +45,8 @@ same engine · **2** document libraries (schema only; no file transfer).
 
 ## Next
 
+- [x] Tools tab (Copy/Export schema/Export data/Import data into this list) — shipped and live-verified 2026-09-22 (build #185).
+
 - [x] Live dev-tenant validation of stage 1a, 1b and 2 (HANDOFF.md records results and what is still open).
       `deploy/Sync-Live.ps1 -Environment dev`, then walk the Workbench against a real list.
 - [x] Stage 1b: item data export/import — shipped 2026-09-22 (HANDOFF "stages 1b + 2").

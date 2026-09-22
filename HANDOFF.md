@@ -519,6 +519,14 @@ onto the Tools tab, added the Import dialog's refusal/consent/mock-write/
 401 checks); the suite total is 564. Not built or deployed — `dcspad.app.js`
 and `dcspad.workbench.js` are unchanged by this work.
 
+
+**Live on the dev tenant (build #185):** the Tools tab's Export data wrote a
+v2 data document (3 items, 36 fields) for `zz-schema-requests`, and Import data
+into this list added those items to the separate, schema-only
+`zz-schema-requests Copy` on `/sites/NewNerve` — ids in source order, client
+lookup, self-lookup rebound to the new id, user column and both DateOnly values
+correct, 0 failures. The column preview listed each written column and named
+the read-only ones.
 ## Roadmap (seams reserved)
 
 - **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).
