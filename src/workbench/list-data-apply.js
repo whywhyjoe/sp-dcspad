@@ -10,27 +10,39 @@
 // pass into AddValidateUpdateItemUsingPath / ValidateUpdateListItem /
 // AttachmentFiles/add calls through sp-write.js.
 //
-// Deviation from SPUtils, called out because it only exists here: SPUtils'
-// toWebDateString() calls the server's webLocalDate() once per date VALUE
-// (async, so every field gets its own exact offset). list-data.js's
-// toWebDateString() is pure and takes one flat offsetMinutes per call, and
-// toImportFormValues() applies ONE dateFormat to every field of one item —
-// so this executor computes ONE offset per ITEM (from that item's Created
-// date, falling back to "now"), not per value. That is coarser than SPUtils
-// only on the rare item whose OWN custom DateTime value and Created date
-// straddle a DST transition on the very same import; list-data.js's own
-// header comment names this as the future apply module's call to make.
+// Matches SPUtils' toWebDateString(), which calls the server's
+// webLocalDate() once per date VALUE, not once per item: list-data.js's
+// toWebDateString() is pure and takes one flat offsetMinutes per call, so
+// this executor precomputes a PER-FIELD offset for each item
+// (dateFormatForFields()/resolveItemFields()) before calling
+// toImportFormValues() — a Created stamp and a custom DueOn value on the
+// same item can straddle a DST transition differently, so one offset for
+// the whole item would get one of them wrong.
 
 import {
   normalizeDataDoc, writableFields, partitionPasses, toImportFormValues,
   authorshipFormValues, folderOrder, LOOKUP_TYPES,
 } from './list-data.js';
+import { fetchAttachmentBytes } from './list-data-capture.js';
 import { SpFileError } from '../sp-odata.js';
 import { isExpiredSession } from './denied.js';
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 const FAILED_CAP = 50;
-const CONCURRENCY = 3;
+// Same opt-in cap list-data-capture.js reserves for a lookup-target index.
+const LOOKUP_INDEX_CAP = 100000;
+
+function cleanGuid(v) {
+  const s = String(v ?? '').replace(/[{}]/g, '').trim();
+  return s ? s.toLowerCase() : null;
+}
+
+function base64ToArrayBuffer(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
 
 // ---- report -----------------------------------------------------------
 
@@ -54,16 +66,6 @@ function capItemFailures(report) {
     report.items.failedTruncated = report.items.failed.length - FAILED_CAP;
     report.items.failed = report.items.failed.slice(0, FAILED_CAP);
   }
-}
-
-// ---- small promise pool (SPUtils runPool) -------------------------------
-
-async function runPool(items, limit, worker) {
-  const queue = [...items];
-  const n = Math.max(1, Math.min(limit, queue.length || 1));
-  await Promise.all(new Array(n).fill(0).map(async () => {
-    while (queue.length) { await worker(queue.shift()); }
-  }));
 }
 
 // ---- target reads -------------------------------------------------------
@@ -193,45 +195,32 @@ async function buildUserIds(spWrite, users, report) {
 
 // ---- attachments ----------------------------------------------------------
 
-async function fetchAttachmentBytes(sourceClient, serverRelativeUrl) {
-  let origin = '';
-  try { origin = new URL(sourceClient.webUrl()).origin; } catch { /* keep '' */ }
-  const abs = /^https?:/i.test(serverRelativeUrl) ? serverRelativeUrl : `${origin}${serverRelativeUrl}`;
-  let res;
-  try {
-    res = await fetch(abs, { credentials: 'same-origin' });
-  } catch (cause) {
-    throw new SpFileError(`Could not reach the source site (${cause.message || cause}).`, { code: 'network', cause });
-  }
-  if (!res.ok) {
-    throw new SpFileError(`The source attachment could not be read (HTTP ${res.status}).`, {
-      code: res.status === 401 ? 'auth' : 'network', status: res.status,
-    });
-  }
-  return res.arrayBuffer();
-}
-
-// Attachment BYTES only ever travel in copy mode, straight from the source
-// site (same tenant) — a data document imported from a FILE never carries
-// them (list-data-capture.js records name/url metadata only), so import mode
-// can only skip and say why.
+// Attachment BYTES travel as base64 on the item (v1's own shape, or an
+// export that stayed under the size caps) — used in EITHER mode, import
+// included, since that's just data on the document, not a network fetch.
+// Only when base64 is absent (a document that degraded to `{ name, url }`
+// over a cap) does copy mode fall back to fetching the source's bytes live;
+// an imported-from-file document with no base64 can only skip and say why.
 async function runAttachments(ctx, report, item, newItemId) {
   for (const a of item._attachments) {
     if (!ctx.includeAttachments) { report.attachments.skipped++; continue; }
-    if (!ctx.sourceClient) {
-      report.attachments.skipped++;
-      if (!ctx.warnedNoSourceClient) {
-        ctx.warnedNoSourceClient = true;
-        report.warnings.push(
-          'Attachments were not copied — the imported data document has no attachment bytes; '
-          + 'use Copy to… from the source site to bring them across.',
-        );
-      }
-      continue;
-    }
-    if (!ctx.sourceClient.context().live) { report.attachments.skipped++; continue; }
     try {
-      const bytes = await fetchAttachmentBytes(ctx.sourceClient, a.url);
+      let bytes;
+      if (a.base64) {
+        bytes = base64ToArrayBuffer(a.base64);
+      } else if (ctx.sourceClient && ctx.sourceClient.context().live && a.url) {
+        bytes = await fetchAttachmentBytes(ctx.sourceClient, a.url);
+      } else {
+        report.attachments.skipped++;
+        if (!ctx.warnedNoSourceClient) {
+          ctx.warnedNoSourceClient = true;
+          report.warnings.push(
+            'Some attachments were not copied — the imported data document has no attachment bytes for them; '
+            + 'use Copy to… from the source site to bring them across.',
+          );
+        }
+        continue;
+      }
       await ctx.spWrite.addAttachment(ctx.listId, newItemId, a.name, bytes);
       report.attachments.added++;
     } catch (err) {
@@ -262,6 +251,28 @@ async function createItemWithRetry(ctx, report, sourceId, spec) {
   }
 }
 
+// ---- per-item date resolution ---------------------------------------------
+
+// Computes this item's date format with one offset PER FIELD (a Created
+// stamp and a custom DueOn value can straddle a DST transition differently —
+// see list-data.js's fieldDateFormat) and drops any DateTime field whose
+// offset could not be learned, warning once per field NAME across the whole
+// run rather than once per item, and never falling back to a guessed
+// mdy/UTC value for it (finding #4/#10).
+async function resolveItemFields(ctx, report, item, fields) {
+  const dateNames = fields.filter((w) => w.typeAsString === 'DateTime').map((w) => w.name);
+  if (!dateNames.length) return { dateFormat: ctx.baseFormat, fields };
+  const dateFormat = await ctx.dateFormatForFields(item, dateNames);
+  const failed = dateNames.filter((n) => dateFormat.perField.get(n) === null);
+  for (const n of failed) {
+    if (!ctx.warnedDateFields.has(n)) {
+      ctx.warnedDateFields.add(n);
+      report.warnings.push(`“${n}” not written — the target web's date format could not be learned.`);
+    }
+  }
+  return { dateFormat, fields: failed.length ? fields.filter((w) => !failed.includes(w.name)) : fields };
+}
+
 // ---- pass 0: folders ------------------------------------------------------
 
 async function runFolders(ctx, data, report, pass1Fields, userIds, lookupIds, onStep) {
@@ -275,9 +286,8 @@ async function runFolders(ctx, data, report, pass1Fields, userIds, lookupIds, on
     const slash = path.lastIndexOf('/');
     const parent = slash === -1 ? ctx.rootFolder : `${ctx.rootFolder}/${path.slice(0, slash)}`;
     const name = path.slice(slash + 1);
-    const offsetMinutes = await ctx.offsetFor(f);
-    const dateFormat = { ...ctx.baseFormat, offsetMinutes };
-    const { values, errors } = toImportFormValues(f, pass1Fields, { dateFormat, userIds, lookupIds, idMap: report.idMap });
+    const { dateFormat, fields } = await resolveItemFields(ctx, report, f, pass1Fields);
+    const { values, errors } = toImportFormValues(f, fields, { dateFormat, userIds, lookupIds, idMap: report.idMap });
     for (const e of errors) report.fieldErrors.push({ sourceId: f.Id, ...e });
     const formValues = [{ FieldName: 'Title', FieldValue: name }, ...values.filter((v) => v.FieldName !== 'Title')];
     try {
@@ -297,15 +307,20 @@ async function runFolders(ctx, data, report, pass1Fields, userIds, lookupIds, on
 
 // ---- pass 1: items ----------------------------------------------------
 
+// Sequential, in ascending SOURCE id order (folders already went first, by
+// depth) — a fresh target list then gets item ids in the same sequence the
+// source had them. The earlier concurrent pool dequeued in that order too,
+// but completion order (and so id ASSIGNMENT order) wasn't guaranteed by
+// network timing; a live run once produced ids 1,2,3 for source items
+// 2,3,1. Only pass 1's CREATE matters for this — pass 2/3 are updates
+// against ids already assigned, with no ordering promise to keep.
 async function runItems(ctx, data, report, pass1Fields, userIds, lookupIds, onStep) {
   const items = [...data.items].sort((a, b) => (a.Id ?? 0) - (b.Id ?? 0));
   let done = 0;
-  let aborted = false;
-  await runPool(items, CONCURRENCY, async (item) => {
-    if (aborted || ctx.signal?.aborted) { aborted = true; return; }
-    const offsetMinutes = await ctx.offsetFor(item);
-    const dateFormat = { ...ctx.baseFormat, offsetMinutes };
-    const { values, errors } = toImportFormValues(item, pass1Fields, { dateFormat, userIds, lookupIds, idMap: report.idMap });
+  for (const item of items) {
+    if (ctx.signal?.aborted) { report.aborted = 'user'; return false; }
+    const { dateFormat, fields } = await resolveItemFields(ctx, report, item, pass1Fields);
+    const { values, errors } = toImportFormValues(item, fields, { dateFormat, userIds, lookupIds, idMap: report.idMap });
     for (const e of errors) report.fieldErrors.push({ sourceId: item.Id, ...e });
     const folderPath = item._dir ? `${ctx.rootFolder}/${item._dir}` : ctx.rootFolder;
     try {
@@ -321,14 +336,14 @@ async function runItems(ctx, data, report, pass1Fields, userIds, lookupIds, onSt
         await runAttachments(ctx, report, item, id);
       }
     } catch (err) {
-      if (isExpiredSession(err)) { aborted = true; report.aborted = 'auth'; return; }
+      if (isExpiredSession(err)) { report.aborted = 'auth'; return false; }
       report.items.failed.push({ sourceId: item.Id, error: err.message || String(err) });
     }
     done++;
     onStep?.({ phase: 'items', index: done, total: items.length, label: `Copying item ${done} of ${items.length}…` });
-  });
+  }
   capItemFailures(report);
-  return !aborted;
+  return true;
 }
 
 // ---- pass 2: self-referencing lookups ------------------------------------
@@ -373,9 +388,25 @@ async function runAuthorship(ctx, data, report, userIds, onStep) {
     if (ctx.signal?.aborted) { report.aborted = 'user'; return false; }
     i++;
     onStep?.({ phase: 'authorship', index: i, total: allRows.length, label: `Restoring authorship ${i} of ${allRows.length}…` });
-    const offsetMinutes = await ctx.offsetFor(item);
-    const dateFormat = { ...ctx.baseFormat, offsetMinutes };
-    const values = authorshipFormValues(item, { dateFormat, userIds });
+    let dateFormat = ctx.baseFormat;
+    let dropNames = [];
+    const wanted = ['Created', 'Modified'].filter((n) => item?.[n] != null);
+    if (wanted.length) {
+      if (!ctx.dateCalibrationOk) {
+        dropNames = wanted;
+      } else {
+        dateFormat = await ctx.dateFormatForFields(item, wanted);
+        dropNames = wanted.filter((n) => dateFormat.perField.get(n) === null);
+      }
+    }
+    for (const n of dropNames) {
+      if (!ctx.warnedDateFields.has(n)) {
+        ctx.warnedDateFields.add(n);
+        report.warnings.push(`“${n}” not written — the target web's date format could not be learned.`);
+      }
+    }
+    let values = authorshipFormValues(item, { dateFormat, userIds });
+    if (dropNames.length) values = values.filter((v) => !dropNames.includes(v.FieldName));
     if (!values.length) continue;
     try {
       await ctx.spWrite.validateUpdateListItem({ listId: ctx.listId, itemId: report.idMap[item.Id] }, values, { newDocumentUpdate: true });
@@ -434,37 +465,83 @@ export async function applyListData({
     throw err;
   }
   const writable = writableFields(data.fields, targetFieldRows);
-  const { pass1, pass2 } = partitionPasses(data.items, writable);
 
+  // Date calibration must never guess: a genuine failure to learn the
+  // target's regional format (RegionalSettings itself unreadable — the
+  // deliberately-invalid-date probe failing is fine, calibrateDateFormat
+  // itself falls back to RegionalSettings for that) means every DateTime
+  // field is DROPPED from every item rather than written as a guessed
+  // mdy/UTC value (finding #4). Computed before partitionPasses so a
+  // dropped field never even reaches pass 1/pass 3.
   const isMock = spWrite.isMock();
   const dayOffsetCache = new Map();
   let baseFormat = { order: 'mdy', sep: '/', timeSep: ':' };
-  const dateField = writable.find((w) => w.typeAsString === 'DateTime');
-  if (!isMock && (dateField || preserveAuthorship)) {
+  let dateCalibrationOk = true;
+  const dateFieldsAll = writable.filter((w) => w.typeAsString === 'DateTime');
+  if (!isMock && (dateFieldsAll.length || preserveAuthorship)) {
     try {
-      baseFormat = await calibrateDateFormat(client, spWrite, listId, rootFolder, dateField ? dateField.name : 'Created');
+      baseFormat = await calibrateDateFormat(
+        client, spWrite, listId, rootFolder, dateFieldsAll[0] ? dateFieldsAll[0].name : 'Created',
+      );
     } catch (err) {
       if (isExpiredSession(err)) { report.aborted = 'auth'; return report; }
-      report.warnings.push(`Date format could not be learned from the target (${err.message || err}); using ${baseFormat.order} "${baseFormat.sep}" as a fallback.`);
+      dateCalibrationOk = false;
     }
   }
-  const offsetFor = async (item) => {
+  const warnedDateFields = new Set();
+  if (!dateCalibrationOk) {
+    for (const w of dateFieldsAll) {
+      warnedDateFields.add(w.name);
+      report.warnings.push(`“${w.name}” not written — the target web's date format could not be learned.`);
+    }
+    if (preserveAuthorship) {
+      for (const n of ['Created', 'Modified']) warnedDateFields.add(n);
+      report.warnings.push('“Created”/“Modified” not written — the target web’s date format could not be learned.');
+    }
+  }
+  const effectiveWritable = dateCalibrationOk ? writable : writable.filter((w) => w.typeAsString !== 'DateTime');
+  const { pass1, pass2 } = partitionPasses(data.items, effectiveWritable);
+
+  // Per-VALUE offset (not per item) — see resolveItemFields()/list-data.js's
+  // fieldDateFormat. A timezone lookup that fails for one specific value is
+  // the same "never guess" rule: that field is dropped for that item, never
+  // written with an offset of 0/UTC.
+  const offsetForValue = async (rawValue) => {
     if (isMock) return 0;
-    const raw = item?.Created;
-    const utc = raw ? new Date(raw) : new Date();
+    const utc = rawValue ? new Date(rawValue) : new Date();
     if (Number.isNaN(utc.getTime())) return 0;
     try { return await webLocalOffsetMinutes(dayOffsetCache, client, utc); }
-    catch { return 0; }
+    catch { return null; }
+  };
+  const dateFormatForFields = async (item, names) => {
+    const perField = new Map();
+    for (const name of names) {
+      const raw = item?.[name];
+      if (raw == null) continue;
+      perField.set(name, await offsetForValue(raw));
+    }
+    return { ...baseFormat, perField };
   };
 
   const lookupIds = new Map();
   for (const w of pass1.fields) {
     if (!LOOKUP_TYPES.has(w.typeAsString)) continue;
-    const lookupListId = w.tf?.LookupList;
+    // SharePoint's own REST responses are inconsistent about braces on a
+    // GUID-valued property — cleanGuid() the same way every other GUID this
+    // codebase reads off the wire is handled (list-schema.js normalizeField,
+    // scrubSchemaXml…). Left raw, a braced value built a malformed
+    // `guid'{…}'` OData path, the read below failed, and the index for this
+    // field was silently never built — every cross-list lookup value then
+    // came back unresolved while a self-lookup (which never touches this
+    // index — it resolves through idMap instead) kept working.
+    const lookupListId = cleanGuid(w.tf?.LookupList);
     if (!lookupListId) continue;
     try {
       const showField = w.tf?.LookupField || 'Title';
-      const { items: rows } = await client.getAll(guidPath(lookupListId, '/items'), { select: ['Id', showField] });
+      const { items: rows, partial } = await client.getAll(
+        guidPath(lookupListId, '/items'), { select: ['Id', showField] },
+        { cap: LOOKUP_INDEX_CAP, allowLargeCap: true },
+      );
       const byValue = new Map();
       for (const r of rows) {
         const key = String(r[showField] ?? '');
@@ -472,6 +549,9 @@ export async function applyListData({
         byValue.get(key).push(r.Id);
       }
       lookupIds.set(w.name, byValue);
+      if (partial) {
+        report.warnings.push(`Lookup "${w.name}": the target lookup list has more items than could be indexed at once — some values may be left unresolved.`);
+      }
     } catch (err) {
       if (isExpiredSession(err)) { report.aborted = 'auth'; return report; }
       report.warnings.push(`Lookup "${w.name}": target lookup list could not be read (${err.message || err}); values will be left empty.`);
@@ -482,7 +562,8 @@ export async function applyListData({
   if (report.aborted) return report;
 
   const ctx = {
-    client, spWrite, listId, rootFolder, baseFormat, offsetFor, signal,
+    client, spWrite, listId, rootFolder, baseFormat, dateCalibrationOk,
+    dateFormatForFields, warnedDateFields, signal,
     includeAttachments, sourceClient,
   };
 

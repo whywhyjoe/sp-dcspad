@@ -49,6 +49,19 @@ const STATE_MAP = {
   skipped: 'skip', failed: 'failed', blocked: 'blocked',
 };
 
+// Items must never import twice, and must never import against a list whose
+// columns aren't really there yet — a RETRYABLE field.create failure ('failed'
+// and not `final`) or one still 'blocked' on a dependency means some column
+// the item data wants to write is missing; a `final` refusal (a real type
+// clash, a taken display name) or a policy 'skipped' column is not something
+// a retry could ever fix, so it doesn't hold anything up. Exported so the
+// dialog's own hold/resume decision is exactly what this test pins — not a
+// copy of the same predicate drifting out of sync with it.
+export function hasBlockingFieldFailures(report) {
+  return (report?.steps || []).some((s) => s.kind === 'field.create'
+    && (s.status === 'blocked' || (s.status === 'failed' && !s.final)));
+}
+
 function verbFor(step) {
   switch (step.kind) {
     case 'list.create': return 'Creating the list';
@@ -119,6 +132,9 @@ export function openSchemaApplyDialog({
     let phase = 'form';           // 'form' | 'running' | 'report'
     let listExists = false;
     let lastReport = null;
+    // Items import runs exactly once for the whole dialog session, never on
+    // every Retry — see maybeRunItemsPhase() below.
+    let itemsPhaseRun = false;
     let liById = new Map();
     let abortController = null;
     let titleTouched = false;
@@ -676,6 +692,36 @@ export function openSchemaApplyDialog({
       }
     }
 
+    // Gate for runItemsPhase(): items must wait until the schema run has no
+    // RETRYABLE field.create failure (findings review, item #1) — a column
+    // Retry could still create is a column an item's value would otherwise
+    // silently drop. Runs the phase exactly once for the whole dialog
+    // session (itemsPhaseRun), whether that happens right after Create or
+    // after a later Retry that clears the last blocking column. A retry
+    // AFTER items already ran carries the earlier items summary forward
+    // (each runPlan() hands back a brand new report object) so a later,
+    // unrelated retry (e.g. a failed view) doesn't make the Items row and
+    // its warnings disappear from the panel.
+    let savedItemsReport = null;
+    let savedItemsError = '';
+    async function maybeRunItemsPhase(report, targetListId) {
+      if (!includeItemsCb.checked || itemsFieldset.disabled) return;
+      if (itemsPhaseRun) {
+        if (savedItemsReport) report.itemsReport = savedItemsReport;
+        else if (savedItemsError) report.itemsError = savedItemsError;
+        return;
+      }
+      if (hasBlockingFieldFailures(report)) {
+        report.itemsHeld = 'Items wait until the failed columns are created — Retry, then items import.';
+        return;
+      }
+      report.itemsHeld = '';
+      itemsPhaseRun = true;
+      await runItemsPhase(targetListId);
+      savedItemsReport = report.itemsReport || null;
+      savedItemsError = report.itemsError || '';
+    }
+
     // ---- dry run ----------------------------------------------------------
 
     async function runDryRun() {
@@ -775,7 +821,7 @@ export function openSchemaApplyDialog({
       try {
         const report = await runPlan(plan, currentCtx);
         lastReport = report;
-        if (report.listId && !report.aborted) await runItemsPhase(report.listId);
+        if (report.listId && !report.aborted) await maybeRunItemsPhase(report, report.listId);
         renderReport(lastReport);
         setPhase('report');
       } catch (err) {
@@ -853,7 +899,9 @@ export function openSchemaApplyDialog({
       abortController = new AbortController();
       currentCtx = { client, spWrite: writer, onStep: handleStep, signal: abortController.signal };
       try {
-        lastReport = await runPlan(plan, currentCtx);
+        const report = await runPlan(plan, currentCtx);
+        lastReport = report;
+        if (report.listId && !report.aborted) await maybeRunItemsPhase(report, report.listId);
       } catch (err) {
         // lastReport is left as it was — still the previous (unchanged)
         // report — so re-rendering it below restores the right buttons
@@ -891,6 +939,8 @@ export function openSchemaApplyDialog({
         }
       } else if (report.itemsError) {
         rows.push(['Items', `could not be imported — ${report.itemsError}`]);
+      } else if (report.itemsHeld) {
+        rows.push(['Items', report.itemsHeld]);
       }
       for (const [label, value] of rows) {
         const tr = el('tr');
@@ -931,14 +981,35 @@ export function openSchemaApplyDialog({
           reportFailed.append(el('p', 'wb-schema-note', `+${report.itemsReport.items.failedTruncated} more not shown.`));
         }
       }
+      // Per-field rejections during item import (a create retried without
+      // one bad field — see list-data-apply.js's createItemWithRetry): shown
+      // separately from "Failed items" above, since the item itself still
+      // got created, just missing that one value.
+      const itemFieldErrors = report.itemsReport?.fieldErrors;
+      if (itemFieldErrors?.length) {
+        reportFailed.append(el('h3', '', 'Item field errors'));
+        const ftable = el('table', 'wb-table');
+        const ftbody = el('tbody');
+        for (const fe of itemFieldErrors) {
+          const tr = el('tr');
+          tr.append(el('td', '', `Source id ${fe.sourceId} — ${fe.field}`), el('td', '', fe.message || ''));
+          ftbody.append(tr);
+        }
+        ftable.append(ftbody);
+        reportFailed.append(ftable);
+      }
     }
 
     function renderReportWarnings(report) {
       reportWarnings.textContent = '';
-      if (!report.warnings?.length) return;
+      // Items warnings (e.g. "Item 2 → 1003: created without Status …",
+      // dropped-date-field notices) live on itemsReport.warnings, not the
+      // schema report's own warnings — merged here so both show in one list.
+      const warnings = [...(report.warnings || []), ...(report.itemsReport?.warnings || [])];
+      if (!warnings.length) return;
       reportWarnings.append(el('h3', '', 'Warnings'));
       const list = el('ul', 'wb-grid-notice');
-      for (const w of report.warnings) list.append(el('li', '', w));
+      for (const w of warnings) list.append(el('li', '', w));
       reportWarnings.append(list);
     }
 

@@ -47,6 +47,30 @@ function toIdList(v) {
   return (v == null ? [] : Array.isArray(v) ? v : [v]).filter((x) => x != null);
 }
 
+// SPUtils v1 docs carry people only inside each item's/folder's `_resolved`
+// object — there is no top-level `users` array in that format. When `users`
+// is missing or empty (a v1 document, or a v2 one that simply forgot the
+// key), derive the user set by scanning every row's `_resolved`: Author,
+// Editor, and every field the doc's own `fields` map marks as a User/
+// UserMulti type. Deduped by Id.
+function deriveUsersFromResolved(rows, fields) {
+  const byId = new Map();
+  for (const row of rows || []) {
+    const resolved = row?._resolved;
+    if (!resolved) continue;
+    for (const [key, val] of Object.entries(resolved)) {
+      const isUserField = key === 'Author' || key === 'Editor' || USER_TYPES.has(fields?.[key]?.type);
+      if (!isUserField) continue;
+      const arr = Array.isArray(val) ? val : [val];
+      for (const u of arr) {
+        if (!u || u.Id == null || byId.has(u.Id)) continue;
+        byId.set(u.Id, { Id: u.Id, Email: u.Email || '', LoginName: u.LoginName || '', Title: u.Title || '' });
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
 // ---- document shape ---------------------------------------------------------
 
 // buildDataDoc keeps SPUtils' v1 `items` array shape exactly: one array,
@@ -90,16 +114,20 @@ export function normalizeDataDoc(doc) {
   const allItems = Array.isArray(doc.items) ? doc.items : [];
   const folders = Array.isArray(doc.folders) ? doc.folders : allItems.filter((i) => i?._folder);
   const items = allItems.filter((i) => !i?._folder);
+  const fields = doc.fields || {};
+  const users = (Array.isArray(doc.users) && doc.users.length)
+    ? doc.users
+    : deriveUsersFromResolved([...folders, ...items], fields);
   return {
     kind: doc.kind,
     version: DATA_VERSION,
     exported: doc.exported || '',
     generator: doc.generator || { tool: 'unknown', build: '' },
     source: doc.source || {},
-    fields: doc.fields || {},
+    fields,
     items,
     folders,
-    users: doc.users || [],
+    users,
     warnings: doc.warnings || [],
     _sourceVersion: sourceVersion,
   };
@@ -173,6 +201,20 @@ export function toWebDateString(value, dateFormat, { dateOnly = false } = {}) {
   const dateText = (f.order || 'mdy').split('').map((k) => parts[k]).join(f.sep ?? '/');
   if (dateOnly) return dateText;
   return `${dateText} ${pad2(local.getUTCHours())}${f.timeSep ?? ':'}${pad2(local.getUTCMinutes())}`;
+}
+
+// DST boundaries differ between one date field and another on the very same
+// item (a Created stamp and a custom DueOn value can straddle a transition
+// differently) — the executor precomputes a per-field-name offset (see its
+// dateFormatForFields()) rather than one offset for the whole item, and this
+// picks the right one out of that map. A field with no per-field entry falls
+// back to the flat offsetMinutes the caller supplied (mock mode, or a caller
+// that never bothered with per-field offsets).
+function fieldDateFormat(dateFormat, name) {
+  if (dateFormat?.perField?.has(name)) {
+    return { ...dateFormat, offsetMinutes: dateFormat.perField.get(name) };
+  }
+  return dateFormat;
 }
 
 // SPUtils userValue(): resolved {Email,LoginName} users -> the
@@ -278,7 +320,7 @@ export function toImportFormValues(item, fields, { dateFormat, userIds, lookupId
         value = raw && raw.Url ? `${raw.Url}, ${raw.Description || raw.Url}` : '';
         break;
       case 'DateTime':
-        value = raw ? toWebDateString(raw, dateFormat, { dateOnly: (w.tf?.DisplayFormat ?? w.tf?.displayFormat) === 0 }) : '';
+        value = raw ? toWebDateString(raw, fieldDateFormat(dateFormat, w.name), { dateOnly: (w.tf?.DisplayFormat ?? w.tf?.displayFormat) === 0 }) : '';
         break;
       case 'User':
       case 'UserMulti':
@@ -312,8 +354,8 @@ export function authorshipFormValues(item, { dateFormat, userIds } = {}) {
   const editor = userFormValue(item?._resolved?.Editor, userIds);
   if (author) values.push({ FieldName: 'Author', FieldValue: author });
   if (editor) values.push({ FieldName: 'Editor', FieldValue: editor });
-  if (item?.Created) values.push({ FieldName: 'Created', FieldValue: toWebDateString(item.Created, dateFormat) });
-  if (item?.Modified) values.push({ FieldName: 'Modified', FieldValue: toWebDateString(item.Modified, dateFormat) });
+  if (item?.Created) values.push({ FieldName: 'Created', FieldValue: toWebDateString(item.Created, fieldDateFormat(dateFormat, 'Created')) });
+  if (item?.Modified) values.push({ FieldName: 'Modified', FieldValue: toWebDateString(item.Modified, fieldDateFormat(dateFormat, 'Modified')) });
   return values;
 }
 

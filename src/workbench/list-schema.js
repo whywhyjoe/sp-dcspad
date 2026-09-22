@@ -843,7 +843,26 @@ export function buildApplyReport({ report, doc, targetWebUrl }) {
       `- Skipped: ${report.contentTypes.skipped ?? 0}`,
       `- Failed: ${report.contentTypes.failed ?? 0}`, '');
   }
-  const warnings = report?.warnings || [];
+  const ir = report?.itemsReport;
+  if (ir) {
+    lines.push('## Items', '',
+      `- Added: ${ir.items?.added ?? 0}`,
+      `- Failed: ${(ir.items?.failed || []).length}`,
+      `- Folders created: ${ir.folders?.created ?? 0}`, '');
+    if (ir.fieldErrors?.length) {
+      lines.push('### Item field errors', '');
+      for (const fe of ir.fieldErrors) lines.push(`- Source id ${fe.sourceId} — ${fe.field}: ${fe.message || ''}`);
+      lines.push('');
+    }
+  } else if (report?.itemsHeld) {
+    lines.push('## Items', '', `- ${report.itemsHeld}`, '');
+  } else if (report?.itemsError) {
+    lines.push('## Items', '', `- Could not be imported — ${report.itemsError}`, '');
+  }
+  // Items warnings (dropped-field notices, dropped-date-field notices) live
+  // on itemsReport.warnings, not the schema report's own warnings — merged
+  // here the same way the dialog's own report panel merges them.
+  const warnings = [...(report?.warnings || []), ...(ir?.warnings || [])];
   if (warnings.length) {
     lines.push('## Warnings', '');
     for (const w of warnings) lines.push(`- ${w}`);

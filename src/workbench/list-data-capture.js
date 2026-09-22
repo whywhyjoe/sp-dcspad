@@ -8,11 +8,11 @@
 // per-type FieldValue strings — that's list-data.js's job, for the (future)
 // import/apply module.
 //
-// Attachment BYTES are never embedded (unlike SPUtils' opt-in includeAttachments):
-// this capture only ever records each attachment's name and server-relative
-// URL. A schema-only "how many bytes would this be" concern doesn't apply to
-// metadata, so there's no size gate here — the gate belongs to whatever
-// (future) module re-uploads them.
+// Attachment BYTES are embedded unconditionally (unlike SPUtils' opt-in
+// includeAttachments), matching v1's `{ name, base64 }` shape, under a
+// per-file (10 MB) and running total (50 MB) cap — over either, the entry
+// degrades to a `{ name, url }` link (the `url` key is additive/v2) plus one
+// warning naming the file. See captureAttachment()/fetchAttachmentBytes().
 
 import {
   LOOKUP_TYPES, USER_TYPES, buildDataDoc,
@@ -20,7 +20,8 @@ import {
 import { SCHEMA_KIND } from './list-schema.js';
 import { captureListSchema } from './list-schema-capture.js';
 import { APP_BUILD_INFO } from '../build-info.js';
-import { isDeniedRead, isExpiredSession } from './denied.js';
+import { isExpiredSession } from './denied.js';
+import { SpFileError } from '../sp-odata.js';
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 
@@ -29,7 +30,76 @@ const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 // else). A caller may pass a smaller `maxItems`; it can never exceed this.
 const DATA_CAP = 100000;
 
+// Attachment embedding caps — per file and across the whole export. Over
+// either cap the attachment degrades to its v2 `{ name, url }` link-only
+// shape (see fetchAttachmentBytes/captureAttachment below) instead of
+// growing the document without bound.
+const ATTACHMENT_FILE_CAP = 10 * 1024 * 1024;
+const ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024;
+
 const toIdList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]).filter((x) => x != null);
+
+// Reads one attachment's bytes over plain fetch (same tenant, same-origin
+// cookies) — used here to embed export bytes, and by list-data-apply.js's
+// copy-mode fallback when an item's `_attachments` entry has no base64 (an
+// imported-from-file document, or one that degraded to url-only over a cap).
+export async function fetchAttachmentBytes(client, serverRelativeUrl) {
+  let origin = '';
+  try { origin = new URL(client.webUrl()).origin; } catch { /* keep '' */ }
+  const abs = /^https?:/i.test(serverRelativeUrl) ? serverRelativeUrl : `${origin}${serverRelativeUrl}`;
+  let res;
+  try {
+    res = await fetch(abs, { credentials: 'same-origin' });
+  } catch (cause) {
+    throw new SpFileError(`Could not reach the source site (${cause.message || cause}).`, { code: 'network', cause });
+  }
+  if (!res.ok) {
+    throw new SpFileError(`The source attachment could not be read (HTTP ${res.status}).`, {
+      code: res.status === 401 ? 'auth' : 'network', status: res.status,
+    });
+  }
+  return res.arrayBuffer();
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+// SPUtils' v1 shape is `{ name, base64 }` — that's what a small-enough
+// attachment gets here. Over either cap it degrades to `{ name, url }`
+// (the `url` key is additive/v2; a v1 reader never looked for it) plus one
+// warning naming the file, per finding #3.
+async function captureAttachment(client, rawFile, warnings, totalState) {
+  const name = rawFile?.FileName || '';
+  const url = rawFile?.ServerRelativeUrl || '';
+  if (!name) return null;
+  if (totalState.bytes >= ATTACHMENT_TOTAL_CAP) {
+    warnings.push(`Attachment "${name}" was not embedded — the ${ATTACHMENT_TOTAL_CAP / (1024 * 1024)} MB total attachment cap was reached; exported as a link only.`);
+    return { name, url };
+  }
+  let bytes;
+  try {
+    bytes = await fetchAttachmentBytes(client, url);
+  } catch (err) {
+    warnings.push(`Attachment "${name}" could not be read (${err.message || err}); exported as a link only.`);
+    return { name, url };
+  }
+  if (bytes.byteLength > ATTACHMENT_FILE_CAP) {
+    warnings.push(`Attachment "${name}" was not embedded — it is larger than the ${ATTACHMENT_FILE_CAP / (1024 * 1024)} MB per-file cap; exported as a link only.`);
+    return { name, url };
+  }
+  if (totalState.bytes + bytes.byteLength > ATTACHMENT_TOTAL_CAP) {
+    warnings.push(`Attachment "${name}" was not embedded — the ${ATTACHMENT_TOTAL_CAP / (1024 * 1024)} MB total attachment cap was reached; exported as a link only.`);
+    return { name, url };
+  }
+  totalState.bytes += bytes.byteLength;
+  return { name, base64: arrayBufferToBase64(bytes) };
+}
 
 export async function captureListData(client, listId, { schemaDoc = null, maxItems = null } = {}) {
   const warnings = [];
@@ -72,13 +142,20 @@ export async function captureListData(client, listId, { schemaDoc = null, maxIte
   for (const f of lookupFields) {
     if (!f.lookupListId) continue;
     try {
-      const { items: targetRows } = await client.getAll(
+      const { items: targetRows, partial } = await client.getAll(
         guidPath(f.lookupListId, '/items'),
         { select: ['Id', f.lookupField || 'Title'] },
+        { cap: DATA_CAP, allowLargeCap: true },
       );
       lookupValues.set(f.internalName, new Map(targetRows.map((r) => [r.Id, r[f.lookupField || 'Title']])));
+      if (partial) {
+        warnings.push(`Lookup “${f.internalName}”: the target list has more items than could be indexed at once — values for ids beyond that are looked up individually.`);
+      }
     } catch (err) {
-      if (isDeniedRead(err) || isExpiredSession(err)) throw err;
+      // A denied read (403) or any other read failure is a fact about this
+      // one lookup list, not a reason to abort the whole export — only an
+      // expired session (401) means nothing further can be trusted.
+      if (isExpiredSession(err)) throw err;
       warnings.push(`Lookup “${f.internalName}”: target list could not be read (${err?.message || err}); ids exported without values.`);
     }
   }
@@ -94,7 +171,7 @@ export async function captureListData(client, listId, { schemaDoc = null, maxIte
       const { items } = await client.getAll('web/siteusers', { select: ['Id', 'Email', 'LoginName', 'Title'] });
       for (const u of items) siteUsersById.set(u.Id, u);
     } catch (err) {
-      if (isDeniedRead(err) || isExpiredSession(err)) throw err;
+      if (isExpiredSession(err)) throw err;
       warnings.push(`Site users could not be read (${err?.message || err}); person fields resolve one id at a time instead.`);
     }
     return siteUsersById;
@@ -115,8 +192,27 @@ export async function captureListData(client, listId, { schemaDoc = null, maxIte
       : { Id: id, Email: '', LoginName: '', Title: '' };
   };
 
+  // A lookup id the index doesn't carry (the target list paged past the
+  // cap) is fetched directly rather than exported unresolved — one request
+  // per missing id, cached back onto the same map for any later row that
+  // references it too.
+  const resolveLookupValue = async (f, id) => {
+    const map = lookupValues.get(f.internalName);
+    if (!map) return null;
+    if (map.has(id)) return map.get(id) ?? null;
+    try {
+      const row = await client.get(guidPath(f.lookupListId, `/items(${id})`), { select: ['Id', f.lookupField || 'Title'] });
+      const value = row ? (row[f.lookupField || 'Title'] ?? null) : null;
+      map.set(id, value);
+      return value;
+    } catch {
+      return null;
+    }
+  };
+
   const items = [];
   const folders = [];
+  const attachmentTotal = { bytes: 0 };
   for (const raw of rawRows) {
     const resolved = {};
     for (const f of userFields) {
@@ -126,17 +222,20 @@ export async function captureListData(client, listId, { schemaDoc = null, maxIte
     for (const f of lookupFields) {
       const ids = toIdList(raw[`${f.internalName}Id`]);
       if (ids.length) {
-        const map = lookupValues.get(f.internalName);
-        resolved[f.internalName] = ids.map((id) => ({ Id: id, value: map ? (map.get(id) ?? null) : null }));
+        resolved[f.internalName] = await Promise.all(
+          ids.map(async (id) => ({ Id: id, value: await resolveLookupValue(f, id) })),
+        );
       }
     }
     // Attachment metadata rides the same items() read (AttachmentFiles was
-    // expanded above); normalize it to {name, url} and drop the raw
-    // expansion object from the row — bytes are never fetched or embedded.
+    // expanded above) — bytes are embedded (base64, capped) or the entry
+    // degrades to a link; see captureAttachment().
     const rawFiles = Array.isArray(raw.AttachmentFiles) ? raw.AttachmentFiles : (raw.AttachmentFiles?.results || []);
-    const attachments = rawFiles
-      .map((f) => ({ name: f?.FileName || '', url: f?.ServerRelativeUrl || '' }))
-      .filter((f) => f.name);
+    const attachments = [];
+    for (const f of rawFiles) {
+      const a = await captureAttachment(client, f, warnings, attachmentTotal);
+      if (a) attachments.push(a);
+    }
     const { AttachmentFiles: _omit, ...rest } = raw;
     const isFolder = Number(raw.FSObjType) === 1;
     const row = { ...rest, _resolved: resolved, _dir: relPath(raw.FileDirRef) };
