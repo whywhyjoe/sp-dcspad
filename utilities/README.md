@@ -95,12 +95,11 @@ writes `version: 2` and reads `version: 1` or `2`, this script writes and
 reads `version: 1`, and each checks only `kind` — a schema exported here
 opens in the Workbench dialog, and a Workbench export downloads as a `.json`
 this script's `readJsonFile()`/`createListFromSchema()` can consume
-unchanged. Porting it found two gaps in this script, not yet fixed here:
-`createFieldAsXml` is called without an `Options` bitmask, which can let
-SharePoint derive a field's internal name from its display name instead of
-the one requested; and `scrubSchemaXml` strips `List=` from every field
-(including User fields, which need to keep `List="UserInfo"`) and leaves
-source GUIDs inside a Calculated field's `<FieldRefs>`.
+unchanged. Porting it found two gaps in this script, both since fixed:
+columns are now created with the internal-name hint (and a column that still
+comes back renamed is removed and reported), and `scrubSchemaXml` keeps
+`List="UserInfo"` on User fields and strips source GUIDs from a Calculated
+field's `<FieldRefs>`.
 
 SharePoint has no good built-in way to copy a list with its data. The four
 primitives do it in steps that each support `dryRun`; any step can be rerun
@@ -178,9 +177,19 @@ What it handles and what it does not:
 - **Throttling.** 429 and 503 responses are retried with backoff, honouring
   `Retry-After`; the request digest refresh is shared between workers and
   retried the same way.
-- **Not handled.** Document libraries (that is a file copy), content types
-  (exported for reference only), creating managed-metadata columns (needs a
-  term-set binding), item-level permissions, version history.
+- **Columns keep their internal names.** Columns are created with
+  SharePoint's internal-name hint; without it a column whose internal name
+  differs from its display name is silently renamed, drops out of views and
+  loses its values on import. A column that still comes back renamed is
+  removed again and reported.
+- **Document libraries.** `getListSchema` and `createListFromSchema` copy a
+  library's structure and settings (versioning, limits, required check-out;
+  libraries reject the attachments setting, so it is not sent and any other
+  rejected setting is retried one at a time). Files are never transferred:
+  `importListData` refuses a library target.
+- **Not handled.** Library files, content types (exported for reference
+  only), creating managed-metadata columns (needs a term-set binding),
+  item-level permissions, version history.
 
 ### Deployment
 
@@ -196,4 +205,6 @@ refuses any file naming another environment's SharePoint host.
   and cross-site into a subsite) with choice, multi-choice, person, date,
   number, note, URL, yes/no, lookup, self-lookup and calculated columns, a
   formatted column, a formatted view, an attachment, and a preserved Created
-  date. Managed-metadata columns and document libraries remain untested.
+  date. Document-library structure copies were verified live (versioning
+  limits, minor versions, forced check-out); library files are never
+  transferred. Managed-metadata columns remain untested.

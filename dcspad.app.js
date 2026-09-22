@@ -857,6 +857,8 @@ interface SPUtilsSchemaDoc {
   source: { siteUrl: string; listTitle: string; listId: string; rootFolder: string | null; itemCount: number };
   list: {
     title: string; description: string; baseTemplate: number;
+    /** 0 = list, 1 = document library. Absent in older documents; the template number is the fallback. */
+    baseType?: number;
     enableVersioning: boolean; majorVersionLimit: number | null; enableMinorVersions: boolean;
     majorWithMinorVersionsLimit: number | null; draftVersionVisibility: number; forceCheckout: boolean;
     hidden: boolean; contentTypesEnabled: boolean; enableAttachments: boolean;
@@ -6180,8 +6182,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "180" : "dev";
-var injectedRevision = true ? "ff97edd6" : "";
+var injectedBuild = true ? "184-dirty" : "dev";
+var injectedRevision = true ? "2b12fe41-dirty" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,

@@ -184,6 +184,8 @@ interface SPUtilsSchemaDoc {
   source: { siteUrl: string; listTitle: string; listId: string; rootFolder: string | null; itemCount: number };
   list: {
     title: string; description: string; baseTemplate: number;
+    /** 0 = list, 1 = document library. Absent in older documents; the template number is the fallback. */
+    baseType?: number;
     enableVersioning: boolean; majorVersionLimit: number | null; enableMinorVersions: boolean;
     majorWithMinorVersionsLimit: number | null; draftVersionVisibility: number; forceCheckout: boolean;
     hidden: boolean; contentTypesEnabled: boolean; enableAttachments: boolean;

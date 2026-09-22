@@ -1386,7 +1386,10 @@ const addFieldsToList = async (listServerRelativeUrl, specs, { dryRun = false } 
           throw new Error(`Unsupported type: ${type}`);
       }
 
-      await retryWithBackoff(() => list.fields.createFieldAsXml(xml));
+      // Options 8 = AddFieldInternalNameHint: without it SharePoint derives the
+      // internal name from DisplayName and ignores the XML's Name.
+      const created = await retryWithBackoff(() => list.fields.createFieldAsXml({ SchemaXml: xml, Options: 8 }));
+      await ensureInternalName(list, created, internalName);
 
       writeStatus(FN, `ADDED: ${internalName}`);
       results.added++;
@@ -2205,6 +2208,10 @@ const NEVER_WRITE_TYPES = new Set(["Computed", "Counter", "Attachments", "File",
 // (Author, Modified, ContentType, _UIVersionString…) do not.
 const isCustomField = (f) => !f.FromBaseType && f.CanBeDeleted === true && !f.Hidden
   && f.TypeAsString !== "Computed";
+// Base type 1 = document library (101, 109, 115, 119, 850, 851 …). Older schema
+// documents carry no baseType, so the template list is the fallback.
+const LIBRARY_TEMPLATES = new Set([101, 109, 115, 119, 850, 851]);
+const isLibrarySchema = (list) => list?.baseType === 1 || LIBRARY_TEMPLATES.has(Number(list?.baseTemplate));
 
 // Strip everything that ties SchemaXml to its source list/web so
 // createFieldAsXml recreates the column cleanly on another list.
@@ -2212,11 +2219,31 @@ const scrubSchemaXml = (xml, { lookupListId = null } = {}) => {
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   const el = doc.documentElement;
   if (!el || el.nodeName === "parsererror") throw new Error("SchemaXml could not be parsed");
-  for (const attr of ["ID", "SourceID", "ColName", "RowOrdinal", "Version", "WebId", "List", "Sealed", "Customization"]) {
+  for (const attr of ["ID", "SourceID", "ColName", "RowOrdinal", "Version", "WebId", "Sealed", "Customization"]) {
     el.removeAttribute(attr);
   }
+  // "List" is a list binding only on lookups; on User fields it is the literal "UserInfo".
+  if (/^Lookup/.test(el.getAttribute("Type") || "")) el.removeAttribute("List");
   if (lookupListId) el.setAttribute("List", `{${cleanGuid(lookupListId)}}`);
+  // A Calculated field's <FieldRefs> carry the SOURCE column GUIDs; SharePoint resolves by Name.
+  for (const ref of Array.from(el.getElementsByTagName("FieldRef"))) ref.removeAttribute("ID");
   return new XMLSerializer().serializeToString(el);
+};
+
+// After createFieldAsXml: SharePoint must have kept the requested internal
+// name (a renamed column drops out of views and loses its values on import).
+// A renamed column is deleted again — retried like any write — and the
+// failure names both names and says whether the cleanup actually happened.
+const ensureInternalName = async (list, created, requested) => {
+  const actual = created?.data?.InternalName;
+  if (!actual || actual === requested) return;
+  let cleanup = "removed again";
+  try {
+    await retryWithBackoff(() => list.fields.getById(created.data.Id).delete());
+  } catch (err) {
+    cleanup = `and it could NOT be removed (${err.message}); delete "${actual}" by hand before retrying`;
+  }
+  throw new Error(`SharePoint created it as "${actual}" instead of "${requested}"; ${cleanup}`);
 };
 
 const base64FromBuffer = (buffer) => {
@@ -2258,14 +2285,16 @@ const getListSchema = async (listTitle) => {
   const warnings = [];
 
   const settings = await list
-    .select("Id", "Title", "Description", "BaseTemplate", "EnableVersioning", "MajorVersionLimit",
+    .select("Id", "Title", "Description", "BaseTemplate", "BaseType", "EnableVersioning", "MajorVersionLimit",
       "EnableMinorVersions", "MajorWithMinorVersionsLimit", "DraftVersionVisibility", "ForceCheckout",
       "Hidden", "ContentTypesEnabled", "EnableAttachments", "EnableFolderCreation", "EnableModeration",
       "ItemCount", "RootFolder/ServerRelativeUrl")
     .expand("RootFolder")();
 
-  if (settings.BaseTemplate !== 100) {
-    warnings.push(`BaseTemplate ${settings.BaseTemplate}: only generic lists (100) are fully supported; libraries need a file copy, not an item import.`);
+  if (settings.BaseType === 1) {
+    warnings.push(`Document library (template ${settings.BaseTemplate}): structure and settings are copied; files are never transferred.`);
+  } else if (settings.BaseTemplate !== 100) {
+    warnings.push(`BaseTemplate ${settings.BaseTemplate}: only generic lists (100) are fully exercised; template-specific behaviour is not recreated.`);
   }
   if (settings.ContentTypesEnabled) {
     warnings.push("Content types are enabled on the source; they are exported for reference but not recreated.");
@@ -2376,6 +2405,7 @@ const getListSchema = async (listTitle) => {
       title: settings.Title,
       description: settings.Description || "",
       baseTemplate: settings.BaseTemplate,
+      baseType: settings.BaseType ?? 0,
       enableVersioning: !!settings.EnableVersioning,
       majorVersionLimit: settings.MajorVersionLimit ?? null,
       enableMinorVersions: !!settings.EnableMinorVersions,
@@ -2566,22 +2596,44 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
     warnings: [...(schema.warnings || [])]
   };
   const warn = (m) => { report.warnings.push(m); writeStatus(FN, `⚠️ ${m}`); };
+  const sourceIsLibrary = isLibrarySchema(schema.list);
+  let isLibrary = sourceIsLibrary; // the TARGET's kind once one exists (see below)
 
   // ---- list ------------------------------------------------------------
-  const existing = await web.lists.filter(`Title eq '${escOData(targetTitle)}'`).select("Id", "Title", "BaseTemplate")();
+  const existing = await web.lists.filter(`Title eq '${escOData(targetTitle)}'`).select("Id", "Title", "BaseTemplate", "BaseType")();
   let list = null;
+  if (existing.length) {
+    // Library-specific gates (no EnableAttachments, Title never forced
+    // required) must follow what the target IS, not what the source was.
+    const targetIsLibrary = existing[0].BaseType === 1;
+    if (targetIsLibrary !== sourceIsLibrary) {
+      throw new Error(`"${targetTitle}" exists and is a ${targetIsLibrary ? "document library" : "list"}, but the schema describes a ${sourceIsLibrary ? "document library" : "list"}; choose another title.`);
+    }
+    isLibrary = targetIsLibrary;
+  }
+  // One MERGE for all settings; if any key is rejected, apply the rest one at
+  // a time so a single bad key never costs versioning or check-out.
+  const applyListSettings = async (settings) => {
+    try {
+      await retryWithBackoff(() => list.update(settings));
+      return;
+    } catch (err) {
+      warn(`List settings rejected as one update (${err.message}); applying them one at a time`);
+    }
+    for (const [key, value] of Object.entries(settings)) {
+      try { await retryWithBackoff(() => list.update({ [key]: value })); }
+      catch (err) { warn(`List setting ${key}=${JSON.stringify(value)} was rejected: ${err.message}`); }
+    }
+  };
   if (existing.length) {
     list = web.lists.getById(existing[0].Id);
     report.listId = cleanGuid(existing[0].Id);
     writeStatus(FN, `List "${targetTitle}" exists — adding missing fields and views only.`);
     // Reconcile the settings an import depends on; leave the rest alone.
     const reconcile = {};
-    if (schema.list.enableAttachments) reconcile.EnableAttachments = true;
+    if (schema.list.enableAttachments && !isLibrary) reconcile.EnableAttachments = true;
     if (schema.list.enableFolderCreation) reconcile.EnableFolderCreation = true;
-    if (Object.keys(reconcile).length && !dryRun) {
-      try { await retryWithBackoff(() => list.update(reconcile)); }
-      catch (err) { warn(`Existing list settings not reconciled (${Object.keys(reconcile).join(", ")}): ${err.message}`); }
-    }
+    if (Object.keys(reconcile).length && !dryRun) await applyListSettings(reconcile);
   } else if (dryRun) {
     writeStatus(FN, `DRY RUN: would create list "${targetTitle}" (template ${schema.list.baseTemplate}).`);
   } else {
@@ -2598,20 +2650,20 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
     const s = schema.list;
     const settings = {
       EnableVersioning: s.enableVersioning,
-      EnableAttachments: s.enableAttachments,
       EnableFolderCreation: s.enableFolderCreation,
       EnableModeration: s.enableModeration,
       ForceCheckout: !!s.forceCheckout,
       Hidden: !!s.hidden
     };
+    // Libraries reject EnableAttachments, and one rejected key fails the whole update.
+    if (!isLibrary) settings.EnableAttachments = s.enableAttachments;
     if (s.enableVersioning && s.majorVersionLimit) settings.MajorVersionLimit = s.majorVersionLimit;
     if (s.enableVersioning && s.enableMinorVersions) {
       settings.EnableMinorVersions = true;
       if (s.majorWithMinorVersionsLimit) settings.MajorWithMinorVersionsLimit = s.majorWithMinorVersionsLimit;
     }
     if (s.enableModeration || s.enableMinorVersions) settings.DraftVersionVisibility = s.draftVersionVisibility;
-    try { await retryWithBackoff(() => list.update(settings)); }
-    catch (err) { warn(`List settings could not all be applied: ${err.message}`); }
+    await applyListSettings(settings);
   }
 
   // ---- fields ----------------------------------------------------------
@@ -2638,6 +2690,7 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
   const tier = (f) => (f.type === "Calculated" ? 3 : f.isDependentLookup ? 2 : LOOKUP_TYPES.has(f.type) ? 1 : 0);
   const ordered = [...custom].sort((a, b) => tier(a) - tier(b));
   const fieldIdMap = new Map(); // source field id -> target field id
+  const fieldOptions = 8 | (schema.list.contentTypesEnabled && (schema.contentTypes || []).length ? 4 : 0);
 
   for (const f of ordered) {
     try {
@@ -2692,7 +2745,11 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
         report.fields.added++;
         continue;
       }
-      const createdField = await retryWithBackoff(() => list.fields.createFieldAsXml(xml));
+      // Options: 8 = AddFieldInternalNameHint (keep the XML's Name — without it
+      // SharePoint derives the internal name from DisplayName, verified live),
+      // + 4 = AddToDefaultContentType when the list uses content types.
+      const createdField = await retryWithBackoff(() => list.fields.createFieldAsXml({ SchemaXml: xml, Options: fieldOptions }));
+      await ensureInternalName(list, createdField, f.internalName);
       if (f.id && createdField?.data?.Id) fieldIdMap.set(f.id, cleanGuid(createdField.data.Id));
       if (f.customFormatter && !/CustomFormatter=/.test(xml)) {
         try { await list.fields.getByInternalNameOrTitle(f.internalName).update({ CustomFormatter: f.customFormatter }); }
@@ -2715,12 +2772,16 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
       writeStatus(FN, `DRY RUN: set Title column display name "${titleField.displayName}", required=${titleField.required}`);
     } else if (list) {
       try {
-        await list.fields.getByInternalNameOrTitle("Title").update({ Title: titleField.displayName, Required: titleField.required });
+        // A library's Title is optional by design; never force it required there.
+        const titleUpdate = { Title: titleField.displayName };
+        if (!isLibrary) titleUpdate.Required = titleField.required;
+        await list.fields.getByInternalNameOrTitle("Title").update(titleUpdate);
       } catch (err) { warn(`Title column settings not applied: ${err.message}`); }
     }
   }
 
   // ---- views -----------------------------------------------------------
+  const claimedViewIds = new Set(); // no two source views may land on one target view
   for (const v of schema.views.filter(v => !v.hidden)) {
     try {
       const wanted = v.fields.filter(name => existingFields.has(name) || dryRun);
@@ -2731,7 +2792,15 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
         report.views.added++;
         continue;
       }
-      const found = await list.views.filter(`Title eq '${escOData(v.title)}'`).select("Id")();
+      let found = (await list.views.filter(`Title eq '${escOData(v.title)}'`).select("Id")())
+        .filter(x => !claimedViewIds.has(cleanGuid(x.Id)));
+      // A new list's default view carries a localized title ("Alle Elemente"),
+      // so the source's default view matches it by role when not by title.
+      if (!found.length && v.defaultView) {
+        found = (await list.views.filter("DefaultView eq true").select("Id")())
+          .filter(x => !claimedViewIds.has(cleanGuid(x.Id)));
+      }
+      if (found.length) claimedViewIds.add(cleanGuid(found[0].Id));
       const addAll = async (view, names) => {
         for (const name of names) await retryWithBackoff(() => view.fields.add(name));
       };
@@ -2752,12 +2821,13 @@ const createListFromSchema = async (schema, { title, description, dryRun = false
           try { await retryWithBackoff(() => view.fields.removeAll()); await addAll(view, previous); } catch {}
           throw err;
         }
-        await retryWithBackoff(() => view.update({ ...props, CustomFormatter: v.customFormatter || "", JSLink: v.jsLink || "" }));
+        await retryWithBackoff(() => view.update({ ...props, Title: v.title, CustomFormatter: v.customFormatter || "", JSLink: v.jsLink || "" }));
         if (v.defaultView) { try { await view.update({ DefaultView: true }); } catch {} }
         report.views.updated++;
       } else {
         const r = await retryWithBackoff(() => list.views.add(v.title, false, { ...props, DefaultView: v.defaultView }));
         const view = r.view;
+        if (r?.data?.Id) claimedViewIds.add(cleanGuid(r.data.Id)); // a later same-titled source view must not land on it
         await retryWithBackoff(() => view.fields.removeAll());
         try {
           await addAll(view, wanted);
@@ -2823,13 +2893,16 @@ const importListData = async (data, { listTitle, dryRun = false, concurrency = 1
   if (idMapSeed) writeStatus(FN, `Resuming: ${Object.keys(idMapSeed).length} source item(s) already imported will be skipped.`);
   const warn = (m) => { report.warnings.push(m); writeStatus(FN, `⚠️ ${m}`); };
 
-  const found = await web.lists.filter(`Title eq '${escOData(targetTitle)}'`).select("Id", "RootFolder/ServerRelativeUrl").expand("RootFolder")();
+  const found = await web.lists.filter(`Title eq '${escOData(targetTitle)}'`).select("Id", "BaseType", "RootFolder/ServerRelativeUrl").expand("RootFolder")();
   if (!found.length) {
     if (dryRun) {
       writeStatus(FN, `DRY RUN: target list "${targetTitle}" does not exist yet; ${data.items.length} item(s) would be imported after createListFromSchema().`);
       return report;
     }
     throw new Error(`Target list "${targetTitle}" was not found. Run createListFromSchema() first.`);
+  }
+  if (found[0].BaseType === 1) {
+    throw new Error(`"${targetTitle}" is a document library: its rows are files, which this tool does not transfer.`);
   }
   const list = web.lists.getById(found[0].Id);
   const rootFolder = found[0].RootFolder.ServerRelativeUrl;
