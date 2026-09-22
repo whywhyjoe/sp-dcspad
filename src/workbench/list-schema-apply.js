@@ -283,6 +283,29 @@ function resolveFieldRefs(step, ctx) {
 
 async function runFieldCreate(step, ctx) {
   const { field: f, asText, options } = step.payload;
+  // SharePoint can provision a column as part of the list's base type the
+  // instant the list itself is created (a document library's own
+  // _ExtendedDescription, live on the dev tenant: it reports CanBeDeleted
+  // true / FromBaseType false, so capture treats it as a custom field and
+  // the plan schedules a create for it) — checked against the post-create
+  // re-read (ctx.targetFields), which is the target's ground truth, never
+  // the plan-time probe that ran before this list existed. Posting
+  // createfieldasxml for a name SharePoint already owns renames the NEW
+  // field to Name+"0" and the step looks like a failure for a column that,
+  // in fact, is already exactly right.
+  const present = (ctx.targetFields || []).find((tf) => tf.internalName === f.internalName);
+  if (present) {
+    if (present.typeAsString !== f.type) {
+      throw new SpFileError(
+        `already on the target as ${present.typeAsString}, source is ${f.type} — values will not import.`,
+        { code: 'write' },
+      );
+    }
+    ctx.fieldIdMap[f.internalName] = present.id;
+    step.status = 'skipped';
+    step.skipReason = 'already on the target';
+    return { id: present.id, alreadyPresent: true };
+  }
   const { lookupListId, primaryFieldId } = resolveFieldRefs(step, ctx);
   const xml = asText
     ? textFallbackXml(f)
@@ -615,7 +638,12 @@ export async function runPlan(plan, ctx = {}) {
       const runner = STEP_RUNNERS[s.kind];
       if (!runner) throw new SpFileError(`No executor for step kind ‘${s.kind}’.`, { code: 'internal' });
       const result = await runner(s, ctx, report);
-      s.status = 'done';
+      // A runner may finalize its own step's status before returning (e.g.
+      // runFieldCreate discovering the column already exists) — respect
+      // that instead of stomping it to 'done'. Still 'running' means the
+      // runner returned normally without an opinion, same as every other
+      // step kind.
+      if (s.status === 'running') s.status = 'done';
       s.result = result ?? null;
     } catch (err) {
       // A dependency that is missing only at run time (a dependent lookup's

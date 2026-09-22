@@ -77,6 +77,27 @@ export function isLibrary(list) {
   return Number(list?.baseType ?? list?.BaseType) === 1;
 }
 
+// Templates whose BaseType is 1 (document library) on every tenant this port
+// has been checked against — the fallback schemaBaseType() uses when a
+// document carries no source.baseType at all (a v1/SPUtils capture, which
+// never recorded it). Not exhaustive of every BaseType-1 template SharePoint
+// ships (Picture Library 109, Wiki Page Library 119, Asset Library 851,
+// Form Library 115…), just the ones this port has actually seen.
+const LIBRARY_BASE_TEMPLATES = new Set([101, 109, 115, 119, 851]);
+
+// The one place that decides "is this schema document a library" — 0 or 1,
+// SharePoint's own BaseType values. Prefers the captured source.baseType
+// (present on every v2 capture); falls back to a known-library BaseTemplate
+// only for a v1 document that predates the field. Everything that used to
+// ask "is baseTemplate === 101" should ask this instead: a non-101
+// BaseType-1 template (a picture/asset/form library) is still a library,
+// just one the planner recreates as a standard document library (101).
+export function schemaBaseType(doc) {
+  const sourceBaseType = doc?.source?.baseType;
+  if (sourceBaseType != null) return Number(sourceBaseType);
+  return LIBRARY_BASE_TEMPLATES.has(Number(doc?.list?.baseTemplate)) ? 1 : 0;
+}
+
 // Dependency tier for field creation: plain → lookup → dependent lookup
 // (needs its primary's new id) → calculated. Stable within a tier (the
 // caller's original order is preserved).
@@ -322,7 +343,7 @@ export function schemaSummary(doc) {
     viewsText: `${views.length} view${views.length === 1 ? '' : 's'}`,
     contentTypesText: d.list.contentTypesEnabled ? 'content types on' : 'content types off',
     versioningText: d.list.enableVersioning ? 'versioning on' : 'versioning off',
-    isLibrary: d.list.baseTemplate === 101 || d.source?.baseType === 1,
+    isLibrary: schemaBaseType(d) === 1,
   };
 }
 
@@ -422,8 +443,8 @@ export function isBuiltinParent(parentId) {
 // Adopting an existing list reconciles only what an import depends on
 // (attachments, folders) and leaves every other setting alone — SPUtils'
 // rule, and the one the consent sentence promises.
-function settingsPayload(list, { reconcile = false } = {}) {
-  const library = isLibrary(list) || Number(list.baseTemplate) === 101;
+function settingsPayload(list, { reconcile = false, isLib = false } = {}) {
+  const library = isLib;
   if (reconcile) {
     const groupA = {};
     if (list.enableAttachments && !library) groupA.EnableAttachments = true;
@@ -517,13 +538,18 @@ function pushMergeStep(steps, mergeStepIds, f, dependsOnId, merges) {
 //          availableContentTypes, targetLists }
 export function buildApplyPlan(doc, options = {}, probe = {}) {
   const d = normalizeSchemaDoc(doc);
-  // Eligibility: generic lists (100) and document libraries (101, schema
-  // only — no file transfer) — anything else is refused before any
-  // probe-dependent decision, so an imported doc of another template opens
-  // the dialog (it can still be inspected/exported) but never gets far
-  // enough to plan a write.
-  const isLib = Number(d.list.baseTemplate) === 101;
-  if (Number(d.list.baseTemplate) !== 100 && !isLib) {
+  // Eligibility: generic lists (100 exactly, base type 0) and document
+  // libraries (any base-type-1 template, schema only — no file transfer) —
+  // anything else is refused before any probe-dependent decision, so an
+  // imported doc of another template opens the dialog (it can still be
+  // inspected/exported) but never gets far enough to plan a write. A
+  // base-type-1 template other than 101 (a picture/asset/form library) is
+  // still eligible — it's recreated as a plain document library (101), see
+  // the list.create step below and its warning.
+  const baseType = schemaBaseType(d);
+  const isLib = baseType === 1;
+  const isGenericList = baseType === 0 && Number(d.list.baseTemplate) === 100;
+  if (!isGenericList && !isLib) {
     throw new SpFileError(
       'Only generic lists and document libraries can be created from a schema.',
       { code: 'unsupported-template' },
@@ -532,12 +558,17 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
   const warnings = [];
   const title = String(options.title || '').trim() || defaultTargetTitle(d, probe.targetLists || []);
   const existing = probe.existingList || null;
-  // A same-title collision whose baseTemplate doesn't match the doc's is not
-  // a title problem — it's a different kind of list, generic-vs-generic
-  // only. Checked before the 'fail'/'resume' branching below so it wins over
-  // both: the same list can't be adopted (columns and views mean nothing on
-  // a library) and "choose another title" doesn't fix a type mismatch.
-  if (existing && existing.baseTemplate != null && Number(existing.baseTemplate) !== Number(d.list.baseTemplate)) {
+  // A same-title collision whose BASE TYPE doesn't match the doc's is not a
+  // title problem — it's a different kind of list (generic-vs-library),
+  // never a template-vs-template distinction (a Tasks list and a generic
+  // list are both base type 0 and adopt onto each other just fine — only
+  // the list/library split actually matters to the plan). Checked before
+  // the 'fail'/'resume' branching below so it wins over both: the same list
+  // can't be adopted (columns and views mean nothing on a library) and
+  // "choose another title" doesn't fix a type mismatch. Opt-in on the probe
+  // actually carrying BaseType — a hand-built probe that omits it is never
+  // treated as a mismatch.
+  if (existing && existing.baseType != null && Number(existing.baseType) !== baseType) {
     throw new SpFileError(
       `‘${title}’ already exists on the target as a different type of list — its schema cannot be applied to it.`,
       { code: 'base-type-mismatch' },
@@ -557,11 +588,20 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
       refs: { listId: { self: true } },
     }));
   } else {
-    steps.push(step('list', 'list.create', `Create list ‘${title}’ (${BASE_TEMPLATE_LABELS[d.list.baseTemplate] || d.list.baseTemplate})`, {
+    // A library recreates as a plain document library (101) regardless of
+    // the source's actual template — SharePoint has no general "create a
+    // picture/asset/form library" REST verb this plan can lean on, and a
+    // standard library is what every other library step (base fields,
+    // settings, views) already assumes.
+    const createBaseTemplate = isLib ? 101 : (d.list.baseTemplate || 100);
+    if (isLib && Number(d.list.baseTemplate) !== 101) {
+      warnings.push(`Recreated as a standard document library (source template ${d.list.baseTemplate}).`);
+    }
+    steps.push(step('list', 'list.create', `Create list ‘${title}’ (${isLib ? 'Document library' : (BASE_TEMPLATE_LABELS[d.list.baseTemplate] || d.list.baseTemplate)})`, {
       payload: {
         title,
         description: options.description ?? d.list.description ?? '',
-        baseTemplate: d.list.baseTemplate || 100,
+        baseTemplate: createBaseTemplate,
         contentTypesEnabled: !!d.list.contentTypesEnabled,
         urlName: options.urlName || '',
       },
@@ -570,7 +610,7 @@ export function buildApplyPlan(doc, options = {}, probe = {}) {
 
   steps.push(step('settings', 'list.settings', existing ? 'Reconcile list settings' : 'Apply list settings', {
     dependsOn: ['list'],
-    payload: settingsPayload(d.list, { reconcile: Boolean(existing) }),
+    payload: settingsPayload(d.list, { reconcile: Boolean(existing), isLib }),
     refs: { listId: { self: true } },
   }));
 

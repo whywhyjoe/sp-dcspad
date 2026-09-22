@@ -310,7 +310,7 @@ await check('pure: settingsPayload never sends Description — list.create alrea
     return !('Description' in freshSettings) && !('Description' in adoptSettings);
   }));
 
-await check('pure: buildApplyPlan refuses an unsupported template (unsupported-template — generic lists and libraries are fine, a survey is not) and a same-title base-type mismatch (base-type-mismatch)', () =>
+await check('pure: buildApplyPlan refuses an unsupported template (unsupported-template — generic lists and libraries are fine, a survey is not) and a same-title BASE TYPE mismatch (base-type-mismatch, opt-in on probe.existingList.baseType)', () =>
   page.evaluate(async () => {
     const { buildApplyPlan, buildSchemaDoc } = await import('/src/workbench/list-schema.js');
     // 101 (document library) is stage 2 — supported. 102 (Survey) never was.
@@ -324,25 +324,40 @@ await check('pure: buildApplyPlan refuses an unsupported template (unsupported-t
     let mismatchCode = null;
     try {
       buildApplyPlan(genericDoc, { title: 'Requests' }, {
-        existingList: { id: 'x', title: 'Requests', baseTemplate: 101 },
+        existingList: { id: 'x', title: 'Requests', baseTemplate: 101, baseType: 1 },
       });
     } catch (e) { mismatchCode = e.code; }
     // The reverse direction: a library doc refused onto an existing generic list.
     let reverseMismatchCode = null;
     try {
       buildApplyPlan(libDoc, { title: 'Documents' }, {
-        existingList: { id: 'y', title: 'Documents', baseTemplate: 100 },
+        existingList: { id: 'y', title: 'Documents', baseTemplate: 100, baseType: 0 },
       });
     } catch (e) { reverseMismatchCode = e.code; }
-    // A hand-built probe that never carries baseTemplate at all (as several
+    // A hand-built probe that never carries BaseType at all (as several
     // other pure fixtures in this file do) must not be treated as a
-    // mismatch — the check is opt-in on the probe actually saying so.
+    // mismatch — the check is opt-in on the probe actually saying so. Even
+    // though this probe's baseTemplate (101) would have mismatched under
+    // the old template comparison — the check now looks at baseType only.
     const noTemplateInProbe = buildApplyPlan(genericDoc, { title: 'Requests', existing: 'resume' },
-      { existingList: { id: 'x', title: 'Requests' }, targetLists: [{ title: 'Requests' }] });
+      { existingList: { id: 'x', title: 'Requests', baseTemplate: 101 }, targetLists: [{ title: 'Requests' }] });
+    // A non-101 BaseType-1 template (a picture library, 109) is eligible —
+    // recreated as a standard document library, with a warning naming the
+    // source template — and a same-baseType collision against it (also
+    // BaseType 1, different template) is NOT a mismatch: only the
+    // list/library split matters now, not the exact template number.
+    const pictureDoc = buildSchemaDoc({ list: { title: 'Photos', baseTemplate: 109 }, fields: [], views: [] });
+    const picturePlan = buildApplyPlan(pictureDoc, { title: 'Photos' }, { targetLists: [] });
+    const pictureCreate = picturePlan.steps.find((s) => s.id === 'list');
+    const pictureAdopt = buildApplyPlan(pictureDoc, { title: 'Photos', existing: 'resume' },
+      { existingList: { id: 'z', title: 'Photos', baseTemplate: 101, baseType: 1 }, targetLists: [{ title: 'Photos' }] });
 
     return libPlan.steps[0].kind === 'list.create' && surveyCode === 'unsupported-template'
       && mismatchCode === 'base-type-mismatch' && reverseMismatchCode === 'base-type-mismatch'
-      && noTemplateInProbe.steps[0].kind === 'list.adopt';
+      && noTemplateInProbe.steps[0].kind === 'list.adopt'
+      && pictureCreate.kind === 'list.create' && pictureCreate.payload.baseTemplate === 101
+      && picturePlan.warnings.some((w) => w.includes('Recreated as a standard document library (source template 109)'))
+      && pictureAdopt.steps[0].kind === 'list.adopt';
   }));
 
 await check('pure: adopting reconciles only attachments/folders, nulls never reach a MERGE, and a dependent lookup on a failed primary is blocked', () =>
@@ -445,6 +460,73 @@ await check('pure: executor — no views read without view steps, a 401 on the r
     const oneToOne = reportC.views.updated === 1 && reportC.views.added === 1 && viewPosts.length === 1
       && viewPosts[0].body.Title === 'Alle Elemente';
     return noViewsRead && listDone && oneToOne;
+  }));
+
+// Live dev-tenant finding: a document library's own _ExtendedDescription
+// reports CanBeDeleted:true / FromBaseType:false, so capture treats it as a
+// custom column and the plan schedules a create for it — but SharePoint
+// already provisioned that exact name as part of the library's base type
+// the instant the list was created. Posting createfieldasxml for it renamed
+// the new field to '_ExtendedDescription0' and the step failed. Fixed in
+// runFieldCreate: check the post-create re-read (ctx.targetFields) before
+// posting.
+await check('pure: executor — a field.create whose name is already on the target (post-create re-read) is skipped instead of posted, feeds its id into fieldIdMap for a following field.merge, and a same-name/different-type collision fails naming both types', () =>
+  page.evaluate(async () => {
+    const { runPlan } = await import('/src/workbench/list-schema-apply.js');
+    const mkClient = (fields) => ({
+      webUrl: () => 'https://t/sites/x',
+      get: async () => ({}),
+      getAll: async (path) => {
+        if (path.endsWith('/fields')) return { items: fields };
+        return { items: [] };
+      },
+    });
+    const mkWrite = (posts) => {
+      const go = async (path, body) => {
+        posts.push({ path, body });
+        if (path === 'web/lists') return { Id: 'L1', RootFolder: { ServerRelativeUrl: '/x' } };
+        return { Id: `v${posts.length}`, InternalName: 'ignored' };
+      };
+      return { postJson: go, mergeJson: go, isMock: () => true };
+    };
+    const listStep = () => ({ id: 'list', kind: 'list.create', label: 'l', dependsOn: [], status: 'planned',
+      payload: { title: 'Docs', description: '', baseTemplate: 101, contentTypesEnabled: false, urlName: '' }, refs: {}, optional: false });
+    const fieldStep = (name, type) => ({
+      id: `field:${name}`, kind: 'field.create', label: name, dependsOn: ['list'], status: 'planned', refs: {}, optional: false,
+      payload: { field: { internalName: name, displayName: name, type, schemaXml: `<Field Name="${name}" Type="${type}"/>` }, options: 8 },
+    });
+    const mergeStep = (name) => ({
+      id: `merge:${name}`, kind: 'field.merge', label: `merge ${name}`, dependsOn: [`field:${name}`], status: 'planned', refs: {}, optional: true,
+      payload: { internalName: name, merges: { Indexed: true } },
+    });
+
+    // (a) same name, same type already on the target → skipped, nothing
+    // posted to createfieldasxml, and its dependent merge still runs against
+    // the EXISTING field's id.
+    const postsA = [];
+    const reportA = await runPlan(
+      { title: 'Docs', steps: [listStep(), fieldStep('_ExtendedDescription', 'Note'), mergeStep('_ExtendedDescription')] },
+      { client: mkClient([{ Id: 'existing-id', InternalName: '_ExtendedDescription', Title: 'Description', TypeAsString: 'Note' }]), spWrite: mkWrite(postsA) },
+    );
+    const stepA = reportA.steps.find((s) => s.id === 'field:_ExtendedDescription');
+    const mergeA = reportA.steps.find((s) => s.id === 'merge:_ExtendedDescription');
+    const noCreatePosted = !postsA.some((p) => p.path.includes('createfieldasxml'));
+    const mergePosted = postsA.some((p) => p.path.includes("fields(guid'existing-id')"));
+
+    // (b) same name, a DIFFERENT type already on the target → failed, naming
+    // both types; still nothing posted to createfieldasxml.
+    const postsB = [];
+    const reportB = await runPlan(
+      { title: 'Docs', steps: [listStep(), fieldStep('Budget', 'Number')] },
+      { client: mkClient([{ Id: 'existing-id', InternalName: 'Budget', Title: 'Budget', TypeAsString: 'Text' }]), spWrite: mkWrite(postsB) },
+    );
+    const stepB = reportB.steps.find((s) => s.id === 'field:Budget');
+    const noCreatePostedB = !postsB.some((p) => p.path.includes('createfieldasxml'));
+
+    return stepA.status === 'skipped' && stepA.skipReason === 'already on the target' && noCreatePosted
+      && reportA.fields.skipped === 1 && reportA.fields.added === 0
+      && mergeA?.status === 'done' && mergePosted
+      && stepB.status === 'failed' && stepB.error.includes('Text') && stepB.error.includes('Number') && noCreatePostedB;
   }));
 
 await check('pure: defaultTargetTitle keeps the source title when free, appends Copy when taken', () =>
@@ -690,6 +772,40 @@ await check('pure: capture warns about a non-default per-library Forms template,
       && !none.doc.warnings.some((w) => w.includes('Per-library Forms template'));
   }));
 
+await check('pure: capture also warns — naming the content type — when a content type carries its own non-empty DocumentTemplate, even with the list-level template left at SharePoint’s default', () =>
+  page.evaluate(async () => {
+    const { captureListSchema } = await import('/src/workbench/list-schema-capture.js');
+    function makeClient(ctTemplate) {
+      return {
+        webUrl: () => 'https://t/sites/x',
+        get: async (path) => {
+          if (path === 'web') return { Id: 'w1', Title: 'W', Url: 'https://t/sites/x', ServerRelativeUrl: '/sites/x', Language: 1033 };
+          return {
+            Id: 'L1', Title: 'Docs', BaseTemplate: 101, BaseType: 1, ItemCount: 0,
+            RootFolder: { ServerRelativeUrl: '/sites/x/Docs' }, ContentTypesEnabled: true,
+            DocumentTemplateUrl: '', EnableVersioning: false, EnableAttachments: true,
+            ValidationFormula: '', ValidationMessage: '', OnQuickLaunch: false, ReadSecurity: null, WriteSecurity: null,
+          };
+        },
+        getAll: async (path) => {
+          if (path.includes('/contenttypes')) {
+            return {
+              items: [{
+                StringId: '0x010100AABBCCDDEEFF00112233445566', Name: 'Report', Group: 'Custom Content Types',
+                Hidden: false, ReadOnly: false, Sealed: false, DocumentTemplate: ctTemplate,
+              }],
+            };
+          }
+          return { items: [] };
+        },
+      };
+    }
+    const named = await captureListSchema(makeClient('/sites/x/Docs/report-template.dotx'), 'L1');
+    const quiet = await captureListSchema(makeClient(''), 'L1');
+    return named.doc.warnings.some((w) => w.includes('Per-library Forms template') && w.includes('‘Report’'))
+      && !quiet.doc.warnings.some((w) => w.includes('Per-library Forms template'));
+  }));
+
 await check('pure: script emitters use DocumentLibrary for a 101 plan, and never emit EnableAttachments', () =>
   page.evaluate(async () => {
     const { toPnpPowerShellProvisioning, toPnpjs2Provisioning } = await import('/src/workbench/list-schema-script.js');
@@ -824,13 +940,14 @@ await check('dialog: Copy to… on a library shows the files-not-copied line and
   return note.trim() === 'Files are not copied — a library copy is schema only.' && rowHidden && fieldsetDisabled === true;
 });
 
-await check('dialog: a library Create on /sites/target posts BaseTemplate 101, no EnableAttachments, ForceCheckout true, and attaches the 0x0101-derived content type', async () => {
+await check('dialog: a library Create on /sites/target posts BaseTemplate 101, no EnableAttachments, ForceCheckout true, attaches the 0x0101-derived content type, fails zero steps, and recreates ‘All Documents’/‘By kind’ with the exact source field sequences', async () => {
   await schemaPage.fill('.wb-schema-target', '/sites/target');
   await schemaPage.locator('.wb-schema-connect').click();
   await schemaPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value === 'Documents Copy');
   await schemaPage.evaluate(() => { window.__DCSPAD_WB_WRITES__ = []; });
   await schemaPage.locator('.wb-schema-create').click();
   await schemaPage.waitForSelector('.wb-schema-report:not([hidden])');
+  const failedStepsShown = await schemaPage.locator('.wb-schema-report-failed h3').count();
   const result = await schemaPage.evaluate(() => {
     const writes = window.__DCSPAD_WB_WRITES__ || [];
     const method = (w) => w.headers?.['X-HTTP-Method'] || w.headers?.['x-http-method'] || '';
@@ -845,12 +962,30 @@ await check('dialog: a library Create on /sites/target posts BaseTemplate 101, n
       forceCheckout: settingsBody.ForceCheckout, ctAttach,
     };
   });
+  // Read the target list back exactly the way any other capture would — the
+  // ground truth for what actually landed, not a re-parse of the write log.
+  const views = await schemaPage.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    const { mockResolver } = await import('/src/workbench/mock-data.js');
+    const { captureListSchema } = await import('/src/workbench/list-schema-capture.js');
+    const target = createSpRestClient({ mockResolver });
+    await target.connectWeb('/sites/target');
+    const { items } = await target.getAll('web/lists', { select: ['Id', 'Title'] });
+    const listId = items.find((l) => l.Title === 'Documents Copy')?.Id;
+    if (!listId) return null;
+    const { doc } = await captureListSchema(target, listId, { includeHidden: true });
+    const byTitle = (t) => doc.views.find((v) => v.title === t);
+    return { allDocuments: byTitle('All Documents')?.fields, byKind: byTitle('By kind')?.fields };
+  });
   // Close the report so later schemaPage checks (which start from the
   // all-lists grid) aren't blocked by this dialog's own overlay.
   await schemaPage.locator('.wb-schema-cancel').click();
   await schemaPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
   return result.baseTemplate === 101 && !result.hasEnableAttachments
-    && result.forceCheckout === true && result.ctAttach === true;
+    && result.forceCheckout === true && result.ctAttach === true
+    && failedStepsShown === 0
+    && (views?.allDocuments || []).join(',') === 'DocIcon,LinkFilename,DocCategory,FileSizeDisplay,Modified'
+    && (views?.byKind || []).join(',') === 'DocIcon,LinkFilename,Modified,Editor';
 });
 
 // ---- Stubbed live: capture request shapes ----------------------------------
@@ -1162,6 +1297,13 @@ const applyPosts = [];   // { url, method, ifMatch, digest, body, order }
 const contextInfoUrls = [];
 const applyFlags = { failField: null, throttleField: null, expireOnField: null };
 let applyCallSeq = 0;
+// Fields actually created via createfieldasxml on this stub's one reused
+// LIST_ID, name → TypeAsString — the fields GET route below folds these in
+// on top of the two genuinely pre-existing base columns (Title, LinkTitle),
+// so the executor's post-create re-read (list-schema-apply.js
+// runFieldCreate's already-on-the-target check) never sees a field as
+// present before its own createfieldasxml has actually landed.
+const stubCreatedFields = new Map();
 
 await liveApply.route('**/_api/**', async (route) => {
   const request = route.request();
@@ -1192,12 +1334,15 @@ await liveApply.route('**/_api/**', async (route) => {
       return route.fulfill({ json: { value: [{ StringId: CT_PARENT, Name: 'Request', Group: 'Custom' }] } });
     }
     if (url.includes(`lists(guid'${LIST_ID}')/fields`)) {
-      return route.fulfill({ json: { value: [
+      const base = [
         { Id: 'fid-title', InternalName: 'Title', Title: 'Title', TypeAsString: 'Text', Hidden: false, ReadOnlyField: false },
         { Id: 'fid-linktitle', InternalName: 'LinkTitle', Title: 'Title', TypeAsString: 'Computed', Hidden: false, ReadOnlyField: true },
-        { Id: 'fid-budget', InternalName: 'Budget', Title: 'Budget', TypeAsString: 'Number', Hidden: false, ReadOnlyField: false },
-        { Id: 'fid-region', InternalName: 'Region', Title: 'Region', TypeAsString: 'Lookup', Hidden: false, ReadOnlyField: false },
-      ] } });
+      ];
+      const created = [...stubCreatedFields.entries()].map(([name, typeAsString]) => ({
+        Id: `fid-${name.toLowerCase()}`, InternalName: name, Title: name, TypeAsString: typeAsString,
+        Hidden: false, ReadOnlyField: false,
+      }));
+      return route.fulfill({ json: { value: [...base, ...created] } });
     }
     if (url.includes('/viewfields') && url.includes(`lists(guid'${LIST_ID}')`)) {
       return route.fulfill({ json: { Items: [] } });
@@ -1240,6 +1385,8 @@ await liveApply.route('**/_api/**', async (route) => {
     if (applyFlags.failField && name === applyFlags.failField) {
       return route.fulfill({ status: 400, json: { 'odata.error': { message: { value: `SharePoint could not create the column '${name}'.` } } } });
     }
+    const type = /Type="([^"]*)"/.exec(xml)?.[1] || 'Text';
+    stubCreatedFields.set(name, type);
     return route.fulfill({ json: { Id: `fid-${name.toLowerCase()}`, InternalName: name } });
   }
 

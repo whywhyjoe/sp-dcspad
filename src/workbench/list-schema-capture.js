@@ -174,6 +174,14 @@ export async function captureListSchema(client, listId, { includeHidden = false 
   if (templateUrl && !/\/forms\/template\.dotx$/i.test(templateUrl)) {
     warnings.push('Per-library Forms template — upload it after the copy.');
   }
+  // A content type's own template is captured (list-schema.js CT_DEFAULTS)
+  // but never uploaded either — same capture-only-with-warning treatment as
+  // the list-level default, one warning per content type so each is named.
+  for (const ct of contentTypes) {
+    if (ct.documentTemplate) {
+      warnings.push(`Per-library Forms template on content type ‘${ct.name}’ — upload it after the copy.`);
+    }
+  }
 
   const doc = buildSchemaDoc({
     source,
@@ -197,7 +205,7 @@ export async function probeTarget(client, { title, doc } = {}) {
   // $filter: SharePoint titles collide case-insensitively, and the mock
   // resolver (like every fixture) ignores $filter.
   const { items: allLists } = await client.getAll('web/lists', {
-    select: ['Id', 'Title', 'BaseTemplate', 'ContentTypesEnabled', 'RootFolder/ServerRelativeUrl'],
+    select: ['Id', 'Title', 'BaseTemplate', 'BaseType', 'ContentTypesEnabled', 'RootFolder/ServerRelativeUrl'],
     expand: 'RootFolder',
   });
   const wanted = String(title || '').trim().toLowerCase();
@@ -207,6 +215,11 @@ export async function probeTarget(client, { title, doc } = {}) {
       id: match.Id,
       title: match.Title,
       baseTemplate: match.BaseTemplate,
+      // The base-type-mismatch check (list-schema.js buildApplyPlan) compares
+      // this, not baseTemplate — the target's actual BaseType is what
+      // decides list-vs-library, a v1-compatible fact templates alone don't
+      // carry (a picture/asset/form library is base type 1 too).
+      baseType: match.BaseType,
       contentTypesEnabled: !!match.ContentTypesEnabled,
       rootFolderUrl: match.RootFolder?.ServerRelativeUrl || '',
     }

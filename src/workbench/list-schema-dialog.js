@@ -18,7 +18,7 @@
 
 import {
   normalizeSchemaDoc, SCHEMA_KIND, defaultTargetTitle, buildApplyPlan,
-  buildApplyReport, parentContentTypeId, isBuiltinParent, LOOKUP_TYPES,
+  buildApplyReport, parentContentTypeId, isBuiltinParent, LOOKUP_TYPES, schemaBaseType,
 } from './list-schema.js';
 import { probeTarget } from './list-schema-capture.js';
 import { runPlan } from './list-schema-apply.js';
@@ -116,8 +116,9 @@ export function openSchemaApplyDialog({
     const d = normalizeSchemaDoc(doc);
     // Stage 2: a library copy is schema only — files are never transferred,
     // so the Items fieldset has nothing to offer for one, ever (not even in
-    // 'copy' mode with a live source client).
-    const isLibraryDoc = Number(d.list.baseTemplate) === 101;
+    // 'copy' mode with a live source client). schemaBaseType covers every
+    // BaseType-1 template (picture/asset/form libraries too), not just 101.
+    const isLibraryDoc = schemaBaseType(d) === 1;
     // Replaced per connect (see connect()); closures read the current one.
     let targetClient = createClient();
     const isMockMode = !targetClient.context().live;
@@ -397,12 +398,22 @@ export function openSchemaApplyDialog({
     // Planner refusals (list-schema.js buildApplyPlan) worth showing before
     // the user ever clicks Dry run/Create — both are static facts of the
     // doc/probe, not something a write attempt is needed to discover.
+    // Compares BASE TYPE, not template — same rule buildApplyPlan applies,
+    // opt-in on the probe actually carrying BaseType.
     function baseTypeMismatch() {
-      return Boolean(probe.existingList) && probe.existingList.baseTemplate != null
-        && Number(probe.existingList.baseTemplate) !== Number(d.list.baseTemplate);
+      return Boolean(probe.existingList) && probe.existingList.baseType != null
+        && Number(probe.existingList.baseType) !== schemaBaseType(d);
+    }
+    // Generic list = base type 0 with template exactly 100; any base-type-1
+    // template is a library, recreated as a standard one (101) — mirrors
+    // buildApplyPlan's own eligibility gate.
+    function unsupportedTemplate() {
+      const bt = schemaBaseType(d);
+      const isGenericList = bt === 0 && Number(d.list.baseTemplate) === 100;
+      return !(isGenericList || bt === 1);
     }
     function eligible() {
-      return (Number(d.list.baseTemplate) === 100 || Number(d.list.baseTemplate) === 101) && !baseTypeMismatch();
+      return !unsupportedTemplate() && !baseTypeMismatch();
     }
 
     function updateTitleStatus() {
@@ -544,7 +555,7 @@ export function openSchemaApplyDialog({
       // of waiting for a Dry run/Create click to discover them.
       if (baseTypeMismatch()) {
         showError(`‘${probe.existingList.title}’ already exists on the target as a different type of list — it can’t be used for this schema.`);
-      } else if (Number(d.list.baseTemplate) !== 100 && Number(d.list.baseTemplate) !== 101) {
+      } else if (unsupportedTemplate()) {
         showError('Only generic lists and document libraries can be created from a schema.');
       } else {
         showError('');

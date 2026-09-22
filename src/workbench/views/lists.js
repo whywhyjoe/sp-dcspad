@@ -17,7 +17,7 @@ import { renderValue } from '../../inspect/tree-view.js';
 import { toNode } from '../../inspect/to-node.js';
 import { captureListSchema } from '../list-schema-capture.js';
 import { captureListData } from '../list-data-capture.js';
-import { schemaSummary, TAXONOMY_TYPES, normalizeSchemaDoc, SCHEMA_KIND } from '../list-schema.js';
+import { schemaSummary, TAXONOMY_TYPES, normalizeSchemaDoc, SCHEMA_KIND, schemaBaseType } from '../list-schema.js';
 import { normalizeDataDoc, DATA_KIND } from '../list-data.js';
 import { toPnpPowerShellProvisioning, toPnpjs2Provisioning } from '../list-schema-script.js';
 import { openSchemaApplyDialog } from '../list-schema-dialog.js';
@@ -862,10 +862,13 @@ export function createListsView({
     ]));
     const copyBtn = el('button', 'btn btn-xs wb-schema-copy', 'Copy to…');
     copyBtn.type = 'button';
-    // Generic lists (100) and document libraries (101, schema only) can be
-    // copied. Any other template is out of scope — a plain sentence, since
-    // there's no stage planned to promise there.
-    const gated = doc.list.baseTemplate !== 100 && doc.list.baseTemplate !== 101;
+    // Generic lists (100 exactly) and document libraries (any base-type-1
+    // template, schema only) can be copied. Any other template is out of
+    // scope — a plain sentence, since there's no stage planned to promise
+    // there. Mirrors list-schema.js buildApplyPlan's own eligibility gate.
+    const docBaseType = schemaBaseType(doc);
+    const isEligible = (docBaseType === 0 && doc.list.baseTemplate === 100) || docBaseType === 1;
+    const gated = !isEligible;
     copyBtn.disabled = gated;
     copyBtn.title = !gated
       ? 'Create a new list from this schema, on this site or another one.'

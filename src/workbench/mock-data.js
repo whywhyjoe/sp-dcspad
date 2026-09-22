@@ -258,6 +258,13 @@ const SCHEMA_DOCUMENTS_FIELDS = [
   schemaField('File Size', 'FileSizeDisplay', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, Hidden: true }),
   schemaField('Content Type', 'ContentType', 'Computed', 12, { FromBaseType: true, CanBeDeleted: false, Hidden: true, ReadOnlyField: true }),
   schemaField('Created By', 'Author', 'User', 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: 'UserInfo' } }),
+  // Not Hidden on a real library (unlike DocIcon/FileSizeDisplay above), so
+  // a real capture reaches these through doc.fields/baseFieldNames like any
+  // other non-custom column — the buildApplyPlan view comment's own "base
+  // Title/ID/Created/Modified/Author set already is assumed present" line.
+  schemaField('Modified By', 'Editor', 'User', 20, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true, xmlAttrs: { List: 'UserInfo' } }),
+  schemaField('Created', 'Created', 'DateTime', 4, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true }),
+  schemaField('Modified', 'Modified', 'DateTime', 4, { FromBaseType: true, CanBeDeleted: false, ReadOnlyField: true }),
 ];
 
 const SCHEMA_DOCUMENTS_VIEWS = [
@@ -266,6 +273,17 @@ const SCHEMA_DOCUMENTS_VIEWS = [
     PersonalView: false, Hidden: false, ServerRelativeUrl: '/sites/schema/Documents/Forms/AllItems.aspx',
     RowLimit: 30, Paged: true, ViewQuery: '',
     ViewFields: { Items: ['DocIcon', 'LinkFilename', 'DocCategory', 'FileSizeDisplay', 'Modified'] },
+  },
+  // A second, non-default view — grouped by kind of document, all columns
+  // library base fields already carry. Exercises a plain (non-default)
+  // view.upsert alongside the default-view match above so the library
+  // Create check (tests/workbench-schema.mjs) can assert both recreated
+  // views land with their exact field sequences and zero failed steps.
+  {
+    Id: 'cc1e2c1d-6666-7777-bbbb-000000000002', Title: 'By kind', DefaultView: false,
+    PersonalView: false, Hidden: false, ServerRelativeUrl: '/sites/schema/Documents/Forms/ByKind.aspx',
+    RowLimit: 30, Paged: true, ViewQuery: '<GroupBy Collapse="TRUE"><FieldRef Name="DocIcon"/></GroupBy>',
+    ViewFields: { Items: ['DocIcon', 'LinkFilename', 'Modified', 'Editor'] },
   },
 ];
 
@@ -404,6 +422,15 @@ function xmlAttr(xml, name) {
 }
 
 let mockWriteSeq = 0;
+// Every generated id must stay within [0-9a-f] (plus the literal dashes a
+// real GUID also carries) — the write handlers below re-extract a listId/
+// viewId/fieldId from the request URL with a GUID-shaped regex
+// (`[0-9a-f-]+`), and a prefix using a letter outside a-f (a bare 'v', say)
+// silently fails that match, so the request falls through to
+// defaultMockWriter and the mutation it was supposed to make (clearing/
+// filling a view's own field list, in particular) never happens — caught by
+// the library Create check reading a just-run mutation back and getting the
+// list's still-original state.
 const nextMockId = (prefix) => `${prefix}${String(++mockWriteSeq).padStart(8, '0')}`;
 
 // A list born via the stateful mock writer needs SharePoint's own base
@@ -428,6 +455,32 @@ function baseFieldRows() {
     baseFieldRow('Modified', 'Modified', 'DateTime', { ReadOnlyField: true }),
     baseFieldRow('Author', 'Created By', 'User', { ReadOnlyField: true }),
     baseFieldRow('Editor', 'Modified By', 'User', { ReadOnlyField: true }),
+  ];
+}
+
+// A document library's own base columns — a different set from a generic
+// list's (no Attachments; File*/DocIcon/Name instead). FromBaseType true /
+// CanBeDeleted false throughout, matching what SharePoint actually reports,
+// EXCEPT _ExtendedDescription: real SPO libraries report it CanBeDeleted
+// true / FromBaseType false (isCustomField sees it as a custom column) —
+// the exact live shape list-schema-apply.js runFieldCreate's
+// already-on-the-target check exists for. Keep it that way here; don't
+// "fix" it to match the others.
+function libraryBaseFieldRows() {
+  return [
+    baseFieldRow('FileLeafRef', 'Name', 'Computed', { ReadOnlyField: true }),
+    baseFieldRow('LinkFilename', 'Name', 'Computed', { ReadOnlyField: true }),
+    baseFieldRow('LinkFilenameNoMenu', 'Name', 'Computed', { Hidden: true, ReadOnlyField: true }),
+    baseFieldRow('DocIcon', 'Type', 'Computed', { Hidden: true, ReadOnlyField: true }),
+    baseFieldRow('FileSizeDisplay', 'File Size', 'Computed', { Hidden: true, ReadOnlyField: true }),
+    baseFieldRow('Title', 'Title', 'Text', { Required: false }),
+    baseFieldRow('_ExtendedDescription', 'Description', 'Note', { FromBaseType: false, CanBeDeleted: true }),
+    baseFieldRow('Created', 'Created', 'DateTime', { ReadOnlyField: true }),
+    baseFieldRow('Modified', 'Modified', 'DateTime', { ReadOnlyField: true }),
+    baseFieldRow('Author', 'Created By', 'User', { ReadOnlyField: true }),
+    baseFieldRow('Editor', 'Modified By', 'User', { ReadOnlyField: true }),
+    baseFieldRow('ContentType', 'Content Type', 'Computed', { Hidden: true, ReadOnlyField: true }),
+    baseFieldRow('ID', 'ID', 'Counter', { ReadOnlyField: true }),
   ];
 }
 
@@ -466,11 +519,18 @@ export function mockWriter(url, body, contentType, headers = {}) {
     };
     writerState.lists.set(`${webBase}::${String(data.Title || '').toLowerCase()}`, entry);
     const fields = new Map();
-    for (const row of baseFieldRows()) fields.set(row.InternalName, row);
+    for (const row of (isLib ? libraryBaseFieldRows() : baseFieldRows())) fields.set(row.InternalName, row);
     writerState.fields.set(id, fields);
     const views = new Map();
-    const viewId = nextMockId('vv00');
-    views.set(viewId, { Id: viewId, Title: 'All Items', fields: ['LinkTitle'], defaultView: true });
+    const viewId = nextMockId('fa00');
+    // SharePoint's own default view on a fresh list: "All Items" for a
+    // generic list, "All Documents" for a library — same title the schema
+    // feature's own source fixtures use, so a source view captured under
+    // that name matches by title instead of falling back to the
+    // default-view guess (list-schema-apply.js assignViews).
+    views.set(viewId, isLib
+      ? { Id: viewId, Title: 'All Documents', fields: ['DocIcon', 'LinkFilename', 'Modified', 'Editor'], defaultView: true }
+      : { Id: viewId, Title: 'All Items', fields: ['LinkTitle'], defaultView: true });
     writerState.views.set(id, views);
     writerState.contentTypes.set(id, new Set());
     record();
@@ -555,7 +615,7 @@ export function mockWriter(url, body, contentType, headers = {}) {
   if (listId && /\/views$/.test(path) && !method) {
     let data = {};
     try { data = JSON.parse(body); } catch { /* keep {} */ }
-    const id = nextMockId('vv00');
+    const id = nextMockId('fa00');
     const views = writerState.views.get(listId) || new Map();
     views.set(id, { Id: id, Title: data.Title, fields: [], defaultView: !!data.DefaultView });
     writerState.views.set(listId, views);
@@ -573,7 +633,12 @@ export function mockWriter(url, body, contentType, headers = {}) {
   const addViewField = /addviewfield\('([^']*)'\)/i.exec(path);
   if (listId && viewMatch && addViewField) {
     const view = writerState.views.get(listId)?.get(viewMatch[1]);
-    if (view) view.fields.push(decodeURIComponent(addViewField[1]));
+    // The internal name is case-sensitive (SharePoint field names are) —
+    // re-extracted from the ORIGINAL url, never the routing-only `path`
+    // above, which is lowercased wholesale for matching and would otherwise
+    // silently mangle every field name pushed here.
+    const castName = /addviewfield\('([^']*)'\)/i.exec(String(url))?.[1] ?? addViewField[1];
+    if (view) view.fields.push(decodeURIComponent(castName));
     record();
     return {};
   }
