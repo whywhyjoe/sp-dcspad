@@ -22,6 +22,8 @@ import {
 } from './list-schema.js';
 import { probeTarget } from './list-schema-capture.js';
 import { runPlan } from './list-schema-apply.js';
+import { captureListData } from './list-data-capture.js';
+import { applyListData } from './list-data-apply.js';
 import { createSpWriteClient } from './sp-write.js';
 import { EXPIRED_SESSION_NOTE } from './denied.js';
 import { getFavorites, getRecents } from './favorites.js';
@@ -67,7 +69,7 @@ function stepLine(step) {
 }
 
 function buildHeadline(report, { isMock }) {
-  if (report.aborted === 'auth') return EXPIRED_SESSION_NOTE;
+  if (report.aborted === 'auth' || report.itemsReport?.aborted === 'auth') return EXPIRED_SESSION_NOTE;
   if (report.aborted === 'probe') {
     const msg = report.warnings?.[report.warnings.length - 1] || 'a read failed';
     return `The run stopped: ${msg} — Retry resumes from the list as it is now.`;
@@ -95,7 +97,7 @@ function buildHeadline(report, { isMock }) {
 }
 
 export function openSchemaApplyDialog({
-  doc, mode = 'copy', client, createClient, navigate, inspectSite, mockWriter,
+  doc, dataDoc = null, mode = 'copy', client, createClient, navigate, inspectSite, mockWriter,
 } = {}) {
   return new Promise((resolve) => {
     const d = normalizeSchemaDoc(doc);
@@ -239,21 +241,43 @@ export function openSchemaApplyDialog({
     panel.append(ctSection);
 
     // ---- 6. items (stage 1b) ---------------------------------------------
+    // copy mode: always available — items are captured from the SOURCE
+    // client on demand (runItemsPhase below), only when the box is checked.
+    // import mode: available only when 'New from schema…' was also given a
+    // matching data document (views/lists.js refuses a mismatched one before
+    // this dialog ever opens).
     const itemsFieldset = el('fieldset', 'wb-schema-items');
-    itemsFieldset.disabled = true;
-    itemsFieldset.title = 'Item data arrives in stage 1b — this run copies the schema only.';
     const legend = el('legend', '', 'Items');
     itemsFieldset.append(legend);
     const itemsRow = el('div', 'wb-schema-items-row');
-    for (const label of ['Include items', 'Include attachments', 'Preserve authorship']) {
-      const cbLabel = el('label', 'wb-schema-items-opt');
-      const cb = el('input');
-      cb.type = 'checkbox';
-      cbLabel.append(cb, el('span', '', label));
-      itemsRow.append(cbLabel);
-    }
+    const includeItemsCb = el('input');
+    includeItemsCb.type = 'checkbox';
+    const includeItemsLabel = el('label', 'wb-schema-items-opt');
+    includeItemsLabel.append(includeItemsCb, el('span', '', 'Include items'));
+    const includeAttachmentsCb = el('input');
+    includeAttachmentsCb.type = 'checkbox';
+    const includeAttachmentsLabel = el('label', 'wb-schema-items-opt');
+    includeAttachmentsLabel.append(includeAttachmentsCb, el('span', '', 'Include attachments'));
+    const preserveAuthorshipCb = el('input');
+    preserveAuthorshipCb.type = 'checkbox';
+    const preserveAuthorshipLabel = el('label', 'wb-schema-items-opt');
+    preserveAuthorshipLabel.append(preserveAuthorshipCb, el('span', '', 'Preserve authorship'));
+    itemsRow.append(includeItemsLabel, includeAttachmentsLabel, preserveAuthorshipLabel);
     itemsFieldset.append(itemsRow);
+    const itemsNote = el('p', 'wb-schema-note wb-schema-items-note');
+    itemsFieldset.append(itemsNote);
     panel.append(itemsFieldset);
+
+    function updateItemsAvailability() {
+      const available = mode === 'copy' || Boolean(dataDoc);
+      itemsFieldset.disabled = !available;
+      itemsNote.textContent = available ? ''
+        : 'Choose a matching item-data file alongside the schema (New from schema…) to import items.';
+      includeAttachmentsCb.disabled = !available || !includeItemsCb.checked;
+      preserveAuthorshipCb.disabled = !available || !includeItemsCb.checked;
+    }
+    includeItemsCb.addEventListener('change', updateItemsAvailability);
+    updateItemsAvailability();
 
     // ---- 7. existing-target policy -----------------------------------------
     const existingSection = el('div', 'wb-schema-existing sp-metadata-consent');
@@ -612,6 +636,46 @@ export function openSchemaApplyDialog({
 
     let currentCtx = null;
 
+    // ---- items phase (stage 1b-b) ------------------------------------
+    // Runs once, right after the schema plan's own steps finish — never on
+    // Retry (a schema retry re-applies fields/views idempotently, but items
+    // already created must never be attempted a second time). Attaches its
+    // own report as `itemsReport` on the schema report, or `itemsError` when
+    // it never got to run at all (a thrown refusal, e.g. a library target).
+    async function runItemsPhase(targetListId) {
+      if (!includeItemsCb.checked || itemsFieldset.disabled) return;
+      let sourceData = dataDoc;
+      if (mode === 'copy') {
+        masterLine.hidden = false;
+        masterLine.textContent = 'Reading source items…';
+        try {
+          const capture = await captureListData(client, d.source.listId, { schemaDoc: d });
+          sourceData = capture.doc;
+        } catch (err) {
+          lastReport.itemsError = err.message || String(err);
+          return;
+        }
+      }
+      if (!sourceData) return;
+      try {
+        lastReport.itemsReport = await applyListData({
+          dataDoc: sourceData,
+          client: currentCtx.client,
+          spWrite: currentCtx.spWrite,
+          listId: targetListId,
+          options: {
+            includeAttachments: includeAttachmentsCb.checked,
+            preserveAuthorship: preserveAuthorshipCb.checked,
+            sourceClient: mode === 'copy' ? client : null,
+          },
+          onStep: (info) => { masterLine.hidden = false; masterLine.textContent = info.label; },
+          signal: currentCtx.signal,
+        });
+      } catch (err) {
+        lastReport.itemsError = err.message || String(err);
+      }
+    }
+
     // ---- dry run ----------------------------------------------------------
 
     async function runDryRun() {
@@ -711,7 +775,8 @@ export function openSchemaApplyDialog({
       try {
         const report = await runPlan(plan, currentCtx);
         lastReport = report;
-        renderReport(report);
+        if (report.listId && !report.aborted) await runItemsPhase(report.listId);
+        renderReport(lastReport);
         setPhase('report');
       } catch (err) {
         // runPlan itself shouldn't reject (read failures between steps
@@ -811,6 +876,22 @@ export function openSchemaApplyDialog({
         ['Content types', `${report.contentTypes.attached} attached · ${report.contentTypes.skipped} skipped · ${report.contentTypes.failed} failed`],
         ['Validation', report.validation.applied ? 'applied' : (report.validation.error ? 'failed' : '—')],
       ];
+      if (report.itemsReport) {
+        const ir = report.itemsReport;
+        const failedText = ir.items.failedTruncated
+          ? `${ir.items.failed.length}+${ir.items.failedTruncated} failed`
+          : `${ir.items.failed.length} failed`;
+        rows.push(['Items', `${ir.items.added} added · ${failedText}`]);
+        rows.push(['Folders', `${ir.folders.created} created · ${ir.folders.failed} failed`]);
+        if (includeAttachmentsCb.checked) {
+          rows.push(['Attachments', `${ir.attachments.added} added · ${ir.attachments.skipped} skipped · ${ir.attachments.failed} failed`]);
+        }
+        if (preserveAuthorshipCb.checked) {
+          rows.push(['Authorship', `${ir.authorship.applied} applied · ${ir.authorship.failed} failed`]);
+        }
+      } else if (report.itemsError) {
+        rows.push(['Items', `could not be imported — ${report.itemsError}`]);
+      }
       for (const [label, value] of rows) {
         const tr = el('tr');
         tr.append(el('td', '', label), el('td', '', value));
@@ -822,17 +903,34 @@ export function openSchemaApplyDialog({
     function renderReportFailed(report) {
       reportFailed.textContent = '';
       const failed = report.steps.filter((s) => s.status === 'failed');
-      if (!failed.length) return;
-      reportFailed.append(el('h3', '', 'Failed steps'));
-      const table = el('table', 'wb-table');
-      const tbody = el('tbody');
-      for (const s of failed) {
-        const tr = el('tr');
-        tr.append(el('td', '', s.label), el('td', '', s.error || ''));
-        tbody.append(tr);
+      if (failed.length) {
+        reportFailed.append(el('h3', '', 'Failed steps'));
+        const table = el('table', 'wb-table');
+        const tbody = el('tbody');
+        for (const s of failed) {
+          const tr = el('tr');
+          tr.append(el('td', '', s.label), el('td', '', s.error || ''));
+          tbody.append(tr);
+        }
+        table.append(tbody);
+        reportFailed.append(table);
       }
-      table.append(tbody);
-      reportFailed.append(table);
+      const failedItems = report.itemsReport?.items.failed;
+      if (failedItems?.length) {
+        reportFailed.append(el('h3', '', 'Failed items'));
+        const itable = el('table', 'wb-table');
+        const itbody = el('tbody');
+        for (const f of failedItems) {
+          const tr = el('tr');
+          tr.append(el('td', '', `Source id ${f.sourceId}`), el('td', '', f.error || ''));
+          itbody.append(tr);
+        }
+        itable.append(itbody);
+        reportFailed.append(itable);
+        if (report.itemsReport.items.failedTruncated) {
+          reportFailed.append(el('p', 'wb-schema-note', `+${report.itemsReport.items.failedTruncated} more not shown.`));
+        }
+      }
     }
 
     function renderReportWarnings(report) {

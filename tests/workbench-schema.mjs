@@ -2108,10 +2108,9 @@ await check('dialog: Copy to… on the same web defaults the title to ‘Request
   return true;
 });
 
-await check('dialog: the Items fieldset is disabled with the stage-1b reason', async () => {
+await check('dialog: the Items fieldset is enabled in copy mode (stage 1b-b)', async () => {
   const disabled = await dialogPage.locator('.wb-schema-items').evaluate((f) => f.disabled);
-  const title = await dialogPage.locator('.wb-schema-items').getAttribute('title');
-  return disabled && title.includes('stage 1b');
+  return disabled === false;
 });
 
 await check('dialog: Create (same web) writes the list and Open the new list navigates to it', async () => {
@@ -2369,6 +2368,227 @@ await check('items: Download data .json exports the whole list via captureListDa
     && doc.items.some((i) => i._attachments?.[0]?.name === 'quote.pdf')
     && doc.folders[0]._folderPath === 'Archive';
 });
+
+// ---- Stage 1b-b: list item DATA apply (pure list-data-apply.js) -----------
+
+await check('pure: applyListData executor — folders before items in depth order, a per-field rejection retries once without that field, self-lookups written in pass 2 with new ids, authorship applied only with bNewDocumentUpdate:true', () =>
+  page.evaluate(async () => {
+    const { applyListData } = await import('/src/workbench/list-data-apply.js');
+    const { SpFileError } = await import('/src/sp-odata.js');
+    const dataDoc = {
+      kind: 'dcspad-sputils-list-data', version: 2,
+      source: { listTitle: 'Requests', listId: 'SRC1' },
+      fields: {
+        Title: { type: 'Text', custom: false },
+        Notes: { type: 'Text', custom: true },
+        ParentRequest: { type: 'Lookup', custom: true, isSelfLookup: true, lookupListId: 'L1' },
+      },
+      items: [
+        { Id: 1, Title: 'Parent', Created: '2026-01-01T00:00:00Z', Modified: '2026-01-01T00:00:00Z', _resolved: {} },
+        { Id: 2, Title: 'Child', Notes: 'child notes', _resolved: { ParentRequest: [{ Id: 1, value: 'Parent' }] } },
+        { Id: 3, Title: 'RejectMe', Notes: 'bad notes', _resolved: {} },
+      ],
+      folders: [
+        { Id: 10, Title: 'Sub', _folder: true, _folderPath: 'Sub', _resolved: {} },
+        { Id: 11, Title: 'SubSub', _folder: true, _folderPath: 'Sub/SubSub', _resolved: {} },
+      ],
+      users: [], warnings: [],
+    };
+    const client = {
+      webUrl: () => 'https://t/sites/x',
+      get: async (path) => {
+        if (path.includes("lists(guid'L1')") && !path.includes('/fields')) {
+          return { BaseType: 0, Title: 'Target', RootFolder: { ServerRelativeUrl: '/sites/x/Lists/Target' } };
+        }
+        return {};
+      },
+      getAll: async (path) => {
+        if (path.includes("lists(guid'L1')/fields")) {
+          return { items: [
+            { InternalName: 'Title', TypeAsString: 'Text', ReadOnlyField: false },
+            { InternalName: 'Notes', TypeAsString: 'Text', ReadOnlyField: false },
+            { InternalName: 'ParentRequest', TypeAsString: 'Lookup', ReadOnlyField: false, LookupList: 'L1' },
+          ] };
+        }
+        return { items: [] };
+      },
+    };
+    const posts = [];
+    const rejectedOnce = new Set();
+    let idSeq = 1000;
+    const spWrite = {
+      isMock: () => true,
+      addValidateUpdateItem: async (listId, spec) => {
+        posts.push({ ...spec });
+        const titleVal = spec.formValues.find((v) => v.FieldName === 'Title')?.FieldValue;
+        if (titleVal === 'RejectMe' && !rejectedOnce.has('RejectMe')) {
+          rejectedOnce.add('RejectMe');
+          const err = new SpFileError('rejected', { code: 'metadata-write' });
+          err.fieldErrors = { Notes: 'bad value' };
+          throw err;
+        }
+        return { id: idSeq++ };
+      },
+      validateUpdateListItem: async (pathKind, formValues, opts) => {
+        posts.push({ kind: 'update', pathKind, formValues, opts: opts || {} });
+        return { updated: formValues.map((f) => f.FieldName) };
+      },
+      ensureUser: async () => null,
+    };
+    const report = await applyListData({
+      dataDoc, client, spWrite, listId: 'L1', options: { preserveAuthorship: true },
+    });
+    const creates = posts.filter((p) => !p.kind);
+    const updates = posts.filter((p) => p.kind === 'update');
+    const folderCreates = creates.filter((c) => c.underlyingObjectType === 1);
+    const itemCreates = creates.filter((c) => c.underlyingObjectType === 0);
+    const foldersFirst = creates.indexOf(folderCreates[0]) === 0 && creates.indexOf(folderCreates[1]) === 1
+      && creates.indexOf(itemCreates[0]) >= 2;
+    const rejectAttempts = itemCreates.filter((c) => c.formValues.find((v) => v.FieldName === 'Title')?.FieldValue === 'RejectMe');
+    const retryDroppedField = rejectAttempts.length === 2
+      && rejectAttempts[0].formValues.some((v) => v.FieldName === 'Notes')
+      && !rejectAttempts[1].formValues.some((v) => v.FieldName === 'Notes');
+    const parentNewId = report.idMap[1];
+    const selfLookupUpdate = updates.find((u) => u.formValues.some((v) => v.FieldName === 'ParentRequest'));
+    const selfLookupOk = selfLookupUpdate
+      && selfLookupUpdate.formValues.find((v) => v.FieldName === 'ParentRequest').FieldValue === String(parentNewId);
+    const authorshipUpdate = updates.find((u) => u.formValues.some((v) => v.FieldName === 'Created'));
+    const authorshipOk = authorshipUpdate && authorshipUpdate.opts.newDocumentUpdate === true;
+    return foldersFirst && retryDroppedField && selfLookupOk && authorshipOk
+      && report.items.added === 3 && report.items.failed.length === 0
+      && report.folders.created === 2
+      && report.fieldErrors.some((e) => e.sourceId === 3 && e.field === 'Notes')
+      && report.authorship.applied >= 1;
+  }));
+
+await check('pure: applyListData refuses a document-library target (library-items) and aborts on a 401', () =>
+  page.evaluate(async () => {
+    const { applyListData } = await import('/src/workbench/list-data-apply.js');
+    const { SpFileError } = await import('/src/sp-odata.js');
+    const dataDoc = {
+      kind: 'dcspad-sputils-list-data', version: 2,
+      source: { listTitle: 'Docs', listId: 'SRC2' },
+      fields: { Title: { type: 'Text', custom: false } },
+      items: [{ Id: 1, Title: 'A', _resolved: {} }],
+      folders: [], users: [], warnings: [],
+    };
+    const libraryClient = {
+      webUrl: () => 'https://t/sites/x',
+      get: async () => ({ BaseType: 1, Title: 'Docs', RootFolder: { ServerRelativeUrl: '/sites/x/Documents' } }),
+      getAll: async () => ({ items: [] }),
+    };
+    let refused = false;
+    try {
+      await applyListData({ dataDoc, client: libraryClient, spWrite: { isMock: () => true }, listId: 'LIB1' });
+    } catch (e) { refused = e?.code === 'library-items'; }
+
+    const authClient = {
+      webUrl: () => 'https://t/sites/x',
+      get: async () => { throw new SpFileError('expired', { code: 'auth', status: 401 }); },
+      getAll: async () => ({ items: [] }),
+    };
+    const authReport = await applyListData({ dataDoc, client: authClient, spWrite: { isMock: () => true }, listId: 'L1' });
+    return refused && authReport.aborted === 'auth';
+  }));
+
+// ---- Mock UI: item copy through the apply dialog (Requests → target) ------
+
+await check('dialog: Copy to… with Include items copies items to a NEW target list and the report counts them', async () => {
+  await schemaPage.locator('.wb-back').click();
+  await schemaPage.waitForSelector('.wb-table tbody tr', { hasText: 'Requests' });
+  await schemaPage.locator('.wb-table tbody tr', { hasText: 'Requests' }).locator('td').first().click();
+  await schemaPage.locator('.wb-tab', { hasText: 'Schema' }).click();
+  await schemaPage.waitForSelector('.wb-schema-copy');
+  await schemaPage.locator('.wb-schema-copy').click();
+  await schemaPage.waitForSelector('.wb-schema-dialog');
+  await schemaPage.fill('.wb-schema-target', '/sites/target');
+  await schemaPage.locator('.wb-schema-connect').click();
+  await schemaPage.waitForFunction(() => document.querySelector('.wb-schema-title')?.value?.length > 0);
+  await schemaPage.fill('.wb-schema-title', 'Requests Import Test');
+  await schemaPage.locator('.wb-schema-items input[type="checkbox"]').first().check();
+  await schemaPage.locator('.wb-schema-create').click();
+  await schemaPage.waitForSelector('.wb-schema-report:not([hidden])');
+  const headline = await schemaPage.locator('.wb-schema-report-headline').textContent();
+  const itemsCountText = await schemaPage.locator('.wb-schema-report-counts').textContent();
+  const wroteAddItem = await schemaPage.evaluate(() =>
+    (window.__DCSPAD_WB_WRITES__ || []).some((w) => String(w.url).toLowerCase().includes('addvalidateupdateitemusingpath')));
+  await schemaPage.locator('.wb-schema-close').click();
+  await schemaPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+  return !headline.includes('expired') && itemsCountText.includes('Items') && wroteAddItem;
+});
+
+await check('dialog: New from schema… enables Include items when a matching data file is also chosen, and refuses a mismatched one inline', async () => {
+  await schemaPage.locator('.wb-back').click();
+  await schemaPage.waitForSelector('.wb-schema-new');
+  const schemaDoc = {
+    kind: 'dcspad-sputils-list-schema', version: 2,
+    source: { listTitle: 'Clients', listId: 'clients-src-id' },
+    list: { title: 'Clients', baseTemplate: 100 },
+    fields: [{ internalName: 'Title', displayName: 'Title', type: 'Text', custom: false, fromBaseType: true }],
+    views: [{ title: 'All Items', fields: ['Title'] }],
+    contentTypes: [], warnings: [],
+  };
+  const mismatchedDataDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'Other list', listId: 'not-clients' },
+    fields: { Title: { type: 'Text', custom: false } },
+    items: [], folders: [], users: [], warnings: [],
+  };
+  await schemaPage.setInputFiles('.wb-schema-file', [
+    { name: 'clients-schema.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(schemaDoc)) },
+    { name: 'other-data.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(mismatchedDataDoc)) },
+  ]);
+  await schemaPage.waitForSelector('.wb-schema-import-notice:not([hidden])');
+  const mismatchText = await schemaPage.locator('.wb-schema-import-notice').textContent();
+  const mismatchRefused = mismatchText.includes('match');
+
+  await schemaPage.locator('.wb-schema-import-notice button', { hasText: 'Dismiss' }).click();
+  const matchingDataDoc = {
+    kind: 'dcspad-sputils-list-data', version: 2,
+    source: { listTitle: 'Clients', listId: 'clients-src-id' },
+    fields: { Title: { type: 'Text', custom: false } },
+    items: [], folders: [], users: [], warnings: [],
+  };
+  await schemaPage.setInputFiles('.wb-schema-file', [
+    { name: 'clients-schema2.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(schemaDoc)) },
+    { name: 'clients-data.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(matchingDataDoc)) },
+  ]);
+  await schemaPage.waitForSelector('.wb-schema-dialog');
+  const itemsEnabled = await schemaPage.locator('.wb-schema-items').evaluate((f) => f.disabled === false);
+  await schemaPage.locator('.wb-schema-close').click();
+  await schemaPage.waitForSelector('.wb-schema-dialog', { state: 'detached' });
+  return mismatchRefused && itemsEnabled;
+});
+
+// ---- Stubbed live: AddValidateUpdateItemUsingPath body shape + ensureuser -
+
+// The request BODY sp-write.js's addValidateUpdateItem/ensureUser build is
+// identical whether post() then sends it live or (as here) hands it to the
+// mock writer — post() only branches AFTER the body is JSON.stringify'd — so
+// recording it through __DCSPAD_WB_WRITES__ pins the exact same shape a live
+// POST would carry, without needing to also stand up a digest fetch.
+await check('mock: AddValidateUpdateItemUsingPath body carries FolderPath.DecodedUrl/UnderlyingObjectType/string formValues, and ensureuser posts once per login', () =>
+  page.evaluate(async () => {
+    const { createSpWriteClient } = await import('/src/workbench/sp-write.js');
+    globalThis.__DCSPAD_WB_WRITES__ = [];
+    const client = { webUrl: () => 'https://t/sites/x', context: () => ({ live: false }) };
+    const spWrite = createSpWriteClient({ client });
+    const { id } = await spWrite.addValidateUpdateItem('L1', {
+      folderPath: '/sites/x/Lists/Requests', underlyingObjectType: 0,
+      formValues: [{ FieldName: 'Title', FieldValue: 'Hello' }, { FieldName: 'Budget', FieldValue: '10' }],
+    });
+    const writes = globalThis.__DCSPAD_WB_WRITES__;
+    const createWrite = writes.find((w) => String(w.url).toLowerCase().includes('addvalidateupdateitemusingpath'));
+    const createBody = JSON.parse(createWrite.body);
+    const shapeOk = createBody.listItemCreateInfo.FolderPath.DecodedUrl === '/sites/x/Lists/Requests'
+      && createBody.listItemCreateInfo.UnderlyingObjectType === 0
+      && createBody.formValues.every((v) => typeof v.FieldValue === 'string')
+      && typeof id === 'number';
+    await spWrite.ensureUser('pat@t.local');
+    await spWrite.ensureUser('pat@t.local');
+    const ensureCount = writes.filter((w) => String(w.url).toLowerCase().includes('/ensureuser')).length;
+    return shapeOk && ensureCount === 1;
+  }));
 
 await page.close();
 await schemaPage.close();

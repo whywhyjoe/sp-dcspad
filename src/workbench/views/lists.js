@@ -18,6 +18,7 @@ import { toNode } from '../../inspect/to-node.js';
 import { captureListSchema } from '../list-schema-capture.js';
 import { captureListData } from '../list-data-capture.js';
 import { schemaSummary, TAXONOMY_TYPES, normalizeSchemaDoc, SCHEMA_KIND } from '../list-schema.js';
+import { normalizeDataDoc, DATA_KIND } from '../list-data.js';
 import { toPnpPowerShellProvisioning, toPnpjs2Provisioning } from '../list-schema-script.js';
 import { openSchemaApplyDialog } from '../list-schema-dialog.js';
 
@@ -245,8 +246,12 @@ export function createListsView({
   const schemaFileInput = el('input', 'wb-schema-file');
   schemaFileInput.type = 'file';
   schemaFileInput.accept = '.json';
+  // One schema document (required) + one item-data document (optional, from
+  // the Items tab's "Download data .json") — matched by `kind` below, not by
+  // which slot the file browser puts them in.
+  schemaFileInput.multiple = true;
   schemaFileInput.hidden = true;
-  schemaFileInput.setAttribute('aria-label', 'Choose a list schema JSON file');
+  schemaFileInput.setAttribute('aria-label', 'Choose a list schema JSON file, and optionally a matching item-data JSON file');
   newFromSchemaBtn.addEventListener('click', () => schemaFileInput.click());
 
   function showImportNotice(message) {
@@ -261,25 +266,47 @@ export function createListsView({
   }
 
   schemaFileInput.addEventListener('change', async () => {
-    const file = schemaFileInput.files?.[0];
+    const files = [...(schemaFileInput.files || [])];
     schemaFileInput.value = '';
-    if (!file) return;
+    if (!files.length) return;
     importNotice.hidden = true;
-    if (file.size > MAX_IMPORT_BYTES) {
-      showImportNotice(`‘${file.name}’ is ${(file.size / 1048576).toFixed(1)} MB — above the 5 MB import limit.`);
+    let doc = null;
+    let dataDoc = null;
+    for (const file of files) {
+      if (file.size > MAX_IMPORT_BYTES) {
+        showImportNotice(`‘${file.name}’ is ${(file.size / 1048576).toFixed(1)} MB — above the 5 MB import limit.`);
+        return;
+      }
+      let json;
+      try { json = JSON.parse(await file.text()); }
+      catch { showImportNotice(`‘${file.name}’ isn’t valid JSON.`); return; }
+      if (json?.kind === DATA_KIND) {
+        try { dataDoc = normalizeDataDoc(json); }
+        catch {
+          showImportNotice(`‘${file.name}’ is not a list data document (expected kind ${DATA_KIND}).`);
+          return;
+        }
+      } else {
+        try { doc = normalizeSchemaDoc(json); }
+        catch {
+          showImportNotice(`‘${file.name}’ is not a list schema document (expected kind ${SCHEMA_KIND}).`);
+          return;
+        }
+      }
+    }
+    if (!doc) {
+      showImportNotice(`Choose a list schema document (expected kind ${SCHEMA_KIND}).`);
       return;
     }
-    let json;
-    try { json = JSON.parse(await file.text()); }
-    catch { showImportNotice(`‘${file.name}’ isn’t valid JSON.`); return; }
-    let doc;
-    try { doc = normalizeSchemaDoc(json); }
-    catch {
-      showImportNotice(`‘${file.name}’ is not a list schema document (expected kind ${SCHEMA_KIND}).`);
+    if (dataDoc && String(dataDoc.source?.listId || '').toLowerCase() !== String(doc.source?.listId || '').toLowerCase()) {
+      showImportNotice(
+        `The data file’s source list (‘${dataDoc.source?.listTitle || 'unknown'}’) doesn’t match the `
+        + `schema’s (‘${doc.source?.listTitle || 'unknown'}’) — choose a matching pair.`,
+      );
       return;
     }
     const outcome = await openSchemaApplyDialog({
-      doc, mode: 'import', client, createClient, navigate, inspectSite, mockWriter,
+      doc, dataDoc, mode: 'import', client, createClient, navigate, inspectSite, mockWriter,
     });
     if (outcome === 'created') { listsLoaded = false; loadLists(); }
   });

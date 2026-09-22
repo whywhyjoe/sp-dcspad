@@ -19,6 +19,12 @@ import {
 // through chunked uploads; that is deliberately out of scope for v1.
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
+// Sequential ids for the mock's AddValidateUpdateItemUsingPath and
+// ensureuser answers — module-level so ids stay unique across every mock
+// writer call in one page load (a fresh page/test reloads and resets it).
+let mockNewItemId = 1000;
+let mockEnsuredUserId = 9000;
+
 // Built-in mock writer: record the call, answer with the minimal success
 // shape each endpoint's caller parses. Exported so mock-data.js's stateful
 // writer can fall back to it for URLs it doesn't itself register.
@@ -26,6 +32,42 @@ export function defaultMockWriter(url, body, contentType, headers) {
   const writes = (globalThis.__DCSPAD_WB_WRITES__ ||= []);
   writes.push({ url, body, contentType, headers });
   const lower = String(url).toLowerCase();
+  // Stage 1b-b: list item DATA import writes. Checked ahead of the
+  // 'validateupdatelistitem' substring test below — 'addvalidateupdateitem
+  // usingpath' never matches it (no "list" between "validate" and "update"),
+  // but keeping the more specific endpoints first avoids any future drift.
+  if (lower.includes('addvalidateupdateitemusingpath')) {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    const formValues = Array.isArray(data?.formValues) ? data.formValues : [];
+    const id = String(mockNewItemId++);
+    return {
+      value: [
+        ...formValues.map((fv) => ({
+          FieldName: fv.FieldName, FieldValue: fv.FieldValue, HasException: false, ErrorMessage: null,
+        })),
+        { FieldName: 'Id', FieldValue: id, HasException: false, ErrorMessage: null },
+      ],
+    };
+  }
+  if (lower.includes('/ensureuser')) {
+    let data = {};
+    try { data = JSON.parse(body); } catch { /* keep {} */ }
+    const logon = String(data?.logonName || '');
+    const email = logon.includes('@') ? logon : `${logon.replace(/[^a-z0-9.]+/gi, '.')}@mock.local`;
+    return {
+      Id: mockEnsuredUserId++,
+      Title: logon,
+      LoginName: `i:0#.f|membership|${email.toLowerCase()}`,
+      Email: email,
+    };
+  }
+  if (lower.includes('attachmentfiles/add(')) {
+    const name = /attachmentfiles\/add\(filename='([^']*)'\)/.exec(lower)?.[1] || 'file';
+    let decoded = name;
+    try { decoded = decodeURIComponent(name); } catch { /* keep raw */ }
+    return { FileName: decoded, ServerRelativeUrl: `/mock/attachments/${decoded}` };
+  }
   if (lower.includes('validateupdatelistitem')) {
     let formValues = [];
     try { formValues = JSON.parse(body)?.formValues || []; } catch { /* keep [] */ }
@@ -141,6 +183,90 @@ export function createSpWriteClient({
       throw err;
     }
     return { updated: formValues.map((fv) => fv.FieldName) };
+  }
+
+  // AddValidateUpdateItemUsingPath — create a list item (or, with
+  // underlyingObjectType 1, a folder) under folderPath, in one call that both
+  // creates the row and sets its fields. Unlike ValidateUpdateListItem
+  // (an update against an item that already exists), a rejected field here
+  // aborts the WHOLE create — SharePoint never returns an Id alongside a
+  // HasException row — so every failure throws the same SpFileError
+  // ('metadata-write', err.fieldErrors) validateUpdateListItem throws; the
+  // caller (list-data-apply.js) retries once without the rejected fields,
+  // the same way importListData does.
+  async function addValidateUpdateItem(listId, {
+    folderPath, formValues, underlyingObjectType = 0, leafName,
+  } = {}) {
+    const endpoint = `${client.webUrl()}/_api/web/lists(guid'${listId}')/AddValidateUpdateItemUsingPath`;
+    const data = await post(endpoint, {
+      body: JSON.stringify({
+        listItemCreateInfo: {
+          FolderPath: { DecodedUrl: folderPath },
+          UnderlyingObjectType: underlyingObjectType,
+          ...(leafName ? { LeafName: { DecodedUrl: leafName } } : {}),
+        },
+        formValues,
+        bNewDocumentUpdate: false,
+      }),
+    }, { fallback: 'Could not create the item', code: 'metadata-write' });
+
+    const results = resultArray(data.value || data.AddValidateUpdateItemUsingPath || data);
+    const failures = results.filter((result) => result.HasException || String(result.ErrorMessage || '').trim());
+    if (failures.length) {
+      const fieldErrors = {};
+      for (const failure of failures) {
+        fieldErrors[failure.FieldName || ''] = failure.ErrorMessage || 'SharePoint rejected the value.';
+      }
+      const detail = failures
+        .map((f) => `${f.FieldName || 'Field'}: ${f.ErrorMessage || 'SharePoint rejected the value.'}`)
+        .join(' ');
+      const err = new SpFileError(`SharePoint rejected the metadata. ${detail}`, { code: 'metadata-write' });
+      err.fieldErrors = fieldErrors;
+      throw err;
+    }
+    const idRow = results.find((r) => /^id$/i.test(r.FieldName || ''));
+    const id = idRow ? Number(idRow.FieldValue) : null;
+    if (!id) {
+      throw new SpFileError('SharePoint did not return the new item’s id.', { code: 'metadata-write' });
+    }
+    return { id };
+  }
+
+  // web/ensureuser — resolve an email or login to a target-web principal,
+  // cached per login for this client's lifetime (one spWrite instance per
+  // target connection, so the cache never survives a Connect to a different
+  // web). Returns null for an empty logon; throws on a genuine write failure
+  // — the caller (list-data-apply.js) decides what to do with that (SPUtils'
+  // fallback to a synthetic claims key).
+  const ensureUserCache = new Map();
+  async function ensureUser(logonName) {
+    const key = String(logonName || '').toLowerCase();
+    if (!key) return null;
+    if (ensureUserCache.has(key)) return ensureUserCache.get(key);
+    const promise = (async () => {
+      const data = await post(`${client.webUrl()}/_api/web/ensureuser`, {
+        body: JSON.stringify({ logonName }),
+      }, { fallback: 'Could not resolve the user', code: 'write' });
+      return { id: data.Id, loginName: data.LoginName || '', email: data.Email || '', title: data.Title || '' };
+    })();
+    ensureUserCache.set(key, promise);
+    try {
+      return await promise;
+    } catch (err) {
+      ensureUserCache.delete(key);
+      throw err;
+    }
+  }
+
+  // Attach a file to an existing item. `bytes` is whatever fetch accepts as
+  // a body (ArrayBuffer/Blob/typed array) — the caller (list-data-apply.js)
+  // reads it from the source attachment's URL first; this only uploads it.
+  async function addAttachment(listId, itemId, fileName, bytes) {
+    const endpoint = `${client.webUrl()}/_api/web/lists(guid'${listId}')/items(${Number(itemId)})`
+      + `/AttachmentFiles/add(FileName='${odataPathLiteral(fileName)}')`;
+    const data = await post(endpoint, { body: bytes, contentType: 'application/octet-stream' },
+      { fallback: 'Could not add the attachment', code: 'write' });
+    return { fileName, serverRelativeUrl: data.ServerRelativeUrl || '' };
   }
 
   // Binary (or text) upload into a folder. data may be an ArrayBuffer,
@@ -272,7 +398,8 @@ export function createSpWriteClient({
   }
 
   return {
-    validateUpdateListItem, uploadFile, checkOutFile, checkInFile, createFolder,
+    validateUpdateListItem, addValidateUpdateItem, ensureUser, addAttachment,
+    uploadFile, checkOutFile, checkInFile, createFolder,
     postJson, mergeJson, isMock,
   };
 }

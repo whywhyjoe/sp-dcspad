@@ -397,6 +397,10 @@ export function mockWriter(url, body, contentType, headers = {}) {
     const rootUrl = `${base}/Lists/${String(data.Title || 'List').replace(/\s+/g, '')}`;
     const entry = {
       Id: id, Title: data.Title, BaseTemplate: data.BaseTemplate ?? 100,
+      // Stage 1b-b's library gate (list-data-apply.js) reads BaseType off the
+      // target list before importing items — a schema-created list is always
+      // a generic list (BaseTemplate 100), never a library.
+      BaseType: 0,
       ContentTypesEnabled: !!data.ContentTypesEnabled, RootFolder: { ServerRelativeUrl: rootUrl },
     };
     writerState.lists.set(`${webBase}::${String(data.Title || '').toLowerCase()}`, entry);
