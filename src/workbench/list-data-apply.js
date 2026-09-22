@@ -206,7 +206,9 @@ async function runAttachments(ctx, report, item, newItemId) {
     if (!ctx.includeAttachments) { report.attachments.skipped++; continue; }
     try {
       let bytes;
-      if (a.base64) {
+      // A zero-byte file is a valid v1 attachment: presence of the string,
+      // not its length, says the bytes travelled in the document.
+      if (typeof a.base64 === 'string') {
         bytes = base64ToArrayBuffer(a.base64);
       } else if (ctx.sourceClient && ctx.sourceClient.context().live && a.url) {
         bytes = await fetchAttachmentBytes(ctx.sourceClient, a.url);

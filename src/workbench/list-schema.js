@@ -847,7 +847,8 @@ export function buildApplyReport({ report, doc, targetWebUrl }) {
   if (ir) {
     lines.push('## Items', '',
       `- Added: ${ir.items?.added ?? 0}`,
-      `- Failed: ${(ir.items?.failed || []).length}`,
+      `- Failed: ${(ir.items?.failed || []).length + (ir.items?.failedTruncated || 0)}`
+        + (ir.items?.failedTruncated ? ` (${ir.items.failedTruncated} not itemised below)` : ''),
       `- Folders created: ${ir.folders?.created ?? 0}`, '');
     if (ir.fieldErrors?.length) {
       lines.push('### Item field errors', '');

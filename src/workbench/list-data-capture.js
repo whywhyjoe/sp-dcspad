@@ -86,6 +86,7 @@ async function captureAttachment(client, rawFile, warnings, totalState) {
   try {
     bytes = await fetchAttachmentBytes(client, url);
   } catch (err) {
+    if (isExpiredSession(err)) throw err;
     warnings.push(`Attachment "${name}" could not be read (${err.message || err}); exported as a link only.`);
     return { name, url };
   }
@@ -184,7 +185,10 @@ export async function captureListData(client, listId, { schemaDoc = null, maxIte
       try {
         const u = await client.get(`web/siteusers/getbyid(${Number(id)})`, { select: ['Id', 'Email', 'LoginName', 'Title'] });
         users.set(id, u);
-      } catch { users.set(id, null); }
+      } catch (err) {
+        if (isExpiredSession(err)) throw err;
+        users.set(id, null);
+      }
     }
     const u = users.get(id);
     return u
@@ -205,7 +209,9 @@ export async function captureListData(client, listId, { schemaDoc = null, maxIte
       const value = row ? (row[f.lookupField || 'Title'] ?? null) : null;
       map.set(id, value);
       return value;
-    } catch {
+    } catch (err) {
+      // Degrade a missing row, never an expired sign-in.
+      if (isExpiredSession(err)) throw err;
       return null;
     }
   };
