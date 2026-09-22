@@ -52,7 +52,7 @@ same engine · **2** document libraries (schema only; no file transfer).
 - [x] Stage 1b: item data export/import — shipped 2026-09-22 (HANDOFF "stages 1b + 2").
 - [x] Stage 2: document libraries, schema only — shipped 2026-09-22.
 - [x] List drilldown Tools tab (Copy this list…, Export schema, Export data, Import data into this list) — the Schema tab is now read-only; shipped 2026-09-22 (HANDOFF "SP Workbench: list Tools tab").
-- [ ] Remaining live checks (HANDOFF "Still open"): attachments/folders, content types, 429, SPUtils round-trip, reconcile.
+- [x] Live checks done 2026-09-22: folders/attachments, reconcile, content types, item import into an existing list, SPUtils round-trip both ways. Only the 429 path is unproven (cannot be forced).
 - [ ] Delete the `zz-schema-*` test lists on the dev tenant (by hand).
 
 ## Open questions

@@ -486,10 +486,33 @@ the executor now checks the post-create field set. Test lists
 `zz-schema-*` on `/sites/NewNerve` and `/sites/NewNerve/sputils-test` are
 leftovers to delete by hand.
 
-**Still open:** attachments and folders live (the fixture has neither);
-content types on a CT-enabled list live; the 429 path under real
-throttling; a SPUtils ⇄ Workbench document round-trip in both directions;
-a reconcile (Add to existing list) run live.
+**Live checks completed 2026-09-22 (build #185):**
+- Folders and attachments: a cross-web copy with items recreated the `Archive`
+  folder, placed its item inside it, and carried the attachment (`zz-note.txt`)
+  onto the right item — 4 items, 1 folder, 1 attachment, 0 failures.
+- Reconcile (Add to existing list): the consent sentence gates it, the button
+  relabels, and the run added only the new column — 1 added, 12 already
+  present, 2 views rebuilt, validation re-applied.
+- Content types: a content-type-enabled list copied with its site content type
+  attached (`addAvailableContentType` before the fields) and its column created
+  with the internal name intact; content-type membership matches the source.
+- Item import into an existing list (Tools tab): export from one list, import
+  into another — ids in source order, lookups, self-lookup, user and dates
+  correct, 0 failures.
+- SPUtils ⇄ Workbench document round-trip, both directions: `SPUtils.getListSchema`
+  → New from schema… → created (13/13 columns, internal names intact), and a
+  Workbench v2 export → `SPUtils.createListFromSchema` → created (13 columns, no
+  failures). Note when driving SPUtils from a modern page: hide `define.amd`
+  across the pnp2 bundle load or `window.pnp2` is never set.
+
+**Still open:** the 429 path (cannot be forced on demand — left unproven).
+
+**New SPUtils finding from the round-trip (for the SPUtils owner):** a dependent
+lookup created by `createListFromSchema` lands as `Client_x0020_code` — it goes
+through `addDependentLookupField(displayName, …)`, which derives the internal
+name from the display name. The `Options` fix does not cover this path (it is
+not a `createFieldAsXml` call). The Workbench keeps `ReqClientCode` by creating
+dependent lookups from scrubbed XML with `Options: 8`.
 
 ## SP Workbench: list Tools tab (2026-09-22)
 
