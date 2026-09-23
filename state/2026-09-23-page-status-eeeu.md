@@ -3,7 +3,7 @@
 Last touched: 2026-09-23
 Mode: Joe
 Branch: claude/dcspad-sp-utilities-availability-ylr25q
-State: PLANNED — decisions below are Joe's answers (2026-09-23); build in progress
+State: BUILT on the branch (mock-tested, 161/161 workbench checks) — waiting on the live-tenant check below and a PR
 
 ## What this is
 
@@ -68,12 +68,36 @@ viewer is NOT in scope (the Workbench's Permissions view already covers groups/m
 - Speed: bounded concurrency (4) + sp-rest.js's 429/503 retry; Cancel keeps partial results
   (no 10-minute timeout).
 
+## Done
+
+- Page status (`src/workbench/page-status.js`, `views/pages.js`, `grid.js` setColumns,
+  `field-editor.js` layout, `page-export.js` status lines, mock Site Pages fixtures) — commit
+  1872837.
+- EEEU audit (`src/workbench/eeeu-audit.js`, `views/security.js` tab, `/sites/eeeu` mock tree)
+  — commit 1d8945a.
+- Tests: `tests/workbench.mjs` 150 → 161 (7 page status, 4 EEEU); workbench-edit 26,
+  workbench-schema 138, workbench-hosted 10 all still green. CLAUDE.md + tests/README.md counts.
+
 ## Next
 
-- [ ] Page status: pure helpers + mock fixtures + pages.js (grid scan, chips, tab-row actions,
-      Permissions tab, Metadata spec) + CSS + page-export metadata + tests
-- [ ] EEEU audit: pure engine module + security.js tab + mock fixtures + tests
-- [ ] CLAUDE.md file map + test counts; rebuild dcspad.workbench.js from a clean tree
-- [ ] Live-tenant check on bmo: internal names (bmocContentCategory, FolderType, Org, Pillar,
-      Contact), publish state on a page with a draft over a published version, EEEU audit on a
-      site with a known EEEU grant
+- [ ] Deploy to dev, then prod (`Sync-Live.ps1` rebuilds dcspad.workbench.js), and check on the
+      bmo tenant:
+  - Metadata tab rows resolve `bmocContentCategory`, `FolderType` (shows as Item Type), `Org`,
+    `Pillar`, `Contact` — any missing row means the internal name differs; the Raw tab shows it.
+  - A page with a draft over a published version reads Published (grid + chip), and Publish
+    Date is the date of that published version, not the draft's.
+  - Scan Page Status on the FCUPortal Site Pages library: no "some fields unavailable" chip
+    (if one appears, its tooltip carries SharePoint's reason — the status ladder degraded).
+  - EEEU audit on a site with a known EEEU grant and a known org-wide sharing link; confirm
+    "SharePoint EEEU Visitors" shows as "Group containing Everyone except external users".
+- [ ] Open a PR when Joe asks.
+
+## Landmines
+
+- Tests: the sandbox's HTTPS_PROXY intercepts localhost from Chromium (405s, blank
+  workbench). Run suites with `env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy`.
+- `Contact` (person) and `bmocContentCategory` (managed metadata) are read-only on purpose —
+  the Workbench has no User/Taxonomy editor yet (CLAUDE.md roadmap seam).
+- The EEEU audit reports only securables with their OWN permissions; an inheriting list or
+  subsite is covered by its parent's row (said in the run summary). If Joe wants every exposed
+  list listed individually, that is a deliberate change to `scanWeb` in eeeu-audit.js.

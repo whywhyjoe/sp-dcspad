@@ -498,7 +498,9 @@ export function createSecurityView({ client, createClient }) {
         { key: 'Unique', label: 'Unique' },
         { key: 'Url', label: 'URL', link: (v) => v, copyable: true },
       ],
-      emptyText: 'Run the audit to see results.',
+      // True before a run and after a clean one; the line beside the Run
+      // button says which.
+      emptyText: 'No broad-access grants to show.',
       subject: 'the broad-access grants on this site',
       filterPlaceholder: 'Filter results…',
       exportName: 'sp-eeeu-audit',
