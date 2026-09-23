@@ -35,8 +35,7 @@ function list(title, id, template, baseType, itemCount, hidden, url) {
     Description: hidden ? '' : `${title} for the mock web.`,
     DefaultViewUrl: `${url}/Forms/AllItems.aspx`,
     RootFolder: { ServerRelativeUrl: url },
-    // No content approval — and, like live SPO, versions of such a list
-    // carry no OData__ModerationStatus even when the select names it.
+    // No content approval (read by the Pages view — moderationApplies()).
     EnableModeration: false,
   };
 }
@@ -883,7 +882,7 @@ const ITEM_VERSIONS = {
   ],
 };
 
-function versionsOf(list, item) {
+function versionsOf(list, item, path = '') {
   const known = ITEM_VERSIONS[`${list.Id}:${item.Id}`];
   const major = item.File?.MajorVersion || 0;
   const minor = item.File?.MinorVersion || 0;
@@ -894,10 +893,15 @@ function versionsOf(list, item) {
     Created: item.Modified,
     OData__ModerationStatus: item.OData__ModerationStatus ?? 0,
   }];
-  // Live SPO (dev tenant, 2026-09-23): on a list without content approval the
-  // versions answer 200 but silently omit OData__ModerationStatus.
-  if (list.EnableModeration !== false) return versions;
-  return versions.map(({ OData__ModerationStatus, ...rest }) => rest);
+  // Live SPO (dev tenant, 2026-09-23, approval on or off): versions carry
+  // moderation under OData__x005f_ModerationStatus — returned by the bare
+  // collection or a $select naming that key, and silently OMITTED when the
+  // $select names the items-style OData__ModerationStatus instead.
+  const select = /[?&]\$select=([^&]*)/.exec(path)?.[1];
+  const withModeration = select === undefined || select.includes('odata__x005f_moderationstatus');
+  return versions.map(({ OData__ModerationStatus: moderation, ...rest }) => (
+    withModeration && moderation !== undefined
+      ? { ...rest, OData__x005f_ModerationStatus: moderation } : rest));
 }
 
 // Pages whose permissions are their own (HasUniqueRoleAssignments), keyed
@@ -1571,7 +1575,7 @@ export function mockResolver(rawUrl) {
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
       if (!single) return null;
-      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found, single) };
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found, single, path) };
       if (/\/items\(\d+\)\/fieldvaluesastext/.test(path)) return single.FieldValuesAsText || {};
       if (/[?&]\$expand=[^&]*fieldvaluesastext/.test(path) && single.FieldValuesAsText) {
         // Like live SPO: the INLINE expand answers person fields with their

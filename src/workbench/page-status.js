@@ -127,22 +127,29 @@ export const checkedOutLabel = (status) =>
 // The item versions read for "last published". Same ladder idea: a select
 // SharePoint refuses falls back to the bare collection (heavier — each
 // version carries its field values — but still answerable).
+//
+// Versions name the moderation field differently from items. Live SPO (dev
+// tenant, 2026-09-23, with and without content approval): selecting
+// `OData__ModerationStatus` on items(id)/versions answers 200 but OMITS the
+// value; selecting `OData__x005f_ModerationStatus` returns it under that key,
+// which is also the key the bare collection uses. Items keep the plain name.
+export const VERSION_MODERATION_FIELD = 'OData__x005f_ModerationStatus';
 export function versionShapes({ hasModeration = false } = {}) {
   const base = ['VersionId', 'VersionLabel', 'IsCurrentVersion', 'Created'];
   return [
-    { options: { select: hasModeration ? [...base, 'OData__ModerationStatus'] : base } },
+    { options: { select: hasModeration ? [...base, VERSION_MODERATION_FIELD] : base } },
     { options: {} },
   ];
 }
 
 // Whether a missing moderation value must make "last published" unknown.
 // The _ModerationStatus FIELD exists on every pages library, approval or not
-// (hidden), so the field probe alone says nothing — and live SPO silently
-// drops OData__ModerationStatus from items(id)/versions when the library does
-// not run content approval. Treating that absence as "unknown" blanked
-// Publish Date on every non-approval library (dev tenant, 2026-09-23). Only
-// the list's own EnableModeration says approval is on; unknown (null) keeps
-// the conservative reading.
+// (hidden), so the field probe alone says nothing about approval. A version
+// read that comes back without moderation (the select naming the wrong key
+// did exactly that on live SPO and blanked Publish Date on every library)
+// may only withhold the date where the list really runs content approval —
+// the list's own EnableModeration; unknown (null) keeps the conservative
+// reading.
 export function moderationApplies(hasModerationField, enableModeration) {
   return Boolean(hasModerationField) && enableModeration !== false;
 }

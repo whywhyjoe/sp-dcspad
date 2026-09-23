@@ -1312,7 +1312,17 @@ await check('page-status: display-name aliases never match a hidden built-in (FS
 
 await check('page-status: moderation only withholds Publish Date when the list runs content approval', async () =>
   page.evaluate(async () => {
-    const { moderationApplies, lastPublishedFrom } = await import('/src/workbench/page-status.js');
+    const { moderationApplies, lastPublishedFrom, versionShapes } = await import('/src/workbench/page-status.js');
+    // Versions name moderation OData__x005f_ModerationStatus (items don't):
+    // selecting the items-style name returns 200 with the value omitted.
+    const sel = versionShapes({ hasModeration: true })[0].options.select;
+    // The live zz-mod-pages history: approved 1.0, submitted 1.1 on top.
+    const moderated = [
+      { VersionLabel: '1.1', Created: '2026-09-23T19:55:18', OData__x005f_ModerationStatus: 2 },
+      { VersionLabel: '1.0', Created: '2026-09-23T19:54:10', OData__x005f_ModerationStatus: 0 },
+    ];
+    if (!sel.includes('OData__x005f_ModerationStatus') || sel.includes('OData__ModerationStatus')
+      || lastPublishedFrom(moderated, { hasModeration: true }) !== '2026-09-23T19:54:10') return false;
     // Live SPO versions of a non-approval library: no moderation value at all.
     const versions = [
       { VersionLabel: '1.2', Created: '2026-07-28T03:31:20' },
