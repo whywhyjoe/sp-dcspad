@@ -39,7 +39,7 @@ decisions and the live-tenant checklist: `HANDOFF.md` → "SP Workbench: page st
       and redeploy.
 - [ ] Run HANDOFF.md's "Live-tenant checklist" for this section on the dev FCUPortal site; tick
       items there with the evidence, as the markdown-export section did.
-- [ ] Anything the checklist breaks: fix on this branch, re-run `tests/workbench.mjs`, redeploy.
+- [ ] Anything the checklist breaks: fix on a branch off `main`, re-run `tests/workbench.mjs`, merge, redeploy.
 - [ ] Prod (bmo): repeat the Metadata-row and EEEU checks — the bmo site columns
       (`bmocContentCategory`, `FolderType`, `Pillar`, `Org`, `Contact`) likely exist only there.
 - [ ] When the checklist passes (dev, then prod): promote per the project-state rules, delete this
