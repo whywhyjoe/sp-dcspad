@@ -2,9 +2,9 @@
 
 Last touched: 2026-09-23
 Mode: Joe
-Branch: claude/dcspad-sp-utilities-availability-ylr25q, pushed
-State: built, mock-tested and review-round-1 fixed on the branch; not yet deployed or tried on a
-live tenant; no PR
+Branch: merged into `main` 2026-09-23 (from claude/dcspad-sp-utilities-availability-ylr25q);
+  rollback point: branch `rollback/main-before-page-status-eeeu` (= `db95413`, Build #197)
+State: on `main`, mock-tested and review-round-1 fixed; not yet deployed or tried on a live tenant
 
 ## What this is
 
@@ -31,20 +31,19 @@ decisions and the live-tenant checklist: `HANDOFF.md` → "SP Workbench: page st
 
 ## Next
 
-- [ ] **This branch is not deployed anywhere.** The dev tenant runs `main` (Build #197), so
-      testing what is live tests none of this work — a first local attempt (2026-09-23) did
-      exactly that. Local machine: `git fetch origin && git checkout
-      claude/dcspad-sp-utilities-availability-ylr25q` (the checkout there was parked on
-      `claude/spworkbench-dcspad-tabs-1oapsa`), optionally run `tests/workbench.mjs`, then
-      deploy it to dev with `deploy\Sync-Live.ps1` (default env; rebuilds the bundle — no `?v=`
-      bump). Before testing, confirm the served `dcspad.workbench.js` stamps Build #209 or later,
-      not #197.
+- [ ] Local machine: `git checkout main && git pull`, optionally run `tests/workbench.mjs`,
+      then deploy to dev with `deploy\Sync-Live.ps1` (default env; rebuilds the bundle — no
+      `?v=` bump). Before testing, confirm the served `dcspad.workbench.js` stamps a build newer
+      than #197 (the pre-merge build) — a first local attempt on 2026-09-23 tested #197 and so
+      tested none of this work. To roll back: `git checkout rollback/main-before-page-status-eeeu`
+      and redeploy.
 - [ ] Run HANDOFF.md's "Live-tenant checklist" for this section on the dev FCUPortal site; tick
       items there with the evidence, as the markdown-export section did.
 - [ ] Anything the checklist breaks: fix on this branch, re-run `tests/workbench.mjs`, redeploy.
 - [ ] Prod (bmo): repeat the Metadata-row and EEEU checks — the bmo site columns
       (`bmocContentCategory`, `FolderType`, `Pillar`, `Org`, `Contact`) likely exist only there.
-- [ ] Open a PR when Joe asks; on merge, promote per the project-state rules and delete this file.
+- [ ] When the checklist passes (dev, then prod): promote per the project-state rules, delete this
+      file and the `rollback/main-before-page-status-eeeu` branch.
 
 ## Open questions
 
@@ -55,19 +54,19 @@ For Joe:
   covered by the parent's row. Should every exposed list be listed individually instead? (One
   change in `scanWeb`, `src/workbench/eeeu-audit.js`.)
 
-## Found live on `main` (2026-09-23), also present on this branch
+## Found live on the pre-merge `main` (2026-09-23), still present
 
 A local session tested `main` (Build #197) on the dev tenant by mistake. It found four defects
-in code this branch did not change, so they are here too. It queued fix tasks for them off
-`main`; whichever lands first, merge `main` into this branch rather than fixing twice.
+in code this work did not change, so they are still on `main`. It queued separate fix tasks for
+them — check those haven't landed before fixing here.
 - `field-editor.js` `toFormValue` sends DateTime as ISO; live `ValidateUpdateListItem` rejects
   every ISO form and accepts only the site-locale form (`10/1/2026 9:30 AM`, site time zone), and
-  one bad field fails the whole save. Hits the Files editor; this branch's Pages Metadata tab
-  edits no DateTime field. `list-data-apply.js`'s date calibration is the likely reusable fix.
+  one bad field fails the whole save. Hits the Files editor; the Pages Metadata tab edits no
+  DateTime field. `list-data-apply.js`'s date calibration is the likely reusable fix.
 - `canvas.js` `WEBPART_NAMES`: `1ef5ed11-…` is "Markdown", not "Code snippet".
 - `canvas.js`: `controlType: 14` (section background image) is reported as a parse error.
-- Pages grid lists folders (`SitePages/tools`) as pages, with MD/HTML export buttons. With this
-  branch the Scan columns on such a row are blank; the fix (filter `FSObjType eq 1` rows out, or
+- Pages grid lists folders (`SitePages/tools`) as pages, with MD/HTML export buttons. The Scan
+  columns on such a row are blank; the fix (filter `FSObjType eq 1` rows out, or
   show them as folders) belongs in `views/pages.js` either way.
 
 ## Landmines
