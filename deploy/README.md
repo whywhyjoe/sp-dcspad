@@ -83,7 +83,7 @@ destination does not exist yet, `Sync-Live.ps1` creates it. The script then:
 4. stages `index.html`, `boot.js`, `dcspad.webpart.html`, `dcspad.app.js`,
    `dcspad.config.json`, `workbench.html`, `boot-workbench.js`,
    `workbench.webpart.html`, `dcspad.workbench.js`, `src/`, `styles/`,
-   `examples/`, `vendor/`, and `lib-mirror/` in a temporary package;
+   `examples/`, `vendor/`, `lib-mirror/`, and `utilities/` in a temporary package;
 5. rewrites and validates the selected environment's URLs in that package
    (`vendor/` is generated and is leak-checked but not rewritten);
 6. copies the validated package to the configured synced destination; and

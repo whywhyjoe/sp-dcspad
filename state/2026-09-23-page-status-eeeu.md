@@ -2,115 +2,64 @@
 
 Last touched: 2026-09-23
 Mode: Joe
-Branch: claude/dcspad-sp-utilities-availability-ylr25q
-State: BUILT on the branch (mock-tested, 165/165 workbench checks; ChatGPT review round 1 closed) — waiting on the live-tenant check below and a PR
+Branch: claude/dcspad-sp-utilities-availability-ylr25q, pushed
+State: built, mock-tested and review-round-1 fixed on the branch; not yet deployed or tried on a
+live tenant; no PR
 
 ## What this is
 
-Two SP Workbench features. The first is a REBUILD: a page-status feature was built once on the
-work (bmo) machine and lost — the only surviving record is the original prompt and the plan that
-session wrote (no code, no diffs; the answers to that session's questions were also lost). The
-second is new: an EEEU / broad-access audit ported (loosely) from Joe's standalone
-`DCS.SecurityGroups` script, whose content-audit engine is the reference — its group-membership
-viewer is NOT in scope (the Workbench's Permissions view already covers groups/members).
-
-## Decisions — page status (Pages view)
-
-- Scope: modern Site Pages (119 with PromotedState + CanvasContent1) and the classic publishing
-  Pages library (850) only. Other libraries don't get the scan/chips/Permissions tab changes.
-- "Published" = the page has EVER had a published major version, even with a newer draft on top
-  (File/MajorVersion > 0, or UIVersion >= 512). NOT `_ModerationStatus` — that is 0 on every item
-  when content approval is off. Two states only: Published / Unpublished.
-- Grid: a **Scan Page Status** toolbar button. On click (one extra library query, no per-page
-  calls) the grid gains three columns: **Published** (Published/Unpublished), **Checked out**
-  (the holder's name), **Inheritance** (marker when broken). The grid shows no date.
-  Scan columns ride along in CSV/JSON/markdown exports. Cleared on library switch.
-- Detail header: status chips after the kind chip — Published (accent) / Unpublished (neutral);
-  Inheritance broken (accent) only when true; Checked out (accent, holder on tooltip) only when
-  true. Status register (`design/INFO-CHIP.md`), never the info chip. Chips only when the field
-  was readable.
-- Detail header buttons (Export MD, Export HTML, Export raw, Open page) move to the tab row,
-  right-aligned.
-- New detail tab **Permissions**, between Metadata and Structure: a status chip (Inherited /
-  Broken inheritance) + the page's own role assignments (the item endpoint returns the inherited
-  set when inheritance is intact — never the web's). Principal / Login / Type / Roles, same
-  grammar as the Permissions view. 401/403 via denied.js.
-- Metadata tab: ONLY these rows, in this order; any field missing from the list is skipped:
-  ID · Name (FileLeafRef) · Title · Publish Status (Published/Unpublished) · Publish Date (LAST
-  published — date of the current published major version; one versions read, detail only) ·
-  First Published Date (FirstPublishedDate) · Permissions (Inherited / Broken inheritance) ·
-  Checked Out To (user name) · Promoted State ("Promoted" when 2, "False" otherwise) · Content
-  Category (`bmocContentCategory`, managed metadata multi — read-only) · Modified · Modified By ·
-  Created · Created By · Item Type (`FolderType`, single choice — display name differs) ·
-  Contact (`Contact`, person single — read-only: Workbench can't edit people yet) · Pillar ·
-  Org (`Org`, single choice) · Compliance Asset ID (ComplianceAssetId) · Wiki Content
-  (WikiField). Scheduled start date (`_PublishStartDate`) is dropped.
-  Editable: Title, Item Type, Pillar, Org (plus anything else simple); hard ones
-  (managed metadata, person, computed/system) read-only. Name (FileLeafRef) stays read-only as
-  it was before — a rename breaks every link to the page; say so if it should become editable.
-- Per-page `.md` export metadata block gains the publish status.
-
-## Decisions — EEEU audit (Permissions view, new tab "EEEU audit")
-
-- Detection, both: (a) a principal list — defaults "Everyone except external users",
-  "Everyone", "SharePoint EEEU Visitors" (BMO prod convention), editable in the form, matched on
-  title OR login, with EEEU/Everyone also matched by claim (`spo-grid-all-users`, `c:0(.s|true`);
-  (b) at scan start, every site group whose members include EEEU/Everyone is added as a target.
-- Also flag "People in your organization" sharing links (`SharingLinks.*.OrganizationView*`
-  groups).
-- Scope: four checkboxes — Site (the web's own role assignments only), Pages libraries, Lists,
-  Document libraries. Hidden and system lists skipped.
-- Depth option: "Include items and folders" (default on) — off = list/library level only.
-- Subsites: the site's direct subsites listed as checkboxes; a checked subsite is scanned with
-  its whole tree (sub-subsites are never listed individually).
-- Limited Access–only matches hidden (noise from item-level shares).
-- Output: one results grid (Site, Type, Location, Name, Shared with, Permission, Why it counts,
-  Unique, URL)
-  + a Problems grid; grid exports. No "folder containing matching files" summary rows.
-- Speed: bounded concurrency (3 — sp-rest.js's own ceiling) + its 429/503 retry; Cancel keeps partial results
-  (no 10-minute timeout).
+Two SP Workbench features. **Page status** (Pages view): a Scan Page Status button that adds
+Published / Checked out / Inheritance columns, status chips and a Permissions tab in the page
+drilldown, and a fixed-order Metadata tab — a rebuild of a feature built once on the work (bmo)
+machine and lost. **EEEU audit** (Permissions view): finds where everyone in the organization
+has access, across the site, its lists/libraries/items and chosen subsite trees. Design, Joe's
+decisions and the live-tenant checklist: `HANDOFF.md` → "SP Workbench: page status + EEEU audit
+(2026-09-23)".
 
 ## Done
 
-- Page status (`src/workbench/page-status.js`, `views/pages.js`, `grid.js` setColumns,
-  `field-editor.js` layout, `page-export.js` status lines, mock Site Pages fixtures) — commit
-  1872837.
-- EEEU audit (`src/workbench/eeeu-audit.js`, `views/security.js` tab, `/sites/eeeu` mock tree)
-  — commit 1d8945a.
-- Tests: `tests/workbench.mjs` 150 → 161 (7 page status, 4 EEEU); workbench-edit 26,
-  workbench-schema 138, workbench-hosted 10 all still green. CLAUDE.md + tests/README.md counts.
-
-## Review round 1 (ChatGPT, 2026-09-23) — all nine findings fixed
-
-- sp-rest.js: one request queue shared by every client (createClient() used to get its own 3
-  slots), with slot hand-off so the ceiling can't briefly reach 4.
-- EEEU: a capped (100,000) item read is a Problems row; links encode path segments ('#');
-  stop checks after every await; the view's destroy() cancels an audit on site switch.
-- Page status: Scheduled (4) is not live; moderation read from every payload shape, and on a
-  moderated library unreadable per-version moderation makes Publish Date unknown, not approved;
-  the scan uses the grid's $orderby/$top, keeps the ladder rung, and says when rows came back
-  without status; status-read failures are shown (denied.js register) instead of swallowed.
+- Code: `src/workbench/page-status.js`, `src/workbench/eeeu-audit.js` (new);
+  `views/pages.js`, `views/security.js`, `grid.js` (`setColumns`), `field-editor.js` (`layout`),
+  `page-export.js` (status lines), `sp-rest.js` (one shared request queue), `mock-data.js`
+  (Site Pages status fixtures + the `/sites/eeeu` audit tree), `styles/workbench.css`.
+- ChatGPT review round 1: all nine findings fixed (`4cfb92e`); summary in HANDOFF.md.
+- Mock-tested in the cloud sandbox: `tests/workbench.mjs` 165/165 (15 new), workbench-edit
+  26, workbench-schema 138, workbench-hosted 10 (against the rebuilt bundle, Build #208).
+  The pad-side suites (smoke, monaco, config, hosted, files, ux…) were not run — nothing under
+  `src/` outside `src/workbench/` changed.
+- Docs: CLAUDE.md file map + test counts, tests/README.md counts, HANDOFF.md section.
 
 ## Next
 
-- [ ] Deploy to dev, then prod (`Sync-Live.ps1` rebuilds dcspad.workbench.js), and check on the
-      bmo tenant:
-  - Metadata tab rows resolve `bmocContentCategory`, `FolderType` (shows as Item Type), `Org`,
-    `Pillar`, `Contact` — any missing row means the internal name differs; the Raw tab shows it.
-  - A page with a draft over a published version reads Published (grid + chip), and Publish
-    Date is the date of that published version, not the draft's.
-  - Scan Page Status on the FCUPortal Site Pages library: no "some fields unavailable" chip
-    (if one appears, its tooltip carries SharePoint's reason — the status ladder degraded).
-  - EEEU audit on a site with a known EEEU grant and a known org-wide sharing link; confirm
-    "SharePoint EEEU Visitors" shows as "Group containing Everyone except external users".
-- [ ] Open a PR when Joe asks.
+- [ ] Local machine: `git fetch && git checkout claude/dcspad-sp-utilities-availability-ylr25q`,
+      optionally run `tests/workbench.mjs` (both servers, see tests/README.md), then deploy to
+      dev with `deploy\Sync-Live.ps1` (default env; rebuilds the bundle — no `?v=` bump needed).
+- [ ] Run HANDOFF.md's "Live-tenant checklist" for this section on the dev FCUPortal site; tick
+      items there with the evidence, as the markdown-export section did.
+- [ ] Anything the checklist breaks: fix on this branch, re-run `tests/workbench.mjs`, redeploy.
+- [ ] Prod (bmo): repeat the Metadata-row and EEEU checks — the bmo site columns
+      (`bmocContentCategory`, `FolderType`, `Pillar`, `Org`, `Contact`) likely exist only there.
+- [ ] Open a PR when Joe asks; on merge, promote per the project-state rules and delete this file.
+
+## Open questions
+
+For Joe:
+- Name (FileLeafRef) stayed read-only in the Metadata tab (a rename breaks links to the page).
+  Should it be editable?
+- The EEEU audit lists only lists/subsites with their own permissions; inheriting ones are
+  covered by the parent's row. Should every exposed list be listed individually instead? (One
+  change in `scanWeb`, `src/workbench/eeeu-audit.js`.)
 
 ## Landmines
 
-- Tests: the sandbox's HTTPS_PROXY intercepts localhost from Chromium (405s, blank
-  workbench). Run suites with `env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy`.
-- `Contact` (person) and `bmocContentCategory` (managed metadata) are read-only on purpose —
-  the Workbench has no User/Taxonomy editor yet (CLAUDE.md roadmap seam).
-- The EEEU audit reports only securables with their OWN permissions; an inheriting list or
-  subsite is covered by its parent's row (said in the run summary). If Joe wants every exposed
-  list listed individually, that is a deliberate change to `scanWeb` in eeeu-audit.js.
+- **Unverified against SharePoint:** the status select (`File/MajorVersion`, `File/CheckOutType`,
+  `CheckoutUser/Title` with `$expand=File,CheckoutUser`) and the per-version moderation shape of
+  `items(id)/versions`. Both were designed from docs plus a ChatGPT review; the checklist has an
+  item for each. `moderationOf()` in `page-status.js` is where a new payload shape goes.
+- Cloud sandbox only: its HTTPS_PROXY intercepts `localhost` from Chromium (405s, blank
+  workbench) — run suites there with `env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy`.
+  A local machine needs nothing special.
+- `sp-rest.js` now shares one three-request queue across every client (module scope). A view
+  that needs its own parallelism must not "fix" that by creating more clients — that was the bug.
+- `Contact` (person) and `bmocContentCategory` (managed metadata) are read-only by design until
+  the User/Taxonomy editor seam (CLAUDE.md Roadmap) is built.
