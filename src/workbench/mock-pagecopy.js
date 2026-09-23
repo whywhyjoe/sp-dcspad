@@ -189,8 +189,11 @@ export function resetPageCopyMock() {
     AuthorByline: ['alex@contoso.com'],
     CanvasContent1: canvasJson,
     LayoutWebpartsContent: layoutJson,
-    BannerImageUrl: { Url: `${WEB_URL}/sites/pagesrc/_layouts/15/getpreview.ashx?guidSite=${PAGECOPY_IDS.srcSite}&guidWeb=${PAGECOPY_IDS.srcWeb}&guidFile=d15f0000-0000-4000-8000-000000000001` },
-    BannerThumbnailUrl: `${WEB_URL}/sites/pagesrc/SiteAssets/thumbs/thumb.png`,
+    // Live shape (spike §11): a custom-thumbnail page's DTO BannerImageUrl is
+    // the THUMBNAIL's plain URL, BannerThumbnailUrl a tokened afdcache CDN URL,
+    // and the banner itself only in the header part's imageSources.
+    BannerImageUrl: `${WEB_URL}/sites/pagesrc/SiteAssets/thumbs/thumb.png`,
+    BannerThumbnailUrl: `${WEB_URL}/_vti_bin/afdcache.ashx/authitem/sites/pagesrc/SiteAssets/thumbs/thumb.png?_oat_=mock&width=400`,
     CommentsDisabled: true,
     IsPageCheckedOutToCurrentUser: false,
     _UIVersionString: '2.0',
@@ -226,7 +229,7 @@ export function resetPageCopyMock() {
       _UIVersionString: '2.0',
       CanvasContent1: canvasJson,
       LayoutWebpartsContent: layoutJson,
-      BannerImageUrl: quPage.BannerImageUrl,
+      BannerImageUrl: { Url: quPage.BannerImageUrl, Description: quPage.BannerImageUrl },
       Description: 'Q3 numbers',
       CommentsDisabled: true,
       PageCategory: 'IT',
@@ -995,12 +998,25 @@ export function pageCopyWriter(url, body, contentType, headers) {
 
       const result = { value: [] };
       const formValues = bodyData.formValues || [];
+      const list = web.lists.find((l) => l.Id.toLowerCase() === listId);
+      const known = new Set((web.fields?.[list?.Id] || web.fields?.[listId] || []).map((f) => f.InternalName));
+      const page = web.pages.get(itemId);
       for (const fv of formValues) {
         const row = { FieldName: fv.FieldName, FieldValue: fv.FieldValue, HasException: false, ErrorMessage: '' };
         // Audience required on pagedst only
         if (fv.FieldName === 'Audience' && web.path === '/sites/pagedst' && !fv.FieldValue) {
           row.HasException = true;
           row.ErrorMessage = 'Audience is required.';
+        } else if (known.size && !known.has(fv.FieldName) && fv.FieldName !== 'PromotedState') {
+          row.HasException = true;
+          row.ErrorMessage = `Column '${fv.FieldName}' does not exist.`;
+        } else if (page) {
+          // Applied like SPO: onto the item, and the DTO mirrors the fields it
+          // carries (Description is only settable this way — spike §11).
+          page.item[fv.FieldName] = fv.FieldValue;
+          if (fv.FieldName === 'Description') page.dto.Description = fv.FieldValue;
+          if (fv.FieldName === 'Title') page.dto.Title = fv.FieldValue;
+          if (fv.FieldName === 'PromotedState') { page.dto.PromotedState = Number(fv.FieldValue); page.item.PromotedState = Number(fv.FieldValue); }
         }
         result.value.push(row);
       }
@@ -1017,6 +1033,7 @@ export function pageCopyWriter(url, body, contentType, headers) {
       const page = web.pages.get(pageId);
       if (page) {
         page.item.CommentsDisabled = bodyData.value === true;
+        page.dto.CommentsDisabled = bodyData.value === true;
       }
     }
     return {};

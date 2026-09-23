@@ -17,10 +17,13 @@ export const COPYABLE_LAYOUTS = new Set(['Article', 'Home', 'SingleWebPartAppPag
 export const MAX_ASSET_BYTES = 50 * 1024 * 1024;
 export const PAGE_HEADER_ID = 'cbe7b0a9-3504-44dd-a3a3-0e5cacd07788';
 
-// Decision 2 (§4.2) — the spike's answer is recorded in the spec's §1 and
-// here. Until then the sitepages API with path A is the default hypothesis.
+// Decision 2 (§4.2), settled by the spike (§1, §11): the sitepages API,
+// created by path A (create in the root under a staging name, then move).
+// CopyFileByPath lands a copy of a promoted page still promoted and in the
+// news query before any reset can run, and addTemplateFile (path B) makes a
+// file without the Site Page content type that the sitepages API refuses.
+// 'copyFile' survives only for legacy-HTML canvases on the same web.
 export const DEFAULT_ENGINE = 'api';
-export const DEFAULT_CREATE_PATH = 'A';
 
 // §5.5 step 2: fields the copy operation itself owns. The carry set never
 // writes these, whatever their type says.
@@ -78,6 +81,9 @@ export function snapshotFromReads({ page = {}, item = {}, fields = [], status = 
   const pageSettings = canvas.ok
     ? canvas.value.find((c) => c && typeof c === 'object' && c.pageSettingsSlice)?.pageSettingsSlice || null
     : null;
+  // On a custom-thumbnail page the DTO's BannerImageUrl IS the thumbnail
+  // (the banner itself lives in the header part's imageSources), and
+  // BannerThumbnailUrl is a tokened afdcache CDN URL — never copied (§11).
   const bannerThumb = String(page.BannerThumbnailUrl || '');
   return {
     web: { ...web },
@@ -104,7 +110,7 @@ export function snapshotFromReads({ page = {}, item = {}, fields = [], status = 
     layoutRaw: String(layoutRaw ?? ''),
     layout: layout.ok ? layout.value : null,
     pageSettings,
-    customThumbnail: Boolean(pageSettings && pageSettings.isDefaultThumbnail === false && bannerThumb),
+    customThumbnail: Boolean(pageSettings && pageSettings.isDefaultThumbnail === false),
     item,
     itemAsText: item.FieldValuesAsText || {},
     fields: [...fields],
@@ -112,7 +118,10 @@ export function snapshotFromReads({ page = {}, item = {}, fields = [], status = 
     fileRef: item.FileRef || '',
     fileDirRef: item.FileDirRef || '',
     fileName: item.FileLeafRef || page.FileName || '',
-    commentsDisabled: typeof item.CommentsDisabled === 'boolean' ? item.CommentsDisabled : null,
+    // The DTO is authoritative: on SPO the list item's CommentsDisabled
+    // column kept reading false after SetCommentsDisabled took effect (§11).
+    commentsDisabled: typeof page.CommentsDisabled === 'boolean' ? page.CommentsDisabled
+      : typeof item.CommentsDisabled === 'boolean' ? item.CommentsDisabled : null,
   };
 }
 
@@ -452,7 +461,7 @@ export function inventoryReferences(snapshot) {
   (snapshot.layout || []).forEach((part, index) => {
     scan('layout', part, { index, instanceId: String(part?.instanceId || part?.id || ''), webPartId: normalizeGuid(part?.id), kind: 'layout', label: part?.title || 'Title area' }, [index]);
   });
-  for (const key of ['BannerImageUrl', 'BannerThumbnailUrl']) {
+  for (const key of ['BannerImageUrl']) {
     const value = snapshot.dto?.[key];
     if (!value) continue;
     for (const kind of classifyString(value, key, ctx)) {
@@ -496,15 +505,20 @@ export function assetRequests(snapshot, analysis) {
       if (ref.class === 'asset' && ref.asset) add(ref.asset, { where: part.where, index: part.index, path: ref.path });
     }
   }
+  // The DTO's BannerImageUrl: a getpreview.ashx URL (resolved by its GUIDs)
+  // or a plain file URL — the custom thumbnail, when the page has one.
   const banner = snapshot.dto.BannerImageUrl;
-  const bannerIds = previewIds(banner);
-  if (bannerIds) add({ ids: bannerIds }, { where: 'dto', index: -1, path: ['BannerImageUrl'] });
-  if (snapshot.customThumbnail) {
-    const thumb = snapshot.dto.BannerThumbnailUrl;
-    const ids = previewIds(thumb);
+  if (banner) {
+    const ids = previewIds(banner);
     let path = '';
-    if (!ids) { try { path = decodeSafe(new URL(thumb, 'https://placeholder.invalid').pathname); } catch { /* keep '' */ } }
-    add({ ids: ids || {}, path }, { where: 'dto', index: -1, path: ['BannerThumbnailUrl'] });
+    if (!ids) {
+      try {
+        const url = new URL(banner, 'https://placeholder.invalid');
+        const sameHost = url.origin === 'https://placeholder.invalid' || url.origin.toLowerCase() === lower(originOf(snapshot.web.webUrl));
+        if (sameHost) path = decodeSafe(url.pathname);
+      } catch { /* not a URL */ }
+    }
+    if (ids || path) add({ ids: ids || {}, path }, { where: 'dto', index: -1, path: ['BannerImageUrl'] });
   }
   return [...byKey.values()];
 }
@@ -586,7 +600,7 @@ export function dependentConsumers(analysis, droppedIds) {
 // rootPath }, siteAssetsRoot, fields, webParts: Set|null, takenFinal: Set,
 // takenRoot: Set, assetFolderExists: bool }.
 // options: { fileName, title, folder, publish, promoteAsNews, carryMetadata,
-// rewriteLinks, engine, createPath, dropped, requiredValues, dateText,
+// rewriteLinks, engine, dropped, requiredValues, dateText,
 // checkInDraft, runId }.
 // assetInfo: Map(key → fileInfo | null) resolved by the preflight.
 export function analyzeCopy({ snapshot, target, options = {}, analyzers = null, assetInfo = new Map() }) {
@@ -602,7 +616,7 @@ export function analyzeCopy({ snapshot, target, options = {}, analyzers = null, 
 
   const legacy = Boolean(eligibility.legacyHtml);
   const engine = legacy ? 'copyFile' : (options.engine || DEFAULT_ENGINE);
-  const createPath = engine === 'api' ? (options.createPath || DEFAULT_CREATE_PATH) : null;
+  const createPath = engine === 'api' ? 'A' : null;
   if (engine === 'copyFile' && !sameWeb) blockers.push('Whole-file copy only runs within one site.');
 
   const folder = String(options.folder || '').replace(/^\/+|\/+$/g, '');
@@ -691,6 +705,12 @@ export function analyzeCopy({ snapshot, target, options = {}, analyzers = null, 
     dateText: options.dateText || null,
     enabled: options.carryMetadata !== false,
   });
+  // Description is operation-owned (never in the carry set), but savepage
+  // cannot set it on SPO — so the run writes it with the metadata (§11).
+  const description = String(snapshot.dto.Description ?? '');
+  if (description) {
+    metadata.formValues.unshift({ FieldName: 'Description', FieldValue: description });
+  }
   for (const gap of metadata.requiredGaps) {
     blockers.push(gap.supportable
       ? `${gap.title} is required on the destination — enter a value to copy.`
@@ -726,6 +746,7 @@ export function analyzeCopy({ snapshot, target, options = {}, analyzers = null, 
       stagingAbsolute: abs(`${libraryRoot}/${stage}.aspx`),
     },
     title,
+    description,
     pageLayoutType: snapshot.dto.PageLayoutType || 'Article',
     publish: Boolean(options.publish),
     promoteAsNews: Boolean(options.promoteAsNews) && snapshot.dto.PromotedState > 0,
@@ -774,7 +795,7 @@ export function rewriteContent(snapshot, plan, transferResults = new Map(), anal
 
   let canvasOut = snapshot.canvasRaw;
   let layoutOut = snapshot.layoutRaw;
-  const bannerOut = { image: snapshot.dto.BannerImageUrl, thumb: snapshot.dto.BannerThumbnailUrl };
+  const bannerOut = { image: snapshot.dto.BannerImageUrl };
 
   if (!sameWebVerbatim || titleChanged) {
     const ctx = {
@@ -827,22 +848,20 @@ export function rewriteContent(snapshot, plan, transferResults = new Map(), anal
       });
       if (changed) layoutOut = JSON.stringify(parts);
     }
-    if (!plan.sameWeb) {
-      bannerOut.image = mapBannerUrl(snapshot.dto.BannerImageUrl, ctx, plan);
-      bannerOut.thumb = snapshot.customThumbnail
-        ? mapBannerUrl(snapshot.dto.BannerThumbnailUrl, ctx, plan) : bannerOut.image;
-    }
+    if (!plan.sameWeb) bannerOut.image = mapBannerUrl(snapshot.dto.BannerImageUrl, ctx, plan);
   }
 
-  // PnPjs's rule (PnP-pages 371–375): with a custom thumbnail, the
-  // BannerImageUrl sent is the thumbnail's URL; the banner itself lives in
-  // the header part's imageSources.
-  const bannerForSave = snapshot.customThumbnail ? bannerOut.thumb : bannerOut.image;
+  // PnPjs's rule (PnP-pages 371–375): with a custom thumbnail the
+  // BannerImageUrl sent is the thumbnail's URL — which is exactly what the
+  // DTO's BannerImageUrl already holds on such a page (§11), so it is sent
+  // as read (mapped to the transferred copy across webs). Description is
+  // NOT sent: savepage blanks it on SPO; the run writes it through
+  // ValidateUpdateListItem after the save (§11).
+  const bannerForSave = bannerOut.image;
   const fields = {
     Title: plan.title,
     CanvasContent1: canvasOut,
     LayoutWebpartsContent: layoutOut,
-    Description: snapshot.dto.Description,
     TopicHeader: snapshot.dto.TopicHeader,
     AuthorByline: snapshot.dto.AuthorByline,
   };
@@ -891,8 +910,11 @@ export function compareReadBack(plan, saved, dto = {}) {
   same('Title', plan.title, dto.Title);
   same('FileName', plan.target.fileName.toLowerCase(), String(dto.FileName || '').toLowerCase());
   same('PageLayoutType', plan.pageLayoutType, dto.PageLayoutType);
+  if (plan.description !== undefined && plan.engine !== 'copyFile') same('Description', plan.description, dto.Description ?? '');
+  if (plan.commentsDisabled === true && dto.CommentsDisabled === false) {
+    drift.push({ field: 'CommentsDisabled', expected: true, actual: false });
+  }
   if (saved) {
-    same('Description', saved.Description, dto.Description);
     same('TopicHeader', saved.TopicHeader, dto.TopicHeader);
     const expectedParts = webPartSequence(saved.CanvasContent1);
     const actualParts = webPartSequence(dto.CanvasContent1);

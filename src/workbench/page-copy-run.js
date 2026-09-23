@@ -118,16 +118,6 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
       return plan.target.finalPath;
     });
     if (r.err) return finish(r.network ? 'unknown' : 'failed');
-  } else if (plan.createPath === 'B') {
-    const r = await attempt(journal, onStep, 'create', async () => {
-      const folder = parentOf(plan.target.finalPath);
-      await pages.addTemplateFile(folder, plan.target.finalPath);
-      journal.currentPath = plan.target.finalPath;
-      journal.createdBy = 'this run';
-      journal.pageId = await pages.fileItemId(plan.target.finalPath);
-      return plan.target.finalPath;
-    });
-    if (r.err) return finish(r.network ? 'unknown' : 'failed');
   } else {
     const r = await attempt(journal, onStep, 'create', async () => {
       const created = await pages.createPage({ pageLayoutType: plan.pageLayoutType, promotedState: 0 });
@@ -170,9 +160,7 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
     pushStep(journal, onStep, 'metadata', 'skipped', 'carried by the file copy');
     pushStep(journal, onStep, 'comments', 'skipped', 'carried by the file copy');
   } else {
-    if (plan.createPath === 'B') {
-      pushStep(journal, onStep, 'name', 'skipped', 'path B');
-    } else {
+    {
       const r = await attempt(journal, onStep, 'name', async () => {
         if (!dto.IsPageCheckedOutToCurrentUser) await pages.checkoutPage(journal.pageId);
         await pages.savePage(journal.pageId, { Title: plan.target.stagingStem });
@@ -234,10 +222,8 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
       if (r.err) return finish(r.network ? 'unknown' : 'failed');
     }
 
-    // ---- move (path A only) ----------------------------------------------
-    if (plan.createPath === 'B') {
-      pushStep(journal, onStep, 'move', 'skipped', 'path B');
-    } else {
+    // ---- move (staging name → final name/folder) ------------------------
+    {
       const r = await attempt(journal, onStep, 'move', async () => {
         const srcAbsolute = `${originOf(plan.target.webUrl)}${journal.currentPath}`;
         try {

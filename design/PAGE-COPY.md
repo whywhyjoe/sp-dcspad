@@ -49,9 +49,15 @@ Decisions (Joe, 2026-09-23):
 
 1. **Naming:** keep the source file name; `{name}-copy` (then `-copy-2`…) only when that name
    already exists at the destination. Same-folder duplicates therefore always get the suffix.
-2. **Same-web engine:** open; the spike decides (§4.2). Sitepages API remains the default
-   hypothesis; `CopyFileByPath` wins if it preserves opaque page state **and** meets the
-   draft-by-default contract without a publicly visible window.
+2. **Same-web engine: the sitepages API, created by path A** (decided 2026-09-23 from the
+   spike, §11 Q1/Q5). `CopyFileByPath` lands a copy of a promoted page as a 0.1 draft that
+   still carries `PromotedState` 2 and the source's `FirstPublishedDate`, and it is in the
+   list's news query (`PromotedState eq 2`) within a second — a news-visible window no
+   pre-copy step can close without writing to the source; whether readers see the draft
+   depends on the library's `DraftVersionVisibility`, which a copy tool cannot assume. It
+   also regenerates `Description` from the body. Path B (`addTemplateFile`) is out: the file
+   it makes lacks the Site Page content type and every sitepages call on it is refused.
+   `CopyFileByPath` stays only for legacy-HTML canvases on the same web (§1 table).
 3. **Links into the source web:** keep by default; rewrite is opt-in.
 4. **Unportable web parts:** copy with warnings; never block; drop only on the operator's
    explicit per-part choice. A server rejection of an unknown id must surface as a failure
@@ -379,6 +385,61 @@ keeps the page-copy mock webs out of the default fixtures.
   open with the visibility-transition test as the deciding criterion (§4.2), and
   `addTemplateFile` is added as path B for the spike (§3, §9).
 
+## 11. Spike results (dev tenant, 2026-09-23)
+
+Driven headlessly (Playwright, `pw-profile`) with REST from a page on the dev web; captures in
+the session scratchpad `spike/captures/`. Everything created was named `zz-pagecopy-*`.
+
+- **Formats.** The sitepages DTO (`GET sitepages/pages(id)`) returns `CanvasContent1` as a
+  JSON array on every modern page on all three webs; the **list item's** `CanvasContent1` on
+  the same pages is the HTML storage format (`<div data-sp-canvascontrol …>`). The snapshot
+  therefore reads the DTO, never the item field, for content.
+- **Create.** `POST sitepages/pages` names the file `Page.aspx` (`Url: SitePages/Page.aspx`),
+  checked out to the caller. The first `savepage` Title renames it; the verbose body
+  (`Content-Type: application/json;odata=verbose`, `If-Match: *`) answers `{"odata.null":true}`.
+- **Q1 — `addTemplateFile(…, 3)` in a subfolder (path B).** Creates `zz-pagecopy-b1.aspx` in
+  place (0.1, not checked out; a second call with the same name → 500 "The file exists").
+  But `GET/checkoutpage/savepage` on it all answer **406 "This page does not have the site
+  page content type. Only site pages can be served with this API."** Unusable — rejected.
+- **Q2 — path A.** A staging Title `zz-pagecopy-a1~copy-abc123` becomes exactly that file
+  name (`~` survives). `MoveFileByPath(overwrite=false)` of the still-checked-out page into
+  `SitePages/zz-pagecopy-sub/` succeeds; the page keeps its id and its checkout. Moving onto
+  an existing name → **400** "The destination file already exists." (not 409). Title →
+  file-name sanitising maps `: " # % /` and spaces to `-` (`&` kept); a Title whose name is
+  taken gets `(1)` (`zz-pagecopy-shapes(1).aspx`).
+- **Q3 — `AddImageFromExternalUrl`.** Same-tenant URLs (an image and a PDF, to the subweb
+  and to the other site collection) all fail **400 wrapping "(403) Forbidden"** — the server's
+  fetch carries no user auth. Every asset takes the bytes path (`readFileBytes` +
+  `AddUsingPath`).
+- **Q4 — unknown web-part id.** `savepage` with id `d15c…ff` answers 200 and stores the
+  control verbatim (properties intact); publish succeeds. The server never rejects an
+  unknown id, so decision 4's "named failure" cannot arise from `savepage`; the preflight's
+  `GetClientSideWebParts` check is the only warning an operator gets.
+- **Q5 — `CopyFileByPath` on a published, promoted, custom-thumbnail page.** The copy lands
+  as **0.1 draft** (minor versions on; `DraftVersionVisibility` 1) with `PromotedState` 2 and
+  the source's `FirstPublishedDate`, appears in `items?$filter=PromotedState eq 2` at +1.1 s,
+  keeps the canvas/layout strings byte-identical and the thumbnail, but its `Description` is
+  regenerated from the body. See decision 2.
+- **Description.** `savepage` with a `Description` **blanks** it (DTO and item read `null`);
+  `ValidateUpdateListItem` `Description` sets it, and later Title-only saves and publish keep
+  it. The run writes Description with the metadata step.
+- **Thumbnail.** On a custom-thumbnail page (`pageSettingsSlice.isDefaultThumbnail: false`)
+  the DTO's `BannerImageUrl` **is the thumbnail's plain URL**; `BannerThumbnailUrl` is a
+  tokened `_vti_bin/afdcache.ashx/authitem/…?_oat_=…` CDN URL that must never be copied; the
+  banner is only in the header part's `imageSources`/`customMetadata`. The save sends the
+  DTO `BannerImageUrl` as read (mapped across webs).
+- **Q6 — comments.** `POST items(id)/SetCommentsDisabled` works with a `{ "value": true }`
+  body and as `SetCommentsDisabled(true)`; the **DTO's `CommentsDisabled`** reflects it, the
+  list item's `CommentsDisabled` column kept reading `false`. The snapshot reads the DTO.
+- **Q7 — shapes.** First-party ids from `GetClientSideWebParts` on dev: Hero `c4bd7b2f…`,
+  Image `d1d91016…`, Image gallery `af8be689…`, Quick links `c70391ea…`, Call to action
+  `df8e44e7…`, Countdown `62cac389…`, File and media `b7dd04e1…`, List/Document library
+  `f92bf067…`, Events `20745d7d…`, Highlighted content `daf0b71c…`, News `8c88f208…`,
+  Quick chart `91a50c94…`, **Sites `7cba020c…`** (canvas.js's label table calls it "Document
+  library") and Organization chart `e84a8ca2…` (labelled "Sites" there). Configured instance
+  shapes: pending (`zz-pagecopy-shapes.aspx` built with default instances; configuration in
+  the editor requested from Joe).
+
 ## 12. Progress log
 
 - 2026-09-23 — branch `claude/page-copy` from `main` @ `ab5a0f9`. Tenant work (Phase 0) waits for
@@ -387,3 +448,9 @@ keeps the page-copy mock webs out of the default fixtures.
 - 2026-09-23 — `sp-pages.js` (§0 shapes, one call per method) + `sp-files.js readFileBytes`
   landed after a clean blind review; `files.mjs` 63/63. Next: page-copy core, mock webs,
   runner, dialog.
+- 2026-09-23 — core, runner (journal §7), dialog, Pages-view Copy button and mock webs landed
+  with blind-review fixes; PR #22 merged to `main` (tags `pre-pr22-merge`, `pr22-merged`) and
+  merged into this branch. Spike Q1–Q6 answered (§11); decision 2 = API + path A; path B
+  removed. Suites: workbench 165 (pre-merge), schema 138, edit 26, pages-copy pure 21 +
+  runner 13. Next: Q7 shapes (waiting on the editor configuration), dialog + live test
+  sections, same-web live check.

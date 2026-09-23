@@ -285,7 +285,10 @@ export async function run({ browser, check, WB_URL }) {
       return plan.blockers.some((b) => b.includes('already exists'));
     }));
 
-  await check('pure: rewriteContent returns the raw CanvasContent1/LayoutWebpartsContent strings byte-identical for a verbatim same-web copy, and uses BannerThumbnailUrl as BannerImageUrl for a custom thumbnail', () =>
+  // Live SPO (spike §11): on a custom-thumbnail page the DTO's BannerImageUrl
+  // already IS the thumbnail and BannerThumbnailUrl is a tokened CDN URL, so
+  // the save sends BannerImageUrl as read and never the CDN URL.
+  await check('pure: rewriteContent returns the raw CanvasContent1/LayoutWebpartsContent strings byte-identical for a verbatim same-web copy, and sends the DTO BannerImageUrl (never the CDN BannerThumbnailUrl) for a custom thumbnail', () =>
     page.evaluate(async () => {
       const { rewriteContent } = await import('/src/workbench/page-copy.js');
       const canvasRaw = JSON.stringify([{ controlType: 4, id: 't1', innerHTML: '<p>hi</p>' }]);
@@ -301,11 +304,12 @@ export async function run({ browser, check, WB_URL }) {
 
       const thumbSnapshot = {
         ...baseSnapshot,
-        dto: { ...baseSnapshot.dto, BannerImageUrl: '/sites/src/SiteAssets/banner.jpg', BannerThumbnailUrl: '/sites/src/SiteAssets/thumb.png' },
+        dto: { ...baseSnapshot.dto, BannerImageUrl: 'https://t.sharepoint.com/sites/src/SiteAssets/thumb.png', BannerThumbnailUrl: 'https://t.sharepoint.com/_vti_bin/afdcache.ashx/authitem/sites/src/SiteAssets/thumb.png?_oat_=x' },
         customThumbnail: true,
       };
       const savedThumb = rewriteContent(thumbSnapshot, basePlan, new Map());
-      return verbatim && savedThumb.BannerImageUrl === '/sites/src/SiteAssets/thumb.png';
+      return verbatim && savedThumb.BannerImageUrl === 'https://t.sharepoint.com/sites/src/SiteAssets/thumb.png'
+        && !('Description' in savedThumb);
     }));
 
   await check('pure: rewriteContent with a changed title patches only the header part\'s properties.title, leaving the canvas and other layout parts untouched', () =>
