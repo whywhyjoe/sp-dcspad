@@ -20,7 +20,7 @@ import {
 import { createSpWriteClient } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
 import {
-  buildContentExport, buildRawExport, exportFileStem, contentParts,
+  buildContentExport, buildRawExport, exportFileStem, contentFileName, contentParts,
   bundleEntryName, dedupeEntryNames, buildExportReport,
 } from '../page-export.js';
 import { buildZip } from '../zip.js';
@@ -474,7 +474,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
   // bundle is byte-identical to the same page exported on its own.
   // `parts` is the reading model when the caller already has it (the detail
   // pane does); otherwise it is derived the same way the drilldown derives it.
-  async function contentMarkdownFor(item, sitePages, parts = null) {
+  // `format` picks the content-block shape ('markdown' | 'html'); everything
+  // else about the document is identical, so the two are diffable.
+  async function contentMarkdownFor(item, sitePages, parts = null, format = 'markdown') {
     const parsed = parseCanvasContent(item.CanvasContent1);
     let readingParts = parts;
     if (!readingParts) {
@@ -493,6 +495,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
     const web = await webIdentity();
     return buildContentExport({
       item,
+      format,
       controls: parsed.controls,
       parts: readingParts,
       siteTitle: web.Title || '',
@@ -502,10 +505,10 @@ export function createPagesView({ client, navigate, updateRoute }) {
     });
   }
 
-  // ---- bulk export: the selected pages as one zip of content markdown ----
+  // ---- bulk export: the selected pages as one zip of content files ----
 
   let exporting = false;
-  async function exportContentZip() {
+  async function exportContentZip(format = 'markdown') {
     if (exporting || !grid || !current) return;
     const sitePages = current;
     const rows = grid.getExportRows();
@@ -536,7 +539,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
           const row = rows[i];
           try {
             const { item } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
-            results[i] = { item, text: await contentMarkdownFor(item, sitePages) };
+            results[i] = { item, text: await contentMarkdownFor(item, sitePages, null, format) };
           } catch (err) {
             // One unreadable page does not end the export — it is named in the
             // report instead, with the server's own sentence.
@@ -562,7 +565,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       const ok = results.filter((r) => r && r.text !== undefined);
       const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
       const names = dedupeEntryNames(
-        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath)),
+        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath, format)),
       );
       const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
       if (failures.length) {
@@ -580,7 +583,8 @@ export function createPagesView({ client, navigate, updateRoute }) {
       // Inside the try on purpose: zip.js refuses anything classic ZIP cannot
       // encode, and allocating one contiguous archive can fail. Either way the
       // user must not be left reading "Exporting 40 of 40 pages…" forever.
-      downloadBytes('sp-pages-content.zip', buildZip(entries), 'application/zip');
+      downloadBytes(`sp-pages-content${format === 'html' ? '-html' : ''}.zip`,
+        buildZip(entries), 'application/zip');
       masterStatus.hidden = true;
     } catch (err) {
       showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
@@ -589,6 +593,57 @@ export function createPagesView({ client, navigate, updateRoute }) {
       // fetch and the download — otherwise the export button dies for good.
       exporting = false;
     }
+  }
+
+  // ---- single-page export from a grid row ----
+
+  // The row carries only the grid projection, so the full item (canvas body
+  // included) is fetched the same way the drilldown and the zip fetch it —
+  // one page, no selection, no zip. Runs straight off the row so exporting a
+  // page never requires opening it first.
+  async function exportRowContent(row, format, btn) {
+    if (btn.disabled || !current) return;
+    const sitePages = current;
+    btn.disabled = true;
+    try {
+      const plan = await queryPlan(sitePages);
+      const { item } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
+      // A library switch mid-fetch would download the previous library's page
+      // while the grid shows the new one.
+      if (current !== sitePages) return;
+      downloadText(contentFileName(item, format),
+        await contentMarkdownFor(item, sitePages, null, format),
+        'text/markdown;charset=utf-8');
+      masterStatus.hidden = true;
+    } catch (err) {
+      // A page this account cannot read is a fact about the site, so it goes
+      // through the same register as every other denied read (denied.js).
+      showFailure(masterStatus, err, row.FileLeafRef || row.Title || `page ${row.Id}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // The pair of per-row export buttons. Text, not icons: the choice is
+  // between two content formats, and only a word can say which is which.
+  function rowExportCell(row) {
+    const span = el('span', 'wb-page-row-actions');
+    for (const [label, format, title] of [
+      ['MD', 'markdown', 'Export this page as .md with its content converted to markdown'],
+      ['HTML', 'html', 'Export this page as .md with each content block left as its original HTML'],
+    ]) {
+      const btn = el('button', 'wb-cell-link wb-cell-export', label);
+      btn.type = 'button';
+      btn.title = title;
+      btn.setAttribute('aria-label', `${title} (${row.FileLeafRef || row.Title || `page ${row.Id}`})`);
+      // The row opens the page on click; these are their own gesture.
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportRowContent(row, format, btn);
+      });
+      span.append(btn);
+    }
+    return span;
   }
 
   async function loadPages() {
@@ -636,6 +691,15 @@ export function createPagesView({ client, navigate, updateRoute }) {
             { key: 'Modified', label: 'Modified', format: fmtDate },
             { key: 'Editor', label: 'Editor', value: (row) => row.Editor?.Title || '' },
             {
+              key: 'Export',
+              label: '',
+              // Controls only — no data, so CSV/JSON/markdown skip it.
+              action: true,
+              value: (row) => row.Id,
+              format: () => '',
+              render: (_id, row) => rowExportCell(row),
+            },
+            {
               key: 'FileRef',
               label: '',
               format: () => '',
@@ -670,7 +734,8 @@ export function createPagesView({ client, navigate, updateRoute }) {
           // opening one stay distinct gestures on the same row.
           selectable: true,
           exportExtras: [
-            ['Download content .zip', () => exportContentZip()],
+            ['Download content .zip (Markdown)', () => exportContentZip('markdown')],
+            ['Download content .zip (original HTML)', () => exportContentZip('html')],
           ],
           // The same object the ladder rewrites below, on purpose: the
           // "Copy as…" menu reads it at click time, so a script copied out of
@@ -1062,13 +1127,20 @@ export function createPagesView({ client, navigate, updateRoute }) {
     if (lostFields) headRow.append(reducedChip(lostFields, 'this page', lostReason));
 
     const actions = el('span', 'wb-detail-actions');
-    const exportContent = el('button', 'btn btn-xs', 'Export content');
+    // One button per content format, matching the pair on every grid row.
+    // Both write .md; only the content blocks differ.
+    const exportContent = el('button', 'btn btn-xs', 'Export MD');
     exportContent.type = 'button';
-    exportContent.title = 'One human-readable file: metadata, merged web-part content, full metadata';
+    exportContent.title = 'One human-readable .md: metadata plus the merged '
+      + 'web-part content converted to markdown';
+    const exportContentHtml = el('button', 'btn btn-xs', 'Export HTML');
+    exportContentHtml.type = 'button';
+    exportContentHtml.title = 'The same .md, but each content block keeps its '
+      + 'original HTML — for a page the markdown conversion got wrong';
     const exportRaw = el('button', 'btn btn-xs', 'Export raw');
     exportRaw.type = 'button';
     exportRaw.title = 'Item + parsed canvas controls as JSON, for scripts';
-    actions.append(exportContent, exportRaw);
+    actions.append(exportContent, exportContentHtml, exportRaw);
     if (item.FileRef) {
       const open = el('a', 'btn btn-xs', 'Open page ↗');
       open.href = item.FileRef;
@@ -1077,11 +1149,13 @@ export function createPagesView({ client, navigate, updateRoute }) {
     }
     headRow.append(actions);
 
-    exportContent.addEventListener('click', async () => {
-      downloadText(`${exportFileStem(item)}-content.md`,
-        await contentMarkdownFor(item, sitePages, readingParts),
+    const downloadContent = async (format) => {
+      downloadText(contentFileName(item, format),
+        await contentMarkdownFor(item, sitePages, readingParts, format),
         'text/markdown;charset=utf-8');
-    });
+    };
+    exportContent.addEventListener('click', () => downloadContent('markdown'));
+    exportContentHtml.addEventListener('click', () => downloadContent('html'));
     exportRaw.addEventListener('click', () => {
       downloadText(`${exportFileStem(item)}-raw.json`,
         buildRawExport({ item, controls: parsed.controls, webParts }),

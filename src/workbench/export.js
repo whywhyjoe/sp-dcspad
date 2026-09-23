@@ -37,22 +37,30 @@ export function cellText(row, col) {
   return String(v);
 }
 
+// Columns marked `action` exist only to host per-row controls (export
+// buttons, and the like). They carry no data, so every export drops them —
+// otherwise they contribute an empty CSV column and a JSON key whose value
+// is whatever the render happened to key off.
+const dataColumns = (columns) => (columns || []).filter((c) => !c.action);
+
 // RFC 4180: quote fields containing commas, quotes, or line breaks; double
 // embedded quotes. BOM prefix so Excel opens UTF-8 correctly.
 export function toCsv(rows, columns) {
+  const cols = dataColumns(columns);
   const quote = (s) => (/[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s);
-  const lines = [columns.map((c) => quote(String(c.label ?? c.key))).join(',')];
+  const lines = [cols.map((c) => quote(String(c.label ?? c.key))).join(',')];
   for (const row of rows) {
-    lines.push(columns.map((c) => quote(cellText(row, c))).join(','));
+    lines.push(cols.map((c) => quote(cellText(row, c))).join(','));
   }
   return `\uFEFF${lines.join('\r\n')}`;
 }
 
 // JSON keeps raw row values (not display formatting) under column keys.
 export function toJson(rows, columns) {
+  const cols = dataColumns(columns);
   const out = rows.map((row) => {
     const record = {};
-    for (const c of columns) {
+    for (const c of cols) {
       const v = cellValue(row, c);
       record[c.key] = v === undefined ? null : v;
     }
@@ -62,13 +70,14 @@ export function toJson(rows, columns) {
 }
 
 export function toMarkdown(rows, columns) {
+  const cols = dataColumns(columns);
   const esc = (s) => s.replaceAll('|', '\\|').replaceAll('\r', '').replaceAll('\n', ' ');
   const lines = [
-    `| ${columns.map((c) => esc(String(c.label ?? c.key))).join(' | ')} |`,
-    `| ${columns.map(() => '---').join(' | ')} |`,
+    `| ${cols.map((c) => esc(String(c.label ?? c.key))).join(' | ')} |`,
+    `| ${cols.map(() => '---').join(' | ')} |`,
   ];
   for (const row of rows) {
-    lines.push(`| ${columns.map((c) => esc(cellText(row, c))).join(' | ')} |`);
+    lines.push(`| ${cols.map((c) => esc(cellText(row, c))).join(' | ')} |`);
   }
   return lines.join('\n');
 }

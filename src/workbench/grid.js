@@ -88,6 +88,8 @@ function displayValue(row, col) {
 //             link?(v,row)=>href, copyable?, mono?, num?, width? }]
 // link renders the cell text as an anchor opening href in a new tab (URL
 // columns stay real URLs); copyable then adds a ⧉ copy glyph beside it.
+// action marks a column that exists only to host per-row controls: it renders
+// like any other, but every export drops it (see export.js dataColumns).
 // exportName enables the toolbar export menu; it's the download file stem.
 // descriptor { path, options, webUrl } enables the "Copy as…" script menu.
 // toolbarExtras: a Node adopted into the toolbar after the filter box, so a
