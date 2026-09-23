@@ -192,6 +192,11 @@ src/workbench/            SP Workbench, a site inspector (read + Tier 2 edit too
                           names, no dependency — the Pages grid bundles the
                           selected pages' content .md through it) ·
                           item-export.js list-content markdown export builders
+                          (bulk shape is DELIBERATELY not the Pages one: a
+                          list's selected rows are one dataset, so they export
+                          as ONE merged .md; a page is its own document, so
+                          Pages exports a zip of one .md per page. Not an
+                          inconsistency to reconcile — Joe's call, 2026-08-26)
                           (pure; content-field selection, view-column mapping,
                           HTML→markdown for rich text, attachment links,
                           per-item Title-heading + Field: value blocks) ·
