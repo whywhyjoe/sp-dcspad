@@ -67,19 +67,35 @@ const FIELDS = {
     field('Author', 'Author', 'User', 20, { ReadOnlyField: true }),
     field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true }),
   ],
-  // Site Pages: one field per editor type the metadata form supports, plus
-  // the content fields the editor must refuse to touch.
+  // Site Pages: the column set of the bmo FCUPortal Site Pages library that
+  // the Metadata tab's fixed layout (page-status.js METADATA_SPEC) is written
+  // against — deliberately in a DIFFERENT order from the spec, with the
+  // bmo site columns whose internal name differs from the display name
+  // (Item Type is FolderType), and with fields the spec leaves out
+  // (Description, PageCategory, CanvasContent1) so the tab can prove it
+  // hides them. Per-type editor coverage lives with the Files browser.
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02': [
     field('Title', 'Title', 'Text', 2, { Required: true }),
     field('Description', 'Description', 'Note', 3),
     field('Page category', 'PageCategory', 'Choice', 6, {
       Choices: ['Announcement', 'How-to', 'Reference'], DefaultValue: 'Reference',
     }),
-    field('Review date', 'ReviewDate', 'DateTime', 4),
-    field('Show in navigation', 'ShowInNav', 'Boolean', 8),
-    field('Related link', 'RelatedLink', 'URL', 11),
+    field('Org', 'Org', 'Choice', 6, { Choices: ['FCU', 'CCU', 'Wealth'] }),
+    field('Pillar', 'Pillar', 'Choice', 6, { Choices: ['Member', 'Business', 'Operations'] }),
+    field('Item Type', 'FolderType', 'Choice', 6, { Choices: ['Page', 'News', 'Hub'] }),
+    field('Contact', 'Contact', 'User', 20),
+    field('Content Category', 'bmocContentCategory', 'TaxonomyFieldTypeMulti', 0),
     field('Promoted state', 'PromotedState', 'Number', 9, { ReadOnlyField: true }),
-    field('Editor', 'Editor', 'User', 20, { ReadOnlyField: true }),
+    field('Name', 'FileLeafRef', 'File', 18),
+    field('First Published Date', 'FirstPublishedDate', 'DateTime', 4, { ReadOnlyField: true }),
+    field('Checked Out To', 'CheckoutUser', 'User', 20, { ReadOnlyField: true }),
+    field('Approval Status', '_ModerationStatus', 'ModStat', 22, { ReadOnlyField: true, Hidden: true }),
+    field('Compliance Asset Id', 'ComplianceAssetId', 'Text', 2, { ReadOnlyField: true }),
+    field('Wiki Content', 'WikiField', 'Note', 3),
+    field('Modified', 'Modified', 'DateTime', 4, { ReadOnlyField: true }),
+    field('Created', 'Created', 'DateTime', 4, { ReadOnlyField: true }),
+    field('Created By', 'Author', 'User', 20, { ReadOnlyField: true }),
+    field('Modified By', 'Editor', 'User', 20, { ReadOnlyField: true }),
     field('Canvas content', 'CanvasContent1', 'Note', 3),
     field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true }),
   ],
@@ -751,10 +767,26 @@ const SITEPAGES_ITEMS = [
       Description: 'Mock landing page.',
       BannerImageUrl: null,
       PageCategory: 'Announcement',
-      ReviewDate: '2026-08-01T00:00:00Z',
-      ShowInNav: true,
-      RelatedLink: { Url: 'https://example.com', Description: 'Example' },
-      FieldValuesAsText: { Editor: 'Mock Developer', CanvasContent1: '(canvas markup)' },
+      // Page status: published (3.0) with a newer draft (3.1) on top, and
+      // its own permissions — see ITEM_VERSIONS / ITEM_ROLE_ASSIGNMENTS.
+      File: { MajorVersion: 3, MinorVersion: 1, CheckOutType: 2 },
+      HasUniqueRoleAssignments: true,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
+      FirstPublishedDate: '2026-05-10T12:00:00Z',
+      FolderType: 'Page',
+      Pillar: 'Member',
+      Org: 'FCU',
+      Contact: { Title: 'Pat Example' },
+      ComplianceAssetId: 'CA-0042',
+      FieldValuesAsText: {
+        Editor: 'Mock Developer',
+        Author: 'Mock Developer',
+        CanvasContent1: '(canvas markup)',
+        Contact: 'Pat Example',
+        bmocContentCategory: 'Policy;Benefits',
+        CheckoutUser: '',
+      },
     }),
   },
   {
@@ -767,7 +799,12 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Pat Example' },
       Editor: { Title: 'Pat Example' },
       CanvasContent1: LEGACY_CANVAS,
-      FieldValuesAsText: { Editor: 'Pat Example' },
+      // Never published (0.4) and checked out to Pat.
+      File: { MajorVersion: 0, MinorVersion: 4, CheckOutType: 0 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: { Title: 'Pat Example' },
+      FieldValuesAsText: { Editor: 'Pat Example', CheckoutUser: 'Pat Example' },
     }),
   },
   {
@@ -780,6 +817,10 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Mock Developer' },
       Editor: { Title: 'Mock Developer' },
       CanvasContent1: null,
+      File: { MajorVersion: 1, MinorVersion: 0, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: 'Mock Developer' },
     }),
   },
@@ -794,6 +835,10 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Pat Example' },
       Editor: { Title: 'Pat Example' },
       CanvasContent1: null,
+      File: { MajorVersion: 2, MinorVersion: 0, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: 'Pat Example' },
     }),
   },
@@ -807,6 +852,10 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Mock Developer' },
       Editor: { Title: 'Mock Developer' },
       CanvasContent1: null,
+      File: { MajorVersion: 0, MinorVersion: 1, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: 'Mock Developer' },
     }),
   },
@@ -815,6 +864,55 @@ const SITEPAGES_ITEMS = [
 const ITEMS = {
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03': PROJECT_ITEMS,
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02': SITEPAGES_ITEMS,
+};
+
+// Item version histories (items(n)/versions), keyed "listId:itemId". Home's
+// current version is the 3.1 draft; the page was last PUBLISHED as 3.0 on
+// 2026-07-01, which is what the Metadata tab's Publish Date must show — not
+// the draft's date, not the first publish. Items without an entry get one
+// synthesized from File.MajorVersion (see versionsOf).
+const ITEM_VERSIONS = {
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1': [
+    { VersionId: 1537, VersionLabel: '3.1', IsCurrentVersion: true, Created: '2026-07-18T10:00:00Z', OData__ModerationStatus: 0 },
+    { VersionId: 1536, VersionLabel: '3.0', IsCurrentVersion: false, Created: '2026-07-01T09:00:00Z', OData__ModerationStatus: 0 },
+    { VersionId: 1024, VersionLabel: '2.0', IsCurrentVersion: false, Created: '2026-06-01T09:00:00Z', OData__ModerationStatus: 0 },
+    { VersionId: 512, VersionLabel: '1.0', IsCurrentVersion: false, Created: '2026-05-10T12:00:00Z', OData__ModerationStatus: 0 },
+  ],
+};
+
+function versionsOf(listId, item) {
+  const known = ITEM_VERSIONS[`${listId}:${item.Id}`];
+  if (known) return known;
+  const major = item.File?.MajorVersion || 0;
+  const minor = item.File?.MinorVersion || 0;
+  return [{
+    VersionId: major * 512 + minor,
+    VersionLabel: `${major}.${minor}`,
+    IsCurrentVersion: true,
+    Created: item.Modified,
+    OData__ModerationStatus: item.OData__ModerationStatus ?? 0,
+  }];
+}
+
+// Pages whose permissions are their own (HasUniqueRoleAssignments), keyed
+// "listId:itemId". Anything else answers with the web's assignments, which
+// is what an inheriting item's endpoint returns on a web whose libraries
+// inherit too.
+const ITEM_ROLE_ASSIGNMENTS = {
+  // Literal, not assignment(): that helper reads ROLE_DEFINITIONS, which is
+  // declared further down and still in its temporal dead zone here.
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1': [
+    {
+      PrincipalId: 3,
+      Member: { Id: 3, Title: 'Mock Site Owners', LoginName: 'Mock Site Owners', PrincipalType: 8 },
+      RoleDefinitionBindings: [{ Id: 1073741829, Name: 'Full Control' }],
+    },
+    {
+      PrincipalId: 14,
+      Member: { Id: 14, Title: 'Pat Example', LoginName: 'i:0#.f|membership|pat@mock.local', PrincipalType: 1 },
+      RoleDefinitionBindings: [{ Id: 1073741827, Name: 'Contribute' }],
+    },
+  ],
 };
 
 // Folder tree for the Files browser, keyed by lower-cased server-relative
@@ -1222,6 +1320,202 @@ const BOTH_ITEMS = {
   ],
 };
 
+// ---- EEEU audit web --------------------------------------------------------
+// Served for /sites/eeeu and every web below it, so the audit's site tree
+// has somewhere to walk without touching any other fixture. Each grant here
+// exists to prove one rule of eeeu-audit.js:
+//   root web   'SharePoint EEEU Visitors' (named convention AND contains EEEU)
+//              on the site; EEEU itself only as Limited Access (must be
+//              hidden as noise)
+//   Site Pages unique, 'Broad Readers' (a group found only by its MEMBERS —
+//              it contains Everyone); page 1 shared with EEEU directly
+//   Policies   inherits (no list row); folder shared by an org-wide sharing
+//              link; notes.docx shared with Everyone; handbook.docx unique but
+//              to a normal group (no row)
+//   Announcements  unique list, EEEU Read
+//   Hidden Stuff   hidden list granting EEEU — skipped as system/hidden
+//   group 'Locked Group' — membership unreadable: a Problems row
+//   subsites   team (unique, EEEU) > deep (unique, Broad Readers);
+//              quiet (unique, EEEU) — never ticked, so it must NOT appear;
+//              echo (inherits — no Site row)
+const EEEU_LOGIN = 'c:0-.f|rolemanager|spo-grid-all-users/0f1e2d3c-0000-4000-8000-00000000abcd';
+const EVERYONE_LOGIN = 'c:0(.s|true';
+const ORG_LINK_GROUP = 'SharingLinks.3f2a1b00-1111-4222-8333-444455556666.OrganizationView.7e6d5c4b-aaaa-4bbb-8ccc-ddddeeeeffff';
+
+const eeeuPrincipal = (id, Title, LoginName, PrincipalType) => ({ Id: id, Title, LoginName, PrincipalType });
+const P = {
+  owners: eeeuPrincipal(21, 'EEEU Owners', 'EEEU Owners', 8),
+  visitors: eeeuPrincipal(22, 'SharePoint EEEU Visitors', 'SharePoint EEEU Visitors', 8),
+  broad: eeeuPrincipal(23, 'Broad Readers', 'Broad Readers', 8),
+  team: eeeuPrincipal(24, 'Team Members', 'Team Members', 8),
+  locked: eeeuPrincipal(25, 'Locked Group', 'Locked Group', 8),
+  orgLink: eeeuPrincipal(26, ORG_LINK_GROUP, ORG_LINK_GROUP, 8),
+  eeeu: eeeuPrincipal(31, 'Everyone except external users', EEEU_LOGIN, 4),
+  everyone: eeeuPrincipal(32, 'Everyone', EVERYONE_LOGIN, 4),
+  pat: eeeuPrincipal(14, 'Pat Example', 'i:0#.f|membership|pat@mock.local', 1),
+};
+const ROLE = {
+  full: { Name: 'Full Control', RoleTypeKind: 5 },
+  edit: { Name: 'Edit', RoleTypeKind: 6 },
+  contribute: { Name: 'Contribute', RoleTypeKind: 3 },
+  read: { Name: 'Read', RoleTypeKind: 2 },
+  limited: { Name: 'Limited Access', RoleTypeKind: 1 },
+};
+const grant = (member, ...roles) => ({ PrincipalId: member.Id, Member: member, RoleDefinitionBindings: roles });
+
+const EEEU_GROUPS = [P.owners, P.visitors, P.broad, P.team, P.locked, P.orgLink];
+const EEEU_GROUP_USERS = {
+  21: [P.pat],
+  22: [P.eeeu],
+  23: [P.everyone, P.pat],
+  24: [P.pat],
+  // 25 (Locked Group): no entry — its membership read fails.
+  26: [],
+};
+
+const EEEU_SITE_PAGES = '0e0e0e0e-0001-4000-8000-000000000001';
+const EEEU_POLICIES = '0e0e0e0e-0001-4000-8000-000000000002';
+const EEEU_ANNOUNCE = '0e0e0e0e-0001-4000-8000-000000000003';
+const EEEU_HIDDEN = '0e0e0e0e-0001-4000-8000-000000000004';
+const EEEU_TEAM_DOCS = '0e0e0e0e-0002-4000-8000-000000000001';
+
+const eeeuList = (id, Title, BaseTemplate, BaseType, path, unique, extra = {}) => ({
+  Id: id, Title, BaseTemplate, BaseType, Hidden: false, IsCatalog: false,
+  HasUniqueRoleAssignments: unique, ItemCount: 0,
+  RootFolder: { ServerRelativeUrl: path }, ...extra,
+});
+
+// Keyed by the web's server-relative path.
+const EEEU_WEBS = {
+  '/sites/eeeu': {
+    Title: 'EEEU Audit Site',
+    unique: true,
+    grants: [
+      grant(P.owners, ROLE.full),
+      grant(P.team, ROLE.contribute),
+      grant(P.visitors, ROLE.read),
+      grant(P.eeeu, ROLE.limited),
+    ],
+    lists: [
+      eeeuList(EEEU_SITE_PAGES, 'Site Pages', 119, 1, '/sites/eeeu/SitePages', true),
+      eeeuList(EEEU_POLICIES, 'Policies', 101, 1, '/sites/eeeu/Policies', false),
+      eeeuList(EEEU_ANNOUNCE, 'Announcements', 104, 0, '/sites/eeeu/Lists/Announcements', true),
+      eeeuList(EEEU_HIDDEN, 'Hidden Stuff', 100, 0, '/sites/eeeu/Lists/Hidden', true, { Hidden: true }),
+      eeeuList('0e0e0e0e-0001-4000-8000-000000000005', 'User Information List', 112, 0,
+        '/sites/eeeu/_catalogs/users', true, { Hidden: true }),
+    ],
+    subwebs: ['/sites/eeeu/team', '/sites/eeeu/quiet', '/sites/eeeu/echo'],
+  },
+  '/sites/eeeu/team': {
+    Title: 'Team', unique: true,
+    grants: [grant(P.owners, ROLE.full), grant(P.eeeu, ROLE.read)],
+    lists: [eeeuList(EEEU_TEAM_DOCS, 'Team Docs', 101, 1, '/sites/eeeu/team/TeamDocs', true)],
+    subwebs: ['/sites/eeeu/team/deep'],
+  },
+  '/sites/eeeu/team/deep': {
+    Title: 'Deep', unique: true,
+    grants: [grant(P.owners, ROLE.full), grant(P.broad, ROLE.read)],
+    lists: [],
+    subwebs: [],
+  },
+  '/sites/eeeu/quiet': {
+    Title: 'Quiet', unique: true,
+    grants: [grant(P.eeeu, ROLE.read)],
+    lists: [],
+    subwebs: [],
+  },
+  '/sites/eeeu/echo': {
+    Title: 'Echo', unique: false,
+    grants: [grant(P.visitors, ROLE.read)],
+    lists: [],
+    subwebs: [],
+  },
+};
+
+const EEEU_LIST_GRANTS = {
+  [EEEU_SITE_PAGES]: [grant(P.owners, ROLE.full), grant(P.broad, ROLE.read)],
+  [EEEU_ANNOUNCE]: [grant(P.owners, ROLE.full), grant(P.eeeu, ROLE.read)],
+  [EEEU_HIDDEN]: [grant(P.eeeu, ROLE.read)],
+  [EEEU_TEAM_DOCS]: [grant(P.owners, ROLE.full), grant(P.visitors, ROLE.edit)],
+};
+
+const eeeuItem = (Id, FileLeafRef, dir, FSObjType, unique) => ({
+  Id, Title: FileLeafRef, FileLeafRef, FileRef: `${dir}/${FileLeafRef}`, FSObjType,
+  HasUniqueRoleAssignments: unique,
+});
+const EEEU_ITEMS = {
+  [EEEU_SITE_PAGES]: [
+    eeeuItem(1, 'Welcome.aspx', '/sites/eeeu/SitePages', 0, true),
+    eeeuItem(2, 'Internal.aspx', '/sites/eeeu/SitePages', 0, false),
+  ],
+  [EEEU_POLICIES]: [
+    eeeuItem(1, 'Public', '/sites/eeeu/Policies', 1, true),
+    eeeuItem(2, 'handbook.docx', '/sites/eeeu/Policies', 0, true),
+    eeeuItem(3, 'notes.docx', '/sites/eeeu/Policies/Public', 0, true),
+    eeeuItem(4, 'plain.docx', '/sites/eeeu/Policies', 0, false),
+  ],
+  [EEEU_ANNOUNCE]: [eeeuItem(1, 'Hello', '/sites/eeeu/Lists/Announcements', 0, false)],
+  [EEEU_HIDDEN]: [eeeuItem(1, 'Secret', '/sites/eeeu/Lists/Hidden', 0, true)],
+};
+const EEEU_ITEM_GRANTS = {
+  [`${EEEU_SITE_PAGES}:1`]: [grant(P.owners, ROLE.full), grant(P.eeeu, ROLE.read)],
+  [`${EEEU_POLICIES}:1`]: [grant(P.owners, ROLE.full), grant(P.orgLink, ROLE.read)],
+  [`${EEEU_POLICIES}:2`]: [grant(P.owners, ROLE.full), grant(P.team, ROLE.contribute)],
+  [`${EEEU_POLICIES}:3`]: [grant(P.owners, ROLE.full), grant(P.everyone, ROLE.contribute)],
+  [`${EEEU_HIDDEN}:1`]: [grant(P.eeeu, ROLE.read)],
+};
+
+function eeeuResolver(url, path, webBase) {
+  let rel = '/';
+  try { rel = decodeURIComponent(new URL(webBase).pathname).replace(/\/+$/, '') || '/'; } catch { /* keep */ }
+  const web = EEEU_WEBS[rel.toLowerCase()];
+  if (!web) return null;
+  const origin = (() => { try { return new URL(webBase).origin; } catch { return ''; } })();
+
+  const groupUsers = /^web\/sitegroups\((\d+)\)\/users/.exec(path);
+  if (groupUsers) {
+    const users = EEEU_GROUP_USERS[groupUsers[1]];
+    return users ? { value: users } : null;
+  }
+  if (path.startsWith('web/sitegroups')) return { value: EEEU_GROUPS };
+  if (path.startsWith('web/roleassignments')) return { value: web.grants };
+  if (path.startsWith('web/webs')) {
+    return {
+      value: web.subwebs.map((sub) => ({
+        Title: EEEU_WEBS[sub].Title, Url: `${origin}${sub}`, ServerRelativeUrl: sub,
+      })),
+    };
+  }
+  const listId = listIdOf(path);
+  if (listId) {
+    const found = web.lists.find((l) => l.Id === listId);
+    if (!found) return null;
+    const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
+    if (itemId) {
+      if (path.includes('/roleassignments')) {
+        return { value: EEEU_ITEM_GRANTS[`${found.Id}:${itemId}`] || EEEU_LIST_GRANTS[found.Id] || web.grants };
+      }
+      return (EEEU_ITEMS[found.Id] || []).find((i) => i.Id === Number(itemId)) || null;
+    }
+    if (path.includes('/roleassignments')) return { value: EEEU_LIST_GRANTS[found.Id] || web.grants };
+    if (path.includes('/items')) return { value: EEEU_ITEMS[found.Id] || [] };
+    return found;
+  }
+  if (path.startsWith('web/lists')) return { value: web.lists };
+  if (path === 'web' || path.startsWith('web?')) {
+    return {
+      ...WEB,
+      Title: web.Title,
+      Url: webBase,
+      ServerRelativeUrl: rel,
+      HasUniqueRoleAssignments: web.unique,
+    };
+  }
+  // Anything this web does not model (current user, site, property bag…)
+  // falls back to the default mock web's answer.
+  return undefined;
+}
+
 // ---- resolver -------------------------------------------------------------
 
 const listIdOf = (url) => /lists\(guid'([0-9a-f-]+)'\)/i.exec(url)?.[1]?.toLowerCase();
@@ -1235,6 +1529,11 @@ export function mockResolver(rawUrl) {
   // Which mock web is being asked for. Everything outside /sites/classic is
   // the modern web, so existing fixtures and their row counts are untouched.
   const webBase = url.slice(0, url.indexOf('/_api/')).replace(/[/]+$/, '');
+  // The EEEU audit web and its subsite tree answer from their own fixtures.
+  if (/[/]sites[/]eeeu([/]|$)/i.test(webBase)) {
+    const answer = eeeuResolver(url, path, webBase);
+    if (answer !== undefined) return answer;
+  }
   const classic = /[/]sites[/]classic$/i.test(webBase);
   const both = /[/]sites[/]both$/i.test(webBase);
   const schema = /[/]sites[/]schema$/i.test(webBase);
@@ -1265,7 +1564,12 @@ export function mockResolver(rawUrl) {
     const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
-      return single ?? null;
+      if (!single) return null;
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found.Id, single) };
+      if (/\/items\(\d+\)\/roleassignments/.test(path)) {
+        return { value: ITEM_ROLE_ASSIGNMENTS[`${found.Id}:${single.Id}`] || ROLE_ASSIGNMENTS };
+      }
+      return single;
     }
     // The mock ignores $filter/$select on items — live-stub tests assert the
     // real query URLs instead. A single-field $orderby IS honored: the Items

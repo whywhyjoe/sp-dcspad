@@ -216,6 +216,25 @@ inspector, REPL and network capture all work inside the web part; a live
   window only rarely open there despite `target="_blank"` and the explicit
   `bindNewTab()` handler. Reproduce and validate the fix in a live SharePoint
   host; the standalone/mock popup test is not sufficient tenant evidence.
+- **Prod (bmo) reconcile follow-ups — unverified** (from the 2026-09-17
+  work-prod reconcile, whose state file is retired; all of its code is on
+  `main` via PR #19). Prod has since been redeployed (Joe saw a
+  `201-dirty` build stamp on 2026-09-23 — `-dirty` means the work clone had
+  uncommitted tracked changes at build time, most likely
+  `vendor/intelligence/` regenerated from that machine's design-system
+  repos; check `git status` there). Still to confirm:
+  - README.md's validation step 8 (overwrite in a **Require Check Out**
+    library, from the pad and from Workbench Files) on the work tenant.
+  - Then delete the home machine's local-only branch
+    `recovered/work-checkout-prod` (the literal old prod source, kept only
+    as a reference until step 8 passes).
+  - Open question for Joe: the check-out consent box now starts
+    **unticked** (Overwrite disabled until ticked); the old prod build
+    pre-ticked it. One-line change in `applySpCheckoutState()`
+    (`src/main.js`) if pre-ticked is preferred.
+- **Dev-tenant test leftovers**: the `zz-schema-*` lists on `/sites/NewNerve`
+  and `/sites/NewNerve/sputils-test` (List schema live checks) are to be
+  deleted by hand. `SitePages/zz-markdown-export-test.aspx` is a keeper.
 - **CSS bleed, both directions**: `app.css` still styles `html`/`body`
   (darkens the host page behind the pad — currently invisible and arguably
   nice; the gap around the seated app shows it). SP styles also bleed into the
@@ -446,6 +465,23 @@ copies came from pre-fix builds (one carries a duplicate "All Items").
   availability; whether SPUtils' string-overload `createFieldAsXml`
   regenerates internal names; a SPUtils v1 doc imported in the Workbench and
   the reverse; a reconcile (Add to existing list) run.
+
+### Invariants to keep (from the build thread's state file)
+
+- `buildApplyPlan`'s `dependsOn`: views and the validation-formula step
+  depend on the `list` step only, never on every field — one column that
+  can't be recreated (managed metadata, say) must not block every view or
+  the validation formula.
+- Plan-time refusals the probe makes (type clash, taken title, missing
+  content type) carry `final: true` and are never re-run by "Retry failed
+  steps"; only steps that failed during execution are.
+- `sp-write` `post` merges caller headers OVER its base set (digest, Accept,
+  content-type): a step needing `X-HTTP-Method: MERGE` or `IF-MATCH: *` must
+  pass them itself — the base set never supplies them.
+- The mock writer must return the ids the executor binds to (`web/lists` →
+  `{Id, Title, RootFolder}`, `createfieldasxml` → `{Id, InternalName}`, a
+  view add → `{Id}`): the post-create probe resolves through the same
+  registry, so a write it doesn't register breaks the next read in the run.
 
 ## SP Workbench: List schema stages 1b + 2 (2026-09-22)
 
@@ -724,6 +760,138 @@ session scratchpad; the facts:
 library copy, etc. — see Roadmap below) are unchanged by this work. The
 `zz-markdown-export-test.aspx` page on the dev web is a keeper for future
 export checks (recorded in memory), not a leftover to delete.
+
+## SP Workbench: page status + EEEU audit (2026-09-23)
+
+Two features, merged to `main` 2026-09-23 (rollback point: branch
+`rollback/main-before-page-status-eeeu`, Build #197). Status
+(what is done, what is next) lives in `state/2026-09-23-page-status-eeeu.md`;
+this section is the design and the live-tenant checklist.
+
+**Page status is a rebuild.** It was built once on the work (bmo) machine and
+lost; only Joe's original prompt and that session's plan survived. Decisions
+below are Joe's answers of 2026-09-23.
+
+### Page status (Pages view)
+
+Scope: modern Site Pages (119) and the classic publishing Pages library (850)
+— `supportsStatus()` in `views/pages.js`. A library merely titled "Pages"
+keeps the plain drilldown.
+
+- **Published = the page has EVER had a live major version**, even with a
+  newer draft on top (Joe). Read from `File/MajorVersion` (fallback: the
+  `OData__UIVersionString` label) — never from `_ModerationStatus` alone,
+  which reads 0 ("Approved") on every item of a library without content
+  approval, drafts included. With approval/scheduling, a 1.0 that is
+  Rejected (1), Pending (2) or Scheduled (4) has never gone live. Two
+  states only: Published / Unpublished. Rules and tests:
+  `src/workbench/page-status.js` (`derivePageStatus`, `lastPublishedFrom`).
+- **Scan Page Status** (grid toolbar): one library-wide query, same
+  `$orderby=FileLeafRef`/`$top=5000` as the grid so the two capped sets line
+  up. Adds Published, Checked out (holder's name) and Inheritance ("Broken"
+  only) columns via `grid.setColumns()`; they ride into CSV/JSON exports.
+  Its own four-rung query ladder (`pageStatusShapes`): a refused status
+  field costs the columns/chips, never the page; a degraded rung shows the
+  quiet reduced chip with SharePoint's sentence. Rows the read did not cover
+  stay blank (never "Unpublished") with a line saying so.
+- **Drilldown:** status chips after the kind chip in the loud register
+  (`.wb-role-chip` + `.wb-status-on/-off`, `design/INFO-CHIP.md`) —
+  Published (accent) / Unpublished (neutral), Inheritance broken and Checked
+  out (accent) only when true. The Export MD / HTML / raw and Open page
+  buttons moved to the tab row, right-aligned, outside `role=tablist`. A
+  failed status read is stated in the chip row through `denied.js`.
+- **Permissions tab** (between Metadata and Structure): Inherited / Broken
+  inheritance chip + `items(id)/roleassignments` — the item endpoint answers
+  with the inherited set when inheritance is intact, so it is right even
+  under a library that breaks inheritance itself.
+- **Metadata tab:** only Joe's rows, in his order (`METADATA_SPEC`); fields
+  the library lacks are skipped, unlisted fields hidden. Matched by internal
+  name, then display name: Item Type is `FolderType` (a column whose use
+  changed), Content Category is `bmocContentCategory` (managed metadata,
+  multi), Contact is a person field, Org a single choice. Editable: Title,
+  Item Type, Pillar, Org. Read-only: Name (a rename breaks every link — was
+  already read-only), managed metadata and person fields (no editor yet —
+  Roadmap), system fields. `WikiField`/`PublishingPageContent` are now never
+  editable anywhere (page bodies, like `CanvasContent1`). Publish Date is
+  **last** published: the newest live `x.0` in `items(id)/versions`; on a
+  moderated library, a version whose moderation the read could not return
+  makes the date unknown rather than assumed approved. Scheduled start date
+  (`_PublishStartDate`) was dropped (Joe).
+- **Content `.md` export** gains Publish status, Last published,
+  Permissions, and Checked out to lines; unknown values are left out.
+
+### EEEU audit (Permissions → EEEU audit)
+
+Ported loosely from Joe's standalone `DCS.SecurityGroups` content audit (bmo
+FCUPortal); its group-membership viewer was out of scope — the Groups and
+Members tabs already cover it. Engine: `src/workbench/eeeu-audit.js` (no DOM,
+client injected); UI: `views/security.js`.
+
+- **What counts:** EEEU and Everyone by claim
+  (`c:0-.f|rolemanager|spo-grid-all-users/…`, `c:0(.s|true`), the editable
+  name list (defaults include BMO's "SharePoint EEEU Visitors" convention),
+  every site group whose **members** include EEEU/Everyone (found at scan
+  start, once per site collection), and "People in your organization"
+  sharing-link groups (`SharingLinks.*.OrganizationView|Edit.*`).
+- **Scope:** four checkboxes (Site, Pages libraries, Lists, Document
+  libraries), "Include items and folders", and the site's direct subsites as
+  checkboxes — a ticked one is scanned with its whole tree. Hidden/system
+  lists skipped (`isInternalList`).
+- **Noise cut:** Limited Access-only grants dropped; only securables with
+  their own permissions are read — an inheriting list or subsite is covered
+  by its parent's row (the run summary says so).
+- **Robustness:** every REST client now shares one three-request queue
+  (`sp-rest.js`), 429/503 retried once; Cancel is cooperative and keeps
+  partial results; switching site cancels a running audit (view
+  `destroy()`); anything unreadable — including a list over the client's
+  100,000-item cap — is a Problems row, never a silently clean result.
+
+### Review round 1 (ChatGPT, 2026-09-23)
+
+Nine findings (five major, four minor), all verified and fixed in
+`4cfb92e`: the shared request queue with slot hand-off (the old
+release-then-wake could briefly allow four), the 100,000-item cap reported,
+`#` in audit links, cancel checks after every await, Scheduled (4) not live,
+version moderation read from every payload shape, the scan aligned with the
+grid's order/cap and its ladder rung kept, and status-read failures surfaced
+instead of swallowed. Its REST claims came from Microsoft docs, not a
+tenant — the checklist below settles them.
+
+### Live-tenant checklist
+
+Not yet run. Deploy to dev with `deploy\Sync-Live.ps1` (default environment;
+it rebuilds `dcspad.workbench.js`). `boot-workbench.js` is unchanged, so no
+`?v=` bump. Open the SP Workbench page on the dev FCUPortal site.
+
+- [ ] **Scan Page Status** on Site Pages: the three columns fill, no
+      "some fields unavailable" chip (if one appears, its tooltip carries
+      SharePoint's reason — record it). A page with a draft on top of a
+      published version reads Published; a never-published page reads
+      Unpublished; a page checked out shows the holder's name.
+- [ ] **Drilldown chips** match the grid for the same pages; the export and
+      Open page buttons sit on the tab row and still download/open.
+- [ ] **Permissions tab** on a page with unique permissions lists that
+      page's own assignments; on an inheriting page, the library's.
+- [ ] **Metadata tab:** rows in spec order; Publish Date on a draft-over-
+      published page is that published version's date, not the draft's.
+      On the dev tenant the bmo site columns (`bmocContentCategory`,
+      `FolderType`, `Pillar`, `Org`, `Contact`) may not exist — their rows
+      are then simply absent, which is correct; confirm them on bmo prod
+      later. If a row is missing where the column exists, the page's Raw tab
+      shows the real internal name.
+- [ ] **Versions payload shape:** on a library with content approval, open
+      Metadata on a published page and confirm Publish Date appears. If it
+      is blank, `items(id)/versions` is returning moderation in a shape
+      `moderationOf()` does not read — capture one version entity from the
+      Network tab and extend `moderationOf()` in `page-status.js`.
+- [ ] **Content `.md` export** of a page carries the four status lines.
+- [ ] **EEEU audit** on a site with a known EEEU grant and, if available, a
+      "People in your organization" link: both found, with "Why it counts"
+      right; "SharePoint EEEU Visitors" (if present) shows as "Group
+      containing Everyone except external users"; ticking a subsite scans
+      its tree; Cancel mid-run keeps partial results; Problems lists any
+      locked group.
+- [ ] Console: no errors across the Pages and Permissions views.
 
 ## Roadmap (seams reserved)
 

@@ -45,25 +45,38 @@ function entityOf(data) {
   return data?.d ?? data;
 }
 
+// One request queue for the whole app, shared by every client. A second
+// client (createClient(): the schema dialog's target web, the EEEU audit's
+// subsites) used to get its own three slots, so the app could run six or more
+// requests at once against one tenant — the throttling this ceiling exists to
+// avoid. withSlot never nests (a slot holder never waits on another slot), so
+// sharing cannot deadlock.
+//
+// A finished request hands its slot straight to the next waiter instead of
+// releasing it: releasing first let a newcomer take the slot before the woken
+// waiter ran, briefly putting MAX_CONCURRENT + 1 requests in flight.
+let inFlight = 0;
+const waiters = [];
+
+async function withSlot(work) {
+  if (inFlight >= MAX_CONCURRENT) {
+    await new Promise((resolve) => waiters.push(resolve));   // slot handed over
+  } else {
+    inFlight++;
+  }
+  try { return await work(); }
+  finally {
+    const next = waiters.shift();
+    if (next) next();
+    else inFlight--;
+  }
+}
+
 export function createSpRestClient({
   getContext = getSpContext,
   fetchImpl = (...args) => fetch(...args),
   mockResolver = null,
 } = {}) {
-  let inFlight = 0;
-  const waiters = [];
-
-  async function withSlot(work) {
-    if (inFlight >= MAX_CONCURRENT) {
-      await new Promise((resolve) => waiters.push(resolve));
-    }
-    inFlight++;
-    try { return await work(); }
-    finally {
-      inFlight--;
-      waiters.shift()?.();
-    }
-  }
 
   let targetWebUrl = '';   // '' = the host web the workbench runs on
 

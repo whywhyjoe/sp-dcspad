@@ -287,6 +287,19 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-detail-actions a { text-decoration: none; }
 
 .wb-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+/* Page drilldown: the tablist on the left, the page actions (Export MD/HTML/
+   raw, Open page) right-aligned on the same row (.wb-detail-actions already
+   carries margin-left: auto). */
+.wb-tab-list { display: flex; gap: 2px; }
+.wb-tabs-with-actions { align-items: center; }
+.wb-tabs-with-actions .wb-detail-actions { padding-bottom: 3px; }
+/* Page status chips sit in the head row after the page-kind chip. */
+.wb-page-status-chips { display: inline-flex; align-items: center; gap: 6px; align-self: center; }
+.wb-page-status-chips:empty { display: none; }
+.wb-page-perm-bar { flex: none; }
+/* A status read that failed, said in the head row / above the Metadata form
+   (paint comes from denied.js's .wb-denied / .wb-error). */
+.wb-page-status-chips .wb-page-status-failed { font-size: 11.5px; white-space: nowrap; }
 .wb-tab {
   background: transparent; border: none; border-bottom: 2px solid transparent;
   color: var(--fg-dim); font: 500 12.5px/1 var(--sans);
@@ -318,6 +331,19 @@ html.dcspad-suspended #wb-mount { display: none; }
   border-radius: var(--radius-s); padding: 4px 7px;
 }
 .wb-scan-bar { display: flex; align-items: center; gap: 12px; }
+
+/* ---- Permissions → EEEU audit form ---- */
+.wb-eeeu-form { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.wb-eeeu-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.wb-eeeu-subsites { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.wb-eeeu-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--fg); }
+.wb-eeeu-targets summary { cursor: pointer; font-size: 12px; color: var(--fg-dim); }
+.wb-eeeu-principals {
+  display: block; margin-top: 6px; width: min(520px, 100%);
+  font: 12px/1.5 var(--mono); color: var(--fg);
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-s); padding: 6px 8px;
+}
+.wb-eeeu-progress { min-width: 0; }
 
 /* ---- toolbar menus (export, copy-as) ---- */
 .wb-menu-wrap { position: relative; display: inline-flex; }
@@ -771,11 +797,14 @@ html.dcspad-suspended #wb-mount { display: none; }
   border-radius: 999px; padding: 3px 8px; border: 1px solid transparent;
 }
 .wb-role-chip[hidden] { display: none; }
-.wb-role-admin {
+/* .wb-status-on / -off: the same two paints for any status chip that is not
+   a role (Pages: Published, Inheritance broken, Checked out; EEEU audit). */
+.wb-role-admin, .wb-status-on {
   color: var(--accent-soft-fg); background: var(--accent-soft);
   border-color: var(--accent-soft-line);
 }
-.wb-role-user { color: var(--fg-faint); border-color: var(--border); }
+.wb-role-user, .wb-status-off { color: var(--fg-faint); border-color: var(--border); }
+.wb-page-status { flex: none; white-space: nowrap; }
 
 /* ---- Site landing view ---- */
 .wb-home-cards {

@@ -522,7 +522,8 @@ await check('security: tabs render and groups load', async () => {
   await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
   const tabs = await page.locator('.wb-tab').allTextContents();
   const rows = await page.locator('.wb-tab-body .wb-table tbody tr').count();
-  return tabs.join(',') === 'Groups,Members,Role definitions,Role assignments,Inheritance scan' && rows === 3;
+  return tabs.join(',') === 'Groups,Members,Role definitions,Role assignments,Inheritance scan,EEEU audit'
+    && rows === 3;
 });
 
 await check('perm: head links jump to the SP permission panels', async () => {
@@ -1166,6 +1167,180 @@ await check('pages: the action column header is inert and the filter skips it', 
     && filtered.action === 0 && filtered.data === 1;
 });
 
+// ---- page status (Joe, 2026-09-23) ----------------------------------------
+
+await check('page-status: published means ever published, never _ModerationStatus alone', async () =>
+  page.evaluate(async () => {
+    const { derivePageStatus, lastPublishedFrom, parseVersionLabel, pageStatusShapes } =
+      await import('/src/workbench/page-status.js');
+    const s = (item) => derivePageStatus(item);
+    const draftOverPublished = s({ File: { MajorVersion: 3, MinorVersion: 1, CheckOutType: 2 }, HasUniqueRoleAssignments: true });
+    const neverPublished = s({ File: { MajorVersion: 0, MinorVersion: 4, CheckOutType: 0 }, CheckoutUser: { Title: 'Pat' } });
+    // No approval on the library: every item reads 0 ("Approved"), drafts
+    // included — the version, not the moderation field, decides.
+    const draftApprovedFlag = s({ File: { MajorVersion: 0, MinorVersion: 2 }, OData__ModerationStatus: 0 });
+    // Approval on: 1.0 pending or rejected has never been published; a 2.0
+    // pending approval still has an approved 1.0 under it.
+    const pendingFirst = s({ File: { MajorVersion: 1, MinorVersion: 0 }, OData__ModerationStatus: 2 });
+    const rejectedFirst = s({ File: { MajorVersion: 1, MinorVersion: 0 }, OData__ModerationStatus: 1 });
+    const pendingSecond = s({ File: { MajorVersion: 2, MinorVersion: 0 }, OData__ModerationStatus: 2 });
+    const fromLabel = s({ OData__UIVersionString: '2.3' });
+    const unknown = s({});
+    const last = lastPublishedFrom([
+      { VersionLabel: '3.1', Created: '2026-07-18T10:00:00Z' },
+      { VersionLabel: '3.0', Created: '2026-07-01T09:00:00Z' },
+      { VersionLabel: '1.0', Created: '2026-05-10T12:00:00Z' },
+    ]);
+    const lastSkipsPending = lastPublishedFrom([
+      { VersionLabel: '2.0', Created: '2026-08-01T00:00:00Z', OData__ModerationStatus: 2 },
+      { VersionLabel: '1.0', Created: '2026-05-10T12:00:00Z', OData__ModerationStatus: 0 },
+    ]);
+    const shapes = pageStatusShapes({ hasModeration: false });
+    const withMod = pageStatusShapes({ hasModeration: true });
+    return draftOverPublished.published === true && draftOverPublished.brokenInheritance === true
+      && draftOverPublished.checkedOut === false
+      && neverPublished.published === false && neverPublished.checkedOut === true
+      && neverPublished.checkedOutTo === 'Pat'
+      && draftApprovedFlag.published === false
+      && pendingFirst.published === false && rejectedFirst.published === false
+      && pendingSecond.published === true
+      && fromLabel.published === true && fromLabel.checkedOut === null
+      && unknown.published === null && unknown.brokenInheritance === null && unknown.checkedOut === null
+      && last === '2026-07-01T09:00:00Z' && lastSkipsPending === '2026-05-10T12:00:00Z'
+      && lastPublishedFrom([{ VersionLabel: '0.3', Created: 'x' }]) === ''
+      && parseVersionLabel('12.40').major === 12 && parseVersionLabel('x') === null
+      // _ModerationStatus is only named when the library has the field.
+      && !JSON.stringify(shapes).includes('ModerationStatus')
+      && withMod[0].options.select.includes('OData__ModerationStatus')
+      && shapes[0].options.expand.includes('File') && shapes[0].options.expand.includes('CheckoutUser');
+  }));
+
+// Review round 1 (2026-09-23): scheduling, and moderation the versions read
+// could not return.
+await check('page-status: scheduled is not live, and unreadable moderation is unknown, not approved', async () =>
+  page.evaluate(async () => {
+    const { derivePageStatus, lastPublishedFrom } = await import('/src/workbench/page-status.js');
+    // _ModerationStatus 4 = Scheduled: a 1.0 waiting for its start date.
+    const scheduledFirst = derivePageStatus({ File: { MajorVersion: 1, MinorVersion: 0 }, OData__ModerationStatus: 4 });
+    const scheduledLater = lastPublishedFrom([
+      { VersionLabel: '3.0', Created: '2026-09-30T00:00:00Z', OData__ModerationStatus: 4 },
+      { VersionLabel: '2.0', Created: '2026-06-01T00:00:00Z', OData__ModerationStatus: 0 },
+    ]);
+    // The version payload's other shapes are read too.
+    const escaped = lastPublishedFrom([
+      { VersionLabel: '2.0', Created: 'b', OData__x005f_ModerationStatus: 2 },
+      { VersionLabel: '1.0', Created: 'a', FieldValues: { _ModerationStatus: 0 } },
+    ], { hasModeration: true });
+    // A moderated library whose versions came back without moderation: the
+    // newest major could be pending, so the date is unknown (null)…
+    const lost = lastPublishedFrom([
+      { VersionLabel: '2.0', Created: 'b' }, { VersionLabel: '1.0', Created: 'a' },
+    ], { hasModeration: true });
+    // …but without approval on the library, a bare major is simply live.
+    const plain = lastPublishedFrom([{ VersionLabel: '2.0', Created: 'b' }]);
+    return scheduledFirst.published === false
+      && scheduledLater === '2026-06-01T00:00:00Z'
+      && escaped === 'a' && lost === null && plain === 'b';
+  }));
+
+await check('sp-rest: every client shares one three-request ceiling', async () =>
+  page.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js?v=2');
+    let inFlight = 0;
+    let peak = 0;
+    const fetchImpl = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 15));
+      inFlight -= 1;
+      return new Response(JSON.stringify({ value: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const getContext = () => ({ live: true, pageContext: { webAbsoluteUrl: location.origin } });
+    // Two independent clients — the schema dialog's target web, the EEEU
+    // audit's subsites — must not each get three slots of their own.
+    const a = createSpRestClient({ getContext, fetchImpl });
+    const b = createSpRestClient({ getContext, fetchImpl });
+    await Promise.all(Array.from({ length: 12 }, (_, i) => (i % 2 ? a : b).get('web')));
+    return peak === 3;
+  }));
+
+await check('page-status: Metadata layout follows the spec order and hides unlisted fields', async () =>
+  page.evaluate(async () => {
+    const { resolveMetadataLayout } = await import('/src/workbench/page-status.js');
+    const f = (Title, InternalName) => ({ Title, InternalName, TypeAsString: 'Text' });
+    const fields = [
+      f('Org', 'Org'), f('Item Type', 'FolderType'), f('Description', 'Description'),
+      f('Title', 'Title'), f('Name', 'FileLeafRef'),
+      // A site column whose internal name was mangled — found by display name.
+      f('Content Category', 'Content_x0020_Category0'),
+    ];
+    const layout = resolveMetadataLayout(fields, {
+      id: 7, published: true, lastPublished: '2026-07-01T09:00:00Z', brokenInheritance: false,
+      checkedOut: false, checkedOutTo: '',
+    });
+    const order = layout.map((e) => e.field?.InternalName || e.internal).join(',');
+    const text = Object.fromEntries(layout.filter((e) => !e.field).map((e) => [e.internal, e.text]));
+    // Unknown status (a refused read) leaves its rows out entirely.
+    const unknown = resolveMetadataLayout([f('Title', 'Title')], { id: 3 })
+      .map((e) => e.field?.InternalName || e.internal).join(',');
+    return order === '__status_id,FileLeafRef,Title,__status_published,__status_lastPublished,'
+        + '__status_inheritance,__status_checkedOutTo,Content_x0020_Category0,FolderType,Org'
+      && text.__status_id === '7' && text.__status_published === 'Published'
+      && text.__status_lastPublished === '2026-07-01'
+      && text.__status_inheritance === 'Inherited'
+      && text.__status_checkedOutTo === ''
+      && layout.find((e) => e.field?.InternalName === 'FolderType').label === 'Item Type'
+      && unknown === '__status_id,Title';
+  }));
+
+await check('pages: Scan Page Status adds Published, Checked out and Inheritance columns', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const header = async () => headerText(
+    await page.locator('.wb-view-pages .wb-table thead th').allTextContents());
+  const before = await header();
+  const btn = page.locator('.wb-view-pages .wb-grid-toolbar .wb-scan-status');
+  const label = await btn.textContent();
+  await btn.click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.wb-view-pages .wb-table thead th')]
+    .some((th) => th.textContent.includes('Published')));
+  const after = await header();
+  const cells = async (name) => {
+    const row = page.locator('.wb-view-pages .wb-table tbody tr', { hasText: name }).first();
+    const idx = (col) => after.indexOf(col);
+    const tds = await row.locator('td').allTextContents();
+    // +1: the leading selection checkbox column has no header text.
+    return {
+      published: tds[idx('Published') + 1], checkedOut: tds[idx('Checked out') + 1],
+      inheritance: tds[idx('Inheritance') + 1],
+    };
+  };
+  const home = await cells('Home.aspx');
+  const news = await cells('News-Update.aspx');
+  const hebdo = await cells('Hebdo.aspx');
+  // The scan columns ride along in the grid's exports.
+  await page.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download CSV' }).click(),
+  ]);
+  const csv = readFileSync(await download.path(), 'utf8');
+  const relabelled = await btn.textContent();
+  return label === 'Scan Page Status' && relabelled === 'Rescan Page Status'
+    && !before.includes('Published')
+    // between the page's own facts and the Modified/Editor pair
+    && after.indexOf('Published') > after.indexOf('Promoted')
+    && after.indexOf('Inheritance') < after.indexOf('Modified')
+    // published even with a newer draft on top; own permissions marked
+    && home.published === 'Published' && home.inheritance === 'Broken' && home.checkedOut === ''
+    && news.published === 'Unpublished' && news.checkedOut === 'Pat Example' && news.inheritance === ''
+    && hebdo.published === 'Unpublished'
+    && csv.includes('Published') && csv.includes('Checked out') && csv.includes('Inheritance')
+    && csv.includes('Pat Example') && csv.includes('Broken');
+});
+
 await check('pages: drilldown opens on Extract with the reordered tabs and URL copy', async () => {
   await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
     .locator('td.wb-mono').first().click();
@@ -1176,13 +1351,74 @@ await check('pages: drilldown opens on Extract with the reordered tabs and URL c
   const fragText = await frag.textContent();
   const fragTitle = await frag.getAttribute('title');
   const actions = await page.locator('.wb-detail-actions .btn').allTextContents();
-  return tabs.join(',') === 'Extract,Metadata,Structure,Web parts,Raw'
+  // The actions moved off the head row onto the tab row, outside the tablist.
+  const placement = await page.evaluate(() => {
+    const bar = document.querySelector('.wb-view-pages .wb-detail-actions');
+    return {
+      onTabRow: Boolean(bar?.closest('.wb-tabs')),
+      inHead: Boolean(bar?.closest('.wb-detail-head')),
+      inTablist: Boolean(bar?.closest('[role="tablist"]')),
+    };
+  });
+  return tabs.join(',') === 'Extract,Metadata,Permissions,Structure,Web parts,Raw'
+    && placement.onTabRow && !placement.inHead && !placement.inTablist
     && active === 'Extract'
     && fragText === '/SitePages/Home.aspx'
     && fragTitle.includes(`${new URL(WB_URL).origin}/SitePages/Home.aspx`)
     && actions.join(',').includes('Export MD')
     && actions.join(',').includes('Export HTML')
     && actions.join(',').includes('Export raw');
+});
+
+await check('pages: status chips follow the kind chip in the loud register', async () => {
+  await page.waitForSelector('.wb-view-pages .wb-page-status');
+  const seen = await page.evaluate(() => {
+    const head = document.querySelector('.wb-view-pages .wb-detail-head');
+    const kids = [...head.children];
+    const kind = head.querySelector('.wb-detail-kind');
+    const chips = [...head.querySelectorAll('.wb-page-status')];
+    return {
+      texts: chips.map((c) => c.textContent),
+      on: chips.map((c) => c.classList.contains('wb-status-on')),
+      status: chips.every((c) => c.classList.contains('wb-role-chip') && !c.classList.contains('wb-info-chip')),
+      shouty: chips.every((c) => getComputedStyle(c).textTransform === 'uppercase'),
+      after: chips.every((c) => kids.indexOf(c.parentElement) > kids.indexOf(kind)),
+    };
+  });
+  // Home: published (3.0 under a 3.1 draft), own permissions, not checked out.
+  return seen.texts.join(',') === 'Published,Inheritance broken'
+    && seen.on.every(Boolean) && seen.status && seen.shouty && seen.after;
+});
+
+await check('pages: a checked-out, never-published page says so in its chips', async () => {
+  await page.locator('.wb-view-pages .wb-back').click();
+  await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'News-Update.aspx' })
+    .locator('td.wb-mono').first().click();
+  await page.waitForSelector('.wb-view-pages .wb-page-status');
+  await page.waitForFunction(() =>
+    document.querySelectorAll('.wb-view-pages .wb-page-status').length >= 2);
+  const chips = await page.evaluate(() => [...document.querySelectorAll('.wb-view-pages .wb-page-status')]
+    .map((c) => ({ text: c.textContent, on: c.classList.contains('wb-status-on'), title: c.title })));
+  await page.locator('.wb-view-pages .wb-back').click();
+  await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
+    .locator('td.wb-mono').first().click();
+  await page.waitForSelector('.wb-text-rendered');
+  const unpublished = chips.find((c) => c.text === 'Unpublished');
+  const out = chips.find((c) => c.text === 'Checked out');
+  return chips.length === 2 && unpublished && !unpublished.on
+    && out && out.on && out.title.includes('Pat Example');
+});
+
+await check('pages: Permissions tab shows the page’s own assignments under an inheritance chip', async () => {
+  await page.locator('.wb-view-pages .wb-tab', { hasText: 'Permissions' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-tab-body .wb-table tbody tr', { hasText: 'Pat Example' });
+  const chip = await page.locator('.wb-view-pages .wb-tab-body .wb-page-status').textContent();
+  const text = await page.locator('.wb-view-pages .wb-tab-body .wb-table').textContent();
+  const active = await page.locator('.wb-view-pages .wb-tab.active').textContent();
+  // Home has unique permissions: the item's own set, not the web's visitors.
+  return active === 'Permissions' && chip === 'Broken inheritance'
+    && text.includes('Pat Example') && text.includes('Contribute')
+    && text.includes('Mock Site Owners') && !text.includes('Mock Site Visitors');
 });
 
 await check('pages: structure tab parses the canvas and flags the malformed entry', async () => {
@@ -1260,6 +1496,33 @@ await check('page-export: content export merges metadata and content per spec', 
         fileDirRef: '/SitePages/News/fr', libraryRootPath: '/SitePages',
       }) === 'FCUPortal | SitePages | News/fr'
       && exportFileStem({ FileLeafRef: 'News-Update.aspx' }) === 'news-update';
+  }));
+
+await check('page-export: the metadata block carries the page status in words', async () =>
+  page.evaluate(async () => {
+    const { buildContentExport } = await import('/src/workbench/page-export.js');
+    const item = {
+      Id: 2, Title: 'News', FileLeafRef: 'News.aspx', HasUniqueRoleAssignments: true,
+      OData__ModerationStatus: 0,
+    };
+    const md = buildContentExport({
+      item,
+      status: {
+        published: true, lastPublished: '2026-07-01', brokenInheritance: true,
+        checkedOut: true, checkedOutTo: 'Pat Example',
+      },
+    });
+    const unknown = buildContentExport({ item, status: { published: null, brokenInheritance: null } });
+    const none = buildContentExport({ item });
+    return md.includes('- Publish status: Published')
+      && md.includes('- Last published: 2026-07-01')
+      && md.includes('- Permissions: Broken inheritance')
+      && md.includes('- Checked out to: Pat Example')
+      // the raw flags are said in words above, not dumped again
+      && !md.includes('HasUniqueRoleAssignments') && !md.includes('ModerationStatus')
+      // unknown is left out, never guessed
+      && !unknown.includes('Publish status') && !unknown.includes('Permissions:')
+      && !none.includes('Publish status');
   }));
 
 await check('html-markdown: the two profiles keep their structural conventions', async () =>
@@ -1623,23 +1886,41 @@ await check('page-export: the export report names what could not be read', async
       && !buildExportReport({ total: 2, exported: 2, failures: [] }).includes('Not exported');
   }));
 
-await check('pages: metadata tab maps field types to editors and guards content fields', async () => {
+await check('pages: metadata tab lists only the spec rows, in order, editing only the simple ones', async () => {
   await page.locator('.wb-view-pages .wb-tab', { hasText: 'Metadata' }).click();
   await page.waitForSelector('.wb-editor-row');
-  const kinds = await page.evaluate(() =>
-    [...document.querySelectorAll('.wb-editor-row')].map((row) => {
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-view-pages .wb-editor-row')].map((row) => {
       const readonly = row.classList.contains('wb-editor-readonly');
       const control = row.querySelector('select') ? 'select'
         : row.querySelector('textarea') ? 'textarea'
           : row.querySelector('input')?.type || 'static';
-      return `${row.dataset.internal}:${control}:${readonly ? 'ro' : 'edit'}`;
-    }).join('|'));
-  return kinds.includes('PageCategory:select:edit')
-    && kinds.includes('ReviewDate:datetime-local:edit')
-    && kinds.includes('ShowInNav:checkbox:edit')
-    && kinds.includes('RelatedLink:text:edit')
-    && kinds.includes('CanvasContent1:static:ro')
-    && kinds.includes('Editor:static:ro');
+      const label = row.querySelector('.wb-editor-label')?.firstChild?.textContent || '';
+      const value = row.querySelector('.wb-editor-static')?.textContent ?? '';
+      return { internal: row.dataset.internal, control, readonly, label, value };
+    }));
+  const order = rows.map((r) => r.internal).join(',');
+  const row = (internal) => rows.find((r) => r.internal === internal) || {};
+  // Joe's order (2026-09-23), the mock's schema order deliberately differs.
+  return order === '__status_id,FileLeafRef,Title,__status_published,__status_lastPublished,'
+      + 'FirstPublishedDate,__status_inheritance,CheckoutUser,PromotedState,bmocContentCategory,'
+      + 'Modified,Editor,Created,Author,FolderType,Contact,Pillar,Org,ComplianceAssetId,WikiField'
+    && row('__status_id').value === '1'
+    && row('__status_published').value === 'Published'
+    // LAST published: the 3.0 under Home's 3.1 draft — not the draft, not 1.0
+    && row('__status_lastPublished').value === '2026-07-01'
+    && row('__status_inheritance').value === 'Broken inheritance'
+    && row('PromotedState').value === 'False'
+    && row('bmocContentCategory').value === 'Policy;Benefits' && row('bmocContentCategory').readonly
+    && row('Contact').value === 'Pat Example' && row('Contact').readonly
+    && row('Editor').label === 'Modified By' && row('Author').label === 'Created By'
+    && row('FolderType').label === 'Item Type' && row('FolderType').control === 'select'
+    && row('Org').control === 'select' && row('Pillar').control === 'select'
+    && row('Title').control === 'text' && !row('Title').readonly
+    // a page body is never editable from a metadata form
+    && row('WikiField').readonly
+    && !order.includes('Description') && !order.includes('PageCategory')
+    && !order.includes('CanvasContent1');
 });
 
 await check('pages: saving metadata posts ValidateUpdateListItem through the mock writer', async () => {
@@ -2532,7 +2813,9 @@ await check('classic: drilldown hides Structure and says why', async () => {
   const chip = classicPage.locator('.wb-view-pages .wb-detail-kind');
   const chipText = await chip.textContent();
   const chipTitle = await chip.getAttribute('title');
-  return tabs.join(',') === 'Extract,Metadata,Web parts,Raw'
+  // A classic publishing Pages library is in page-status scope, so it gets
+  // the Permissions tab too; only Structure is canvas-only.
+  return tabs.join(',') === 'Extract,Metadata,Permissions,Web parts,Raw'
     && chipText === 'classic publishing page'
     && chipTitle.includes('Structure tab does not apply');
 });
@@ -2669,6 +2952,204 @@ await check('classic: the bulk zip carries the same merged web-part content', as
 
 await classicPage.close();
 
+// ---- EEEU audit (Permissions → EEEU audit) --------------------------------
+// Its own mock web tree (/sites/eeeu, see mock-data.js), so the default web's
+// groups and assignments — asserted by the Permissions checks above — stay
+// untouched.
+
+const eeeuPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await eeeuPage.goto(WB_URL);
+await eeeuPage.waitForSelector('.wb-home-cards');
+
+await check('eeeu: matching is by claim, group membership, org links and name — not Limited Access', async () =>
+  eeeuPage.evaluate(async () => {
+    const {
+      broadPrincipalKind, isOrgSharingLink, makeMatcher, matchAssignments, listScopeOf, DEFAULT_TARGETS,
+    } = await import('/src/workbench/eeeu-audit.js');
+    const eeeu = { Title: 'Tout le monde sauf les utilisateurs externes', LoginName: 'c:0-.f|rolemanager|spo-grid-all-users/abc' };
+    const everyone = { Title: 'Everyone', LoginName: 'c:0(.s|true' };
+    const link = { Title: 'SharingLinks.3f2a1b00-1111-4222-8333-444455556666.OrganizationEdit.7e6d', LoginName: 'x' };
+    const anonymous = { Title: 'SharingLinks.3f2a1b00-1111-4222-8333-444455556666.AnonymousView.7e6d', LoginName: 'y' };
+    const match = makeMatcher({
+      targets: DEFAULT_TARGETS,
+      broadGroups: new Map([['broad readers', 'Everyone']]),
+    });
+    const hits = matchAssignments([
+      { Member: eeeu, RoleDefinitionBindings: [{ Name: 'Limited Access', RoleTypeKind: 1 }] },
+      { Member: eeeu, RoleDefinitionBindings: [{ Name: 'Read', RoleTypeKind: 2 }, { Name: 'Limited Access', RoleTypeKind: 1 }] },
+      { Member: { Title: 'Broad Readers', LoginName: 'Broad Readers' }, RoleDefinitionBindings: [{ Name: 'Edit' }] },
+      { Member: { Title: 'Team', LoginName: 'Team' }, RoleDefinitionBindings: [{ Name: 'Full Control' }] },
+    ], match);
+    const noisy = matchAssignments([
+      { Member: eeeu, RoleDefinitionBindings: [{ Name: 'Limited Access', RoleTypeKind: 1 }] },
+    ], match, { hideLimitedAccess: false });
+    return broadPrincipalKind(eeeu) === 'Everyone except external users'   // localized title, same claim
+      && broadPrincipalKind(everyone) === 'Everyone'
+      && broadPrincipalKind({ Title: 'Everyone except external users', LoginName: 'i:0#.f|membership|x' }) === null
+      && isOrgSharingLink(link) && !isOrgSharingLink(anonymous)
+      && match({ Title: 'SharePoint EEEU Visitors', LoginName: 'SharePoint EEEU Visitors' }) === 'Named principal'
+      && match({ Title: 'Broad Readers' }) === 'Group containing Everyone'
+      && match(link) === 'Org-wide sharing link' && match({ Title: 'Team' }) === null
+      // Limited Access-only is noise and dropped; mixed keeps the real role only
+      && hits.length === 2 && hits[0].permission === 'Read' && hits[1].via === 'Group containing Everyone'
+      && noisy.length === 1 && noisy[0].permission === 'Limited Access'
+      && listScopeOf({ BaseTemplate: 119, BaseType: 1 }) === 'pages'
+      && listScopeOf({ BaseTemplate: 850, BaseType: 1 }) === 'pages'
+      && listScopeOf({ BaseTemplate: 101, BaseType: 1 }) === 'documents'
+      && listScopeOf({ BaseTemplate: 100, BaseType: 0 }) === 'lists'
+      && listScopeOf({ BaseTemplate: 100, BaseType: 0, Hidden: true }) === null
+      && listScopeOf({ BaseTemplate: 112, BaseType: 0 }) === null;
+  }));
+
+// Review round 1: a capped item read is a Problem (never a clean result),
+// links survive '#' in a name, and Cancel stops before the next request.
+await check('eeeu: a capped read is reported, # survives in links, cancel stops new requests', async () =>
+  eeeuPage.evaluate(async () => {
+    const { runEeeuAudit } = await import('/src/workbench/eeeu-audit.js');
+    const EEEU = { Title: 'Everyone except external users', LoginName: 'c:0-.f|rolemanager|spo-grid-all-users/t' };
+    const requests = [];
+    const fake = (webUrl, { onRequest = () => {} } = {}) => ({
+      webUrl: () => webUrl,
+      async get(path) {
+        requests.push(`${webUrl} ${path}`);
+        onRequest(path);
+        return { Title: 'Big', Url: webUrl, HasUniqueRoleAssignments: true };
+      },
+      async getAll(path) {
+        requests.push(`${webUrl} ${path}`);
+        onRequest(path);
+        if (path === 'web/sitegroups' || path === 'web/roleassignments' || path === 'web/webs') {
+          return { items: [], partial: false };
+        }
+        if (path === 'web/lists') {
+          return { items: [{ Id: 'l1', Title: 'Docs', BaseTemplate: 101, BaseType: 1, HasUniqueRoleAssignments: false,
+            RootFolder: { ServerRelativeUrl: '/sites/big/Docs' } }], partial: false };
+        }
+        if (path.endsWith('/items')) {
+          // The client's ceiling was hit: more rows existed than were returned.
+          return { items: [{ Id: 9, FileLeafRef: 'Budget#2026.xlsx', FileRef: '/sites/big/Docs/Budget#2026.xlsx',
+            FSObjType: 0, HasUniqueRoleAssignments: true }], partial: true };
+        }
+        if (path.endsWith('/roleassignments')) {
+          return { items: [{ Member: EEEU, RoleDefinitionBindings: [{ Name: 'Read', RoleTypeKind: 2 }] }], partial: false };
+        }
+        return { items: [], partial: false };
+      },
+    });
+    const origin = 'https://tenant.example';
+    const audit = await runEeeuAudit({
+      client: fake(`${origin}/sites/big`),
+      openWeb: async () => fake(`${origin}/sites/big/sub`),
+      scopes: { site: true, pages: false, lists: false, documents: true },
+    });
+    const file = audit.rows.find((r) => r.Type === 'File');
+    const capped = audit.problems.find((p) => p.Location === 'Docs');
+
+    // Cancel lands while the subsite is being opened: nothing on it runs.
+    let stop = false;
+    requests.length = 0;
+    await runEeeuAudit({
+      client: fake(`${origin}/sites/big`),
+      openWeb: async () => { stop = true; return fake(`${origin}/sites/big/sub`); },
+      subsites: [{ url: `${origin}/sites/big/sub` }],
+      scopes: { site: true, pages: false, lists: false, documents: false },
+      shouldStop: () => stop,
+    });
+    return file && file.Url === `${origin}/sites/big/Docs/Budget%232026.xlsx`
+      && capped && capped.Message.includes('Only the first 1 items were checked')
+      && !requests.some((r) => r.includes('/sites/big/sub '));
+  }));
+
+await eeeuPage.fill('#wb-site-input', '/sites/eeeu');
+await eeeuPage.locator('#wb-site-open').click();
+await eeeuPage.waitForFunction(() =>
+  document.getElementById('wb-status-context').textContent.includes('/sites/eeeu'));
+await eeeuPage.locator('.wb-rail-btn', { hasText: 'Permissions' }).click();
+await eeeuPage.locator('.wb-view-security .wb-tab', { hasText: 'EEEU audit' }).click();
+await eeeuPage.waitForSelector('.wb-eeeu-subsites .wb-eeeu-check');
+
+await check('eeeu: the form offers four scopes, items, direct subsites and the principal list', async () => {
+  const scopes = await eeeuPage.locator('.wb-eeeu-row').first().locator('.wb-eeeu-check').allTextContents();
+  const subs = await eeeuPage.locator('.wb-eeeu-subsites .wb-eeeu-check').allTextContents();
+  const principals = await eeeuPage.inputValue('.wb-eeeu-principals');
+  const subsChecked = await eeeuPage.$$eval('.wb-eeeu-subsites input', (b) => b.map((x) => x.checked));
+  return scopes.map((s) => s.trim()).join('|')
+      === 'Site|Pages libraries|Lists|Document libraries|Include items and folders'
+    // direct children only — Deep (under Team) is never listed on its own
+    && subs.map((s) => s.trim()).join('|') === 'Team|Quiet|Echo'
+    && subsChecked.every((c) => c === false)
+    && principals.split('\n').join('|')
+      === 'Everyone except external users|Everyone|SharePoint EEEU Visitors';
+});
+
+await check('eeeu: a full run finds every broad grant, walks ticked subsite trees, reports problems', async () => {
+  const tick = (name) => eeeuPage.locator('.wb-eeeu-subsites .wb-eeeu-check', { hasText: name })
+    .locator('input').check();
+  await tick('Team');
+  await tick('Echo');
+  await eeeuPage.locator('.wb-eeeu-form .btn', { hasText: 'Run EEEU audit' }).click();
+  await eeeuPage.waitForFunction(() =>
+    /broad-access grant/.test(document.querySelector('.wb-eeeu-progress')?.textContent || ''));
+  const rows = await eeeuPage.$$eval('.wb-eeeu > .wb-grid .wb-table tbody tr', (trs) =>
+    trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())));
+  const find = (type, name) => rows.find((r) => r[1] === type && r[3] === name);
+  const siteRow = find('Site', 'EEEU Audit Site');
+  const pageLib = find('Pages library', 'Site Pages');
+  const page = find('Page', 'Welcome.aspx');
+  const folder = find('Folder', 'Public');
+  const file = find('File', 'notes.docx');
+  const list = find('List', 'Announcements');
+  const team = find('Site', 'Team');
+  const teamDocs = find('Library', 'Team Docs');
+  const deep = find('Site', 'Deep');
+  const summary = await eeeuPage.locator('.wb-eeeu-progress').textContent();
+  const problems = await eeeuPage.locator('.wb-eeeu .wb-subpanel .wb-table tbody').textContent();
+  const all = rows.map((r) => r.join(' ')).join('\n');
+  return rows.length === 9
+    && siteRow && siteRow[4] === 'SharePoint EEEU Visitors' && siteRow[6] === 'Group containing Everyone except external users'
+    && pageLib && pageLib[4] === 'Broad Readers' && pageLib[6] === 'Group containing Everyone'
+    && page && page[6] === 'Everyone except external users' && page[5] === 'Read'
+    && folder && folder[6] === 'Org-wide sharing link'
+    && file && file[6] === 'Everyone' && file[5] === 'Contribute'
+    && list && list[6] === 'Everyone except external users'
+    && team && teamDocs && teamDocs[5] === 'Edit'
+    // Deep sits under Team: scanned with its ticked parent, never listed itself
+    && deep && deep[0] === 'Deep'
+    // skipped: hidden/system lists, Limited Access noise, inheriting lists and
+    // subsites, unticked subsites, grants to ordinary groups
+    && !all.includes('Hidden Stuff') && !all.includes('Limited Access')
+    && !all.includes('Quiet') && !all.includes('Echo') && !all.includes('handbook.docx')
+    && !find('Library', 'Policies')
+    && summary.includes('9 broad-access grants across 4 sites') && summary.includes('1 problem')
+    && problems.includes('Locked Group') && problems.includes('Read group membership');
+});
+
+await check('eeeu: results export, and a narrowed scope skips the rest', async () => {
+  await eeeuPage.locator('.wb-eeeu > .wb-grid .wb-grid-actions .btn', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    eeeuPage.waitForEvent('download'),
+    eeeuPage.locator('.wb-eeeu > .wb-grid .wb-menu-item', { hasText: 'Download CSV' }).click(),
+  ]);
+  const csv = readFileSync(await download.path(), 'utf8');
+  // Site scope only, no items, no subsites: one row, the site's own.
+  for (const name of ['Pages libraries', 'Lists', 'Document libraries', 'Include items and folders']) {
+    await eeeuPage.locator('.wb-eeeu-row .wb-eeeu-check', { hasText: name }).locator('input').uncheck();
+  }
+  for (const name of ['Team', 'Echo']) {
+    await eeeuPage.locator('.wb-eeeu-subsites .wb-eeeu-check', { hasText: name }).locator('input').uncheck();
+  }
+  await eeeuPage.locator('.wb-eeeu-form .btn', { hasText: 'Run EEEU audit' }).click();
+  await eeeuPage.waitForFunction(() =>
+    /1 broad-access grant across 1 site/.test(document.querySelector('.wb-eeeu-progress')?.textContent || ''));
+  const types = await eeeuPage.$$eval('.wb-eeeu > .wb-grid .wb-table tbody tr td:nth-child(2)',
+    (tds) => tds.map((td) => td.textContent));
+  return csv.includes('Why it counts') && csv.includes('Org-wide sharing link')
+    && csv.includes('notes.docx')
+    && types.join(',') === 'Site';
+});
+
+await eeeuPage.close();
+
 // ---- live path (injected context + stubbed /_api) -------------------------
 
 const live = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -2701,9 +3182,18 @@ await live.route('**/_api/**', async (route) => {
   seenHeaders.push(route.request().headers().accept || '');
   liveUrls.push(url);
   if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items(7)")) {
-    pageDetailUrl = url;
     const expand = new URL(url).searchParams.get('$expand') || '';
     const select = new URL(url).searchParams.get('$select') || '';
+    // The page-status read (page-status.js) is its own small query, not the
+    // detail fetch — answered as SharePoint would, and kept out of
+    // pageDetailUrl so the detail-shape assertions below see the detail.
+    if (select.includes('HasUniqueRoleAssignments')) {
+      return route.fulfill({ json: {
+        Id: 7, HasUniqueRoleAssignments: false,
+        File: { MajorVersion: 1, MinorVersion: 0, CheckOutType: 2 }, CheckoutUser: null,
+      } });
+    }
+    pageDetailUrl = url;
     if (!expand.split(',').includes('Author') || !expand.split(',').includes('Editor')) {
       return route.fulfill({
         status: 400,
@@ -2885,6 +3375,10 @@ await check('live: a library that rejects the people projection still opens the 
   await live.route(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/, (route) => {
     const url = route.request().url();
     const select = new URL(url).searchParams.get('$select') || '';
+    // The status read has its own ladder; only detail shapes are counted.
+    if (select.includes('HasUniqueRoleAssignments')) {
+      return route.fulfill({ json: { Id: 7, HasUniqueRoleAssignments: false } });
+    }
     shapes.push(select);
     if (select.includes('Author/Title')) {
       return route.fulfill({
@@ -2924,6 +3418,22 @@ await check('live: a library that rejects the people projection still opens the 
   await live.unroute(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/);
   return shapes.length === 2 && shapes[1].startsWith('*')
     && quiet && said.includes('author and editor names') && noError === 0;
+});
+
+await check('live: the status scan reads the grid’s own ordered set', async () => {
+  // Review round 1: an unordered 5,000-row status read caps a different set
+  // from the grid's FileLeafRef-ordered one, leaving visible rows blank.
+  await live.waitForSelector('.wb-view-pages .wb-scan-status');
+  await live.locator('.wb-view-pages .wb-scan-status').click();
+  await live.waitForFunction(() => [...document.querySelectorAll('.wb-view-pages .wb-table thead th')]
+    .some((th) => th.textContent.includes('Published')));
+  const scanUrl = liveUrls.find((u) => u.includes("11111111-0000-0000-0000-000000000003')/items?")
+    && u.includes('HasUniqueRoleAssignments')) || '';
+  const grid = liveUrls.find((u) => u.includes("11111111-0000-0000-0000-000000000003')/items?")
+    && !u.includes('HasUniqueRoleAssignments')) || '';
+  const q = (u, k) => new URL(u).searchParams.get(k);
+  return Boolean(scanUrl) && q(scanUrl, '$orderby') === 'FileLeafRef'
+    && q(scanUrl, '$orderby') === q(grid, '$orderby') && q(scanUrl, '$top') === q(grid, '$top');
 });
 
 await check('live: a subweb enumeration SharePoint refuses is stated, not alarmed about', async () => {

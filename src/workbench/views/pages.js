@@ -34,6 +34,11 @@ import {
   libraryKindOf, libraryKindLabel, pageContentKindOf, pageContentKindLabel,
   classicWebParts, classicContentParts,
 } from '../classic-page.js';
+import {
+  pageStatusShapes, derivePageStatus, versionShapes, lastPublishedFrom,
+  resolveMetadataLayout, publishLabel, inheritanceLabel, inheritanceMarker, checkedOutLabel,
+} from '../page-status.js';
+import { principalTypeName } from '../perm-kinds.js';
 
 // PromotedState is modern-only — selecting it against a library that lacks it
 // 400s with "The field or property 'PromotedState' does not exist".
@@ -85,6 +90,9 @@ export function pageQueryPlan(fieldInternalNames, kind) {
     showPromoted,
     showTitle,
     gridSelect,
+    // Content approval's field. Only probed, never assumed: naming it on a
+    // library without it is the same 400 as PromotedState.
+    hasModeration: names ? names.has('_ModerationStatus') : false,
     // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
     // want; every rung below it gives something up to stay answerable.
     gridShapes: [
@@ -283,6 +291,24 @@ function reducedChip(lost, where, because = '') {
   return chip;
 }
 
+// Page status is the STATUS register (design/INFO-CHIP.md): a state the
+// operator may act on, so it composes .wb-role-chip — uppercase, pill, and
+// accent-filled when `on`. Never .wb-info-chip, which is for what a thing IS.
+function statusChip(text, on, title = '') {
+  const chip = el('span', `wb-role-chip wb-page-status ${on ? 'wb-status-on' : 'wb-status-off'}`, text);
+  if (title) chip.title = title;
+  return chip;
+}
+
+const roleNames = (row) =>
+  (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || [])
+    .map((r) => r.Name).filter(Boolean).join(', ');
+
+// The status scan and chips cover modern Site Pages and the classic
+// publishing Pages library (Joe, 2026-09-23). A library that is merely
+// titled "Pages" keeps the plain drilldown.
+const supportsStatus = (sitePages) => sitePages?.kind === 'modern' || sitePages?.kind === 'publishing';
+
 export function createPagesView({ client, navigate, updateRoute }) {
   const root = el('section', 'wb-view wb-view-pages');
   const spWrite = createSpWriteClient({ client });
@@ -390,6 +416,16 @@ export function createPagesView({ client, navigate, updateRoute }) {
   let fieldsPromise = null;        // list fields shared by every page
   let detailRun = 0;
   let loadRun = 0;                 // generation guard for loadPages
+  // Page status (page-status.js), per page and per library: the status read,
+  // the last-published date from the item's versions, and the rung the status
+  // ladder settled on (a rejected shape is a fact about the list's schema).
+  const statusCache = new Map();         // "listId:pageId" -> Promise<{ status, lost, reason }>
+  const lastPublishedCache = new Map();  // "listId:pageId" -> Promise<string|null>
+  let statusRung = 0;
+  let gridRows = [];               // the rows handed to the grid (scan merges onto them)
+  let gridPlan = null;             // the plan the grid was built from
+  let scanned = false;             // the grid carries the status columns
+  let scanning = false;
 
   const toLibrary = (list) => ({
     listId: list.Id,
@@ -433,6 +469,12 @@ export function createPagesView({ client, navigate, updateRoute }) {
     // exact failure the probe exists to prevent.
     planPromise = null;
     detailRung = 0;
+    statusCache.clear();
+    lastPublishedCache.clear();
+    statusRung = 0;
+    gridRows = [];
+    gridPlan = null;
+    scanned = false;
     if (grid) { grid.el.remove(); grid = null; }
     pagesLoaded = false;
   }
@@ -493,6 +535,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       }
     }
     const web = await webIdentity();
+    const status = await exportStatusFor(item, sitePages);
     return buildContentExport({
       item,
       format,
@@ -502,7 +545,185 @@ export function createPagesView({ client, navigate, updateRoute }) {
       webUrl: web.Url || client.webUrl(),
       libraryTitle: sitePages.title,
       libraryRootPath: sitePages.rootPath,
+      status,
     });
+  }
+
+  // ---- page status ----
+
+  // One page's status read, through its own ladder (pageStatusShapes). Kept
+  // apart from the detail item query on purpose: a status field SharePoint
+  // refuses must cost the chips, never the page itself.
+  function pageStatus(sitePages, pageId) {
+    const key = `${sitePages.listId}:${pageId}`;
+    if (!statusCache.has(key)) {
+      const path = guidPath(sitePages.listId, `/items(${pageId})`);
+      statusCache.set(key, queryPlan(sitePages)
+        .then((plan) => queryLadder(
+          pageStatusShapes(plan), (options) => client.get(path, options), statusRung,
+        ))
+        .then(({ value, lost, index, reason }) => {
+          if (current === sitePages) statusRung = index;
+          return { status: derivePageStatus(value), lost, reason };
+        })
+        .catch((err) => { statusCache.delete(key); throw err; }));
+    }
+    return statusCache.get(key);
+  }
+
+  // The date the current published version was published ('' = never
+  // published; null = cannot say — status unknown, or the versions read
+  // could not tell a live major from a pending/scheduled one). Only a
+  // published page pays for the versions request. A failed read REJECTS (and
+  // is evicted so the next visit retries): the caller decides whether the
+  // failure is shown (Metadata tab) or absorbed (export).
+  function lastPublished(sitePages, pageId, status) {
+    if (status?.published === false) return Promise.resolve('');
+    if (status?.published !== true) return Promise.resolve(null);
+    const key = `${sitePages.listId}:${pageId}`;
+    if (!lastPublishedCache.has(key)) {
+      const path = guidPath(sitePages.listId, `/items(${pageId})/versions`);
+      lastPublishedCache.set(key, queryPlan(sitePages)
+        .then((plan) => queryLadder(versionShapes(plan), (options) => client.getAll(path, options))
+          .then(({ value }) => lastPublishedFrom(value.items, { hasModeration: plan.hasModeration })))
+        .catch((err) => { lastPublishedCache.delete(key); throw err; }));
+    }
+    return lastPublishedCache.get(key);
+  }
+
+  // Status for the .md export's metadata block — best effort: a page whose
+  // status cannot be read still exports, just without those lines (unknown
+  // is left out, never guessed).
+  async function exportStatusFor(item, sitePages) {
+    if (!supportsStatus(sitePages) || item?.Id === undefined) return null;
+    let status;
+    try {
+      ({ status } = await pageStatus(sitePages, item.Id));
+    } catch {
+      return null;
+    }
+    let published = null;
+    try { published = await lastPublished(sitePages, item.Id, status); } catch { /* line omitted */ }
+    return {
+      ...status,
+      lastPublished: published ? String(published).slice(0, 10) : published,
+    };
+  }
+
+  // The grid's column set. The three status columns ride in only after a
+  // scan, between the page's own facts and the Modified/Editor pair.
+  function gridColumns(plan, sitePages, withStatus) {
+    const statusOf = (row) => row.__status || {};
+    return [
+      { key: 'FileLeafRef', label: 'Name', mono: true },
+      // Dropped with the field itself: a library without Title would
+      // otherwise carry a column that can only ever be blank.
+      ...(plan.showTitle ? [{ key: 'Title', label: 'Title' }] : []),
+      {
+        key: 'Folder',
+        label: 'Folder',
+        value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
+        format: (v) => (v ? `/${v}` : ''),
+      },
+      ...(plan.showPromoted
+        ? [{ key: 'PromotedState', label: 'Promoted', format: promotedLabel }]
+        : []),
+      ...(withStatus
+        ? [
+          { key: 'PublishStatus', label: 'Published', value: (row) => publishLabel(statusOf(row).published) },
+          { key: 'CheckedOut', label: 'Checked out', value: (row) => checkedOutLabel(statusOf(row)) },
+          {
+            key: 'Inheritance',
+            label: 'Inheritance',
+            value: (row) => inheritanceMarker(statusOf(row).brokenInheritance),
+          },
+        ]
+        : []),
+      { key: 'Modified', label: 'Modified', format: fmtDate },
+      { key: 'Editor', label: 'Editor', value: (row) => row.Editor?.Title || '' },
+      {
+        key: 'Export',
+        label: '',
+        // Controls only — no data, so CSV/JSON/markdown skip it.
+        action: true,
+        value: (row) => row.Id,
+        format: () => '',
+        render: (_id, row) => rowExportCell(row),
+      },
+      {
+        key: 'FileRef',
+        label: '',
+        format: () => '',
+        render: (fileRef) => {
+          if (!fileRef) return null;
+          const a = document.createElement('a');
+          a.className = 'wb-cell-link';
+          a.href = fileRef;
+          a.title = 'Open the page in a new tab';
+          a.textContent = '↗';
+          bindNewTab(a);
+          return a;
+        },
+      },
+    ];
+  }
+
+  // "Scan Page Status": one extra library-wide query (no per-page requests),
+  // merged onto the rows already on screen, then the grid gains its status
+  // columns. Re-runnable; the button relabels to Rescan after the first run.
+  const scanBtn = el('button', 'btn btn-xs wb-scan-status', 'Scan Page Status');
+  scanBtn.type = 'button';
+  scanBtn.title = 'Add Published, Checked out and Inheritance columns for every page — one extra query';
+  scanBtn.addEventListener('click', () => scanStatus());
+
+  async function scanStatus() {
+    if (scanning || !grid || !current) return;
+    const sitePages = current;
+    const run = loadRun;
+    const stale = () => current !== sitePages || run !== loadRun;
+    scanning = true;
+    scanBtn.disabled = true;
+    scanBtn.textContent = 'Scanning…';
+    masterStatus.classList.remove('wb-error');
+    masterStatus.hidden = true;
+    try {
+      const plan = await queryPlan(sitePages);
+      const path = guidPath(sitePages.listId, '/items');
+      // The grid's own order and cap, so above 5,000 pages the scan reads
+      // the same first 5,000 rows the grid is showing — an unordered read
+      // would cap a different set and leave visible rows blank.
+      const { value, lost, reason, index } = await queryLadder(pageStatusShapes(plan), (options) =>
+        client.getAll(path, { ...options, orderby: 'FileLeafRef', top: 5000 }), statusRung);
+      if (stale()) return;
+      // The step that answered is a fact about this list's schema: every
+      // later status read (rescan, drilldown, export) starts there.
+      statusRung = index;
+      const byId = new Map(value.items.map((it) => [String(it.Id), derivePageStatus(it)]));
+      for (const row of gridRows) row.__status = byId.get(String(row.Id)) || derivePageStatus({});
+      scanned = true;
+      grid.setColumns(gridColumns(gridPlan || plan, sitePages, true));
+      strip.querySelector('.wb-reduced-chip.wb-scan-reduced')?.remove();
+      if (lost) {
+        const chip = reducedChip(lost, `the page status of ${sitePages.title}`, reason);
+        chip.classList.add('wb-scan-reduced');
+        strip.insertBefore(chip, libraryLink);
+      }
+      const missing = gridRows.filter((row) => !byId.has(String(row.Id))).length;
+      if (value.partial || missing) {
+        masterStatus.textContent = `Page status was read for ${value.items.length} pages`
+          + (missing ? `; ${missing} page${missing === 1 ? '' : 's'} on screen came back without it` : '')
+          + ' — those rows are blank, not Unpublished.';
+        masterStatus.classList.remove('wb-error', 'wb-denied');
+        masterStatus.hidden = false;
+      }
+    } catch (err) {
+      if (stale()) return;
+      showFailure(masterStatus, err, `the page status of ${sitePages.title}`);
+    } finally {
+      scanning = false;
+      scanBtn.disabled = false;
+      scanBtn.textContent = scanned ? 'Rescan Page Status' : 'Scan Page Status';
+    }
   }
 
   // ---- bulk export: the selected pages as one zip of content files ----
@@ -689,48 +910,11 @@ export function createPagesView({ client, navigate, updateRoute }) {
           options: { ...plan.gridShapes[0].options, ...paging },
           webUrl: client.webUrl(),
         };
+        gridPlan = plan;
+        scanned = false;
+        gridRows = [];
         grid = createGrid({
-          columns: [
-            { key: 'FileLeafRef', label: 'Name', mono: true },
-            // Dropped with the field itself: a library without Title would
-            // otherwise carry a column that can only ever be blank.
-            ...(plan.showTitle ? [{ key: 'Title', label: 'Title' }] : []),
-            {
-              key: 'Folder',
-              label: 'Folder',
-              value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
-              format: (v) => (v ? `/${v}` : ''),
-            },
-            ...(plan.showPromoted
-              ? [{ key: 'PromotedState', label: 'Promoted', format: promotedLabel }]
-              : []),
-            { key: 'Modified', label: 'Modified', format: fmtDate },
-            { key: 'Editor', label: 'Editor', value: (row) => row.Editor?.Title || '' },
-            {
-              key: 'Export',
-              label: '',
-              // Controls only — no data, so CSV/JSON/markdown skip it.
-              action: true,
-              value: (row) => row.Id,
-              format: () => '',
-              render: (_id, row) => rowExportCell(row),
-            },
-            {
-              key: 'FileRef',
-              label: '',
-              format: () => '',
-              render: (fileRef) => {
-                if (!fileRef) return null;
-                const a = document.createElement('a');
-                a.className = 'wb-cell-link';
-                a.href = fileRef;
-                a.title = 'Open the page in a new tab';
-                a.textContent = '↗';
-                bindNewTab(a);
-                return a;
-              },
-            },
-          ],
+          columns: gridColumns(plan, sitePages, false),
           onOpen: (row) => navigate({
             view: 'pages',
             pageId: row.Id,
@@ -759,6 +943,11 @@ export function createPagesView({ client, navigate, updateRoute }) {
           // than the one SharePoint rejected.
           descriptor,
         });
+        if (supportsStatus(sitePages)) {
+          scanBtn.textContent = 'Scan Page Status';
+          scanBtn.disabled = false;
+          grid.actionsEl.prepend(scanBtn);
+        }
         gridPane.append(grid.el);
         grid.setLoading('Loading pages…');
         const { value, lost, reason } = await queryLadder(plan.gridShapes, (options) => {
@@ -770,6 +959,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
         // library's rows land in the new library's table under the new chip.
         if (run !== loadRun) return;
         if (lost) strip.insertBefore(reducedChip(lost, sitePages.title, reason), libraryLink);
+        gridRows = items;
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -1011,13 +1201,33 @@ export function createPagesView({ client, navigate, updateRoute }) {
     return wrap;
   }
 
-  function metadataPane(listId, pageId) {
+  // Supported libraries (supportsStatus) get Joe's fixed row set and order
+  // (page-status.js METADATA_SPEC) — unlisted fields hidden, the page-status
+  // rows synthesized; any other library keeps the full schema-order form.
+  function metadataPane(sitePages, pageId) {
+    const listId = sitePages.listId;
     const wrap = el('div', 'wb-tab-pane');
     const status = el('div', 'wb-grid-status', 'Loading metadata…');
     wrap.append(status);
 
     (async () => {
       const fields = await listFields(listId);
+      let layout = null;
+      let statusFailure = null;
+      if (supportsStatus(sitePages)) {
+        // Status is best effort — the form still renders — but a failed read
+        // is said above the form (denied.js register) rather than left to
+        // look like fields that simply aren't there.
+        let pageState = {};
+        let published = null;
+        try {
+          ({ status: pageState } = await pageStatus(sitePages, pageId));
+          published = await lastPublished(sitePages, pageId, pageState);
+        } catch (err) {
+          statusFailure = err;
+        }
+        layout = resolveMetadataLayout(fields, { ...pageState, id: pageId, lastPublished: published });
+      }
       // Values + display text. FieldValuesAsText covers complex types; if the
       // combined expand misbehaves on a tenant, fall back to two requests.
       let item;
@@ -1038,13 +1248,69 @@ export function createPagesView({ client, navigate, updateRoute }) {
         fields,
         item,
         itemAsText,
+        layout,
         onSave: (formValues) =>
           spWrite.validateUpdateListItem({ listId, itemId: pageId }, formValues),
       });
+      if (statusFailure) {
+        wrap.append(showFailure(el('div', 'wb-grid-status wb-page-status-failed'),
+          statusFailure, 'this page’s publish and permission status'));
+      }
       wrap.append(form.el);
     })().catch((err) => {
       showFailure(status, err, 'this page’s metadata');
     });
+    return wrap;
+  }
+
+  // Permissions tab: the page's own role assignments. The item endpoint
+  // answers with the inherited set when inheritance is intact — i.e. what
+  // actually governs the page — never the web's, which would be wrong under a
+  // library that itself breaks inheritance.
+  function permissionsPane(sitePages, pageId) {
+    const wrap = el('div', 'wb-tab-pane');
+    const bar = el('div', 'wb-scan-bar wb-page-perm-bar');
+    const hint = el('span', 'wb-view-hint', '');
+    bar.append(hint);
+    const path = guidPath(sitePages.listId, `/items(${pageId})/roleassignments`);
+    const options = {
+      expand: ['Member', 'RoleDefinitionBindings'],
+      select: [
+        'PrincipalId', 'Member/Id', 'Member/Title', 'Member/LoginName',
+        'Member/PrincipalType', 'RoleDefinitionBindings/Id', 'RoleDefinitionBindings/Name',
+      ],
+    };
+    const permGrid = createGrid({
+      rowKey: 'PrincipalId',
+      columns: [
+        { key: 'Member', label: 'Principal', value: (row) => row.Member?.Title || '' },
+        { key: 'LoginName', label: 'Login', value: (row) => row.Member?.LoginName || '', mono: true, copyable: true },
+        { key: 'PrincipalType', label: 'Type', value: (row) => row.Member?.PrincipalType, format: principalTypeName },
+        { key: 'Roles', label: 'Roles', value: roleNames },
+      ],
+      emptyText: 'No role assignments.',
+      subject: 'this page’s permissions',
+      filterPlaceholder: 'Filter assignments…',
+      exportName: 'sp-page-permissions',
+      descriptor: { path, options, webUrl: client.webUrl() },
+    });
+    wrap.append(bar, permGrid.el);
+
+    pageStatus(sitePages, pageId).then(({ status }) => {
+      if (status.brokenInheritance === null) return;
+      const broken = status.brokenInheritance;
+      bar.prepend(statusChip(inheritanceLabel(broken), broken,
+        broken ? 'This page has its own permissions, separate from its library.'
+          : 'This page inherits its permissions from its library.'));
+      hint.textContent = broken
+        ? 'Unique to this page.'
+        : 'Inherited — the permissions of the nearest parent with its own.';
+    }).catch(() => { /* the grid below still says who has access */ });
+
+    permGrid.setLoading('Loading permissions…');
+    client.getAll(path, options)
+      .then(({ items, partial }) => permGrid.setRows(items, { partial }))
+      .catch((err) => permGrid.setError(err));
     return wrap;
   }
 
@@ -1142,6 +1408,40 @@ export function createPagesView({ client, navigate, updateRoute }) {
     // readable, one or two fields just aren't in it.
     if (lostFields) headRow.append(reducedChip(lostFields, 'this page', lostReason));
 
+    // Status chips (loud register) right after the kind chip. Filled when
+    // the status read answers; a chip whose fact could not be read is left
+    // out rather than guessed.
+    if (supportsStatus(sitePages)) {
+      const chips = el('span', 'wb-page-status-chips');
+      headRow.append(chips);
+      pageStatus(sitePages, route.pageId).then(({ status, lost, reason }) => {
+        if (run !== detailRun) return;
+        if (status.published !== null) {
+          chips.append(statusChip(publishLabel(status.published), status.published,
+            status.published
+              ? 'A major version of this page has been published.'
+              : 'No major version of this page has been published yet.'));
+        }
+        if (status.brokenInheritance) {
+          chips.append(statusChip('Inheritance broken', true,
+            'This page has its own permissions — see the Permissions tab.'));
+        }
+        if (status.checkedOut) {
+          chips.append(statusChip('Checked out', true,
+            status.checkedOutTo ? `Checked out to ${status.checkedOutTo}` : 'Checked out'));
+        }
+        if (lost) chips.append(reducedChip(lost, 'this page’s status', reason));
+      }).catch((err) => {
+        // The page itself is readable, so no error bar over it — but an
+        // unreadable status must not look like "no status": say so in the
+        // chip row, in the register the failure belongs to (denied.js).
+        if (run !== detailRun) return;
+        chips.append(showFailure(el('span', 'wb-page-status-failed'), err, 'this page’s status'));
+      });
+    }
+
+    // The export/open actions live on the tab row (right-aligned), leaving
+    // the head row to the page's identity and its chips.
     const actions = el('span', 'wb-detail-actions');
     // One button per content format, matching the pair on every grid row.
     // Both write .md; only the content blocks differ.
@@ -1163,7 +1463,6 @@ export function createPagesView({ client, navigate, updateRoute }) {
       bindNewTab(open);
       actions.append(open);
     }
-    headRow.append(actions);
 
     const downloadContent = async (format) => {
       downloadText(contentFileName(item, format),
@@ -1185,8 +1484,12 @@ export function createPagesView({ client, navigate, updateRoute }) {
       detailPane.append(notice);
     }
 
-    const tabsBar = el('div', 'wb-tabs');
+    // The row holds the tablist on the left and the page actions on the
+    // right; only the tabs are inside role=tablist.
+    const tabsRow = el('div', 'wb-tabs wb-tabs-with-actions');
+    const tabsBar = el('div', 'wb-tab-list');
     tabsBar.setAttribute('role', 'tablist');
+    tabsRow.append(tabsBar, actions);
     const body = el('div', 'wb-tab-body');
     const panes = new Map();
 
@@ -1202,7 +1505,10 @@ export function createPagesView({ client, navigate, updateRoute }) {
             + `missing — ${webPartError.message || String(webPartError)}`)
           : null),
       },
-      { id: 'metadata', label: 'Metadata', build: () => metadataPane(sitePages.listId, route.pageId) },
+      { id: 'metadata', label: 'Metadata', build: () => metadataPane(sitePages, route.pageId) },
+      ...(supportsStatus(sitePages)
+        ? [{ id: 'permissions', label: 'Permissions', build: () => permissionsPane(sitePages, route.pageId) }]
+        : []),
       ...(isCanvas
         ? [{ id: 'structure', label: 'Structure', build: () => structurePane(parsed) }]
         : []),
@@ -1234,7 +1540,7 @@ export function createPagesView({ client, navigate, updateRoute }) {
       btn.addEventListener('click', () => activate(tab));
       tabsBar.append(btn);
     }
-    detailPane.append(tabsBar, body);
+    detailPane.append(tabsRow, body);
     activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
   }
 

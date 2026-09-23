@@ -216,7 +216,6 @@ export function createGrid({
 
   let selectAll = null;
   if (selectable) {
-    const th = el('th', 'wb-select-col');
     selectAll = el('input');
     selectAll.type = 'checkbox';
     selectAll.className = 'wb-select-all';
@@ -227,36 +226,48 @@ export function createGrid({
       else visible.forEach((row) => selectedKeys.delete(keyOf(row)));
       render();
     });
-    th.append(selectAll);
-    headRow.append(th);
   }
 
-  columns.forEach((col, colIndex) => {
-    const th = el('th', '', col.label ?? col.key);
-    th.dataset.colIndex = String(colIndex);
-    if (col.num) th.classList.add('wb-num');
-    if (col.width) th.style.width = col.width;
-    // Controls, not data: nothing to sort by or filter on, and a focusable
-    // "Sort by " header that silently orders rows by a hidden key is a trap.
-    if (col.action) {
-      th.classList.add('wb-action-col');
+  // Built from `columns` so setColumns() can rebuild it. A rebuild drops any
+  // dragged widths: the new column set gets auto layout again.
+  function buildHeader() {
+    headRow.textContent = '';
+    widthsFrozen = false;
+    table.style.tableLayout = '';
+    table.style.width = '';
+    if (selectAll) {
+      const th = el('th', 'wb-select-col');
+      th.append(selectAll);
       headRow.append(th);
-      return;
     }
-    th.tabIndex = 0;
-    th.title = `Sort by ${col.label ?? col.key}`;
-    const arrow = el('span', 'wb-sort-arrow', '');
-    th.append(arrow);
-    const sortBy = () => {
-      if (sortKey === col.key) sortDir = -sortDir;
-      else { sortKey = col.key; sortDir = 1; }
-      render();
-    };
-    th.addEventListener('click', sortBy);
-    th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortBy(); } });
-    attachResizer(th);
-    headRow.append(th);
-  });
+    columns.forEach((col, colIndex) => {
+      const th = el('th', '', col.label ?? col.key);
+      th.dataset.colIndex = String(colIndex);
+      if (col.num) th.classList.add('wb-num');
+      if (col.width) th.style.width = col.width;
+      // Controls, not data: nothing to sort by or filter on, and a focusable
+      // "Sort by " header that silently orders rows by a hidden key is a trap.
+      if (col.action) {
+        th.classList.add('wb-action-col');
+        headRow.append(th);
+        return;
+      }
+      th.tabIndex = 0;
+      th.title = `Sort by ${col.label ?? col.key}`;
+      const arrow = el('span', 'wb-sort-arrow', '');
+      th.append(arrow);
+      const sortBy = () => {
+        if (sortKey === col.key) sortDir = -sortDir;
+        else { sortKey = col.key; sortDir = 1; }
+        render();
+      };
+      th.addEventListener('click', sortBy);
+      th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortBy(); } });
+      attachResizer(th);
+      headRow.append(th);
+    });
+  }
+  buildHeader();
   thead.append(headRow);
   const tbody = el('tbody');
   table.append(thead, tbody);
@@ -441,6 +452,16 @@ export function createGrid({
     setError(err) {
       status.className = 'wb-grid-status';
       showFailure(status, err, subject);
+    },
+    // Swap the column set on a live grid (the Pages status scan adds its
+    // columns this way). Rows, filter and selection are kept; a sort on a
+    // column that no longer exists is dropped. Exports read `columns` at
+    // click time, so they follow the new set.
+    setColumns(next) {
+      columns = Array.isArray(next) ? next : [];
+      if (sortKey && !columns.some((c) => c.key === sortKey && !c.action)) sortKey = null;
+      buildHeader();
+      render();
     },
     getVisibleRows: () => [...visible],
     getExportRows: () => [...exportRows()],
