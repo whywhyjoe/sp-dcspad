@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "218" : "dev";
-var injectedRevision = true ? "fd2cc777" : "";
+var injectedBuild = true ? "220" : "dev";
+var injectedRevision = true ? "e2825155" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -405,13 +405,19 @@ function createSpRestClient({
   async function get(path, opts) {
     return entityOf(await rawGet(apiUrl(path, opts)));
   }
-  async function getAll(path, opts, { cap, allowLargeCap = false } = {}) {
+  async function getAll(path, opts, { cap, allowLargeCap = false, shouldStop = null } = {}) {
     const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
     const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
     let url = apiUrl(path, opts);
     const items = [];
     let partial = false;
+    let stopped = false;
     while (url) {
+      if (shouldStop?.()) {
+        partial = true;
+        stopped = true;
+        break;
+      }
       const data = await rawGet(url);
       const page = collectionOf(data);
       if (!page) {
@@ -433,7 +439,7 @@ function createSpRestClient({
       }
       url = next2;
     }
-    return { items, partial };
+    return { items, partial, stopped };
   }
   return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
 }
@@ -11030,10 +11036,21 @@ async function runEeeuAudit({
       if (!includeItems || shouldStop()) continue;
       let uniqueItems = [];
       try {
-        const { items, partial } = await webClient.getAll(`${base}/items`, {
-          select: ["Id", "Title", "FileRef", "FileLeafRef", "FSObjType", "HasUniqueRoleAssignments"],
-          top: 5e3
-        }, { allowLargeCap: true });
+        const itemSelect = ["Id", "Title", "FileRef", "FileLeafRef", "FSObjType", "HasUniqueRoleAssignments"];
+        const readItems = (select) => webClient.getAll(
+          `${base}/items`,
+          { select, top: 5e3 },
+          { allowLargeCap: true, shouldStop }
+        );
+        let read;
+        try {
+          read = await readItems(itemSelect);
+        } catch (err) {
+          if (err?.status !== 400) throw err;
+          read = await readItems(itemSelect.filter((f) => f !== "Title"));
+        }
+        if (read.stopped) return;
+        const { items, partial } = read;
         uniqueItems = items.filter((it) => it.HasUniqueRoleAssignments === true);
         if (partial) {
           addProblem(webTitle, LIST_TYPE[scope], listLabel, "List items with their own permissions", {
