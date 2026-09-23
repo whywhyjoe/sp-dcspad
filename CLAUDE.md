@@ -336,6 +336,16 @@ Outside SharePoint the SP chip shows **Mock** and `_api` calls 404 — expected.
   which made that mismatch travel with a clone; it is now untracked and
   `.gitignore`d. If the build ever throws that error, reinstall with the
   system Node: `cd tools && "C:\Program Files\nodejs\node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" install`.
+- **Never copy files back from the deployed SharePoint folder** into the
+  repo: the Document ID service injects `mso:CustomDocumentProperties`
+  blocks into every `.html` it stores. The repo is the source; the synced
+  folder is output only.
+- `checkInFile()` (`src/sp-files.js`) deliberately reads `CheckOutType`
+  before posting `CheckIn()`. Don't "simplify" it to an unconditional call:
+  `CheckIn()` on a checked-in file is an error, and whether an overwrite
+  leaves the check-out standing has not been verified on either tenant.
+- xo on Joe's Windows machine: pass `PYTHONUTF8=1` when a rebuttal's diff
+  contains non-cp1252 characters, or xo's diff capture crashes.
 - The Workbench Items tab queries list items with `$select=*` on purpose.
   Selecting User/Lookup fields by bare internal name 400s on live SPO
   ("The query to field 'X' is not valid… $expand must contain X"), so an

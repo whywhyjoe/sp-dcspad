@@ -56,9 +56,6 @@ For Joe:
   `CheckoutUser/Title` with `$expand=File,CheckoutUser`) and the per-version moderation shape of
   `items(id)/versions`. Both were designed from docs plus a ChatGPT review; the checklist has an
   item for each. `moderationOf()` in `page-status.js` is where a new payload shape goes.
-- Cloud sandbox only: its HTTPS_PROXY intercepts `localhost` from Chromium (405s, blank
-  workbench) — run suites there with `env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy`.
-  A local machine needs nothing special.
 - `sp-rest.js` now shares one three-request queue across every client (module scope). A view
   that needs its own parallelism must not "fix" that by creating more clients — that was the bug.
 - `Contact` (person) and `bmocContentCategory` (managed metadata) are read-only by design until

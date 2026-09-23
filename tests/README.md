@@ -41,3 +41,7 @@ All suites together: 605 checks. Exit code is non-zero on any failure. Override 
 `DCSPAD_URL` / `DCSPAD_FIXTURES` if you serve on different ports.
 
 Known quirk: a failing `custom library loads` check almost always means the fixtures server (8643) isn't running. Public-CDN library presets can't be exercised from the Claude sandbox (egress proxy blocks CDNs) — the fixture covers the identical injection mechanism.
+
+Known environmental flake (2026-09-17, Joe's home machine): `monaco.mjs` timing out at its first hover check (`.monaco-hover-content` present but empty/hidden) on untouched `main` as well — suspected hover widgets not painting while the display is off or locked. Re-run with the screen awake before treating it as a regression.
+
+In the Claude cloud sandbox, its `HTTPS_PROXY` intercepts `localhost` from Chromium (405s, a blank app): run suites there with `env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy node <suite>.mjs`.

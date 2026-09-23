@@ -216,6 +216,25 @@ inspector, REPL and network capture all work inside the web part; a live
   window only rarely open there despite `target="_blank"` and the explicit
   `bindNewTab()` handler. Reproduce and validate the fix in a live SharePoint
   host; the standalone/mock popup test is not sufficient tenant evidence.
+- **Prod (bmo) reconcile follow-ups — unverified** (from the 2026-09-17
+  work-prod reconcile, whose state file is retired; all of its code is on
+  `main` via PR #19). Prod has since been redeployed (Joe saw a
+  `201-dirty` build stamp on 2026-09-23 — `-dirty` means the work clone had
+  uncommitted tracked changes at build time, most likely
+  `vendor/intelligence/` regenerated from that machine's design-system
+  repos; check `git status` there). Still to confirm:
+  - README.md's validation step 8 (overwrite in a **Require Check Out**
+    library, from the pad and from Workbench Files) on the work tenant.
+  - Then delete the home machine's local-only branch
+    `recovered/work-checkout-prod` (the literal old prod source, kept only
+    as a reference until step 8 passes).
+  - Open question for Joe: the check-out consent box now starts
+    **unticked** (Overwrite disabled until ticked); the old prod build
+    pre-ticked it. One-line change in `applySpCheckoutState()`
+    (`src/main.js`) if pre-ticked is preferred.
+- **Dev-tenant test leftovers**: the `zz-schema-*` lists on `/sites/NewNerve`
+  and `/sites/NewNerve/sputils-test` (List schema live checks) are to be
+  deleted by hand. `SitePages/zz-markdown-export-test.aspx` is a keeper.
 - **CSS bleed, both directions**: `app.css` still styles `html`/`body`
   (darkens the host page behind the pad — currently invisible and arguably
   nice; the gap around the seated app shows it). SP styles also bleed into the
@@ -446,6 +465,23 @@ copies came from pre-fix builds (one carries a duplicate "All Items").
   availability; whether SPUtils' string-overload `createFieldAsXml`
   regenerates internal names; a SPUtils v1 doc imported in the Workbench and
   the reverse; a reconcile (Add to existing list) run.
+
+### Invariants to keep (from the build thread's state file)
+
+- `buildApplyPlan`'s `dependsOn`: views and the validation-formula step
+  depend on the `list` step only, never on every field — one column that
+  can't be recreated (managed metadata, say) must not block every view or
+  the validation formula.
+- Plan-time refusals the probe makes (type clash, taken title, missing
+  content type) carry `final: true` and are never re-run by "Retry failed
+  steps"; only steps that failed during execution are.
+- `sp-write` `post` merges caller headers OVER its base set (digest, Accept,
+  content-type): a step needing `X-HTTP-Method: MERGE` or `IF-MATCH: *` must
+  pass them itself — the base set never supplies them.
+- The mock writer must return the ids the executor binds to (`web/lists` →
+  `{Id, Title, RootFolder}`, `createfieldasxml` → `{Id, InternalName}`, a
+  view add → `{Id}`): the post-create probe resolves through the same
+  registry, so a write it doesn't register breaks the next read in the run.
 
 ## SP Workbench: List schema stages 1b + 2 (2026-09-22)
 
