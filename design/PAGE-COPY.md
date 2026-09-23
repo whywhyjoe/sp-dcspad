@@ -378,3 +378,12 @@ keeps the page-copy mock webs out of the default fixtures.
   not implement resumable retry or automatic reconciliation (§7 v2 note). Decision 2 stays
   open with the visibility-transition test as the deciding criterion (§4.2), and
   `addTemplateFile` is added as path B for the spike (§3, §9).
+
+## 12. Progress log
+
+- 2026-09-23 — branch `claude/page-copy` from `main` @ `ab5a0f9`. Tenant work (Phase 0) waits for
+  the live-fix session on `claude/page-status-live-fixes` to finish (semaphore
+  `.PAGE-STATUS-LIVE-FIX-SESSION-DONE`); local Phase 1 work proceeds meanwhile.
+- 2026-09-23 — `sp-pages.js` (§0 shapes, one call per method) + `sp-files.js readFileBytes`
+  landed after a clean blind review; `files.mjs` 63/63. Next: page-copy core, mock webs,
+  runner, dialog.
