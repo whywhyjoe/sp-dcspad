@@ -606,7 +606,8 @@ Four pieces, shipped as one rebased set:
   reuses `contentFileName()`, so a bundled page stays byte-identical to the
   same page exported alone.
 - **Row-level export.** Every Pages grid row now carries always-visible
-  Export MD / Export HTML buttons (`src/workbench/views/pages.js`) that
+  MD / HTML buttons (`src/workbench/views/pages.js`; the drilldown's pair
+  is labelled Export MD / Export HTML) that
   export a single page without opening it first — deliberately not
   hover-revealed like the Files browser's row actions, because these name a
   choice between two formats and a control you must hover to discover is one
@@ -657,23 +658,72 @@ zip-menu locators that now match both entries. Every other suite is
 unchanged. **All 590 checks pass across the suites** after the rebase onto
 main (per-suite counts: `tests/README.md`).
 
+**Codex rounds (xo turns 14–15).** The review found no criticals and six
+real gaps, all closed in `0500a85`: a text part holding only a `<style>`
+block came back through the markdown fallback because `sanitizeHtml`
+never removed `style` (it now drops `style`/`noscript`, the converter's
+`DROPPED` list is exported and a check holds the sanitizer to covering
+it, and a style-only part is judged empty after sanitizing); a bare
+`<pre>` lost its fence (a `barePre` rule in both profiles, fence longer
+than any backtick run inside); link/image targets with spaces were
+invalid CommonMark destinations (control characters stripped before the
+scheme check, whitespace/`()<>` percent-encoded, backslash escaped rather
+than `%5C`); a row export could finish against a library switched away
+from (the zip path's identity guard now runs after every await and in
+the catch); an `action` column's header was a phantom "Sort by" control
+(inert now; the filter skips it); and the vendor guard missed
+side-effect/dynamic imports. The re-review accepted those and raised
+three more, closed in `8258110`: a stale bulk export still wrote to the
+shared status line (it now returns without touching it, progress ticks
+included), the trailing blank-line squeeze ate blank lines inside fenced
+code (`squeezeBlankLines()` walks fences per CommonMark and leaves their
+content alone), and the guard now strips comments — walking over
+strings, template and regex literals — before matching (a bare specifier
+inside a string still trips it: an accepted, loud false failure). Its
+"stale hosted bundle" high was the rebuild that followed (`aaaf26b`,
+Build #197). One Codex ask was declined: a JS module lexer for the guard
+would add a dependency for a copy step; the comment stripper covers the
+forms named without one.
+
 ### Live-tenant checklist
 
-Not yet run this session — record results here once done.
+Run 2026-09-22 on the dev tenant, Build #197, headless Playwright against
+`SitePages/zz-markdown-export-test.aspx` (a page created for this with
+`Add-PnPPageTextPart`: h2/h3, ordered and unordered lists, a table with a
+`<thead>`, a link, bold/italic, a `<br>`). Evidence files stayed in the
+session scratchpad; the facts:
 
-- [ ] On a modern page whose text web part holds headings, a list and a
-      table: Extract content exports markdown with real tables and no raw
-      HTML.
-- [ ] The HTML format still emits sanitized HTML, and the two metadata
-      frames (markdown vs. HTML export of the same page) are byte-identical.
-- [ ] Row buttons export without opening the page, and a denied page goes
-      through `denied.js` in the neutral register.
-- [ ] The zip honours the chosen format, and a bundled page is
-      byte-identical to the solo export of the same page.
+- [x] Extract content exports markdown with real tables and no raw HTML:
+      `## Text`, h2 → `###`, h3 → `####`, `1.`/`2.`/`3.`, `-` bullets, a
+      five-line GFM table, `[link](https://example.com/handbook)`,
+      `**markdown**`, `*workstation*`, the `<br>` as a two-space hard
+      break; `<[a-z][^>]*>` finds nothing in the content section. The row
+      button and the drilldown button produce byte-identical files
+      (1621 bytes).
+- [x] The HTML format emits the sanitized HTML (h2/p/strong/a/h3/ol/li/em/
+      ul/table/thead/tr/th/tbody/td/br only; no script or style), and the
+      two files' metadata frames — header up to the first `---`, footer
+      from the `## Metadata` block — are byte-identical (408 + 726 bytes).
+- [x] Row MD / HTML buttons download without opening the page: the
+      sessionStorage route stays `{"view":"pages"}`, no detail pane mounts;
+      clicking the row itself does open the drilldown on Extract.
+      A denied page cannot be produced live — the account is a site
+      collection admin — so the neutral 403 register rests on the suite's
+      stubbed checks, not on a live read.
+- [x] `sp-pages-content.zip` (store-only) and `sp-pages-content-html.zip`
+      each carry the test page's entry byte-equal to the solo export of
+      the same format (Buffer.equals), plus the second selected page.
+- Console: no errors during the Pages view, exports or zips; the two
+  message-less `pageerror`s fire during SharePoint's own page load and
+  fire on a plain page too.
+- Observed, not a defect of the export: the page's `Description` is
+  SharePoint's auto-generated summary (words run together, truncated) and
+  the export quotes it verbatim.
 
 **Still open:** the other reserved seams (chunked file transfer for a
 library copy, etc. — see Roadmap below) are unchanged by this work. The
-Codex review of this branch is pending.
+`zz-markdown-export-test.aspx` page on the dev web is a keeper for future
+export checks (recorded in memory), not a leftover to delete.
 
 ## Roadmap (seams reserved)
 

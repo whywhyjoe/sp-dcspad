@@ -3,7 +3,7 @@
 Last touched: 2026-09-22
 Mode: Joe
 Branch: claude/markdown-page-export-rebase (unpushed)
-State: code rebased and green (590 checks across all suites); docs done; bundle rebuild, Codex review, and dev-tenant live verification still to run this session
+State: DONE on the branch — rebased, two Codex rounds closed, bundles at Build #197 deployed to dev and the live checklist green; unpushed, no PR opened (not asked)
 
 ## What this is
 
@@ -30,7 +30,7 @@ design.
   `'html'`, unknown format throws, metadata frame byte-identical between the two,
   `contentFileName()` keeps `-content.md` / `-content-html.md` apart, `bundleEntryName()` reuses
   it so a bundled page is byte-identical to a solo export.
-- `src/workbench/views/pages.js`: per-row Export MD / Export HTML buttons (export without
+- `src/workbench/views/pages.js`: per-row MD / HTML buttons (export without
   opening the page; a denied read goes through `denied.js`), the detail pane's Export content
   became the same pair, the grid's Export ▾ menu offers both zip formats.
 - `src/workbench/grid.js` columns may be marked `action`; `src/workbench/export.js` drops them
@@ -49,12 +49,12 @@ design.
 
 ## Next
 
-- [ ] Rebuild `dcspad.app.js` and `dcspad.workbench.js` from clean HEAD (this session's docs
-      pass did not touch either bundle).
-- [ ] Codex review (xo) of this branch, plus one re-review round.
-- [ ] Deploy to the dev tenant (`deploy/Sync-Live.ps1 -Environment dev`) and run the live-tenant
-      checklist in `HANDOFF.md`.
-- [ ] Record live results in `HANDOFF.md`'s checklist.
+- [x] Rebuild `dcspad.app.js` and `dcspad.workbench.js` from clean HEAD — `aaaf26b`, Build #197.
+- [x] Codex review (xo turn 14) + one re-review (turn 15); closed in `0500a85` and `8258110`.
+- [x] Deploy to the dev tenant and run the live-tenant checklist — Build #197, all items green
+      (HANDOFF.md records the evidence).
+- [x] Record live results in `HANDOFF.md`'s checklist.
+- [ ] Push the branch / open the PR when Joe says so (not asked this session).
 
 ## Open questions
 
@@ -78,7 +78,7 @@ design.
 
 ## Live-tenant checklist
 
-Not yet run this session. See `HANDOFF.md` → "SP Workbench: markdown page export (2026-09-22)" →
-Live-tenant checklist for the unchecked items (real tables/no raw HTML in the markdown format,
-byte-identical metadata frames between formats, row buttons + denied-read register, and the
-bulk-zip format/byte-identical-bundle checks).
+Run 2026-09-22, Build #197, against `SitePages/zz-markdown-export-test.aspx` — every item green
+except the denied-read one, which cannot be produced live with a site-collection-admin account
+(stubbed 403 path in the suite only). Details in `HANDOFF.md` → "SP Workbench: markdown page
+export (2026-09-22)" → Live-tenant checklist.

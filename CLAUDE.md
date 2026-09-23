@@ -247,7 +247,7 @@ src/workbench/            SP Workbench, a site inspector (read + Tier 2 edit too
                           list-tools.js's registry; New from schema… on
                           the grid toolbar) · pages.js (Extract/Metadata/Structure/Web
                           parts/Raw; each grid row carries always-visible
-                          Export MD / Export HTML buttons that export without
+                          MD / HTML buttons that export without
                           opening the page — a denied read goes through
                           denied.js; the detail pane's Export content is the
                           same pair; the grid's Export ▾ menu offers the
