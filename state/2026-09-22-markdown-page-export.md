@@ -3,7 +3,7 @@
 Last touched: 2026-09-22
 Mode: Joe
 Branch: claude/markdown-page-export-rebase (unpushed)
-State: code rebased and green (588 checks across all suites); docs done; bundle rebuild, Codex review, and dev-tenant live verification still to run this session
+State: code rebased and green (590 checks across all suites); docs done; bundle rebuild, Codex review, and dev-tenant live verification still to run this session
 
 ## What this is
 
@@ -41,10 +41,10 @@ design.
   page-export.js/item-export.js/grid.js/views/pages.js entries, invariant 5's rebuild sentence,
   the Tests paragraph), `tests/README.md` (workbench.mjs line, suite total), `HANDOFF.md` (new
   "SP Workbench: markdown page export (2026-09-22)" section with an unchecked live-tenant
-  checklist) all updated to match the rebased code and the 581-check total.
+  checklist) all updated to match the rebased code and the measured suite totals (590 after the two Codex rounds).
 - Rebase itself: seven original commits collapsed to four source commits; only the test-count
   paragraphs in `CLAUDE.md`/`tests/README.md` conflicted, resolved in favour of `main`.
-- `workbench.mjs` measured at 148 (was 133 on main) after the rebase and the Codex review fixes; all suites together 588
+- `workbench.mjs` measured at 150 (was 133 on main) after the rebase and the two Codex review rounds; all suites together 590
   (was 573).
 
 ## Next

@@ -521,11 +521,17 @@ export function createPagesView({ client, navigate, updateRoute }) {
       return;
     }
 
+    // masterStatus is shared with whatever library is on screen, so once a
+    // switch makes this export stale it writes nothing there again — not a
+    // progress tick, not its exit. The library now showing owns that line
+    // (a row export's failure there must outlive this export settling).
+    const stale = () => current !== sitePages;
     exporting = true;
     masterStatus.classList.remove('wb-error');
     masterStatus.hidden = false;
     let done = 0;
     const progress = () => {
+      if (stale()) return;
       masterStatus.textContent = `Exporting ${done} of ${rows.length} page${rows.length === 1 ? '' : 's'}…`;
     };
     progress();
@@ -559,8 +565,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
       );
 
       // A library switch mid-export would otherwise download the previous
-      // library's pages under the new library's name.
-      if (current !== sitePages) { masterStatus.hidden = true; return; }
+      // library's pages under the new library's name. Nothing after this
+      // awaits, so passing here means the status line is still ours.
+      if (stale()) return;
 
       const ok = results.filter((r) => r && r.text !== undefined);
       const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
@@ -587,9 +594,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
         buildZip(entries), 'application/zip');
       masterStatus.hidden = true;
     } catch (err) {
-      // Same guard as the success path: a stale rejection must not paint the
-      // previous library's failure over the new one.
-      if (current !== sitePages) { masterStatus.hidden = true; return; }
+      // Same guard as the success path: a stale rejection must neither paint
+      // the previous library's failure over the new one nor clear it.
+      if (stale()) return;
       showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
     } finally {
       // The latch clears on every path, including a throw between the last

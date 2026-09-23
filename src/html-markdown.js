@@ -269,15 +269,49 @@ function serviceFor(profile) {
   return instances.get(profile);
 }
 
+// A backtick fence line, per CommonMark: three or more backticks, then an
+// info string that carries no backtick. A closing fence is backticks alone
+// and at least as long as its opener. Indentation is allowed because a fence
+// inside a list item is indented by the item's prefix.
+const FENCE_OPEN = /^[ \t]*(`{3,})[^`]*$/;
+const FENCE_CLOSE = /^[ \t]*(`{3,})[ \t]*$/;
+
+// Runs of blank lines collapse to one — but only outside fenced code. A code
+// block is exact text: every newline inside a fence is content (both the
+// barePre rule's fence and Turndown's own <pre><code> one). Walked line by
+// line, tracking the open fence's length, because one regex over the whole
+// document cannot tell a ``` inside a ```` fence from a real close.
+// An unclosed fence runs to the end, as CommonMark reads it.
+function squeezeBlankLines(markdown) {
+  const out = [];
+  let fence = 0;          // opener's backtick count while inside a fence
+  let lastBlank = false;
+  for (const line of markdown.split('\n')) {
+    if (fence) {
+      out.push(line);
+      const close = FENCE_CLOSE.exec(line);
+      if (close && close[1].length >= fence) fence = 0;
+      continue;
+    }
+    if (line === '') {
+      if (!lastBlank) out.push(line);
+      lastBlank = true;
+      continue;
+    }
+    lastBlank = false;
+    const open = FENCE_OPEN.exec(line);
+    if (open) fence = open[1].length;
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 // The whole API. `profile` names one of PROFILES; anything else throws rather
 // than silently converting under the wrong structural conventions.
 export function htmlToMarkdown(html, profile = 'listField') {
   const source = String(html ?? '');
   if (!source.trim()) return '';
-  return serviceFor(profile)
-    .turndown(source)
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return squeezeBlankLines(serviceFor(profile).turndown(source)).trim();
 }
 
 export const HTML_MARKDOWN_PROFILES = Object.keys(PROFILES);

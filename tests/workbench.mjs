@@ -1326,6 +1326,23 @@ await check('html-markdown: a bare <pre> is fenced in both profiles', async () =
       && htmlToMarkdown(coded, profile) === '```js\nconst a = 1;\nlet b = a * 2;\n```');
   }));
 
+// Was: the final blank-line squeeze ran over the whole document, fences
+// included, so two deliberate blank lines in a code block came out as one.
+await check('html-markdown: blank lines inside a fence survive; outside, they collapse', async () =>
+  page.evaluate(async () => {
+    const { htmlToMarkdown, HTML_MARKDOWN_PROFILES } = await import('/src/html-markdown.js');
+    const gap = '<div></div><div></div>';   // blank blocks: a run of blank lines
+    return HTML_MARKDOWN_PROFILES.every((profile) =>
+      htmlToMarkdown(`<p>x</p>${gap}<pre>a\n\n\nb</pre>${gap}<p>y</p>`, profile)
+        === 'x\n\n```\na\n\n\nb\n```\n\ny'
+      && htmlToMarkdown(`<p>x</p>${gap}<pre><code>a\n\n\nb</code></pre>${gap}<p>y</p>`, profile)
+        === 'x\n\n```\na\n\n\nb\n```\n\ny'
+      // A shorter ``` line inside a ```` fence does not close it.
+      && htmlToMarkdown('<pre><code>a\n```\n\n\nb</code></pre>', profile)
+        === '````\na\n```\n\n\nb\n````'
+      && htmlToMarkdown(`<p>x</p>${gap}${gap}<p>y</p>`, profile) === 'x\n\ny');
+  }));
+
 await check('html-markdown: link and image targets are valid CommonMark destinations', async () =>
   page.evaluate(async () => {
     const { htmlToMarkdown } = await import('/src/html-markdown.js');
@@ -2313,6 +2330,103 @@ await check('unit: a row export cannot complete against a library switched away 
     }
     return result;
   }));
+
+// The bulk-zip sibling, same plumbing. Was: a stale bulk export still owned
+// the shared status line — its progress ticks rewrote it and its stale exit
+// hid it — so library A settling erased a failure library B had just shown.
+// Run twice: A's held page resolving, and A's held page rejecting.
+await check('unit: a stale bulk export leaves the new library’s failure on screen', async () => {
+  const outcome = await bothPage.evaluate(async () => {
+    const { createPagesView } = await import('/src/workbench/views/pages.js');
+    const defer = () => {
+      let resolve; let reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    };
+    const LISTS = { items: [
+      { Id: 'A', Title: 'Alpha', BaseTemplate: 119, Hidden: false, RootFolder: { ServerRelativeUrl: '/x/SitePages' } },
+      { Id: 'B', Title: 'Beta', BaseTemplate: 119, Hidden: false, RootFolder: { ServerRelativeUrl: '/x/Beta' } },
+    ] };
+    const NAMES = { 'A:1': 'One.aspx', 'A:2': 'Two.aspx', 'B:1': 'Beta.aspx' };
+    const pageRow = (key) => {
+      const [lib, id] = key.split(':');
+      return { Id: Number(id), Title: NAMES[key], FileLeafRef: NAMES[key],
+        FileRef: `/x/${lib}/${NAMES[key]}`, FileDirRef: `/x/${lib}` };
+    };
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    const scenario = async (settleA) => {
+      const held = defer();   // A's Two.aspx: the bulk export waits on it
+      const client = {
+        webUrl: () => 'https://tenant/x',
+        get: async (path) => {
+          if (path === 'web') return { Title: 'Tenant X', Url: 'https://tenant/x' };
+          const m = path.match(/'(A|B)'.*\/items\((\d+)\)/);
+          if (!m) return {};
+          const key = `${m[1]}:${m[2]}`;
+          if (key === 'A:2') return held.promise;
+          if (key === 'B:1') throw new Error('Beta row failure');
+          return pageRow(key);
+        },
+        getAll: async (path) => {
+          if (path === 'web/lists') return LISTS;
+          if (path.includes('/fields')) return { items: [] };
+          if (path.includes("'A'")) return { items: [pageRow('A:1'), pageRow('A:2')], partial: false };
+          if (path.includes("'B'")) return { items: [pageRow('B:1')], partial: false };
+          return { items: [] };
+        },
+      };
+      const made = [];
+      const original = URL.createObjectURL;
+      URL.createObjectURL = (blob) => { made.push(blob.type); return original.call(URL, blob); };
+      const host = document.createElement('div');
+      document.body.append(host);
+      let view;
+      const navigate = (route) => { view.load(route); };
+      view = createPagesView({ client, navigate, updateRoute: () => {} });
+      host.append(view.el);
+      const until = async (cond) => {
+        for (let i = 0; i < 50 && !cond(); i += 1) await settle();
+        return cond();
+      };
+      const exportButton = (name) => [...host.querySelectorAll('.wb-table tbody tr')]
+        .find((tr) => tr.textContent.includes(name))?.querySelector('.wb-cell-export');
+      const shown = () => [...host.querySelectorAll('.wb-grid-status')]
+        .filter((s) => !s.hidden).map((s) => s.textContent).join(' | ');
+      try {
+        view.load({ view: 'pages' });
+        if (!await until(() => exportButton('Two.aspx'))) return 'A grid never loaded';
+        [...host.querySelectorAll('.wb-menu-item')]
+          .find((b) => b.textContent === 'Download content .zip (Markdown)').click();
+        // One.aspx lands, Two.aspx is held: A is part-way through.
+        if (!await until(() => shown().includes('Exporting 1 of 2'))) return `no progress: ${shown()}`;
+
+        const picker = host.querySelector('.wb-lib-picker');
+        picker.value = 'B';
+        picker.dispatchEvent(new Event('change'));
+        if (!await until(() => exportButton('Beta.aspx'))) return 'B grid never loaded';
+        exportButton('Beta.aspx').click();
+        if (!await until(() => shown().includes('Beta row failure'))) return `B failure not shown: ${shown()}`;
+
+        if (settleA === 'resolve') held.resolve(pageRow('A:2'));
+        else held.reject(new Error('Alpha late failure'));
+        for (let i = 0; i < 30; i += 1) await settle();
+        const after = shown();
+        if (!after.includes('Beta row failure')) return `B failure erased: ${after}`;
+        if (/Exporting|Alpha|nothing to export/.test(after)) return `A wrote to B: ${after}`;
+        if (made.length) return `downloads: ${made.join(',')}`;
+        return 'ok';
+      } finally {
+        URL.createObjectURL = original;
+        host.remove();
+      }
+    };
+
+    return `${await scenario('resolve')} / ${await scenario('reject')}`;
+  });
+  if (outcome !== 'ok / ok') console.log(`      ${outcome}`);
+  return outcome === 'ok / ok';
+});
 
 await check('both: a routed library that no longer exists fails closed', async () => {
   // Was: applyRouteLibrary() fell through silently when the routed library
