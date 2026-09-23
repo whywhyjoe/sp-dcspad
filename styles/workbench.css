@@ -228,6 +228,7 @@ html.dcspad-suspended #wb-mount { display: none; }
   position: sticky; top: 0; z-index: 1; cursor: pointer; user-select: none;
 }
 .wb-table th:hover { color: var(--fg); }
+.wb-table th.wb-action-col { cursor: default; }
 .wb-table th.is-sorted { color: var(--fg-strong); box-shadow: inset 0 -2px 0 var(--accent); }
 .wb-sort-arrow { color: var(--accent); font-size: 10px; }
 .wb-table td { color: var(--fg-row); }
@@ -586,6 +587,26 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-cell-link { color: var(--fg-mid); text-decoration: none; font-size: 13px; }
 .wb-cell-link:hover { color: var(--accent); }
 .wb-detail-settings { margin-left: auto; text-decoration: none; }
+
+/* Per-row export controls (Pages). Always visible, unlike the Files browser's
+   hover-revealed row actions: these name a choice between two content formats,
+   and a control you have to hover to discover is a control most people never
+   find. Quiet by default, accent on hover — the same register as .wb-cell-link
+   they compose with. */
+.wb-page-row-actions { display: inline-flex; gap: 6px; }
+.wb-cell-export {
+  background: none;
+  border: 1px solid var(--border-mid);
+  border-radius: 3px;
+  padding: 0 5px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+}
+.wb-cell-export:hover { border-color: var(--accent); }
+.wb-cell-export:disabled { opacity: 0.45; cursor: default; border-color: var(--border-mid); }
 
 /* URL cells render as real links (new tab) with a copy glyph beside them. */
 .wb-cell-url { color: inherit; text-decoration: none; }

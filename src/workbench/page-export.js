@@ -4,10 +4,16 @@
 //   Content (.md)  — for human reading and archiving. Human-oriented
 //     metadata on top (title, description, created, location), the merged
 //     content of every part in document order under a heading per part, then
-//     a standardized metadata block at the bottom. Text parts contribute
-//     their HTML (readable raw AND rendered by md viewers); other parts
-//     contribute whatever searchable text they carry. Parts with nothing to
-//     read are skipped — this artifact is for reading, not for inventory.
+//     a standardized metadata block at the bottom. Text parts are converted
+//     to real markdown — their own headings, lists, links and tables survive
+//     as markdown, not as the HTML a text web part happens to store; other
+//     parts contribute whatever searchable text they carry. Parts with
+//     nothing to read are skipped — this artifact is for reading, not for
+//     inventory. The conversion is good but not perfect, so the same document
+//     can be built in either of two content formats — 'markdown' (default) or
+//     'html', which emits the sanitized source markup the way this export did
+//     before conversion existed. Only the content blocks differ: the file is
+//     .md either way, so the metadata framing stays identical and diffable.
 //   Raw (.json)    — the list item plus the normalized controls, for later
 //     script analysis.
 //
@@ -17,6 +23,7 @@
 // Web parts, Structure and Raw tabs.
 
 import { webPartName, textOfControl, sanitizeHtml } from './canvas.js';
+import { htmlToMarkdown } from '../html-markdown.js';
 
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -34,11 +41,13 @@ export function pageLocation({ siteTitle, libraryTitle, fileDirRef, libraryRootP
 }
 
 // A text part is empty when it renders nothing a reader would see; markup that
-// only carries an image still counts as content.
+// only carries an image still counts as content. Judged after sanitizing: a
+// part that is only a <style> block has text to a DOM parser, none to a reader.
 function textPartIsEmpty(html) {
   if (!html) return true;
-  if (/<img\b/i.test(html)) return false;
-  return !textOfControl({ kind: 'text', innerHTML: html });
+  const safe = sanitizeHtml(html);
+  if (/<img\b/i.test(safe)) return false;
+  return !textOfControl({ kind: 'text', innerHTML: safe });
 }
 
 // Ordered reading model of a page's canvas:
@@ -82,18 +91,38 @@ export function contentParts(controls) {
   return { parts, unreadable };
 }
 
-function contentBlocks(controls, override) {
+// The two content formats. 'markdown' is the default and what a reader
+// wants; 'html' is the escape hatch for a page whose conversion came out
+// wrong, and reproduces exactly what this export emitted before conversion.
+export const CONTENT_FORMATS = ['markdown', 'html'];
+
+// A text part's body in the requested format.
+//
+// Sanitized either way: Script Editor payloads reach this path on classic
+// pages, and a permissive markdown renderer executes inline HTML. The exact
+// unsanitized payload stays available in the raw JSON export.
+//
+// Some markup has no markdown equivalent at all (a bare video embed, a styled
+// container with no text). Rather than drop content silently, a part that
+// converts to nothing falls back to the sanitized HTML — so 'markdown' is
+// lossless in the sense that matters: nothing disappears. The fallback only
+// hands back what sanitizeHtml kept, and that removes every element the
+// converter drops — so a dropped element can never re-enter this way.
+function textPartBody(html, format) {
+  const safe = sanitizeHtml(html);
+  if (format === 'html') return safe;
+  return htmlToMarkdown(safe, 'pageContent') || safe;
+}
+
+function contentBlocks(controls, override, format) {
   const { parts, unreadable } = override
     ? { parts: override, unreadable: 0 }
     : contentParts(controls);
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
-    // Sanitized: Script Editor payloads reach this path on classic pages,
-    // and a permissive markdown renderer executes inline HTML. The exact
-    // unsanitized payload stays available in the raw JSON export.
     blocks.push(part.kind === 'text'
-      ? sanitizeHtml(part.html)
+      ? textPartBody(part.html, format)
       : part.lines.map((t) => `- ${t}`).join('\n'));
   }
   if (unreadable) {
@@ -113,8 +142,13 @@ const METADATA_SKIP = new Set([
 
 export function buildContentExport({
   item = {}, controls = [], parts = null, siteTitle = '', webUrl = '',
-  libraryTitle = '', libraryRootPath = '',
+  libraryTitle = '', libraryRootPath = '', format = 'markdown',
 }) {
+  // An unrecognized format must not silently fall through to markdown and
+  // hand back a document the caller did not ask for.
+  if (!CONTENT_FORMATS.includes(format)) {
+    throw new Error(`Unknown page content format: ${format}`);
+  }
   const title = item.Title || item.FileLeafRef || 'Untitled page';
   const author = item.Author?.Title || '';
   const editor = item.Editor?.Title || '';
@@ -130,7 +164,10 @@ export function buildContentExport({
   const top = [`# ${title}`, ''];
   if (item.Description) top.push(`> ${String(item.Description).replace(/\r?\n/g, ' ')}`, '');
   top.push(`Created ${fmtDate(item.Created)}${author ? ` by ${author}` : ''}  `);
-  if (location) top.push(`Location: ${location}`, '');
+  if (location) top.push(`Location: ${location}`);
+  // The '---' below must stay a thematic break: without this blank line it
+  // would make the last front-matter line a setext heading instead.
+  top.push('');
 
   const meta = ['## Metadata', ''];
   const metaLine = (label, value) => {
@@ -158,7 +195,7 @@ export function buildContentExport({
     ...top,
     '---',
     '',
-    contentBlocks(controls, parts).join('\n\n'),
+    contentBlocks(controls, parts, format).join('\n\n'),
     '',
     '---',
     '',
@@ -180,13 +217,22 @@ export function exportFileStem(item) {
   return slug(name) || 'page';
 }
 
+// The one place a content file is named. Both formats are .md — the metadata
+// framing is identical and only the content blocks differ — so the stem is
+// what distinguishes them. Without that, exporting a page both ways into one
+// folder (or one zip) would silently overwrite, and a file on disk could not
+// say which it was.
+export function contentFileName(item, format = 'markdown') {
+  return `${exportFileStem(item)}-content${format === 'html' ? '-html' : ''}.md`;
+}
+
 // ---- bulk export (Pages grid → one zip of content markdown) ----
 
 // The path a page takes inside the bundle: its folder relative to the library
-// root, then the same '<stem>-content.md' the single-page export writes. Folder
+// root, then the same contentFileName() the single-page export writes. Folder
 // segments go through the same slug as the stem, so nothing reaches a zip entry
 // that could not appear in a file name the pad already produces.
-export function bundleEntryName(item, libraryRootPath) {
+export function bundleEntryName(item, libraryRootPath, format = 'markdown') {
   const dir = String(item?.FileDirRef || '');
   const root = String(libraryRootPath || '').replace(/\/+$/, '');
   let folder = '';
@@ -194,7 +240,7 @@ export function bundleEntryName(item, libraryRootPath) {
     folder = dir.slice(root.length).replace(/^\/+/, '');
   }
   const segments = folder.split('/').map(slug).filter(Boolean);
-  segments.push(`${exportFileStem(item || {})}-content.md`);
+  segments.push(contentFileName(item || {}, format));
   return segments.join('/');
 }
 

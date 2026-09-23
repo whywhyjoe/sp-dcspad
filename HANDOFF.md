@@ -553,6 +553,178 @@ into this list added those items to the separate, schema-only
 lookup, self-lookup rebound to the new id, user column and both DateOnly values
 correct, 0 failures. The column preview listed each written column and named
 the read-only ones.
+
+## SP Workbench: markdown page export (2026-09-22)
+
+Four pieces, shipped as one rebased set:
+
+- **Shallow-clone build guard.** `git rev-list --count HEAD` counts only what
+  a clone actually has, so a shallow checkout (cloud sessions, most CI)
+  stamped a build number far too low and — silently — going *backwards*
+  between releases (the bundle at `7b6ec4e` carried Build #94 against a true
+  count of 152). `tools/build-app.mjs` and `tools/build-workbench.mjs` now
+  refuse to stamp a build number from a shallow clone; `DCSPAD_BUILD_NUMBER`
+  still wins, so an explicit override (CI, a reproducible rebuild) is
+  unaffected.
+- **`src/html-markdown.js`** — the one HTML→Markdown converter, replacing
+  item-export.js's hand-rolled version. Backed by vendored Turndown
+  (`vendor/turndown/turndown.js`, `LICENSE`, `version.json`, produced by
+  `tools/build-vendor-turndown.mjs`, `npm run build:vendor` in `tools/`).
+  Vendored rather than bare-imported for the same reason as `vendor/monaco/`:
+  `src/` loads both bundled (esbuild) and unbundled (standalone `index.html`,
+  every test suite), and only a real relative import resolves in all three —
+  a bare `'turndown'` specifier would 404 outside the bundle. The build step
+  is a copy with provenance (a sha256 in `version.json`) plus a bare-import
+  guard and a default-export check, so a future Turndown release that adds
+  its own imports fails the build instead of silently breaking the
+  unbundled paths. Two named profiles so the two call sites cannot drift:
+  `listField` (used by `src/workbench/item-export.js` — headings flatten to
+  bold, tables join with `' | '`, because that document already owns `##`
+  for its per-item structure) and `pageContent` (used by
+  `src/workbench/page-export.js` — real ATX headings demoted to sit under
+  the web part's own `## <label>` heading, real markdown tables). An unknown
+  profile throws rather than converting under the wrong conventions.
+  Security posture is unchanged and slightly stronger: `sanitizeHtml` still
+  runs first, and Turndown is additionally configured to keep no raw HTML
+  and to drop `script`/`style`/`iframe`/`object`/`embed`/`form` outright, so
+  no tag reaches a permissive markdown renderer even if sanitization were
+  ever bypassed upstream. A part markdown genuinely cannot carry (a bare
+  video embed) falls back to its sanitized HTML rather than exporting an
+  empty section. It bundles into `dcspad.workbench.js` and rides the
+  existing `?v=` busting — no new `VERSIONED` entry in `boot.js` — and the
+  pad bundle tree-shakes it out entirely.
+- **Content format choice.** `buildContentExport(…, format)` in
+  `page-export.js` takes `'markdown'` (default; sanitized then converted) or
+  `'html'` (the sanitized source markup, exactly what this export emitted
+  before conversion existed — the escape hatch for a page the conversion got
+  wrong); an unrecognized format throws. Only the content blocks differ —
+  the metadata frame is byte-identical between the two — so `.md` files in
+  either format diff cleanly against each other. Both are `.md`, so
+  `contentFileName()` keeps the stems apart: `<stem>-content.md` and
+  `<stem>-content-html.md`, and the bulk zips likewise
+  `sp-pages-content.zip` / `sp-pages-content-html.zip`. `bundleEntryName()`
+  reuses `contentFileName()`, so a bundled page stays byte-identical to the
+  same page exported alone.
+- **Row-level export.** Every Pages grid row now carries always-visible
+  MD / HTML buttons (`src/workbench/views/pages.js`; the drilldown's pair
+  is labelled Export MD / Export HTML) that
+  export a single page without opening it first — deliberately not
+  hover-revealed like the Files browser's row actions, because these name a
+  choice between two formats and a control you must hover to discover is one
+  most people never find. They fetch the full item the same way the
+  drilldown and the zip do; a page the account cannot read goes through
+  `denied.js` in the neutral register like every other refused read. The
+  detail pane's single "Export content" button became the same MD/HTML
+  pair, and the grid's Export ▾ menu offers both zips ("Download content
+  .zip (Markdown)" / "(original HTML)").
+- **Action columns.** `src/workbench/grid.js` columns may now be marked
+  `action` — a column that exists only to host per-row controls, like the
+  new Pages row buttons. `src/workbench/export.js` drops `action` columns
+  from CSV/JSON/markdown exports; before this an action column contributed
+  an empty CSV column and a JSON key whose value was whatever the render
+  happened to key off.
+
+**Items vs. Pages bulk shape, written down on purpose.** A separate commit
+(`09b4236`) records why the Items tab's selection-scoped export and the
+Pages bulk zip differ in shape: Items exports selected rows as one merged
+`.md` (a list's rows are one dataset); Pages exports a zip of one `.md` per
+page (a page is its own document). Noted in `CLAUDE.md`'s `item-export.js`
+file-map entry because it very nearly got "fixed" into a false
+inconsistency.
+
+**The rebase.** This work started on `origin/claude/workbench-markdown-extraction-tpuu10`
+(2026-08-26) and was rebased onto `main` today, 2026-09-22, over the List
+Schema stages and the list Tools tab. Seven original commits collapsed to
+four source commits here, bundles regenerated from the rebased tree. The
+code merged clean; the only conflicts were the test-count paragraphs in
+`CLAUDE.md` and `tests/README.md`, resolved in favour of `main` and
+re-pinned in this docs pass.
+
+**Tests.** `workbench.mjs` grew from 133 (main) to **150** — 141 from the rebased branch (eight new
+checks: both html-markdown profiles' structural conventions, no markup
+surviving conversion, page text parts exporting as markdown, the HTML
+fallback for a part markdown can't carry, the html format's structural
+conventions and shared metadata frame, the naming split between the two
+`.md` stems, the row buttons exporting both formats without opening the
+page, the zip honouring the format, and action columns staying out of
+CSV/JSON/markdown) plus nine from the two Codex review rounds below. Six existing assertions were re-pinned to the new
+(correct) output, three per rebased commit: from the converter commit —
+`<br>` now emits a markdown hard break; a hostile `##` inside a list item's
+field value arrives escaped (`> \## forged item`) because Turndown
+neutralizes it at the source, on top of the existing blockquote; and the
+classic-page export carries converted markdown instead of embedded HTML;
+from the format/row-button commit — the detail pane's button pair, and two
+zip-menu locators that now match both entries. Every other suite is
+unchanged. **All 590 checks pass across the suites** after the rebase onto
+main (per-suite counts: `tests/README.md`).
+
+**Codex rounds (xo turns 14–15).** The review found no criticals and six
+real gaps, all closed in `0500a85`: a text part holding only a `<style>`
+block came back through the markdown fallback because `sanitizeHtml`
+never removed `style` (it now drops `style`/`noscript`, the converter's
+`DROPPED` list is exported and a check holds the sanitizer to covering
+it, and a style-only part is judged empty after sanitizing); a bare
+`<pre>` lost its fence (a `barePre` rule in both profiles, fence longer
+than any backtick run inside); link/image targets with spaces were
+invalid CommonMark destinations (control characters stripped before the
+scheme check, whitespace/`()<>` percent-encoded, backslash escaped rather
+than `%5C`); a row export could finish against a library switched away
+from (the zip path's identity guard now runs after every await and in
+the catch); an `action` column's header was a phantom "Sort by" control
+(inert now; the filter skips it); and the vendor guard missed
+side-effect/dynamic imports. The re-review accepted those and raised
+three more, closed in `8258110`: a stale bulk export still wrote to the
+shared status line (it now returns without touching it, progress ticks
+included), the trailing blank-line squeeze ate blank lines inside fenced
+code (`squeezeBlankLines()` walks fences per CommonMark and leaves their
+content alone), and the guard now strips comments — walking over
+strings, template and regex literals — before matching (a bare specifier
+inside a string still trips it: an accepted, loud false failure). Its
+"stale hosted bundle" high was the rebuild that followed (`aaaf26b`,
+Build #197). One Codex ask was declined: a JS module lexer for the guard
+would add a dependency for a copy step; the comment stripper covers the
+forms named without one.
+
+### Live-tenant checklist
+
+Run 2026-09-22 on the dev tenant, Build #197, headless Playwright against
+`SitePages/zz-markdown-export-test.aspx` (a page created for this with
+`Add-PnPPageTextPart`: h2/h3, ordered and unordered lists, a table with a
+`<thead>`, a link, bold/italic, a `<br>`). Evidence files stayed in the
+session scratchpad; the facts:
+
+- [x] Extract content exports markdown with real tables and no raw HTML:
+      `## Text`, h2 → `###`, h3 → `####`, `1.`/`2.`/`3.`, `-` bullets, a
+      five-line GFM table, `[link](https://example.com/handbook)`,
+      `**markdown**`, `*workstation*`, the `<br>` as a two-space hard
+      break; `<[a-z][^>]*>` finds nothing in the content section. The row
+      button and the drilldown button produce byte-identical files
+      (1621 bytes).
+- [x] The HTML format emits the sanitized HTML (h2/p/strong/a/h3/ol/li/em/
+      ul/table/thead/tr/th/tbody/td/br only; no script or style), and the
+      two files' metadata frames — header up to the first `---`, footer
+      from the `## Metadata` block — are byte-identical (408 + 726 bytes).
+- [x] Row MD / HTML buttons download without opening the page: the
+      sessionStorage route stays `{"view":"pages"}`, no detail pane mounts;
+      clicking the row itself does open the drilldown on Extract.
+      A denied page cannot be produced live — the account is a site
+      collection admin — so the neutral 403 register rests on the suite's
+      stubbed checks, not on a live read.
+- [x] `sp-pages-content.zip` (store-only) and `sp-pages-content-html.zip`
+      each carry the test page's entry byte-equal to the solo export of
+      the same format (Buffer.equals), plus the second selected page.
+- Console: no errors during the Pages view, exports or zips; the two
+  message-less `pageerror`s fire during SharePoint's own page load and
+  fire on a plain page too.
+- Observed, not a defect of the export: the page's `Description` is
+  SharePoint's auto-generated summary (words run together, truncated) and
+  the export quotes it verbatim.
+
+**Still open:** the other reserved seams (chunked file transfer for a
+library copy, etc. — see Roadmap below) are unchanged by this work. The
+`zz-markdown-export-test.aspx` page on the dev web is a keeper for future
+export checks (recorded in memory), not a leftover to delete.
+
 ## Roadmap (seams reserved)
 
 - **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).

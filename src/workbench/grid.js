@@ -88,6 +88,9 @@ function displayValue(row, col) {
 //             link?(v,row)=>href, copyable?, mono?, num?, width? }]
 // link renders the cell text as an anchor opening href in a new tab (URL
 // columns stay real URLs); copyable then adds a ⧉ copy glyph beside it.
+// action marks a column that exists only to host per-row controls: its cells
+// render like any other, but its header is inert (no sort, focus or resizer),
+// the filter skips it, and every export drops it (see export.js dataColumns).
 // exportName enables the toolbar export menu; it's the download file stem.
 // descriptor { path, options, webUrl } enables the "Copy as…" script menu.
 // toolbarExtras: a Node adopted into the toolbar after the filter box, so a
@@ -233,6 +236,13 @@ export function createGrid({
     th.dataset.colIndex = String(colIndex);
     if (col.num) th.classList.add('wb-num');
     if (col.width) th.style.width = col.width;
+    // Controls, not data: nothing to sort by or filter on, and a focusable
+    // "Sort by " header that silently orders rows by a hidden key is a trap.
+    if (col.action) {
+      th.classList.add('wb-action-col');
+      headRow.append(th);
+      return;
+    }
     th.tabIndex = 0;
     th.title = `Sort by ${col.label ?? col.key}`;
     const arrow = el('span', 'wb-sort-arrow', '');
@@ -266,7 +276,8 @@ export function createGrid({
 
   function matches(row) {
     if (!filterText) return true;
-    return columns.some((col) => displayValue(row, col).toLowerCase().includes(filterText));
+    return columns.some((col) => !col.action
+      && displayValue(row, col).toLowerCase().includes(filterText));
   }
 
   function compare(a, b) {
@@ -300,6 +311,7 @@ export function createGrid({
     for (const th of headRow.children) {
       if (th.dataset.colIndex === undefined) continue;
       const col = columns[Number(th.dataset.colIndex)];
+      if (col?.action) continue;
       const selected = Boolean(col && col.key === sortKey);
       th.querySelector('.wb-sort-arrow').textContent =
         selected ? (sortDir === 1 ? ' ▲' : ' ▼') : '';

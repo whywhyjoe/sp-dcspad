@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "189" : "dev";
-var injectedRevision = true ? "64a6d738" : "";
+var injectedBuild = true ? "197" : "dev";
+var injectedRevision = true ? "82581100" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -182,10 +182,10 @@ function buildTooltipFor(appName, info = APP_BUILD_INFO) {
 function logBuildInfo(appName, info = APP_BUILD_INFO) {
   console.info(`[${appName}] version ${info.version} \u2014 Build #${info.build}${info.revision ? ` (${info.revision})` : ""}`);
 }
-function applyWorkbenchBuildMarker(root = document) {
+function applyWorkbenchBuildMarker(root2 = document) {
   logBuildInfo("SP Workbench");
   const tooltip = buildTooltipFor("SP Workbench");
-  const logo = root.querySelector(".wb-logo");
+  const logo = root2.querySelector(".wb-logo");
   if (logo) {
     logo.title = tooltip;
     logo.setAttribute("aria-label", tooltip);
@@ -272,11 +272,11 @@ var MAX_CONCURRENT = 3;
 var RETRY_STATUSES = /* @__PURE__ */ new Set([429, 503]);
 function buildQuery({ select, expand, filter, orderby, top } = {}) {
   const parts = [];
-  const join2 = (v) => Array.isArray(v) ? v.join(",") : String(v);
-  if (select) parts.push(`$select=${join2(select)}`);
-  if (expand) parts.push(`$expand=${join2(expand)}`);
+  const join3 = (v) => Array.isArray(v) ? v.join(",") : String(v);
+  if (select) parts.push(`$select=${join3(select)}`);
+  if (expand) parts.push(`$expand=${join3(expand)}`);
   if (filter) parts.push(`$filter=${encodeURIComponent(String(filter))}`);
-  if (orderby) parts.push(`$orderby=${join2(orderby)}`);
+  if (orderby) parts.push(`$orderby=${join3(orderby)}`);
   if (top) parts.push(`$top=${top}`);
   return parts.length ? `?${parts.join("&")}` : "";
 }
@@ -423,13 +423,13 @@ function createSpRestClient({
         break;
       }
       items.push(...page);
-      const next = nextLinkOf(data);
-      if (!next) break;
+      const next2 = nextLinkOf(data);
+      if (!next2) break;
       if (items.length >= limit) {
         partial = true;
         break;
       }
-      url = next;
+      url = next2;
     }
     return { items, partial };
   }
@@ -2751,7 +2751,7 @@ var el = (tag, cls, text) => {
   return n;
 };
 function createShell({ mount, deps, views }) {
-  const instances = /* @__PURE__ */ new Map();
+  const instances2 = /* @__PURE__ */ new Map();
   let currentRoute = null;
   const rail = el("nav", "wb-rail");
   rail.setAttribute("aria-label", "Workbench sections");
@@ -2779,11 +2779,11 @@ function createShell({ mount, deps, views }) {
   }
   mount.append(rail, host);
   function instance(id) {
-    if (instances.has(id)) return instances.get(id);
+    if (instances2.has(id)) return instances2.get(id);
     const def = views.find((v) => v.id === id);
     if (!def) return null;
     const inst = def.create({ ...deps, navigate, updateRoute });
-    instances.set(id, inst);
+    instances2.set(id, inst);
     return inst;
   }
   function navigate(route) {
@@ -2819,8 +2819,8 @@ function createShell({ mount, deps, views }) {
     navigate(saved || { view: views[0].id });
   }
   function reset() {
-    for (const inst of instances.values()) inst.destroy?.();
-    instances.clear();
+    for (const inst of instances2.values()) inst.destroy?.();
+    instances2.clear();
     navigate({ view: currentRoute?.view || views[0].id });
   }
   return { navigate, updateRoute, restore, reset, getRoute: () => currentRoute };
@@ -2880,18 +2880,21 @@ function cellText(row, col) {
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
+var dataColumns = (columns) => (columns || []).filter((c) => !c.action);
 function toCsv(rows, columns) {
+  const cols = dataColumns(columns);
   const quote = (s) => /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-  const lines = [columns.map((c) => quote(String(c.label ?? c.key))).join(",")];
+  const lines = [cols.map((c) => quote(String(c.label ?? c.key))).join(",")];
   for (const row of rows) {
-    lines.push(columns.map((c) => quote(cellText(row, c))).join(","));
+    lines.push(cols.map((c) => quote(cellText(row, c))).join(","));
   }
   return `\uFEFF${lines.join("\r\n")}`;
 }
 function toJson(rows, columns) {
+  const cols = dataColumns(columns);
   const out = rows.map((row) => {
     const record = {};
-    for (const c of columns) {
+    for (const c of cols) {
       const v = cellValue(row, c);
       record[c.key] = v === void 0 ? null : v;
     }
@@ -2952,9 +2955,9 @@ function toPnpjs2({ path, options = {} }) {
       `// REST: /_api/${clean}${queryString(options)}`
     ].join("\n");
   }
-  const [re, root] = route;
+  const [re, root2] = route;
   const match = clean.match(re);
-  let chain = root(match?.[1], match);
+  let chain = root2(match?.[1], match);
   if (options.select) chain += `
   .select(${join(options.select).split(",").map((s) => `"${s}"`).join(", ")})`;
   if (options.expand) chain += `
@@ -3100,7 +3103,7 @@ function createGrid({
     const chosen = visible.filter((row) => selectedKeys.has(keyOf(row)));
     return chosen.length ? chosen : visible;
   };
-  const root = el2("div", "wb-grid");
+  const root2 = el2("div", "wb-grid");
   const toolbar = el2("div", "wb-grid-toolbar");
   const count = el2("span", "wb-grid-count", "\u2014");
   const filter = el2("input", "wb-grid-filter");
@@ -3194,6 +3197,11 @@ function createGrid({
     th.dataset.colIndex = String(colIndex);
     if (col.num) th.classList.add("wb-num");
     if (col.width) th.style.width = col.width;
+    if (col.action) {
+      th.classList.add("wb-action-col");
+      headRow.append(th);
+      return;
+    }
     th.tabIndex = 0;
     th.title = `Sort by ${col.label ?? col.key}`;
     const arrow = el2("span", "wb-sort-arrow", "");
@@ -3224,14 +3232,14 @@ function createGrid({
   notice.hidden = true;
   const status = el2("div", "wb-grid-status");
   status.hidden = true;
-  root.append(toolbar, notice, scroller, status);
+  root2.append(toolbar, notice, scroller, status);
   filter.addEventListener("input", () => {
     filterText = filter.value.trim().toLowerCase();
     render();
   });
   function matches(row) {
     if (!filterText) return true;
-    return columns.some((col) => displayValue(row, col).toLowerCase().includes(filterText));
+    return columns.some((col) => !col.action && displayValue(row, col).toLowerCase().includes(filterText));
   }
   function compare(a, b) {
     const col = columns.find((c) => c.key === sortKey);
@@ -3257,6 +3265,7 @@ function createGrid({
     for (const th of headRow.children) {
       if (th.dataset.colIndex === void 0) continue;
       const col = columns[Number(th.dataset.colIndex)];
+      if (col?.action) continue;
       const selected = Boolean(col && col.key === sortKey);
       th.querySelector(".wb-sort-arrow").textContent = selected ? sortDir === 1 ? " \u25B2" : " \u25BC" : "";
       th.classList.toggle("is-sorted", selected);
@@ -3356,10 +3365,10 @@ function createGrid({
     }
   }
   return {
-    el: root,
+    el: root2,
     actionsEl: actions,
-    setRows(next, { partial = false } = {}) {
-      rows = Array.isArray(next) ? next : [];
+    setRows(next2, { partial = false } = {}) {
+      rows = Array.isArray(next2) ? next2 : [];
       selectedKeys.clear();
       status.hidden = true;
       notice.hidden = !partial;
@@ -3385,6 +3394,890 @@ function createGrid({
     getColumns: () => columns
   };
 }
+
+// ../vendor/turndown/turndown.js
+function extend(destination) {
+  for (var i = 1; i < arguments.length; i++) {
+    var source = arguments[i];
+    for (var key2 in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key2)) destination[key2] = source[key2];
+    }
+  }
+  return destination;
+}
+function repeat(character, count) {
+  return Array(count + 1).join(character);
+}
+function trimLeadingNewlines(string) {
+  return string.replace(/^\n*/, "");
+}
+function trimTrailingNewlines(string) {
+  var indexEnd = string.length;
+  while (indexEnd > 0 && string[indexEnd - 1] === "\n") indexEnd--;
+  return string.substring(0, indexEnd);
+}
+function trimNewlines(string) {
+  return trimTrailingNewlines(trimLeadingNewlines(string));
+}
+var blockElements = ["ADDRESS", "ARTICLE", "ASIDE", "AUDIO", "BLOCKQUOTE", "BODY", "CANVAS", "CENTER", "DD", "DIR", "DIV", "DL", "DT", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "FRAMESET", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HGROUP", "HR", "HTML", "ISINDEX", "LI", "MAIN", "MENU", "NAV", "NOFRAMES", "NOSCRIPT", "OL", "OUTPUT", "P", "PRE", "SECTION", "TABLE", "TBODY", "TD", "TFOOT", "TH", "THEAD", "TR", "UL"];
+function isBlock(node) {
+  return is(node, blockElements);
+}
+var voidElements = ["AREA", "BASE", "BR", "COL", "COMMAND", "EMBED", "HR", "IMG", "INPUT", "KEYGEN", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"];
+function isVoid(node) {
+  return is(node, voidElements);
+}
+function hasVoid(node) {
+  return has(node, voidElements);
+}
+var meaningfulWhenBlankElements = ["A", "TABLE", "THEAD", "TBODY", "TFOOT", "TH", "TD", "IFRAME", "SCRIPT", "AUDIO", "VIDEO"];
+function isMeaningfulWhenBlank(node) {
+  return is(node, meaningfulWhenBlankElements);
+}
+function hasMeaningfulWhenBlank(node) {
+  return has(node, meaningfulWhenBlankElements);
+}
+function is(node, tagNames) {
+  return tagNames.indexOf(node.nodeName) >= 0;
+}
+function has(node, tagNames) {
+  return node.getElementsByTagName && tagNames.some(function(tagName) {
+    return node.getElementsByTagName(tagName).length;
+  });
+}
+var markdownEscapes = [[/\\/g, "\\\\"], [/\*/g, "\\*"], [/^-/g, "\\-"], [/^\+ /g, "\\+ "], [/^(=+)/g, "\\$1"], [/^(#{1,6}) /g, "\\$1 "], [/`/g, "\\`"], [/^~~~/g, "\\~~~"], [/\[/g, "\\["], [/\]/g, "\\]"], [/^>/g, "\\>"], [/_/g, "\\_"], [/^(\d+)\. /g, "$1\\. "]];
+function escapeMarkdown(string) {
+  return markdownEscapes.reduce(function(accumulator, escape) {
+    return accumulator.replace(escape[0], escape[1]);
+  }, string);
+}
+var rules = {};
+rules.paragraph = {
+  filter: "p",
+  replacement: function(content) {
+    return "\n\n" + content + "\n\n";
+  }
+};
+rules.lineBreak = {
+  filter: "br",
+  replacement: function(content, node, options) {
+    return options.br + "\n";
+  }
+};
+rules.heading = {
+  filter: ["h1", "h2", "h3", "h4", "h5", "h6"],
+  replacement: function(content, node, options) {
+    var hLevel = Number(node.nodeName.charAt(1));
+    if (options.headingStyle === "setext" && hLevel < 3) {
+      var underline = repeat(hLevel === 1 ? "=" : "-", content.length);
+      return "\n\n" + content + "\n" + underline + "\n\n";
+    } else {
+      return "\n\n" + repeat("#", hLevel) + " " + content + "\n\n";
+    }
+  }
+};
+rules.blockquote = {
+  filter: "blockquote",
+  replacement: function(content) {
+    content = trimNewlines(content).replace(/^/gm, "> ");
+    return "\n\n" + content + "\n\n";
+  }
+};
+rules.list = {
+  filter: ["ul", "ol"],
+  replacement: function(content, node) {
+    var parent = node.parentNode;
+    if (parent.nodeName === "LI" && parent.lastElementChild === node) {
+      return "\n" + content;
+    } else {
+      return "\n\n" + content + "\n\n";
+    }
+  }
+};
+rules.listItem = {
+  filter: "li",
+  replacement: function(content, node, options) {
+    var prefix = options.bulletListMarker + "   ";
+    var parent = node.parentNode;
+    if (parent.nodeName === "OL") {
+      var start = parent.getAttribute("start");
+      var index = Array.prototype.indexOf.call(parent.children, node);
+      prefix = (start ? Number(start) + index : index + 1) + ".  ";
+    }
+    var isParagraph = /\n$/.test(content);
+    content = trimNewlines(content) + (isParagraph ? "\n" : "");
+    content = content.replace(/\n/gm, "\n" + " ".repeat(prefix.length));
+    return prefix + content + (node.nextSibling ? "\n" : "");
+  }
+};
+rules.indentedCodeBlock = {
+  filter: function(node, options) {
+    return options.codeBlockStyle === "indented" && node.nodeName === "PRE" && node.firstChild && node.firstChild.nodeName === "CODE";
+  },
+  replacement: function(content, node, options) {
+    return "\n\n    " + node.firstChild.textContent.replace(/\n/g, "\n    ") + "\n\n";
+  }
+};
+rules.fencedCodeBlock = {
+  filter: function(node, options) {
+    return options.codeBlockStyle === "fenced" && node.nodeName === "PRE" && node.firstChild && node.firstChild.nodeName === "CODE";
+  },
+  replacement: function(content, node, options) {
+    var className = node.firstChild.getAttribute("class") || "";
+    var language = (className.match(/language-(\S+)/) || [null, ""])[1];
+    var code = node.firstChild.textContent;
+    var fenceChar = options.fence.charAt(0);
+    var fenceSize = 3;
+    var fenceInCodeRegex = new RegExp("^" + fenceChar + "{3,}", "gm");
+    var match;
+    while (match = fenceInCodeRegex.exec(code)) {
+      if (match[0].length >= fenceSize) {
+        fenceSize = match[0].length + 1;
+      }
+    }
+    var fence = repeat(fenceChar, fenceSize);
+    return "\n\n" + fence + language + "\n" + code.replace(/\n$/, "") + "\n" + fence + "\n\n";
+  }
+};
+rules.horizontalRule = {
+  filter: "hr",
+  replacement: function(content, node, options) {
+    return "\n\n" + options.hr + "\n\n";
+  }
+};
+rules.inlineLink = {
+  filter: function(node, options) {
+    return options.linkStyle === "inlined" && node.nodeName === "A" && node.getAttribute("href");
+  },
+  replacement: function(content, node) {
+    var href = escapeLinkDestination(node.getAttribute("href"));
+    var title = escapeLinkTitle(cleanAttribute(node.getAttribute("title")));
+    var titlePart = title ? ' "' + title + '"' : "";
+    return "[" + content + "](" + href + titlePart + ")";
+  }
+};
+rules.referenceLink = {
+  filter: function(node, options) {
+    return options.linkStyle === "referenced" && node.nodeName === "A" && node.getAttribute("href");
+  },
+  replacement: function(content, node, options) {
+    var href = escapeLinkDestination(node.getAttribute("href"));
+    var title = cleanAttribute(node.getAttribute("title"));
+    if (title) title = ' "' + escapeLinkTitle(title) + '"';
+    var replacement;
+    var reference;
+    switch (options.linkReferenceStyle) {
+      case "collapsed":
+        replacement = "[" + content + "][]";
+        reference = "[" + content + "]: " + href + title;
+        break;
+      case "shortcut":
+        replacement = "[" + content + "]";
+        reference = "[" + content + "]: " + href + title;
+        break;
+      default:
+        var id = this.references.length + 1;
+        replacement = "[" + content + "][" + id + "]";
+        reference = "[" + id + "]: " + href + title;
+    }
+    this.references.push(reference);
+    return replacement;
+  },
+  references: [],
+  append: function(options) {
+    var references = "";
+    if (this.references.length) {
+      references = "\n\n" + this.references.join("\n") + "\n\n";
+      this.references = [];
+    }
+    return references;
+  }
+};
+rules.emphasis = {
+  filter: ["em", "i"],
+  replacement: function(content, node, options) {
+    if (!content.trim()) return "";
+    return options.emDelimiter + content + options.emDelimiter;
+  }
+};
+rules.strong = {
+  filter: ["strong", "b"],
+  replacement: function(content, node, options) {
+    if (!content.trim()) return "";
+    return options.strongDelimiter + content + options.strongDelimiter;
+  }
+};
+rules.code = {
+  filter: function(node) {
+    var hasSiblings = node.previousSibling || node.nextSibling;
+    var isCodeBlock = node.parentNode.nodeName === "PRE" && !hasSiblings;
+    return node.nodeName === "CODE" && !isCodeBlock;
+  },
+  replacement: function(content) {
+    if (!content) return "";
+    content = content.replace(/\r?\n|\r/g, " ");
+    var extraSpace = /^`|^ .*?[^ ].* $|`$/.test(content) ? " " : "";
+    var delimiter = "`";
+    var matches = content.match(/`+/gm) || [];
+    while (matches.indexOf(delimiter) !== -1) delimiter = delimiter + "`";
+    return delimiter + extraSpace + content + extraSpace + delimiter;
+  }
+};
+rules.image = {
+  filter: "img",
+  replacement: function(content, node) {
+    var alt = escapeMarkdown(cleanAttribute(node.getAttribute("alt")));
+    var src = escapeLinkDestination(node.getAttribute("src") || "");
+    var title = cleanAttribute(node.getAttribute("title"));
+    var titlePart = title ? ' "' + escapeLinkTitle(title) + '"' : "";
+    return src ? "![" + alt + "](" + src + titlePart + ")" : "";
+  }
+};
+function cleanAttribute(attribute) {
+  return attribute ? attribute.replace(/(\n+\s*)+/g, "\n") : "";
+}
+function escapeLinkDestination(destination) {
+  var escaped = destination.replace(/([<>()])/g, "\\$1");
+  return escaped.indexOf(" ") >= 0 ? "<" + escaped + ">" : escaped;
+}
+function escapeLinkTitle(title) {
+  return title.replace(/"/g, '\\"');
+}
+function Rules(options) {
+  this.options = options;
+  this._keep = [];
+  this._remove = [];
+  this.blankRule = {
+    replacement: options.blankReplacement
+  };
+  this.keepReplacement = options.keepReplacement;
+  this.defaultRule = {
+    replacement: options.defaultReplacement
+  };
+  this.array = [];
+  for (var key2 in options.rules) this.array.push(options.rules[key2]);
+}
+Rules.prototype = {
+  add: function(key2, rule) {
+    this.array.unshift(rule);
+  },
+  keep: function(filter) {
+    this._keep.unshift({
+      filter,
+      replacement: this.keepReplacement
+    });
+  },
+  remove: function(filter) {
+    this._remove.unshift({
+      filter,
+      replacement: function() {
+        return "";
+      }
+    });
+  },
+  forNode: function(node) {
+    if (node.isBlank) return this.blankRule;
+    var rule;
+    if (rule = findRule(this.array, node, this.options)) return rule;
+    if (rule = findRule(this._keep, node, this.options)) return rule;
+    if (rule = findRule(this._remove, node, this.options)) return rule;
+    return this.defaultRule;
+  },
+  forEach: function(fn) {
+    for (var i = 0; i < this.array.length; i++) fn(this.array[i], i);
+  }
+};
+function findRule(rules2, node, options) {
+  for (var i = 0; i < rules2.length; i++) {
+    var rule = rules2[i];
+    if (filterValue(rule, node, options)) return rule;
+  }
+  return void 0;
+}
+function filterValue(rule, node, options) {
+  var filter = rule.filter;
+  if (typeof filter === "string") {
+    if (filter === node.nodeName.toLowerCase()) return true;
+  } else if (Array.isArray(filter)) {
+    if (filter.indexOf(node.nodeName.toLowerCase()) > -1) return true;
+  } else if (typeof filter === "function") {
+    if (filter.call(rule, node, options)) return true;
+  } else {
+    throw new TypeError("`filter` needs to be a string, array, or function");
+  }
+}
+function collapseWhitespace(options) {
+  var element = options.element;
+  var isBlock2 = options.isBlock;
+  var isVoid2 = options.isVoid;
+  var isPre = options.isPre || function(node2) {
+    return node2.nodeName === "PRE";
+  };
+  if (!element.firstChild || isPre(element)) return;
+  var prevText = null;
+  var keepLeadingWs = false;
+  var prev = null;
+  var node = next(prev, element, isPre);
+  while (node !== element) {
+    if (node.nodeType === 3 || node.nodeType === 4) {
+      var text = node.data.replace(/[ \r\n\t]+/g, " ");
+      if ((!prevText || / $/.test(prevText.data)) && !keepLeadingWs && text[0] === " ") {
+        text = text.substr(1);
+      }
+      if (!text) {
+        node = remove(node);
+        continue;
+      }
+      node.data = text;
+      prevText = node;
+    } else if (node.nodeType === 1) {
+      if (isBlock2(node) || node.nodeName === "BR") {
+        if (prevText) {
+          prevText.data = prevText.data.replace(/ $/, "");
+        }
+        prevText = null;
+        keepLeadingWs = false;
+      } else if (isVoid2(node) || isPre(node)) {
+        prevText = null;
+        keepLeadingWs = true;
+      } else if (prevText) {
+        keepLeadingWs = false;
+      }
+    } else {
+      node = remove(node);
+      continue;
+    }
+    var nextNode = next(prev, node, isPre);
+    prev = node;
+    node = nextNode;
+  }
+  if (prevText) {
+    prevText.data = prevText.data.replace(/ $/, "");
+    if (!prevText.data) {
+      remove(prevText);
+    }
+  }
+}
+function remove(node) {
+  var next2 = node.nextSibling || node.parentNode;
+  node.parentNode.removeChild(node);
+  return next2;
+}
+function next(prev, current, isPre) {
+  if (prev && prev.parentNode === current || isPre(current)) {
+    return current.nextSibling || current.parentNode;
+  }
+  return current.firstChild || current.nextSibling || current.parentNode;
+}
+var root = typeof window !== "undefined" ? window : {};
+function canParseHTMLNatively() {
+  var Parser = root.DOMParser;
+  var canParse = false;
+  try {
+    if (new Parser().parseFromString("", "text/html")) {
+      canParse = true;
+    }
+  } catch (e) {
+  }
+  return canParse;
+}
+function createHTMLParser() {
+  var Parser = function() {
+  };
+  {
+    if (shouldUseActiveX()) {
+      Parser.prototype.parseFromString = function(string) {
+        var doc = new window.ActiveXObject("htmlfile");
+        doc.designMode = "on";
+        doc.open();
+        doc.write(string);
+        doc.close();
+        return doc;
+      };
+    } else {
+      Parser.prototype.parseFromString = function(string) {
+        var doc = document.implementation.createHTMLDocument("");
+        doc.open();
+        doc.write(string);
+        doc.close();
+        return doc;
+      };
+    }
+  }
+  return Parser;
+}
+function shouldUseActiveX() {
+  var useActiveX = false;
+  try {
+    document.implementation.createHTMLDocument("").open();
+  } catch (e) {
+    if (root.ActiveXObject) useActiveX = true;
+  }
+  return useActiveX;
+}
+var HTMLParser = canParseHTMLNatively() ? root.DOMParser : createHTMLParser();
+function RootNode(input, options) {
+  var root2;
+  if (typeof input === "string") {
+    var doc = htmlParser().parseFromString(
+      // DOM parsers arrange elements in the <head> and <body>.
+      // Wrapping in a custom element ensures elements are reliably arranged in
+      // a single element.
+      '<x-turndown id="turndown-root">' + input + "</x-turndown>",
+      "text/html"
+    );
+    root2 = doc.getElementById("turndown-root");
+  } else {
+    root2 = input.cloneNode(true);
+  }
+  collapseWhitespace({
+    element: root2,
+    isBlock,
+    isVoid,
+    isPre: options.preformattedCode ? isPreOrCode : null
+  });
+  return root2;
+}
+var _htmlParser;
+function htmlParser() {
+  _htmlParser = _htmlParser || new HTMLParser();
+  return _htmlParser;
+}
+function isPreOrCode(node) {
+  return node.nodeName === "PRE" || node.nodeName === "CODE";
+}
+function Node(node, options) {
+  node.isBlock = isBlock(node);
+  node.isCode = node.nodeName === "CODE" || node.parentNode.isCode;
+  node.isBlank = isBlank(node);
+  node.flankingWhitespace = flankingWhitespace(node, options);
+  return node;
+}
+function isBlank(node) {
+  return !isVoid(node) && !isMeaningfulWhenBlank(node) && /^\s*$/i.test(node.textContent) && !hasVoid(node) && !hasMeaningfulWhenBlank(node);
+}
+function flankingWhitespace(node, options) {
+  if (node.isBlock || options.preformattedCode && node.isCode) {
+    return {
+      leading: "",
+      trailing: ""
+    };
+  }
+  var edges = edgeWhitespace(node.textContent);
+  if (edges.leadingAscii && isFlankedByWhitespace("left", node, options)) {
+    edges.leading = edges.leadingNonAscii;
+  }
+  if (edges.trailingAscii && isFlankedByWhitespace("right", node, options)) {
+    edges.trailing = edges.trailingNonAscii;
+  }
+  return {
+    leading: edges.leading,
+    trailing: edges.trailing
+  };
+}
+function edgeWhitespace(string) {
+  var m = string.match(/^(([ \t\r\n]*)(\s*))(?:(?=\S)[\s\S]*\S)?((\s*?)([ \t\r\n]*))$/);
+  return {
+    leading: m[1],
+    // whole string for whitespace-only strings
+    leadingAscii: m[2],
+    leadingNonAscii: m[3],
+    trailing: m[4],
+    // empty for whitespace-only strings
+    trailingNonAscii: m[5],
+    trailingAscii: m[6]
+  };
+}
+function isFlankedByWhitespace(side, node, options) {
+  var sibling;
+  var regExp;
+  var isFlanked;
+  if (side === "left") {
+    sibling = node.previousSibling;
+    regExp = / $/;
+  } else {
+    sibling = node.nextSibling;
+    regExp = /^ /;
+  }
+  if (sibling) {
+    if (sibling.nodeType === 3) {
+      isFlanked = regExp.test(sibling.nodeValue);
+    } else if (options.preformattedCode && sibling.nodeName === "CODE") {
+      isFlanked = false;
+    } else if (sibling.nodeType === 1 && !isBlock(sibling)) {
+      isFlanked = regExp.test(sibling.textContent);
+    }
+  }
+  return isFlanked;
+}
+var reduce = Array.prototype.reduce;
+function TurndownService(options) {
+  if (!(this instanceof TurndownService)) return new TurndownService(options);
+  var defaults = {
+    rules,
+    headingStyle: "setext",
+    hr: "* * *",
+    bulletListMarker: "*",
+    codeBlockStyle: "indented",
+    fence: "```",
+    emDelimiter: "_",
+    strongDelimiter: "**",
+    linkStyle: "inlined",
+    linkReferenceStyle: "full",
+    br: "  ",
+    preformattedCode: false,
+    blankReplacement: function(content, node) {
+      return node.isBlock ? "\n\n" : "";
+    },
+    keepReplacement: function(content, node) {
+      return node.isBlock ? "\n\n" + node.outerHTML + "\n\n" : node.outerHTML;
+    },
+    defaultReplacement: function(content, node) {
+      return node.isBlock ? "\n\n" + content + "\n\n" : content;
+    }
+  };
+  this.options = extend({}, defaults, options);
+  this.rules = new Rules(this.options);
+}
+TurndownService.prototype = {
+  /**
+   * The entry point for converting a string or DOM node to Markdown
+   * @public
+   * @param {String|HTMLElement} input The string or DOM node to convert
+   * @returns A Markdown representation of the input
+   * @type String
+   */
+  turndown: function(input) {
+    if (!canConvert(input)) {
+      throw new TypeError(input + " is not a string, or an element/document/fragment node.");
+    }
+    if (input === "") return "";
+    var output = process.call(this, new RootNode(input, this.options));
+    return postProcess.call(this, output);
+  },
+  /**
+   * Add one or more plugins
+   * @public
+   * @param {Function|Array} plugin The plugin or array of plugins to add
+   * @returns The Turndown instance for chaining
+   * @type Object
+   */
+  use: function(plugin) {
+    if (Array.isArray(plugin)) {
+      for (var i = 0; i < plugin.length; i++) this.use(plugin[i]);
+    } else if (typeof plugin === "function") {
+      plugin(this);
+    } else {
+      throw new TypeError("plugin must be a Function or an Array of Functions");
+    }
+    return this;
+  },
+  /**
+   * Adds a rule
+   * @public
+   * @param {String} key The unique key of the rule
+   * @param {Object} rule The rule
+   * @returns The Turndown instance for chaining
+   * @type Object
+   */
+  addRule: function(key2, rule) {
+    this.rules.add(key2, rule);
+    return this;
+  },
+  /**
+   * Keep a node (as HTML) that matches the filter
+   * @public
+   * @param {String|Array|Function} filter The unique key of the rule
+   * @returns The Turndown instance for chaining
+   * @type Object
+   */
+  keep: function(filter) {
+    this.rules.keep(filter);
+    return this;
+  },
+  /**
+   * Remove a node that matches the filter
+   * @public
+   * @param {String|Array|Function} filter The unique key of the rule
+   * @returns The Turndown instance for chaining
+   * @type Object
+   */
+  remove: function(filter) {
+    this.rules.remove(filter);
+    return this;
+  },
+  /**
+   * Escapes Markdown syntax
+   * @public
+   * @param {String} string The string to escape
+   * @returns A string with Markdown syntax escaped
+   * @type String
+   */
+  escape: function(string) {
+    return escapeMarkdown(string);
+  }
+};
+function process(parentNode) {
+  var self = this;
+  return reduce.call(parentNode.childNodes, function(output, node) {
+    node = new Node(node, self.options);
+    var replacement = "";
+    if (node.nodeType === 3) {
+      replacement = node.isCode ? node.nodeValue : self.escape(node.nodeValue);
+    } else if (node.nodeType === 1) {
+      replacement = replacementForNode.call(self, node);
+    }
+    return join2(output, replacement);
+  }, "");
+}
+function postProcess(output) {
+  var self = this;
+  this.rules.forEach(function(rule) {
+    if (typeof rule.append === "function") {
+      output = join2(output, rule.append(self.options));
+    }
+  });
+  return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
+}
+function replacementForNode(node) {
+  var rule = this.rules.forNode(node);
+  var content = process.call(this, node);
+  var whitespace = node.flankingWhitespace;
+  if (whitespace.leading || whitespace.trailing) content = content.trim();
+  return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
+}
+function join2(output, replacement) {
+  var s1 = trimTrailingNewlines(output);
+  var s2 = trimLeadingNewlines(replacement);
+  var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
+  var separator = "\n\n".substring(0, nls);
+  return s1 + separator + s2;
+}
+function canConvert(input) {
+  return input != null && (typeof input === "string" || input.nodeType && (input.nodeType === 1 || input.nodeType === 9 || input.nodeType === 11));
+}
+
+// ../src/html-markdown.js
+var DROPPED = Object.freeze(
+  ["script", "style", "noscript", "iframe", "object", "embed", "form"]
+);
+var BASE_OPTIONS = {
+  headingStyle: "atx",
+  hr: "---",
+  bulletListMarker: "-",
+  codeBlockStyle: "fenced",
+  emDelimiter: "*",
+  strongDelimiter: "**",
+  linkStyle: "inlined",
+  // Anything Turndown has no rule for contributes its text, never its markup.
+  // This is what keeps '<div onclick=…>' from reaching a markdown renderer.
+  blankReplacement: (content, node) => node.isBlock ? "\n\n" : "",
+  keepReplacement: (content) => content,
+  defaultReplacement: (content, node) => node.isBlock ? `
+
+${content}
+
+` : content
+};
+var cleanTarget = (url) => String(url ?? "").replace(/[\x00-\x1F\x7F]+/g, "").trim();
+var isSafeHref = (href) => Boolean(href) && !/^javascript:/i.test(href);
+var percent = (c) => c.charCodeAt(0) < 128 ? `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}` : encodeURIComponent(c);
+var encodeTarget = (url) => url.replace(/\\/g, "\\\\").replace(/[\s()<>]/g, percent);
+var fenceFor = (text) => "`".repeat(Math.max(
+  3,
+  ...(text.match(/`+/g) || []).map((run) => run.length + 1)
+));
+var listStart = (raw) => /^\s*\d{1,9}\s*$/.test(raw ?? "") ? Number(raw) : 1;
+var cellText2 = (turndown, cell) => {
+  const clone = cell.cloneNode(true);
+  for (const nested of clone.querySelectorAll("table")) {
+    nested.replaceWith(clone.ownerDocument.createTextNode(
+      ` ${(nested.textContent || "").replace(/\s+/g, " ").trim()} `
+    ));
+  }
+  return turndown.turndown(clone.innerHTML || "").replace(/\s+/g, " ").trim();
+};
+var ownRows = (table2) => [...table2.querySelectorAll(
+  ":scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr"
+)];
+function addSharedRules(turndown) {
+  turndown.remove(DROPPED);
+  turndown.addRule("tightListItem", {
+    filter: "li",
+    replacement: (content, node, options) => {
+      const parent = node.parentNode;
+      let prefix = `${options.bulletListMarker} `;
+      if (parent.nodeName === "OL") {
+        const index = [...parent.children].indexOf(node);
+        prefix = `${listStart(parent.getAttribute("start")) + index}. `;
+      }
+      const body = content.replace(/^\n+/, "").replace(/\n+$/, "\n").replace(/\n/gm, `
+${" ".repeat(prefix.length)}`);
+      return prefix + body + (node.nextSibling && !/\n$/.test(body) ? "\n" : "");
+    }
+  });
+  turndown.addRule("safeLink", {
+    filter: (node) => node.nodeName === "A" && node.getAttribute("href"),
+    replacement: (content, node) => {
+      const href = cleanTarget(node.getAttribute("href"));
+      const text = content.trim();
+      if (!isSafeHref(href)) return text;
+      return `[${text || turndown.escape(href)}](${encodeTarget(href)})`;
+    }
+  });
+  turndown.addRule("safeImage", {
+    filter: "img",
+    replacement: (_content, node) => {
+      const src = cleanTarget(node.getAttribute("src"));
+      if (!isSafeHref(src)) return "";
+      const alt = (node.getAttribute("alt") || "").replace(/\s+/g, " ").trim();
+      return `![${turndown.escape(alt)}](${encodeTarget(src)})`;
+    }
+  });
+  turndown.addRule("barePre", {
+    filter: (node) => node.nodeName === "PRE" && !(node.firstChild && node.firstChild.nodeName === "CODE"),
+    replacement: (_content, node) => {
+      const clone = node.cloneNode(true);
+      for (const br of clone.querySelectorAll("br")) br.replaceWith("\n");
+      const code = (clone.textContent || "").replace(/\s+$/, "");
+      if (!code) return "";
+      const fence = fenceFor(code);
+      return `
+
+${fence}
+${code}
+${fence}
+
+`;
+    }
+  });
+  turndown.addRule("spRichTextWrapper", {
+    filter: (node) => node.nodeName === "DIV" && /(^|\s)(ExternalClass[0-9A-F]+|ms-rtestate-(field|read|write))(\s|$)/.test(
+      node.getAttribute("class") || ""
+    ),
+    replacement: (content) => content.trim() ? `
+
+${content.trim()}
+
+` : ""
+  });
+}
+function addBoldHeadings(turndown) {
+  turndown.addRule("headingAsBold", {
+    filter: ["h1", "h2", "h3", "h4", "h5", "h6"],
+    replacement: (content) => {
+      const core = content.replace(/\s+/g, " ").trim();
+      return core ? `
+
+**${core}**
+
+` : "";
+    }
+  });
+}
+function addDemotedHeadings(turndown, base) {
+  turndown.addRule("headingDemoted", {
+    filter: ["h1", "h2", "h3", "h4", "h5", "h6"],
+    replacement: (content, node) => {
+      const core = content.replace(/\s+/g, " ").trim();
+      if (!core) return "";
+      const level = Number(node.nodeName.charAt(1));
+      const depth = Math.min(6, Math.max(base, base + level - 2));
+      return `
+
+${"#".repeat(depth)} ${core}
+
+`;
+    }
+  });
+}
+function addPipeTables(turndown) {
+  turndown.addRule("pipeTable", {
+    filter: "table",
+    replacement: (_content, node) => {
+      const rows = ownRows(node).map((tr) => [...tr.children].map((td) => cellText2(turndown, td)).join(" | "));
+      return rows.length ? `
+
+${rows.join("\n")}
+
+` : "";
+    }
+  });
+}
+function addMarkdownTables(turndown) {
+  turndown.addRule("markdownTable", {
+    filter: "table",
+    replacement: (_content, node) => {
+      const rows = ownRows(node).map((tr) => [...tr.children].map((td) => cellText2(turndown, td).replace(/\|/g, "\\|")));
+      if (!rows.length) return "";
+      const width = Math.max(...rows.map((row) => row.length));
+      const line = (cells) => `| ${[
+        ...cells,
+        ...Array(Math.max(0, width - cells.length)).fill("")
+      ].join(" | ")} |`;
+      const separator = `| ${Array(width).fill("---").join(" | ")} |`;
+      return `
+
+${[line(rows[0]), separator, ...rows.slice(1).map(line)].join("\n")}
+
+`;
+    }
+  });
+}
+var PROFILES = {
+  listField: (turndown) => {
+    addSharedRules(turndown);
+    addBoldHeadings(turndown);
+    addPipeTables(turndown);
+  },
+  pageContent: (turndown) => {
+    addSharedRules(turndown);
+    addDemotedHeadings(turndown, 3);
+    addMarkdownTables(turndown);
+  }
+};
+var instances = /* @__PURE__ */ new Map();
+function serviceFor(profile) {
+  if (!instances.has(profile)) {
+    const configure = PROFILES[profile];
+    if (!configure) throw new Error(`Unknown html-markdown profile: ${profile}`);
+    const turndown = new TurndownService(BASE_OPTIONS);
+    configure(turndown);
+    instances.set(profile, turndown);
+  }
+  return instances.get(profile);
+}
+var FENCE_OPEN = /^[ \t]*(`{3,})[^`]*$/;
+var FENCE_CLOSE = /^[ \t]*(`{3,})[ \t]*$/;
+function squeezeBlankLines(markdown) {
+  const out = [];
+  let fence = 0;
+  let lastBlank = false;
+  for (const line of markdown.split("\n")) {
+    if (fence) {
+      out.push(line);
+      const close = FENCE_CLOSE.exec(line);
+      if (close && close[1].length >= fence) fence = 0;
+      continue;
+    }
+    if (line === "") {
+      if (!lastBlank) out.push(line);
+      lastBlank = true;
+      continue;
+    }
+    lastBlank = false;
+    const open = FENCE_OPEN.exec(line);
+    if (open) fence = open[1].length;
+    out.push(line);
+  }
+  return out.join("\n");
+}
+function htmlToMarkdown(html, profile = "listField") {
+  const source = String(html ?? "");
+  if (!source.trim()) return "";
+  return squeezeBlankLines(serviceFor(profile).turndown(source)).trim();
+}
+var HTML_MARKDOWN_PROFILES = Object.keys(PROFILES);
 
 // ../src/workbench/item-export.js
 var EXCLUDED_TYPES = /* @__PURE__ */ new Set(["Computed", "Attachments"]);
@@ -3501,115 +4394,6 @@ function attachmentLinks(item2, origin = "") {
     const name = String(f?.FileName || rel.split("/").pop() || rel);
     return mdLink(name, `${origin}${encodeSpPath2(rel)}`);
   }).filter(Boolean);
-}
-var BLOCK_TAGS = /* @__PURE__ */ new Set([
-  "p",
-  "div",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "ul",
-  "ol",
-  "table",
-  "blockquote",
-  "pre",
-  "section",
-  "article",
-  "header",
-  "footer",
-  "hr"
-]);
-var collapse = (s) => s.replace(/[ \t]*\n[ \t]*/g, "\n").replace(/[ \t]{2,}/g, " ").replace(/^[ \t]+|[ \t]+$/g, "").replace(/^\n+|\n+$/g, "");
-function inlineChildren(node) {
-  let out = "";
-  for (const child of node.childNodes) out += inlineNode(child);
-  return out;
-}
-function inlineNode(node) {
-  if (node.nodeType === 3) return String(node.nodeValue).replace(/\s+/g, " ");
-  if (node.nodeType !== 1) return "";
-  const tag = node.tagName.toLowerCase();
-  if (tag === "br") return "\n";
-  if (tag === "script" || tag === "style") return "";
-  if (BLOCK_TAGS.has(tag)) {
-    const block = blockNode(node);
-    return block ? `
-${block}
-` : "";
-  }
-  const body = inlineChildren(node);
-  const core = body.trim();
-  if (tag === "strong" || tag === "b") return core ? `**${core}**` : "";
-  if (tag === "em" || tag === "i") return core ? `*${core}*` : "";
-  if (tag === "a") {
-    const href = String(node.getAttribute("href") || "");
-    const label = core || href;
-    return href && !/^javascript:/i.test(href) ? mdLink(label, href) : label;
-  }
-  if (tag === "img") {
-    const src = String(node.getAttribute("src") || "");
-    return src ? `!${mdLink(node.getAttribute("alt") || "", src)}` : "";
-  }
-  return body;
-}
-function blockNode(node) {
-  const tag = node.tagName.toLowerCase();
-  if (tag === "hr") return "---";
-  if (tag === "ul" || tag === "ol") {
-    const items = [...node.children].filter((c) => c.tagName?.toLowerCase() === "li");
-    return items.map((li, i) => `${tag === "ol" ? `${i + 1}.` : "-"} ${collapse(inlineChildren(li)).replace(/\n+/g, " ")}`).join("\n");
-  }
-  if (/^h[1-6]$/.test(tag)) {
-    const core = collapse(inlineChildren(node)).replace(/\n+/g, " ");
-    return core ? `**${core}**` : "";
-  }
-  if (tag === "blockquote") {
-    return blockChildren(node).split("\n").map((l) => `> ${l}`).join("\n");
-  }
-  if (tag === "pre") {
-    return `\`\`\`
-${String(node.textContent).replace(/\s+$/, "")}
-\`\`\``;
-  }
-  if (tag === "table") {
-    return [...node.querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => collapse(inlineChildren(td)).replace(/\n+/g, " ")).join(" | ")).join("\n");
-  }
-  return blockChildren(node);
-}
-function blockChildren(container) {
-  const parts = [];
-  let run = "";
-  const flush = () => {
-    const text = collapse(run);
-    if (text) parts.push(text);
-    run = "";
-  };
-  for (const child of container.childNodes) {
-    const tag = child.nodeType === 1 ? child.tagName.toLowerCase() : "";
-    if (BLOCK_TAGS.has(tag)) {
-      flush();
-      const block = blockNode(child);
-      if (block) parts.push(block);
-    } else {
-      run += inlineNode(child);
-    }
-  }
-  flush();
-  return parts.join("\n\n");
-}
-var sharedParser = null;
-function htmlToMarkdown(html) {
-  const source = String(html ?? "");
-  if (!source.trim()) return "";
-  if (typeof DOMParser === "undefined") {
-    return source.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  }
-  sharedParser = sharedParser || new DOMParser();
-  const doc = sharedParser.parseFromString(source, "text/html");
-  return blockChildren(doc.body).replace(/\n{3,}/g, "\n\n").trim();
 }
 function buildItemsMarkdown({
   listTitle = "List",
@@ -3985,8 +4769,8 @@ function looksLikeSpObject(node) {
   if (node?.t !== "obj") return false;
   if (key(node, "__metadata")) return true;
   const names = keyNames(node);
-  const has = (...ks) => ks.every((k) => names.includes(k));
-  return has("InternalName", "TypeAsString") || has("BaseTemplate", "EntityTypeName") || has("ServerRelativeUrl", "WebTemplate") || has("LoginName", "PrincipalType") || names.includes("odata.type") || names.includes("@odata.type");
+  const has2 = (...ks) => ks.every((k) => names.includes(k));
+  return has2("InternalName", "TypeAsString") || has2("BaseTemplate", "EntityTypeName") || has2("ServerRelativeUrl", "WebTemplate") || has2("LoginName", "PrincipalType") || names.includes("odata.type") || names.includes("@odata.type");
 }
 function spType(node) {
   const meta = key(node, "__metadata");
@@ -3994,11 +4778,11 @@ function spType(node) {
 }
 function detectShape(node) {
   const names = keyNames(node);
-  const has = (...ks) => ks.every((k) => names.includes(k));
-  if (has("InternalName", "TypeAsString")) return "SP.Field";
-  if (has("BaseTemplate", "EntityTypeName")) return "SP.List";
-  if (has("ServerRelativeUrl", "WebTemplate")) return "SP.Web";
-  if (has("LoginName", "PrincipalType")) {
+  const has2 = (...ks) => ks.every((k) => names.includes(k));
+  if (has2("InternalName", "TypeAsString")) return "SP.Field";
+  if (has2("BaseTemplate", "EntityTypeName")) return "SP.List";
+  if (has2("ServerRelativeUrl", "WebTemplate")) return "SP.Web";
+  if (has2("LoginName", "PrincipalType")) {
     return str(key(node, "OwnerTitle")) !== void 0 ? "SP.Group" : "SP.User";
   }
   return null;
@@ -4055,11 +4839,11 @@ function collection(arrNode, parentNode) {
     toggle.textContent = showTable ? "\u2261 tree view" : "\u229E table view";
   });
   wrap.append(treeEl, tableEl);
-  const next = str(key(parentNode, "__next")) || str(key(parentNode, "odata.nextLink")) || str(key(parentNode, "@odata.nextLink"));
-  if (next) {
+  const next2 = str(key(parentNode, "__next")) || str(key(parentNode, "odata.nextLink")) || str(key(parentNode, "@odata.nextLink"));
+  if (next2) {
     const warn = el3("div", "sp-next-link");
     warn.append(el3("span", "", "\u26A0 partial result set \u2014 next page: "));
-    warn.append(copySpan(next, next.length > 80 ? next.slice(0, 80) + "\u2026" : next));
+    warn.append(copySpan(next2, next2.length > 80 ? next2.slice(0, 80) + "\u2026" : next2));
     wrap.append(warn);
   }
   return wrap;
@@ -4534,22 +5318,22 @@ function scrubSchemaXml(xml, { lookupListId = null, primaryFieldId = null, field
   } catch (cause) {
     throw new SpFileError("SchemaXml could not be parsed.", { code: "bad-xml", cause });
   }
-  const root = doc.documentElement;
-  if (!root || root.nodeName === "parsererror" || doc.getElementsByTagName("parsererror").length) {
+  const root2 = doc.documentElement;
+  if (!root2 || root2.nodeName === "parsererror" || doc.getElementsByTagName("parsererror").length) {
     throw new SpFileError("SchemaXml could not be parsed.", { code: "bad-xml" });
   }
-  for (const attr of STRIP_ATTRS) root.removeAttribute(attr);
+  for (const attr of STRIP_ATTRS) root2.removeAttribute(attr);
   if (LOOKUP_TYPES.has(fieldType) && lookupListId) {
-    root.setAttribute("List", `{${cleanGuid(lookupListId)}}`);
+    root2.setAttribute("List", `{${cleanGuid(lookupListId)}}`);
   } else if (USER_TYPES.has(fieldType)) {
-    root.setAttribute("List", "UserInfo");
+    root2.setAttribute("List", "UserInfo");
   }
   if (LOOKUP_TYPES.has(fieldType) && primaryFieldId) {
-    root.setAttribute("FieldRef", `{${cleanGuid(primaryFieldId)}}`);
+    root2.setAttribute("FieldRef", `{${cleanGuid(primaryFieldId)}}`);
   }
-  const refs = root.getElementsByTagName("FieldRef");
+  const refs = root2.getElementsByTagName("FieldRef");
   for (let i = 0; i < refs.length; i++) refs[i].removeAttribute("ID");
-  return new XMLSerializer().serializeToString(root);
+  return new XMLSerializer().serializeToString(root2);
 }
 function textFallbackXml(field2) {
   const name = String(field2?.internalName || "").replaceAll('"', "&quot;");
@@ -6365,9 +7149,9 @@ async function webLocalOffsetMinutes(cache, client2, utc) {
   const day = dayOf(utc);
   const here = await offsetForDay(day);
   const prev = await offsetForDay(dayOf(new Date(utc.getTime() - 864e5)));
-  const next = await offsetForDay(dayOf(new Date(utc.getTime() + 864e5)));
+  const next2 = await offsetForDay(dayOf(new Date(utc.getTime() + 864e5)));
   let offsetMs = here;
-  if (here !== prev || here !== next) {
+  if (here !== prev || here !== next2) {
     offsetMs = await utcOffsetAtMs(client2, utc.toISOString());
   }
   return offsetMs / 6e4;
@@ -7594,11 +8378,11 @@ function openSchemaApplyDialog({
         targetWebUrl: targetClient.webUrl()
       };
     }
-    function setPhase(next) {
-      phase = next;
-      const inForm = next === "form";
-      const inRunning = next === "running";
-      const inReport = next === "report";
+    function setPhase(next2) {
+      phase = next2;
+      const inForm = next2 === "form";
+      const inRunning = next2 === "running";
+      const inReport = next2 === "report";
       targetField.hidden = !inForm;
       titleField.hidden = !inForm;
       descField.hidden = !inForm;
@@ -8352,20 +9136,20 @@ function openImportDataDialog({
         }
       }, closeAnywayMs);
     }
-    function setPhase(next) {
-      phase = next;
-      const inForm = next === "form";
-      const inReport = next === "report";
+    function setPhase(next2) {
+      phase = next2;
+      const inForm = next2 === "form";
+      const inReport = next2 === "report";
       countsLine.hidden = !inForm;
       fieldsSection.hidden = !inForm;
       optsFieldset.hidden = !inForm;
       consentSection.hidden = !inForm;
-      planPanel.hidden = next !== "running";
+      planPanel.hidden = next2 !== "running";
       reportPanel.hidden = !inReport;
       importBtn.hidden = !inForm;
       downloadBtn.hidden = !inReport;
       cancelBtn.textContent = inReport ? "Close" : "Cancel";
-      closeBtn.hidden = next === "running";
+      closeBtn.hidden = next2 === "running";
     }
     function updateImportEnabled() {
       importBtn.disabled = !(consentBox.checked && previewOk);
@@ -8876,7 +9660,7 @@ function createListsView({
   createClient,
   mockWriter: mockWriter2
 }) {
-  const root = el8("section", "wb-view wb-view-lists");
+  const root2 = el8("section", "wb-view wb-view-lists");
   const webOrigin = () => {
     try {
       return new URL(client2.webUrl()).origin;
@@ -9016,7 +9800,7 @@ function createListsView({
   grid.actionsEl.prepend(newFromSchemaBtn, schemaFileInput);
   const detailPane = el8("div", "wb-pane");
   detailPane.hidden = true;
-  root.append(gridPane, detailPane);
+  root2.append(gridPane, detailPane);
   let listsLoaded = false;
   let allLists = [];
   let listsPartial = false;
@@ -9447,9 +10231,9 @@ function createListsView({
     sections.append(buildViewsSection(doc));
     if (doc.contentTypes.length) sections.append(buildContentTypesSection(doc));
     if (doc.warnings.length) sections.append(buildWarningsSection(doc));
-    const root2 = el8("div", "wb-schema");
-    root2.append(head2, sections);
-    return root2;
+    const root3 = el8("div", "wb-schema");
+    root3.append(head2, sections);
+    return root3;
   }
   function buildSchemaPane(wrap, listId) {
     const status = el8("div", "wb-grid-status", "Reading the list schema\u2026");
@@ -9666,7 +10450,7 @@ function createListsView({
       loadLists();
     }
   }
-  return { el: root, load: load2, grid };
+  return { el: root2, load: load2, grid };
 }
 
 // ../src/workbench/views/security.js
@@ -9678,7 +10462,7 @@ var el9 = (tag, cls, text) => {
 };
 var roleNames = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
 function createSecurityView({ client: client2 }) {
-  const root = el9("section", "wb-view wb-view-security");
+  const root2 = el9("section", "wb-view wb-view-security");
   const spWrite = createSpWriteClient({ client: client2 });
   const head = el9("div", "wb-view-head");
   head.innerHTML = '<h2>Permissions</h2><p class="wb-view-hint">Site groups, membership, role definitions, and who holds what on this web. The inheritance scan is on-demand \u2014 it makes SharePoint evaluate security per list.</p>';
@@ -9693,7 +10477,7 @@ function createSecurityView({ client: client2 }) {
   head.append(headLinks);
   const tabsBar = el9("div", "wb-tabs");
   const body = el9("div", "wb-tab-body");
-  root.append(head, tabsBar, body);
+  root2.append(head, tabsBar, body);
   const panes = /* @__PURE__ */ new Map();
   function groupsPane() {
     const wrap = el9("div", "wb-tab-pane");
@@ -10059,7 +10843,7 @@ function createSecurityView({ client: client2 }) {
     }
     if (!tabsBar.querySelector(".wb-tab.active")) activate(TABS[0]);
   }
-  return { el: root, load: load2 };
+  return { el: root2, load: load2 };
 }
 
 // ../src/workbench/views/site.js
@@ -10093,7 +10877,7 @@ var WEB_SELECT = [
 ];
 var SITE_SELECT = ["Id", "Url", "ServerRelativeUrl", "ReadOnly", "ShareByEmailEnabled"];
 function createSiteView({ client: client2 }) {
-  const root = el10("section", "wb-view wb-view-site");
+  const root2 = el10("section", "wb-view wb-view-site");
   const absUrl = (rel) => {
     try {
       return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
@@ -10105,7 +10889,7 @@ function createSiteView({ client: client2 }) {
   head.innerHTML = '<h2>Site overview</h2><p class="wb-view-hint">Web and site collection properties, features, subwebs, and the property bag.</p>';
   const tabsBar = el10("div", "wb-tabs");
   const body = el10("div", "wb-tab-body");
-  root.append(head, tabsBar, body);
+  root2.append(head, tabsBar, body);
   const panes = /* @__PURE__ */ new Map();
   function sheetPane(query, extraSections = []) {
     const wrap = el10("div", "wb-tab-pane");
@@ -10280,7 +11064,7 @@ function createSiteView({ client: client2 }) {
   function load2() {
     if (!tabsBar.querySelector(".wb-tab.active")) activate(TABS[0]);
   }
-  return { el: root, load: load2 };
+  return { el: root2, load: load2 };
 }
 
 // ../src/workbench/views/site-home.js
@@ -10292,7 +11076,7 @@ var el11 = (tag, cls, text) => {
 };
 var fmtDate2 = (v) => v ? String(v).slice(0, 10) : "";
 function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSite2 }) {
-  const root = el11("section", "wb-view wb-view-sitehome");
+  const root2 = el11("section", "wb-view wb-view-sitehome");
   const absUrl = (rel) => {
     try {
       return rel ? `${new URL(client2.webUrl()).origin}${encodeSpPath(rel)}` : "";
@@ -10307,7 +11091,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
   const userCard = el11("div", "wb-home-card");
   cards.append(webCard, userCard);
   const subwebsBox = el11("div", "wb-home-subwebs");
-  root.append(head, cards, subwebsBox);
+  root2.append(head, cards, subwebsBox);
   let loadedForWeb = "";
   const failureRow = (err, subject) => showFailure(el11("div", "wb-grid-status"), err, subject);
   function factRow(label, value, { copyFull = "" } = {}) {
@@ -10419,7 +11203,7 @@ function createSiteHomeView({ client: client2, navigate, inspectSite: inspectSit
     if (loadedForWeb && loadedForWeb !== client2.webUrl()) loadedForWeb = "";
     load2();
   }
-  return { el: root, load: loadRoute };
+  return { el: root2, load: loadRoute };
 }
 
 // ../src/workbench/views/links.js
@@ -10430,11 +11214,11 @@ var el12 = (tag, cls, text) => {
   return n;
 };
 function createLinksView({ client: client2 }) {
-  const root = el12("section", "wb-view wb-view-links");
+  const root2 = el12("section", "wb-view wb-view-links");
   const head = el12("div", "wb-view-head");
   head.innerHTML = '<h2>Panels</h2><p class="wb-view-hint">Quick jumps to the SharePoint configuration panels you actually reach for. Links open in a new tab; hover for the underlying page.</p>';
   const body = el12("div", "wb-links");
-  root.append(head, body);
+  root2.append(head, body);
   function load2() {
     const webUrl = client2.webUrl();
     body.textContent = "";
@@ -10454,7 +11238,7 @@ ${link.hint}` : link.path;
       body.append(card);
     }
   }
-  return { el: root, load: load2 };
+  return { el: root2, load: load2 };
 }
 
 // ../src/workbench/views/query.js?v=2
@@ -10515,12 +11299,12 @@ function composeFilter(rows) {
 }
 function descriptorToRaw(descriptor) {
   const parts = [];
-  const join2 = (v) => Array.isArray(v) ? v.join(",") : String(v);
+  const join3 = (v) => Array.isArray(v) ? v.join(",") : String(v);
   const o = descriptor.options || {};
-  if (o.select) parts.push(`$select=${join2(o.select)}`);
-  if (o.expand) parts.push(`$expand=${join2(o.expand)}`);
+  if (o.select) parts.push(`$select=${join3(o.select)}`);
+  if (o.expand) parts.push(`$expand=${join3(o.expand)}`);
   if (o.filter) parts.push(`$filter=${o.filter}`);
-  if (o.orderby) parts.push(`$orderby=${join2(o.orderby)}`);
+  if (o.orderby) parts.push(`$orderby=${join3(o.orderby)}`);
   if (o.top) parts.push(`$top=${o.top}`);
   return `${descriptor.path}${parts.length ? `?${parts.join("&")}` : ""}`;
 }
@@ -10587,7 +11371,7 @@ function writeSaved(webUrl, state2) {
   }
 }
 function createQueryView({ client: client2 }) {
-  const root = el13("section", "wb-view wb-view-query");
+  const root2 = el13("section", "wb-view wb-view-query");
   const head = el13("div", "wb-view-head");
   head.innerHTML = '<h2>Query builder</h2><p class="wb-view-hint">Compose an OData query against any list \u2014 or any /_api endpoint \u2014 and run it. \u201CCopy as\u201D turns the query into a script.</p>';
   const composer = el13("div", "wb-qb");
@@ -10646,7 +11430,7 @@ function createQueryView({ client: client2 }) {
   rawRow.append(rawArea, rawNote, runBtn, backToBuilder);
   composer.append(targetRow, fieldsBox, filtersBox, optionsRow, rawRow);
   const results = el13("div", "wb-qb-results");
-  root.append(head, composer, results);
+  root2.append(head, composer, results);
   let lists = [];
   let fields = [];
   let rawMode = false;
@@ -10658,14 +11442,14 @@ function createQueryView({ client: client2 }) {
   }
   function addFilterRow(saved = {}) {
     const row = el13("div", "wb-qb-filterrow");
-    const join2 = el13("select", "wb-qb-join");
+    const join3 = el13("select", "wb-qb-join");
     for (const [v, label] of [["and", "AND"], ["or", "OR"]]) {
       const opt = el13("option", "", label);
       opt.value = v;
-      join2.append(opt);
+      join3.append(opt);
     }
-    join2.value = saved.join || "and";
-    if (!filterRows.childElementCount) join2.classList.add("wb-qb-join-first");
+    join3.value = saved.join || "and";
+    if (!filterRows.childElementCount) join3.classList.add("wb-qb-join-first");
     const fieldSel = el13("select", "wb-qb-field");
     for (const f of fields) {
       const opt = el13("option", "", f.InternalName);
@@ -10684,18 +11468,18 @@ function createQueryView({ client: client2 }) {
     valueInput.type = "text";
     valueInput.placeholder = "value";
     valueInput.value = saved.value || "";
-    const remove = el13("button", "btn btn-xs", "\xD7");
-    remove.type = "button";
-    remove.title = "Remove this filter";
-    remove.addEventListener("click", () => {
+    const remove2 = el13("button", "btn btn-xs", "\xD7");
+    remove2.type = "button";
+    remove2.title = "Remove this filter";
+    remove2.addEventListener("click", () => {
       row.remove();
       onBuilderChange();
     });
-    for (const control of [join2, fieldSel, opSel]) {
+    for (const control of [join3, fieldSel, opSel]) {
       control.addEventListener("change", onBuilderChange);
     }
     valueInput.addEventListener("input", onBuilderChange);
-    row.append(join2, fieldSel, opSel, valueInput, remove);
+    row.append(join3, fieldSel, opSel, valueInput, remove2);
     filterRows.append(row);
   }
   function readFilterRows() {
@@ -10842,7 +11626,7 @@ function createQueryView({ client: client2 }) {
       listId: listSelect.value,
       endpoint: endpointInput.value,
       select: selectedFields(),
-      filters: readFilterRows().map(({ join: join2, field: field2, op, value }) => ({ join: join2, field: field2, op, value })),
+      filters: readFilterRows().map(({ join: join3, field: field2, op, value }) => ({ join: join3, field: field2, op, value })),
       orderby: orderSelect.value,
       orderdir: orderDir.value,
       top: topInput.value,
@@ -10900,7 +11684,7 @@ function createQueryView({ client: client2 }) {
       enterRawMode();
     }
   }
-  return { el: root, load: load2 };
+  return { el: root2, load: load2 };
 }
 
 // ../src/workbench/canvas.js
@@ -11139,19 +11923,24 @@ function textOfControl(control) {
 }
 function sanitizeHtml(html) {
   const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
-  for (const node of doc.querySelectorAll("script, iframe, object, embed, form")) {
+  for (const node of doc.querySelectorAll(
+    "script, style, noscript, iframe, object, embed, form"
+  )) {
     node.remove();
   }
   for (const node of doc.body.querySelectorAll("*")) {
     for (const attr of [...node.attributes]) {
       const name = attr.name.toLowerCase();
       if (name.startsWith("on")) node.removeAttribute(attr.name);
-      else if ((name === "href" || name === "src" || name === "xlink:href") && /^\s*javascript:/i.test(attr.value)) {
+      else if ((name === "href" || name === "src" || name === "xlink:href") && isScriptUrl(attr.value)) {
         node.removeAttribute(attr.name);
       }
     }
   }
   return doc.body.innerHTML;
+}
+function isScriptUrl(value) {
+  return /^javascript:/i.test(String(value).replace(/[\x00-\x20\x7F]+/g, ""));
 }
 
 // ../src/workbench/field-editor.js
@@ -11375,7 +12164,7 @@ function readOnlyRow(field2, displayText) {
   return row;
 }
 function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSave }) {
-  const root = el14("div", "wb-editor-form");
+  const root2 = el14("div", "wb-editor-form");
   const rows = el14("div", "wb-editor-rows");
   const editors = [];
   const shown = (fields || []).filter((f) => !f.Hidden);
@@ -11395,7 +12184,7 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
   save.type = "button";
   const status = el14("span", "wb-editor-status");
   bar.append(save, status);
-  root.append(rows, bar);
+  root2.append(rows, bar);
   function dirtyFormValues() {
     return editors.filter((e) => e.isDirty()).map((e) => ({
       FieldName: e.field.InternalName,
@@ -11434,7 +12223,7 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
       save.disabled = false;
     }
   });
-  return { el: root, getDirtyFormValues: dirtyFormValues, editors };
+  return { el: root2, getDirtyFormValues: dirtyFormValues, editors };
 }
 
 // ../src/workbench/page-export.js
@@ -11442,18 +12231,19 @@ var fmtDate3 = (v) => v ? String(v).slice(0, 10) : "";
 function pageLocation({ siteTitle, libraryTitle, fileDirRef, libraryRootPath }) {
   const parts = [siteTitle, libraryTitle].filter(Boolean);
   const dir = String(fileDirRef || "");
-  const root = String(libraryRootPath || "").replace(/\/+$/, "");
+  const root2 = String(libraryRootPath || "").replace(/\/+$/, "");
   let folder = "";
-  if (root && dir.toLowerCase().startsWith(root.toLowerCase())) {
-    folder = dir.slice(root.length).replace(/^\/+/, "");
+  if (root2 && dir.toLowerCase().startsWith(root2.toLowerCase())) {
+    folder = dir.slice(root2.length).replace(/^\/+/, "");
   }
   if (folder) parts.push(folder);
   return parts.join(" | ");
 }
 function textPartIsEmpty(html) {
   if (!html) return true;
-  if (/<img\b/i.test(html)) return false;
-  return !textOfControl({ kind: "text", innerHTML: html });
+  const safe = sanitizeHtml(html);
+  if (/<img\b/i.test(safe)) return false;
+  return !textOfControl({ kind: "text", innerHTML: safe });
 }
 function contentParts(controls) {
   const parts = [];
@@ -11490,12 +12280,18 @@ function contentParts(controls) {
   }
   return { parts, unreadable };
 }
-function contentBlocks(controls, override) {
+var CONTENT_FORMATS = ["markdown", "html"];
+function textPartBody(html, format) {
+  const safe = sanitizeHtml(html);
+  if (format === "html") return safe;
+  return htmlToMarkdown(safe, "pageContent") || safe;
+}
+function contentBlocks(controls, override, format) {
   const { parts, unreadable } = override ? { parts: override, unreadable: 0 } : contentParts(controls);
   const blocks = [];
   for (const part of parts) {
     blocks.push(`## ${part.label}`);
-    blocks.push(part.kind === "text" ? sanitizeHtml(part.html) : part.lines.map((t) => `- ${t}`).join("\n"));
+    blocks.push(part.kind === "text" ? textPartBody(part.html, format) : part.lines.map((t) => `- ${t}`).join("\n"));
   }
   if (unreadable) {
     blocks.push(`*[${unreadable} part${unreadable === 1 ? "" : "s"} could not be read \u2014 see the raw export.]*`);
@@ -11519,8 +12315,12 @@ function buildContentExport({
   siteTitle = "",
   webUrl = "",
   libraryTitle = "",
-  libraryRootPath = ""
+  libraryRootPath = "",
+  format = "markdown"
 }) {
+  if (!CONTENT_FORMATS.includes(format)) {
+    throw new Error(`Unknown page content format: ${format}`);
+  }
   const title = item2.Title || item2.FileLeafRef || "Untitled page";
   const author = item2.Author?.Title || "";
   const editor = item2.Editor?.Title || "";
@@ -11541,7 +12341,8 @@ function buildContentExport({
   const top = [`# ${title}`, ""];
   if (item2.Description) top.push(`> ${String(item2.Description).replace(/\r?\n/g, " ")}`, "");
   top.push(`Created ${fmtDate3(item2.Created)}${author ? ` by ${author}` : ""}  `);
-  if (location2) top.push(`Location: ${location2}`, "");
+  if (location2) top.push(`Location: ${location2}`);
+  top.push("");
   const meta = ["## Metadata", ""];
   const metaLine = (label, value) => {
     if (value !== "" && value !== null && value !== void 0) {
@@ -11565,7 +12366,7 @@ function buildContentExport({
     ...top,
     "---",
     "",
-    contentBlocks(controls, parts).join("\n\n"),
+    contentBlocks(controls, parts, format).join("\n\n"),
     "",
     "---",
     "",
@@ -11583,15 +12384,18 @@ function exportFileStem(item2) {
   const name = String(item2.FileLeafRef || item2.Title || "page").replace(/\.aspx$/i, "");
   return slug(name) || "page";
 }
-function bundleEntryName(item2, libraryRootPath) {
+function contentFileName(item2, format = "markdown") {
+  return `${exportFileStem(item2)}-content${format === "html" ? "-html" : ""}.md`;
+}
+function bundleEntryName(item2, libraryRootPath, format = "markdown") {
   const dir = String(item2?.FileDirRef || "");
-  const root = String(libraryRootPath || "").replace(/\/+$/, "");
+  const root2 = String(libraryRootPath || "").replace(/\/+$/, "");
   let folder = "";
-  if (root && dir.toLowerCase().startsWith(root.toLowerCase())) {
-    folder = dir.slice(root.length).replace(/^\/+/, "");
+  if (root2 && dir.toLowerCase().startsWith(root2.toLowerCase())) {
+    folder = dir.slice(root2.length).replace(/^\/+/, "");
   }
   const segments = folder.split("/").map(slug).filter(Boolean);
-  segments.push(`${exportFileStem(item2 || {})}-content.md`);
+  segments.push(contentFileName(item2 || {}, format));
   return segments.join("/");
 }
 function dedupeEntryNames(names) {
@@ -12052,7 +12856,7 @@ SharePoint said: ${because}` : "");
   return chip;
 }
 function createPagesView({ client: client2, navigate, updateRoute }) {
-  const root = el15("section", "wb-view wb-view-pages");
+  const root2 = el15("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
   const gridPane = el15("div", "wb-pane");
   const head = el15("div", "wb-view-head");
@@ -12116,7 +12920,7 @@ ${current.rootPath}` : "");
   gridPane.append(head, masterStatus);
   const detailPane = el15("div", "wb-pane");
   detailPane.hidden = true;
-  root.append(gridPane, detailPane);
+  root2.append(gridPane, detailPane);
   let librariesPromise = null;
   let libraries = [];
   let current = null;
@@ -12153,8 +12957,8 @@ ${current.rootPath}` : "");
     }
     return librariesPromise;
   }
-  function adoptLibrary(next) {
-    current = next;
+  function adoptLibrary(next2) {
+    current = next2;
     detailCache.clear();
     webPartCache.clear();
     fieldsPromise = null;
@@ -12166,10 +12970,10 @@ ${current.rootPath}` : "");
     }
     pagesLoaded = false;
   }
-  function switchLibrary(next) {
-    if (!next || next.listId === current?.listId) return;
-    adoptLibrary(next);
-    navigate({ view: "pages", libId: next.listId });
+  function switchLibrary(next2) {
+    if (!next2 || next2.listId === current?.listId) return;
+    adoptLibrary(next2);
+    navigate({ view: "pages", libId: next2.listId });
   }
   let webInfoPromise = null;
   function webIdentity() {
@@ -12180,11 +12984,11 @@ ${current.rootPath}` : "");
   }
   function folderOf(fileDirRef, rootPath) {
     const dir = String(fileDirRef || "");
-    const root2 = String(rootPath || "").replace(/\/+$/, "");
-    if (!root2 || !dir.toLowerCase().startsWith(root2.toLowerCase())) return "";
-    return dir.slice(root2.length).replace(/^\/+/, "");
+    const root3 = String(rootPath || "").replace(/\/+$/, "");
+    if (!root3 || !dir.toLowerCase().startsWith(root3.toLowerCase())) return "";
+    return dir.slice(root3.length).replace(/^\/+/, "");
   }
-  async function contentMarkdownFor(item2, sitePages, parts = null) {
+  async function contentMarkdownFor(item2, sitePages, parts = null, format = "markdown") {
     const parsed = parseCanvasContent(item2.CanvasContent1);
     let readingParts = parts;
     if (!readingParts) {
@@ -12203,6 +13007,7 @@ ${current.rootPath}` : "");
     const web = await webIdentity();
     return buildContentExport({
       item: item2,
+      format,
       controls: parsed.controls,
       parts: readingParts,
       siteTitle: web.Title || "",
@@ -12212,7 +13017,7 @@ ${current.rootPath}` : "");
     });
   }
   let exporting = false;
-  async function exportContentZip() {
+  async function exportContentZip(format = "markdown") {
     if (exporting || !grid || !current) return;
     const sitePages = current;
     const rows = grid.getExportRows();
@@ -12223,24 +13028,26 @@ ${current.rootPath}` : "");
       masterStatus.hidden = false;
       return;
     }
+    const stale = () => current !== sitePages;
     exporting = true;
     masterStatus.classList.remove("wb-error");
     masterStatus.hidden = false;
     let done = 0;
     const progress = () => {
+      if (stale()) return;
       masterStatus.textContent = `Exporting ${done} of ${rows.length} page${rows.length === 1 ? "" : "s"}\u2026`;
     };
     progress();
     const results = new Array(rows.length);
     try {
       const plan = await queryPlan(sitePages);
-      let next = 0;
+      let next2 = 0;
       const worker = async () => {
-        for (let i = next++; i < rows.length; i = next++) {
+        for (let i = next2++; i < rows.length; i = next2++) {
           const row = rows[i];
           try {
             const { item: item2 } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
-            results[i] = { item: item2, text: await contentMarkdownFor(item2, sitePages) };
+            results[i] = { item: item2, text: await contentMarkdownFor(item2, sitePages, null, format) };
           } catch (err) {
             results[i] = {
               failure: {
@@ -12256,14 +13063,11 @@ ${current.rootPath}` : "");
       await Promise.all(
         Array.from({ length: Math.min(BULK_CONCURRENCY, rows.length) }, worker)
       );
-      if (current !== sitePages) {
-        masterStatus.hidden = true;
-        return;
-      }
+      if (stale()) return;
       const ok = results.filter((r) => r && r.text !== void 0);
       const failures = results.filter((r) => r && r.failure).map((r) => r.failure);
       const names = dedupeEntryNames(
-        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath))
+        ok.map((r) => bundleEntryName(r.item, sitePages.rootPath, format))
       );
       const entries = ok.map((r, i) => ({ name: names[i], text: r.text }));
       if (failures.length) {
@@ -12277,13 +13081,57 @@ ${current.rootPath}` : "");
         masterStatus.hidden = false;
         return;
       }
-      downloadBytes("sp-pages-content.zip", buildZip(entries), "application/zip");
+      downloadBytes(
+        `sp-pages-content${format === "html" ? "-html" : ""}.zip`,
+        buildZip(entries),
+        "application/zip"
+      );
       masterStatus.hidden = true;
     } catch (err) {
+      if (stale()) return;
       showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
     } finally {
       exporting = false;
     }
+  }
+  async function exportRowContent(row, format, btn) {
+    if (btn.disabled || !current) return;
+    const sitePages = current;
+    const stale = () => current !== sitePages;
+    btn.disabled = true;
+    try {
+      const plan = await queryPlan(sitePages);
+      if (stale()) return;
+      const { item: item2 } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
+      if (stale()) return;
+      const text = await contentMarkdownFor(item2, sitePages, null, format);
+      if (stale()) return;
+      downloadText(contentFileName(item2, format), text, "text/markdown;charset=utf-8");
+      masterStatus.hidden = true;
+    } catch (err) {
+      if (stale()) return;
+      showFailure(masterStatus, err, row.FileLeafRef || row.Title || `page ${row.Id}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  function rowExportCell(row) {
+    const span = el15("span", "wb-page-row-actions");
+    for (const [label, format, title] of [
+      ["MD", "markdown", "Export this page as .md with its content converted to markdown"],
+      ["HTML", "html", "Export this page as .md with each content block left as its original HTML"]
+    ]) {
+      const btn = el15("button", "wb-cell-link wb-cell-export", label);
+      btn.type = "button";
+      btn.title = title;
+      btn.setAttribute("aria-label", `${title} (${row.FileLeafRef || row.Title || `page ${row.Id}`})`);
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        exportRowContent(row, format, btn);
+      });
+      span.append(btn);
+    }
+    return span;
   }
   async function loadPages() {
     if (pagesLoaded) return;
@@ -12324,6 +13172,15 @@ ${current.rootPath}` : "");
             { key: "Modified", label: "Modified", format: fmtDate4 },
             { key: "Editor", label: "Editor", value: (row) => row.Editor?.Title || "" },
             {
+              key: "Export",
+              label: "",
+              // Controls only — no data, so CSV/JSON/markdown skip it.
+              action: true,
+              value: (row) => row.Id,
+              format: () => "",
+              render: (_id, row) => rowExportCell(row)
+            },
+            {
               key: "FileRef",
               label: "",
               format: () => "",
@@ -12358,7 +13215,8 @@ ${current.rootPath}` : "");
           // opening one stay distinct gestures on the same row.
           selectable: true,
           exportExtras: [
-            ["Download content .zip", () => exportContentZip()]
+            ["Download content .zip (Markdown)", () => exportContentZip("markdown")],
+            ["Download content .zip (original HTML)", () => exportContentZip("html")]
           ],
           // The same object the ladder rewrites below, on purpose: the
           // "Copy as…" menu reads it at click time, so a script copied out of
@@ -12684,13 +13542,16 @@ ${fullUrl}`;
     headRow.append(kindChip);
     if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
     const actions = el15("span", "wb-detail-actions");
-    const exportContent = el15("button", "btn btn-xs", "Export content");
+    const exportContent = el15("button", "btn btn-xs", "Export MD");
     exportContent.type = "button";
-    exportContent.title = "One human-readable file: metadata, merged web-part content, full metadata";
+    exportContent.title = "One human-readable .md: metadata plus the merged web-part content converted to markdown";
+    const exportContentHtml = el15("button", "btn btn-xs", "Export HTML");
+    exportContentHtml.type = "button";
+    exportContentHtml.title = "The same .md, but each content block keeps its original HTML \u2014 for a page the markdown conversion got wrong";
     const exportRaw = el15("button", "btn btn-xs", "Export raw");
     exportRaw.type = "button";
     exportRaw.title = "Item + parsed canvas controls as JSON, for scripts";
-    actions.append(exportContent, exportRaw);
+    actions.append(exportContent, exportContentHtml, exportRaw);
     if (item2.FileRef) {
       const open = el15("a", "btn btn-xs", "Open page \u2197");
       open.href = item2.FileRef;
@@ -12698,13 +13559,15 @@ ${fullUrl}`;
       actions.append(open);
     }
     headRow.append(actions);
-    exportContent.addEventListener("click", async () => {
+    const downloadContent = async (format) => {
       downloadText(
-        `${exportFileStem(item2)}-content.md`,
-        await contentMarkdownFor(item2, sitePages, readingParts),
+        contentFileName(item2, format),
+        await contentMarkdownFor(item2, sitePages, readingParts, format),
         "text/markdown;charset=utf-8"
       );
-    });
+    };
+    exportContent.addEventListener("click", () => downloadContent("markdown"));
+    exportContentHtml.addEventListener("click", () => downloadContent("html"));
     exportRaw.addEventListener("click", () => {
       downloadText(
         `${exportFileStem(item2)}-raw.json`,
@@ -12817,7 +13680,7 @@ ${fullUrl}`;
       });
     }
   }
-  return { el: root, load: load2 };
+  return { el: root2, load: load2 };
 }
 
 // ../src/workbench/upload-metadata.js
@@ -13087,7 +13950,7 @@ function normalizedPath2(value) {
   return path;
 }
 function createBrowserView({ client: client2, navigate }) {
-  const root = el17("section", "wb-view wb-view-files");
+  const root2 = el17("section", "wb-view wb-view-files");
   const spWrite = createSpWriteClient({ client: client2 });
   const head = el17("div", "wb-view-head");
   head.innerHTML = '<h2>Files</h2><p class="wb-view-hint">Browse any library or folder of this web \u2014 every file type, with download, binary upload, folder creation, and full metadata editing.</p>';
@@ -13101,7 +13964,7 @@ function createBrowserView({ client: client2, navigate }) {
   const gridWrap = el17("div", "wb-files-grid");
   const metaPanel = el17("div", "wb-subpanel wb-file-meta");
   metaPanel.hidden = true;
-  root.append(head, bar, consent, gridWrap, metaPanel);
+  root2.append(head, bar, consent, gridWrap, metaPanel);
   let libraries = [];
   let currentPath = "";
   let currentListing = { folders: [], files: [] };
@@ -13697,7 +14560,7 @@ function createBrowserView({ client: client2, navigate }) {
   function destroy() {
     crumbObserver?.disconnect();
   }
-  return { el: root, load: load2, destroy };
+  return { el: root2, load: load2, destroy };
 }
 
 // ../src/workbench/main.js

@@ -277,10 +277,16 @@ export function textOfControl(control) {
 }
 
 // Rendered-view sanitizer: drop active content, keep formatting. Used for the
-// Text tab preview only — never for anything that executes.
+// Text tab preview and the page content export — never for anything that
+// executes. <style> goes too: injected into the preview it restyles the whole
+// workbench, and the export's markdown fallback would otherwise hand it back.
+// This list must cover html-markdown.js DROPPED, or that fallback restores
+// what the converter removed.
 export function sanitizeHtml(html) {
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
-  for (const node of doc.querySelectorAll('script, iframe, object, embed, form')) {
+  for (const node of doc.querySelectorAll(
+    'script, style, noscript, iframe, object, embed, form',
+  )) {
     node.remove();
   }
   for (const node of doc.body.querySelectorAll('*')) {
@@ -288,10 +294,17 @@ export function sanitizeHtml(html) {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on')) node.removeAttribute(attr.name);
       else if ((name === 'href' || name === 'src' || name === 'xlink:href')
-        && /^\s*javascript:/i.test(attr.value)) {
+        && isScriptUrl(attr.value)) {
         node.removeAttribute(attr.name);
       }
     }
   }
   return doc.body.innerHTML;
+}
+
+// Browsers drop tabs and newlines anywhere in a URL and trim controls and
+// spaces around it, so 'java&#9;script:' still runs. Compare with all of
+// those gone.
+function isScriptUrl(value) {
+  return /^javascript:/i.test(String(value).replace(/[\x00-\x20\x7F]+/g, ''));
 }

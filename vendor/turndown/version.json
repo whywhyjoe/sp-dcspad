@@ -1,0 +1,7 @@
+{
+  "name": "turndown",
+  "version": "7.2.4",
+  "license": "MIT",
+  "source": "lib/turndown.browser.es.js",
+  "sha256": "3bcd2dd53d6eb3f7a8ed2363404c8869d92cfcaae7a76dca2d556e7ec4cb1f42"
+}

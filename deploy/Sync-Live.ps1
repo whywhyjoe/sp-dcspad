@@ -190,6 +190,15 @@ if (-not (Get-ChildItem (Join-Path $monaco 'assets') -Filter 'codicon-*.ttf' -Fi
     throw "Missing vendor\monaco\assets\codicon-*.ttf. Run npm run build:monaco from tools first."
 }
 
+# Turndown backs the HTML->Markdown exports. It is bundled into
+# dcspad.workbench.js, so a missing copy fails the esbuild step below rather
+# than the deploy - but standalone index.html and the test suites import the
+# vendored file directly, so it must be present and shipped either way.
+$turndown = Join-Path $repo 'vendor\turndown\turndown.js'
+if (-not (Test-Path $turndown)) {
+    throw "Missing vendor\turndown\turndown.js. Run npm run build:vendor from tools first."
+}
+
 $createLiveDestination = $false
 if (Test-Path -LiteralPath $LivePath) {
     if (-not (Test-Path -LiteralPath $LivePath -PathType Container)) {

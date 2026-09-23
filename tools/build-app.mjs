@@ -36,6 +36,17 @@ function git(...args) {
 }
 
 const requestedBuildNumber = String(process.env.DCSPAD_BUILD_NUMBER || '').trim();
+// A shallow clone (cloud sessions, most CI checkouts) can only count the
+// commits it fetched, so rev-list silently returns a number far below the
+// real one and the build stamp goes BACKWARDS. Refuse to guess: unshallow,
+// or pass DCSPAD_BUILD_NUMBER explicitly.
+if (!requestedBuildNumber && git('rev-parse', '--is-shallow-repository') === 'true') {
+  console.error(
+    'Refusing to stamp a build number from a shallow clone — the count would be '
+    + 'too low.\nRun `git fetch --unshallow`, or set DCSPAD_BUILD_NUMBER.',
+  );
+  process.exit(1);
+}
 const commitCount = git('rev-list', '--count', 'HEAD');
 const shortRevision = git('rev-parse', '--short=8', 'HEAD');
 // Build outputs never make a build 'dirty' — exclude the bundles.
