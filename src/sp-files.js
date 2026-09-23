@@ -319,6 +319,44 @@ export function createSpFilesClient({
     };
   }
 
+  // Raw binary read, no file-type restriction (readTextFile's cap and type
+  // gate are for the code-import path; this is for arbitrary asset bytes —
+  // e.g. a page-copy banner or web-part image). content-length is checked
+  // before the body is read so an oversized file never has to be downloaded
+  // to be rejected; the arrayBuffer length is checked again in case the
+  // header was missing or wrong.
+  async function readFileBytes(
+    serverRelativePath,
+    { webUrl: targetWebUrl = '', maxBytes = 50 * 1024 * 1024 } = {},
+  ) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(`
+      + `decodedUrl='${odataPathLiteral(path)}')/$value`;
+    const response = await request(endpoint);
+    await requireOk(response, 'Could not download the SharePoint file', 'read');
+    const declaredLength = Number(response.headers.get('content-length')) || 0;
+    if (declaredLength > maxBytes) {
+      throw new SpFileError(
+        'The selected SharePoint file is larger than the transfer limit.',
+        { code: 'too-large' },
+      );
+    }
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > maxBytes) {
+      throw new SpFileError(
+        'The selected SharePoint file is larger than the transfer limit.',
+        { code: 'too-large' },
+      );
+    }
+    return {
+      bytes,
+      length: bytes.byteLength,
+      contentType: response.headers.get('content-type') || '',
+      serverRelativeUrl: path,
+    };
+  }
+
   // Check-out policy of the destination library, plus the destination file's
   // current check-out state. The file state is read whether or not the
   // library forces a check-out: a file held by someone else refuses the write
@@ -707,6 +745,7 @@ export function createSpFilesClient({
     getDigest,
     listFolder,
     readTextFile,
+    readFileBytes,
     checkOutFile,
     checkInFile,
     undoCheckOutFile,
@@ -723,6 +762,7 @@ export const connectSpWeb = (webUrl) => defaultClient.connectWeb(webUrl);
 export const getDigest = (options) => defaultClient.getDigest(options);
 export const listFolder = (path, options) => defaultClient.listFolder(path, options);
 export const readTextFile = (path, options) => defaultClient.readTextFile(path, options);
+export const readFileBytes = (path, options) => defaultClient.readFileBytes(path, options);
 export const checkOutFile = (path, options) => defaultClient.checkOutFile(path, options);
 export const checkInFile = (path, options) => defaultClient.checkInFile(path, options);
 export const undoCheckOutFile = (path, options) =>
