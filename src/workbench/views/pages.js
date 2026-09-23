@@ -1464,10 +1464,13 @@ export function createPagesView({
     exportRaw.type = 'button';
     exportRaw.title = 'Item + parsed canvas controls as JSON, for scripts';
     actions.append(exportContent, exportContentHtml, exportRaw);
-    // Copy (design/PAGE-COPY.md): canvas pages in a modern Site Pages library.
-    // The dialog decides the finer eligibility (JSON canvas, layout) on its
-    // own snapshot and says why when it refuses.
-    if (isCanvas && Number(sitePages.baseTemplate) === SITE_PAGES_TEMPLATE && createClient) {
+    // Copy (design/PAGE-COPY.md): pages in a modern Site Pages library. The
+    // item field is not proof either way — on SPO a modern page's list-item
+    // CanvasContent1 can be null while its sitepages DTO holds the content
+    // (spike §11) — so 'empty' qualifies too; the dialog reads the DTO and
+    // refuses what is not a copyable site page, saying why.
+    const copyable = contentKind === 'canvas' || contentKind === 'empty';
+    if (copyable && Number(sitePages.baseTemplate) === SITE_PAGES_TEMPLATE && createClient) {
       const copyBtn = el('button', 'btn btn-xs wb-page-copy-btn', 'Copy…');
       copyBtn.type = 'button';
       copyBtn.title = 'Duplicate this page here, or copy it to another site';
