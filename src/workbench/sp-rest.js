@@ -199,13 +199,19 @@ export function createSpRestClient({
   // No `cap` means the ceiling itself — with allowLargeCap that is
   // LARGE_PAGE_CAP. (A `cap = PAGE_CAP` default here once silently held an
   // allowLargeCap caller that passed no cap — the EEEU item scan — to 5000.)
-  async function getAll(path, opts, { cap, allowLargeCap = false } = {}) {
+  // `shouldStop` (optional) is checked between pages: a cancelled caller gets
+  // what was read so far with partial=true and stopped=true instead of
+  // waiting out the whole collection (the EEEU item scan of a 34k-item
+  // library otherwise held Cancel for ~2.5 minutes on live SPO).
+  async function getAll(path, opts, { cap, allowLargeCap = false, shouldStop = null } = {}) {
     const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
     const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
     let url = apiUrl(path, opts);
     const items = [];
     let partial = false;
+    let stopped = false;
     while (url) {
+      if (shouldStop?.()) { partial = true; stopped = true; break; }
       const data = await rawGet(url);
       const page = collectionOf(data);
       if (!page) {
@@ -225,7 +231,7 @@ export function createSpRestClient({
       if (items.length >= limit) { partial = true; break; }
       url = next;
     }
-    return { items, partial };
+    return { items, partial, stopped };
   }
 
   return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
