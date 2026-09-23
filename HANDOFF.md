@@ -216,6 +216,19 @@ inspector, REPL and network capture all work inside the web part; a live
   window only rarely open there despite `target="_blank"` and the explicit
   `bindNewTab()` handler. Reproduce and validate the fix in a live SharePoint
   host; the standalone/mock popup test is not sufficient tenant evidence.
+  **Reproduced live 2026-09-23 (dev, Build #215–#220) — root cause narrowed:**
+  every `bindNewTab` anchor (Panels, grid ↗, the Pages drilldown's Open
+  page, library links) navigates the *Workbench tab itself*; no new tab
+  opens. SharePoint registers a capture-phase `click` listener on `window`
+  (before the bundle loads) that routes any `<a href>` click in the same
+  tab — even when the anchor's own listener calls `preventDefault()` +
+  `stopPropagation()`, and even for a synthetic `element.click()`; it acts
+  on `click`, not on pointer/mouse down/up. `window.open` itself is fine:
+  an injected `<button>` calling `window.open(url, '_blank', 'noopener')`
+  on the same page opens a new tab and leaves the Workbench in place. So
+  the likely fix is a non-anchor control (button, or an anchor without
+  `href` carrying the URL in a data attribute) — at the cost of native
+  middle/ctrl-click, which is Joe's call.
 - **Prod (bmo) reconcile follow-ups — unverified** (from the 2026-09-17
   work-prod reconcile, whose state file is retired; all of its code is on
   `main` via PR #19). Prod has since been redeployed (Joe saw a
@@ -859,39 +872,97 @@ tenant — the checklist below settles them.
 
 ### Live-tenant checklist
 
-Not yet run. Deploy to dev with `deploy\Sync-Live.ps1` (default environment;
-it rebuilds `dcspad.workbench.js`). `boot-workbench.js` is unchanged, so no
-`?v=` bump. Open the SP Workbench page on the dev FCUPortal site.
+Run 2026-09-23 on the dev tenant with headless Playwright (a clean
+browser context carrying only the sp-env profile's auth cookies, so no
+workspace was touched). First against `main` at Build #215 (ab5a0f9 —
+served bundles confirmed byte-identical to the mirror, stamp #215): 19/23
+Pages checks passed and six defects surfaced. They were fixed on
+`claude/page-status-live-fixes` (PR below) and every item re-run green
+on the branch's **Build #220** (e282515): Pages 29/29, EEEU 10/10.
+Evidence stayed in the session scratchpad; the facts:
 
-- [ ] **Scan Page Status** on Site Pages: the three columns fill, no
-      "some fields unavailable" chip (if one appears, its tooltip carries
-      SharePoint's reason — record it). A page with a draft on top of a
-      published version reads Published; a never-published page reads
-      Unpublished; a page checked out shows the holder's name.
-- [ ] **Drilldown chips** match the grid for the same pages; the export and
-      Open page buttons sit on the tab row and still download/open.
-- [ ] **Permissions tab** on a page with unique permissions lists that
-      page's own assignments; on an inheriting page, the library's.
-- [ ] **Metadata tab:** rows in spec order; Publish Date on a draft-over-
-      published page is that published version's date, not the draft's.
-      On the dev tenant the bmo site columns (`bmocContentCategory`,
-      `FolderType`, `Pillar`, `Org`, `Contact`) may not exist — their rows
-      are then simply absent, which is correct; confirm them on bmo prod
-      later. If a row is missing where the column exists, the page's Raw tab
-      shows the real internal name.
-- [ ] **Versions payload shape:** on a library with content approval, open
-      Metadata on a published page and confirm Publish Date appears. If it
-      is blank, `items(id)/versions` is returning moderation in a shape
-      `moderationOf()` does not read — capture one version entity from the
-      Network tab and extend `moderationOf()` in `page-status.js`.
-- [ ] **Content `.md` export** of a page carries the four status lines.
-- [ ] **EEEU audit** on a site with a known EEEU grant and, if available, a
-      "People in your organization" link: both found, with "Why it counts"
-      right; "SharePoint EEEU Visitors" (if present) shows as "Group
-      containing Everyone except external users"; ticking a subsite scans
-      its tree; Cancel mid-run keeps partial results; Problems lists any
-      locked group.
-- [ ] Console: no errors across the Pages and Permissions views.
+- [x] **Scan Page Status** on Site Pages: the three columns fill, no
+      reduced chip. Draft-over-published pages (CPtest 1.2, DCSpad 1.3,
+      SPutils 1.1, pnp2-object-test 3.1, SPWorkbench 4.2) read Published;
+      the never-published 0.2 pages (`sp-pilot-listview`,
+      `_harness-sp-pilot-listview`) read Unpublished; a checked-out page
+      (`zz-markdown-export-test.aspx`, checked out for the run, then
+      UndoCheckOut) shows "Joe Zapert (NERVE.digital)"; Inheritance reads
+      Broken on SPWorkbench.aspx only — the one page REST reports unique.
+- [x] **Drilldown chips** match the grid (CPtest Published; sp-pilot
+      Unpublished (off); the checked-out page Published + Checked out;
+      SPWorkbench Published + Inheritance broken). The tab row holds
+      Extract·Metadata·Permissions·Structure·Web parts·Raw with Export MD /
+      Export HTML / Export raw / Open page ↗ right-aligned outside the
+      tablist; the exports download. **Open page ↗ opens in the same tab,
+      not a new one** — the pre-existing issue #10 (root cause under Open
+      items above), not introduced by this work.
+- [x] **Permissions tab**: SPWorkbench.aspx lists its own 4 assignments
+      (REST `items(7)/roleassignments` = 4; the library has 5); CPtest
+      (inheriting) lists exactly the library's 5.
+- [x] **Metadata tab** (after the fixes): rows in spec order; Publish Date
+      is the published version under the draft — CPtest `2026-07-28` (1.0,
+      not the 1.2 draft), SPWorkbench `2026-08-17` (4.0, not 4.2); Modified
+      By / Created By read names. The bmo columns are absent on dev, and
+      the "Item Type" row is now absent too (see fix 3).
+- [x] **Versions payload shape**, on a content-approval pages library built
+      for this (`zz-mod-pages`, 119, approval on; `zz-mod-page.aspx` at
+      approved 1.0 with 1.1 submitted/Pending on top): versions return
+      moderation only as `OData__x005f_ModerationStatus` (fix 1). After
+      the fix the scan reads Published and Publish Date is the approved
+      1.0 — the deployed parser returns exactly `2026-09-23T19:54:10` (1.0),
+      not 1.1's `19:55:18`.
+- [x] **Content `.md` export**: the checked-out page carries all four lines
+      (Publish status: Published / Last published: 2026-09-23 / Permissions:
+      Inherited / Checked out to: Joe Zapert (NERVE.digital)); CPtest three
+      (not checked out); SPWorkbench says Broken inheritance. "Last
+      published" was missing everywhere before fix 1.
+- [x] **EEEU audit**, with temporary fixtures Joe approved (all removed
+      after the run — lists recycled, group deleted, and the Limited Access
+      entry SharePoint had added for EEEU at web level removed; the web is
+      back to no EEEU assignment): the direct EEEU Read on library
+      `zz-eeeu-test` found, Why "Everyone except external users"; a group
+      named **SharePoint EEEU Visitors** containing EEEU shows as "Group
+      containing Everyone except external users" (membership, not the name
+      list); an OrganizationView link on `zz-org-link.txt` found as
+      "Org-wide sharing link" (items on); ticking `sputils-test` finds
+      `zz-eeeu-sub` there, unticked it is not scanned; the full item scan
+      (Documents ≈ 34.6k items) completes in ~4.5 min with 0 problems
+      (fixes 4, 6); Cancel mid-run keeps partial results and settles 22 s
+      after starting (fix 5). **Not produced:** a locked group for the
+      Problems grid — the account is a site-collection admin, so every
+      group's membership is readable (stubbed path only).
+- [x] Console: no errors from the Workbench across Pages and Permissions.
+      The only console entry is the one deliberate 400 of the EEEU Title
+      retry (fix 6); the two message-less `pageerror`s are SharePoint's own
+      page load.
+
+**Defects found live and fixed** (branch `claude/page-status-live-fixes`;
+mock fixtures now mirror the tenant, and each fix has a check that fails
+without it):
+
+1. `items(id)/versions?$select=…,OData__ModerationStatus` answers 200 with
+   the value **omitted** on every library; versions carry it only as
+   `OData__x005f_ModerationStatus`. Publish Date / "Last published" were
+   blank on every library. `versionShapes` selects the escaped key
+   (`VERSION_MODERATION_FIELD`), and `moderationApplies()` lets a missing
+   value withhold the date only where the list's own `EnableModeration`
+   is on — the `_ModerationStatus` *field* exists (hidden) on every pages
+   library, so the field probe alone never meant "approval on".
+2. Metadata Modified By / Created By read "7": the inline
+   `$expand=FieldValuesAsText` answers person fields with lookup ids; the
+   separate `/FieldValuesAsText` endpoint returns names. Always two reads
+   now (pre-existing code, surfaced by the new spec rows).
+3. "Item Type" matched SharePoint's hidden built-in `FSObjType` (titled
+   "Item Type") when `FolderType` is absent, showing "0". Display-name
+   aliases skip hidden fields.
+4. The EEEU item scan stopped at 5,000 items: `getAll`'s `cap` defaulted to
+   `PAGE_CAP` even with `allowLargeCap`, so the documented 100,000 ceiling
+   never applied. No `cap` now means the ceiling.
+5. With 4 fixed, Cancel waited out a large library's full read (~144 s).
+   `getAll` takes an optional `shouldStop`, checked between pages.
+6. The EEEU item read named `Title`, which a 119 wiki library lacks — the
+   whole read 400'd into a Problems row. It retries once without `Title`.
 
 ## Roadmap (seams reserved)
 

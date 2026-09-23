@@ -36,6 +36,8 @@ function list(title, id, template, baseType, itemCount, hidden, url) {
     Description: hidden ? '' : `${title} for the mock web.`,
     DefaultViewUrl: `${url}/Forms/AllItems.aspx`,
     RootFolder: { ServerRelativeUrl: url },
+    // No content approval (read by the Pages view — moderationApplies()).
+    EnableModeration: false,
   };
 }
 
@@ -884,18 +886,26 @@ const ITEM_VERSIONS = {
   ],
 };
 
-function versionsOf(listId, item) {
-  const known = ITEM_VERSIONS[`${listId}:${item.Id}`];
-  if (known) return known;
+function versionsOf(list, item, path = '') {
+  const known = ITEM_VERSIONS[`${list.Id}:${item.Id}`];
   const major = item.File?.MajorVersion || 0;
   const minor = item.File?.MinorVersion || 0;
-  return [{
+  const versions = known || [{
     VersionId: major * 512 + minor,
     VersionLabel: `${major}.${minor}`,
     IsCurrentVersion: true,
     Created: item.Modified,
     OData__ModerationStatus: item.OData__ModerationStatus ?? 0,
   }];
+  // Live SPO (dev tenant, 2026-09-23, approval on or off): versions carry
+  // moderation under OData__x005f_ModerationStatus — returned by the bare
+  // collection or a $select naming that key, and silently OMITTED when the
+  // $select names the items-style OData__ModerationStatus instead.
+  const select = /[?&]\$select=([^&]*)/.exec(path)?.[1];
+  const withModeration = select === undefined || select.includes('odata__x005f_moderationstatus');
+  return versions.map(({ OData__ModerationStatus: moderation, ...rest }) => (
+    withModeration && moderation !== undefined
+      ? { ...rest, OData__x005f_ModerationStatus: moderation } : rest));
 }
 
 // Pages whose permissions are their own (HasUniqueRoleAssignments), keyed
@@ -1571,7 +1581,18 @@ export function mockResolver(rawUrl) {
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
       if (!single) return null;
-      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found.Id, single) };
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found, single, path) };
+      if (/\/items\(\d+\)\/fieldvaluesastext/.test(path)) return single.FieldValuesAsText || {};
+      if (/[?&]\$expand=[^&]*fieldvaluesastext/.test(path) && single.FieldValuesAsText) {
+        // Like live SPO: the INLINE expand answers person fields with their
+        // lookup id, not the name the separate endpoint above returns.
+        const asText = { ...single.FieldValuesAsText };
+        for (const key of Object.keys(asText)) {
+          const raw = single[key];
+          if (raw && typeof raw === 'object' && 'Title' in raw) asText[key] = String(single[`${key}Id`] ?? '');
+        }
+        return { ...single, FieldValuesAsText: asText };
+      }
       if (/\/items\(\d+\)\/roleassignments/.test(path)) {
         return { value: ITEM_ROLE_ASSIGNMENTS[`${found.Id}:${single.Id}`] || ROLE_ASSIGNMENTS };
       }

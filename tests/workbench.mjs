@@ -1295,6 +1295,47 @@ await check('page-status: Metadata layout follows the spec order and hides unlis
       && unknown === '__status_id,Title';
   }));
 
+await check('page-status: display-name aliases never match a hidden built-in (FSObjType is titled "Item Type")', async () =>
+  page.evaluate(async () => {
+    const { resolveMetadataLayout } = await import('/src/workbench/page-status.js');
+    // The dev tenant's Site Pages: no FolderType column, but a hidden
+    // FSObjType whose Title is "Item Type" — it once filled the row with "0".
+    const fields = [
+      { Title: 'Title', InternalName: 'Title', TypeAsString: 'Text' },
+      { Title: 'Item Type', InternalName: 'FSObjType', TypeAsString: 'Lookup', Hidden: true },
+    ];
+    const withBmo = [...fields, { Title: 'Item Type', InternalName: 'FolderType', TypeAsString: 'Choice' }];
+    const names = (l) => l.map((e) => e.field?.InternalName || e.internal).join(',');
+    return names(resolveMetadataLayout(fields, {})) === 'Title'
+      && names(resolveMetadataLayout(withBmo, {})) === 'Title,FolderType';
+  }));
+
+await check('page-status: moderation only withholds Publish Date when the list runs content approval', async () =>
+  page.evaluate(async () => {
+    const { moderationApplies, lastPublishedFrom, versionShapes } = await import('/src/workbench/page-status.js');
+    // Versions name moderation OData__x005f_ModerationStatus (items don't):
+    // selecting the items-style name returns 200 with the value omitted.
+    const sel = versionShapes({ hasModeration: true })[0].options.select;
+    // The live zz-mod-pages history: approved 1.0, submitted 1.1 on top.
+    const moderated = [
+      { VersionLabel: '1.1', Created: '2026-09-23T19:55:18', OData__x005f_ModerationStatus: 2 },
+      { VersionLabel: '1.0', Created: '2026-09-23T19:54:10', OData__x005f_ModerationStatus: 0 },
+    ];
+    if (!sel.includes('OData__x005f_ModerationStatus') || sel.includes('OData__ModerationStatus')
+      || lastPublishedFrom(moderated, { hasModeration: true }) !== '2026-09-23T19:54:10') return false;
+    // Live SPO versions of a non-approval library: no moderation value at all.
+    const versions = [
+      { VersionLabel: '1.2', Created: '2026-07-28T03:31:20' },
+      { VersionLabel: '1.0', Created: '2026-07-28T02:29:12' },
+    ];
+    return moderationApplies(true, false) === false
+      && moderationApplies(true, true) === true
+      && moderationApplies(true, null) === true       // unknown stays conservative
+      && moderationApplies(false, true) === false
+      && lastPublishedFrom(versions, { hasModeration: moderationApplies(true, false) }) === '2026-07-28T02:29:12'
+      && lastPublishedFrom(versions, { hasModeration: moderationApplies(true, true) }) === null;
+  }));
+
 await check('pages: Scan Page Status adds Published, Checked out and Inheritance columns', async () => {
   await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
@@ -1914,6 +1955,8 @@ await check('pages: metadata tab lists only the spec rows, in order, editing onl
     && row('bmocContentCategory').value === 'Policy;Benefits' && row('bmocContentCategory').readonly
     && row('Contact').value === 'Pat Example' && row('Contact').readonly
     && row('Editor').label === 'Modified By' && row('Author').label === 'Created By'
+    // names, not the lookup ids the inline FieldValuesAsText expand returns
+    && row('Editor').value === 'Mock Developer' && row('Author').value === 'Mock Developer'
     && row('FolderType').label === 'Item Type' && row('FolderType').control === 'select'
     && row('Org').control === 'select' && row('Pillar').control === 'select'
     && row('Title').control === 'text' && !row('Title').readonly

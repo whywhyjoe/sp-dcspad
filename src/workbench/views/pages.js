@@ -35,7 +35,7 @@ import {
   classicWebParts, classicContentParts,
 } from '../classic-page.js';
 import {
-  pageStatusShapes, derivePageStatus, versionShapes, lastPublishedFrom,
+  pageStatusShapes, derivePageStatus, versionShapes, lastPublishedFrom, moderationApplies,
   resolveMetadataLayout, publishLabel, inheritanceLabel, inheritanceMarker, checkedOutLabel,
 } from '../page-status.js';
 import { principalTypeName } from '../perm-kinds.js';
@@ -441,6 +441,9 @@ export function createPagesView({
     kind: libraryKindOf(list),
     baseTemplate: list.BaseTemplate,
     hidden: Boolean(list.Hidden),
+    // Content approval on/off (null when the read did not say) — see
+    // moderationApplies() for why the field probe alone is not enough.
+    moderated: typeof list.EnableModeration === 'boolean' ? list.EnableModeration : null,
     rootPath: list.RootFolder?.ServerRelativeUrl || '',
     viewUrl: list.DefaultViewUrl || list.RootFolder?.ServerRelativeUrl || '',
   });
@@ -448,7 +451,7 @@ export function createPagesView({
   function pagesLibraries() {
     if (!librariesPromise) {
       librariesPromise = client.getAll('web/lists', {
-        select: ['Id', 'Title', 'BaseTemplate', 'Hidden', 'DefaultViewUrl', 'RootFolder/ServerRelativeUrl'],
+        select: ['Id', 'Title', 'BaseTemplate', 'Hidden', 'EnableModeration', 'DefaultViewUrl', 'RootFolder/ServerRelativeUrl'],
         expand: 'RootFolder',
         top: 5000,
       }).then(({ items }) => {
@@ -593,7 +596,9 @@ export function createPagesView({
       const path = guidPath(sitePages.listId, `/items(${pageId})/versions`);
       lastPublishedCache.set(key, queryPlan(sitePages)
         .then((plan) => queryLadder(versionShapes(plan), (options) => client.getAll(path, options))
-          .then(({ value }) => lastPublishedFrom(value.items, { hasModeration: plan.hasModeration })))
+          .then(({ value }) => lastPublishedFrom(value.items, {
+            hasModeration: moderationApplies(plan.hasModeration, sitePages.moderated),
+          })))
         .catch((err) => { lastPublishedCache.delete(key); throw err; }));
     }
     return lastPublishedCache.get(key);
@@ -1236,21 +1241,15 @@ export function createPagesView({
         }
         layout = resolveMetadataLayout(fields, { ...pageState, id: pageId, lastPublished: published });
       }
-      // Values + display text. FieldValuesAsText covers complex types; if the
-      // combined expand misbehaves on a tenant, fall back to two requests.
-      let item;
+      // Values + display text, as two requests on purpose. The combined
+      // `$expand=FieldValuesAsText` answers person fields with their lookup
+      // ids on live SPO (Author/Editor read "7"), while the separate
+      // /FieldValuesAsText endpoint returns the names (dev tenant, 2026-09-23).
+      const item = await client.get(guidPath(listId, `/items(${pageId})`));
       let itemAsText = {};
       try {
-        item = await client.get(guidPath(listId, `/items(${pageId})`), {
-          expand: 'FieldValuesAsText',
-        });
-        itemAsText = item.FieldValuesAsText || {};
-      } catch {
-        item = await client.get(guidPath(listId, `/items(${pageId})`));
-        try {
-          itemAsText = await client.get(guidPath(listId, `/items(${pageId})/FieldValuesAsText`));
-        } catch { itemAsText = {}; }
-      }
+        itemAsText = await client.get(guidPath(listId, `/items(${pageId})/FieldValuesAsText`)) || {};
+      } catch { itemAsText = {}; }
       status.remove();
       const form = createFieldEditorForm({
         fields,
