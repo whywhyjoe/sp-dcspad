@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "216" : "dev";
-var injectedRevision = true ? "c07c8337" : "";
+var injectedBuild = true ? "218" : "dev";
+var injectedRevision = true ? "fd2cc777" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1437,8 +1437,7 @@ function list(title, id, template, baseType, itemCount, hidden, url) {
     Description: hidden ? "" : `${title} for the mock web.`,
     DefaultViewUrl: `${url}/Forms/AllItems.aspx`,
     RootFolder: { ServerRelativeUrl: url },
-    // No content approval — and, like live SPO, versions of such a list
-    // carry no OData__ModerationStatus even when the select names it.
+    // No content approval (read by the Pages view — moderationApplies()).
     EnableModeration: false
   };
 }
@@ -2280,7 +2279,7 @@ var ITEM_VERSIONS = {
     { VersionId: 512, VersionLabel: "1.0", IsCurrentVersion: false, Created: "2026-05-10T12:00:00Z", OData__ModerationStatus: 0 }
   ]
 };
-function versionsOf(list2, item2) {
+function versionsOf(list2, item2, path = "") {
   const known = ITEM_VERSIONS[`${list2.Id}:${item2.Id}`];
   const major = item2.File?.MajorVersion || 0;
   const minor = item2.File?.MinorVersion || 0;
@@ -2291,8 +2290,9 @@ function versionsOf(list2, item2) {
     Created: item2.Modified,
     OData__ModerationStatus: item2.OData__ModerationStatus ?? 0
   }];
-  if (list2.EnableModeration !== false) return versions;
-  return versions.map(({ OData__ModerationStatus, ...rest }) => rest);
+  const select = /[?&]\$select=([^&]*)/.exec(path)?.[1];
+  const withModeration = select === void 0 || select.includes("odata__x005f_moderationstatus");
+  return versions.map(({ OData__ModerationStatus: moderation, ...rest }) => withModeration && moderation !== void 0 ? { ...rest, OData__x005f_ModerationStatus: moderation } : rest);
 }
 var ITEM_ROLE_ASSIGNMENTS = {
   // Literal, not assignment(): that helper reads ROLE_DEFINITIONS, which is
@@ -2896,7 +2896,7 @@ function mockResolver(rawUrl) {
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
       if (!single) return null;
-      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found, single) };
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found, single, path) };
       if (/\/items\(\d+\)\/fieldvaluesastext/.test(path)) return single.FieldValuesAsText || {};
       if (/[?&]\$expand=[^&]*fieldvaluesastext/.test(path) && single.FieldValuesAsText) {
         const asText = { ...single.FieldValuesAsText };
@@ -13661,10 +13661,11 @@ var publishLabel = (published) => published === true ? "Published" : published =
 var inheritanceLabel = (broken) => broken === true ? "Broken inheritance" : broken === false ? "Inherited" : "";
 var inheritanceMarker = (broken) => broken === true ? "Broken" : "";
 var checkedOutLabel = (status) => status?.checkedOut ? status.checkedOutTo || "Checked out" : "";
+var VERSION_MODERATION_FIELD = "OData__x005f_ModerationStatus";
 function versionShapes({ hasModeration = false } = {}) {
   const base = ["VersionId", "VersionLabel", "IsCurrentVersion", "Created"];
   return [
-    { options: { select: hasModeration ? [...base, "OData__ModerationStatus"] : base } },
+    { options: { select: hasModeration ? [...base, VERSION_MODERATION_FIELD] : base } },
     { options: {} }
   ];
 }
