@@ -39,6 +39,10 @@ import {
   resolveMetadataLayout, publishLabel, inheritanceLabel, inheritanceMarker, checkedOutLabel,
 } from '../page-status.js';
 import { principalTypeName } from '../perm-kinds.js';
+import { openPageCopyDialog } from '../page-copy-dialog.js';
+import { runCopy, discardCopy } from '../page-copy-run.js';
+import { ANALYZERS } from '../page-copy-analyzers.js';
+import { SITE_PAGES_TEMPLATE } from '../page-copy.js';
 
 // PromotedState is modern-only — selecting it against a library that lacks it
 // 400s with "The field or property 'PromotedState' does not exist".
@@ -309,7 +313,11 @@ const roleNames = (row) =>
 // titled "Pages" keeps the plain drilldown.
 const supportsStatus = (sitePages) => sitePages?.kind === 'modern' || sitePages?.kind === 'publishing';
 
-export function createPagesView({ client, navigate, updateRoute }) {
+// createClient/mockWriter are main.js's shared view deps: the page-copy dialog
+// opens its own client per destination connect and never retargets `client`.
+export function createPagesView({
+  client, navigate, updateRoute, createClient, mockWriter,
+}) {
   const root = el('section', 'wb-view wb-view-pages');
   const spWrite = createSpWriteClient({ client });
 
@@ -1457,6 +1465,38 @@ export function createPagesView({ client, navigate, updateRoute }) {
     exportRaw.type = 'button';
     exportRaw.title = 'Item + parsed canvas controls as JSON, for scripts';
     actions.append(exportContent, exportContentHtml, exportRaw);
+    // Copy (design/PAGE-COPY.md): canvas pages in a modern Site Pages library.
+    // The dialog decides the finer eligibility (JSON canvas, layout) on its
+    // own snapshot and says why when it refuses.
+    if (isCanvas && Number(sitePages.baseTemplate) === SITE_PAGES_TEMPLATE && createClient) {
+      const copyBtn = el('button', 'btn btn-xs wb-page-copy-btn', 'Copy…');
+      copyBtn.type = 'button';
+      copyBtn.title = 'Duplicate this page here, or copy it to another site';
+      copyBtn.addEventListener('click', async () => {
+        copyBtn.disabled = true;
+        try {
+          const result = await openPageCopyDialog({
+            client,
+            createClient,
+            mockWriter,
+            library: sitePages,
+            pageId: route.pageId,
+            pageName: item.FileLeafRef || route.pageName || '',
+            statusOf: () => pageStatus(sitePages, route.pageId).then((r) => r.status).catch(() => null),
+            analyzers: ANALYZERS,
+            runCopy,
+            discardCopy,
+          });
+          // A same-web copy adds a row to this library's grid.
+          if (result && result !== 'cancelled' && result.sameWeb && result.journal?.createdBy === 'this run') {
+            invalidateGrid();
+          }
+        } finally {
+          copyBtn.disabled = false;
+        }
+      });
+      actions.append(copyBtn);
+    }
     if (item.FileRef) {
       const open = el('a', 'btn btn-xs', 'Open page ↗');
       open.href = item.FileRef;
@@ -1569,6 +1609,14 @@ export function createPagesView({ client, navigate, updateRoute }) {
   // would then land on the default library.
   function rememberLibrary() {
     if (current && libraries.length > 1) updateRoute?.({ libId: current.listId });
+  }
+
+  // The grid reloads on the next list visit (a copy landed in this library).
+  function invalidateGrid() {
+    if (grid) { grid.el.remove(); grid = null; }
+    pagesLoaded = false;
+    gridRows = [];
+    scanned = false;
   }
 
   function showMissingLibrary() {

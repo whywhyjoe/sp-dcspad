@@ -7,6 +7,7 @@
 // contract for every view.
 
 import { defaultMockWriter } from './sp-write.js';
+import { pageCopyResolver, pageCopyWriter } from './mock-pagecopy.js';
 
 const WEB_URL = location.origin;
 
@@ -512,6 +513,9 @@ export function mockWriter(url, body, contentType, headers = {}) {
   const path = String(url).slice(String(url).indexOf('/_api/') + 6).toLowerCase();
   const method = headers?.['X-HTTP-Method'] || headers?.['x-http-method'] || '';
   const record = () => { (globalThis.__DCSPAD_WB_WRITES__ ||= []).push({ url, body, contentType, headers }); };
+
+  const pc = pageCopyWriter(url, body, contentType, headers);
+  if (pc !== undefined) return pc;
 
   if (/^web\/lists$/.test(path) && !method) {
     let data = {};
@@ -1529,6 +1533,8 @@ export function mockResolver(rawUrl) {
   // Which mock web is being asked for. Everything outside /sites/classic is
   // the modern web, so existing fixtures and their row counts are untouched.
   const webBase = url.slice(0, url.indexOf('/_api/')).replace(/[/]+$/, '');
+  const pcAnswer = pageCopyResolver(url, path, webBase);
+  if (pcAnswer !== undefined) return pcAnswer;
   // The EEEU audit web and its subsite tree answer from their own fixtures.
   if (/[/]sites[/]eeeu([/]|$)/i.test(webBase)) {
     const answer = eeeuResolver(url, path, webBase);

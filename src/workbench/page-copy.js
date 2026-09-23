@@ -631,6 +631,14 @@ export function analyzeCopy({ snapshot, target, options = {}, analyzers = null, 
 
   // Parts, assets and links — only a cross-web copy moves anything.
   const analysis = analyzeParts(snapshot, { analyzers: sameWeb ? null : analyzers, targetWebParts: sameWeb ? null : target.webParts });
+  // Within one web every reference still resolves, so nothing is suspicious:
+  // the report keeps only the connections a per-part drop would break.
+  if (sameWeb) {
+    for (const part of analysis.parts) {
+      part.refs = part.refs.filter((r) => r.class === 'dynamic');
+      part.unverified = [];
+    }
+  }
   const dropped = new Set([...(options.dropped || [])].map(lower));
   const assets = [];
   const webSR = trimSlash(target.webServerRelativeUrl || '');
