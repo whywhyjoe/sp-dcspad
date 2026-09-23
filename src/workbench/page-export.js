@@ -41,11 +41,13 @@ export function pageLocation({ siteTitle, libraryTitle, fileDirRef, libraryRootP
 }
 
 // A text part is empty when it renders nothing a reader would see; markup that
-// only carries an image still counts as content.
+// only carries an image still counts as content. Judged after sanitizing: a
+// part that is only a <style> block has text to a DOM parser, none to a reader.
 function textPartIsEmpty(html) {
   if (!html) return true;
-  if (/<img\b/i.test(html)) return false;
-  return !textOfControl({ kind: 'text', innerHTML: html });
+  const safe = sanitizeHtml(html);
+  if (/<img\b/i.test(safe)) return false;
+  return !textOfControl({ kind: 'text', innerHTML: safe });
 }
 
 // Ordered reading model of a page's canvas:
@@ -103,7 +105,9 @@ export const CONTENT_FORMATS = ['markdown', 'html'];
 // Some markup has no markdown equivalent at all (a bare video embed, a styled
 // container with no text). Rather than drop content silently, a part that
 // converts to nothing falls back to the sanitized HTML — so 'markdown' is
-// lossless in the sense that matters: nothing disappears.
+// lossless in the sense that matters: nothing disappears. The fallback only
+// hands back what sanitizeHtml kept, and that removes every element the
+// converter drops — so a dropped element can never re-enter this way.
 function textPartBody(html, format) {
   const safe = sanitizeHtml(html);
   if (format === 'html') return safe;

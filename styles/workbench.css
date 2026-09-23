@@ -228,6 +228,7 @@ html.dcspad-suspended #wb-mount { display: none; }
   position: sticky; top: 0; z-index: 1; cursor: pointer; user-select: none;
 }
 .wb-table th:hover { color: var(--fg); }
+.wb-table th.wb-action-col { cursor: default; }
 .wb-table th.is-sorted { color: var(--fg-strong); box-shadow: inset 0 -2px 0 var(--accent); }
 .wb-sort-arrow { color: var(--accent); font-size: 10px; }
 .wb-table td { color: var(--fg-row); }

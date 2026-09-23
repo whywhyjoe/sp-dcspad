@@ -30,7 +30,12 @@ import TurndownService from '../vendor/turndown/turndown.js';
 // Dropped whole — content and all. sanitizeHtml already removes most of these
 // upstream; repeating them here means the converter is safe on its own terms
 // rather than by assumption about its caller.
-const DROPPED = ['script', 'style', 'noscript', 'iframe', 'object', 'embed', 'form'];
+// Exported so a test can hold canvas.js sanitizeHtml to covering all of them:
+// the page export falls back to sanitized HTML when conversion comes out
+// empty, and anything dropped here but kept there would ride back in.
+export const DROPPED = Object.freeze(
+  ['script', 'style', 'noscript', 'iframe', 'object', 'embed', 'form'],
+);
 
 const BASE_OPTIONS = {
   headingStyle: 'atx',
@@ -47,13 +52,35 @@ const BASE_OPTIONS = {
   defaultReplacement: (content, node) => (node.isBlock ? `\n\n${content}\n\n` : content),
 };
 
-// Markdown link targets: parentheses would close the syntax early, and
-// SharePoint file names may legitimately contain them.
-const encodeTarget = (url) => String(url).replace(/\(/g, '%28').replace(/\)/g, '%29');
-const escapeLabel = (label) => String(label).replace(/([[\]])/g, '\\$1');
+// Browsers drop tabs and newlines anywhere in a URL and trim controls and
+// spaces around it, so 'java\tscript:' runs as javascript:. No SharePoint
+// target carries a control character, so they go before the scheme check
+// sees the URL — the check then judges what a browser would act on.
+const cleanTarget = (url) => String(url ?? '').replace(/[\x00-\x1F\x7F]+/g, '').trim();
 
 // A javascript: target is not a link — the text stays, the href does not.
-const isSafeHref = (href) => Boolean(href) && !/^\s*javascript:/i.test(href);
+const isSafeHref = (href) => Boolean(href) && !/^javascript:/i.test(href);
+
+// A bare CommonMark destination may not contain whitespace, a parenthesis
+// closes it early and '<' reopens it as the pointy form — and SharePoint file
+// names carry all of these ('Shared Documents/Q3 Plan (v2).docx').
+// Percent-encoding leaves the same URL; a backslash is escaped instead, since
+// in a destination '\\' is the literal backslash and %5C would be a different
+// path on the server.
+const percent = (c) => (c.charCodeAt(0) < 0x80
+  ? `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`
+  : encodeURIComponent(c));
+const encodeTarget = (url) => url.replace(/\\/g, '\\\\').replace(/[\s()<>]/g, percent);
+
+// The longest run of backticks anywhere in `text`, plus one, never under 3:
+// a fence no line of the content can close early.
+const fenceFor = (text) => '`'.repeat(Math.max(
+  3, ...(text.match(/`+/g) || []).map((run) => run.length + 1),
+));
+
+// An <ol start> CommonMark can express: digits only, at most nine of them.
+// start="0" is valid and must stay 0; absent, negative or junk starts at 1.
+const listStart = (raw) => (/^\s*\d{1,9}\s*$/.test(raw ?? '') ? Number(raw) : 1);
 
 // Markdown has no table inside a table cell. A nested one contributes its
 // text instead, so the outer table still renders rather than collapsing into
@@ -86,9 +113,8 @@ function addSharedRules(turndown) {
       const parent = node.parentNode;
       let prefix = `${options.bulletListMarker} `;
       if (parent.nodeName === 'OL') {
-        const start = Number(parent.getAttribute('start'));
         const index = [...parent.children].indexOf(node);
-        prefix = `${(Number.isFinite(start) && start ? start : 1) + index}. `;
+        prefix = `${listStart(parent.getAttribute('start')) + index}. `;
       }
       const body = content
         .replace(/^\n+/, '')
@@ -101,22 +127,42 @@ function addSharedRules(turndown) {
   turndown.addRule('safeLink', {
     filter: (node) => node.nodeName === 'A' && node.getAttribute('href'),
     replacement: (content, node) => {
-      const href = node.getAttribute('href');
+      const href = cleanTarget(node.getAttribute('href'));
       // `content` has already been through Turndown's escaping — escaping it
       // again would double every backslash. Only a bare href used as the
-      // label is raw text that still needs it.
-      const label = content.trim() || escapeLabel(href);
-      if (!isSafeHref(href)) return label;
-      return `[${label}](${encodeTarget(href)})`;
+      // label is raw text that still needs it. An unsafe href is never
+      // shown, not even as the label of an empty link.
+      const text = content.trim();
+      if (!isSafeHref(href)) return text;
+      return `[${text || turndown.escape(href)}](${encodeTarget(href)})`;
     },
   });
 
+  // No title is emitted for links or images, so there is none to escape.
   turndown.addRule('safeImage', {
     filter: 'img',
     replacement: (_content, node) => {
-      const src = node.getAttribute('src');
+      const src = cleanTarget(node.getAttribute('src'));
       if (!isSafeHref(src)) return '';
-      return `![${escapeLabel(node.getAttribute('alt') || '')}](${encodeTarget(src)})`;
+      // One line: a blank line inside alt text would end the image early.
+      const alt = (node.getAttribute('alt') || '').replace(/\s+/g, ' ').trim();
+      return `![${turndown.escape(alt)}](${encodeTarget(src)})`;
+    },
+  });
+
+  // Turndown fences only <pre><code>; SharePoint's editor also writes a bare
+  // <pre>, which would otherwise read as ordinary, escaped paragraph text.
+  // <pre><code> keeps Turndown's own rule.
+  turndown.addRule('barePre', {
+    filter: (node) => node.nodeName === 'PRE'
+      && !(node.firstChild && node.firstChild.nodeName === 'CODE'),
+    replacement: (_content, node) => {
+      const clone = node.cloneNode(true);
+      for (const br of clone.querySelectorAll('br')) br.replaceWith('\n');
+      const code = (clone.textContent || '').replace(/\s+$/, '');
+      if (!code) return '';
+      const fence = fenceFor(code);
+      return `\n\n${fence}\n${code}\n${fence}\n\n`;
     },
   });
 

@@ -942,6 +942,27 @@ await check('pages: master grid lists pages with folders and promoted badges', a
     && libHref.includes('/SitePages');
 });
 
+// Every entry of a store-only zip as { name: Buffer }, read through the
+// central directory the same way an unzipper would.
+function readZipEntries(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocd = bytes.length - 22;
+  const count = view.getUint16(eocd + 10, true);
+  let at = view.getUint32(eocd + 16, true);
+  const files = {};
+  for (let i = 0; i < count; i += 1) {
+    const nameLen = view.getUint16(at + 28, true);
+    const size = view.getUint32(at + 24, true);
+    const offset = view.getUint32(at + 42, true);
+    const name = bytes.subarray(at + 46, at + 46 + nameLen).toString('utf8');
+    const body = offset + 30 + view.getUint16(offset + 26, true)
+      + view.getUint16(offset + 28, true);
+    files[name] = bytes.subarray(body, body + size);
+    at += 46 + nameLen;
+  }
+  return files;
+}
+
 // The bulk path end to end: tick two rows in two different folders, take the
 // zip the Export menu writes, and read the archive back off disk. The folder
 // mirroring and the per-page format are asserted here on real bytes, not on
@@ -958,23 +979,8 @@ await check('pages: selected pages download as one zip of content markdown', asy
     page.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download content .zip (Markdown)' }).click(),
   ]);
   const bytes = readFileSync(await download.path());
-
-  // Parse the central directory the same way an unzipper would.
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const eocd = bytes.length - 22;
-  const count = view.getUint16(eocd + 10, true);
-  let at = view.getUint32(eocd + 16, true);
-  const files = {};
-  for (let i = 0; i < count; i += 1) {
-    const nameLen = view.getUint16(at + 28, true);
-    const size = view.getUint32(at + 24, true);
-    const offset = view.getUint32(at + 42, true);
-    const name = bytes.subarray(at + 46, at + 46 + nameLen).toString('utf8');
-    const body = offset + 30 + view.getUint16(offset + 26, true)
-      + view.getUint16(offset + 28, true);
-    files[name] = bytes.subarray(body, body + size).toString('utf8');
-    at += 46 + nameLen;
-  }
+  const files = Object.fromEntries(Object.entries(readZipEntries(bytes))
+    .map(([name, body]) => [name, body.toString('utf8')]));
 
   // Leave the grid as the next checks expect to find it.
   await row('Home.aspx').locator('.wb-row-check').uncheck();
@@ -1077,6 +1083,88 @@ await check('pages: control-only columns stay out of every export', async () =>
       && JSON.parse(toJson(rows, columns))[0].Name === 'Home.aspx'
       && toMarkdown(rows, columns) === '| Name |\n| --- |\n| Home.aspx |';
   }));
+
+// One builder behind both paths is the claim; the bytes are the proof. A page
+// exported from its row and the same page inside the zip must not differ by
+// so much as a trailing newline, in either format.
+await check('pages: a row download is byte-identical to its zip entry', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const row = page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Hebdo.aspx' }).first();
+  const same = {};
+  for (const [label, entry, format] of [
+    ['MD', 'Download content .zip (Markdown)', 'markdown'],
+    ['HTML', 'Download content .zip (original HTML)', 'html'],
+  ]) {
+    const [solo] = await Promise.all([
+      page.waitForEvent('download'),
+      row.locator('.wb-cell-export', { hasText: new RegExp(`^${label}$`) }).click(),
+    ]);
+    const soloBytes = readFileSync(await solo.path());
+    await row.locator('.wb-row-check').check();
+    await page.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
+    const [zip] = await Promise.all([
+      page.waitForEvent('download'),
+      page.locator('.wb-view-pages .wb-menu-item', { hasText: entry }).click(),
+    ]);
+    await row.locator('.wb-row-check').uncheck();
+    const entries = readZipEntries(readFileSync(await zip.path()));
+    const name = format === 'html' ? 'news/fr/hebdo-content-html.md' : 'news/fr/hebdo-content.md';
+    same[format] = Object.keys(entries).length === 1
+      && soloBytes.length > 0 && Buffer.compare(soloBytes, entries[name]) === 0;
+  }
+  return same.markdown === true && same.html === true;
+});
+
+await check('pages: the action column header is inert and the filter skips it', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const header = await page.locator('.wb-view-pages .wb-table thead th.wb-action-col')
+    .evaluateAll((ths) => ths.map((th) => ({
+      tabIndex: th.tabIndex,
+      title: th.title,
+      arrow: Boolean(th.querySelector('.wb-sort-arrow')),
+      resizer: Boolean(th.querySelector('.wb-col-resize')),
+      ariaSort: th.getAttribute('aria-sort'),
+    })));
+  const order = () => page.locator('.wb-view-pages .wb-table tbody tr td.wb-mono')
+    .allTextContents();
+  const sortState = () => page.locator('.wb-view-pages .wb-table thead th')
+    .evaluateAll((ths) => ths.map((th) => th.className).join('|'));
+  const before = await order();
+  const sortBefore = await sortState();
+  await page.locator('.wb-view-pages .wb-table thead th.wb-action-col').click();
+  const after = await order();
+  const sortAfter = await sortState();
+
+  const filtered = await page.evaluate(async () => {
+    const { createGrid } = await import('/src/workbench/grid.js');
+    const grid = createGrid({
+      columns: [
+        { key: 'Name', label: 'Name' },
+        // Worst case: an action column whose value is a visible string.
+        { key: 'Go', label: '', action: true, value: (r) => r.Secret, format: (v) => v },
+      ],
+    });
+    document.body.append(grid.el);
+    grid.setRows([{ Id: 1, Name: 'Home.aspx', Secret: 'zebra' }]);
+    const filter = grid.el.querySelector('.wb-grid-filter');
+    const rowsFor = (text) => {
+      filter.value = text;
+      filter.dispatchEvent(new Event('input'));
+      return grid.el.querySelectorAll('tbody tr:not(:has(.wb-empty))').length;
+    };
+    const result = { action: rowsFor('zebra'), data: rowsFor('home') };
+    grid.el.remove();
+    return result;
+  });
+
+  return header.length === 1
+    && header[0].tabIndex === -1 && header[0].title === ''
+    && !header[0].arrow && !header[0].resizer && header[0].ariaSort === null
+    && JSON.stringify(before) === JSON.stringify(after) && sortBefore === sortAfter
+    && filtered.action === 0 && filtered.data === 1;
+});
 
 await check('pages: drilldown opens on Extract with the reordered tabs and URL copy', async () => {
   await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
@@ -1223,6 +1311,61 @@ await check('html-markdown: no markup survives into the output', async () =>
       && !md.includes('<');
   }));
 
+await check('html-markdown: a bare <pre> is fenced in both profiles', async () =>
+  page.evaluate(async () => {
+    const { htmlToMarkdown, HTML_MARKDOWN_PROFILES } = await import('/src/html-markdown.js');
+    // A ``` run inside the content: the fence must outgrow it or the block
+    // closes early. '*' stays literal — code is never markdown-escaped.
+    const bare = '<pre>line 1\nline ```2``` a * b\n  indented</pre>';
+    const coded = '<pre><code class="language-js">const a = 1;\nlet b = a * 2;</code></pre>';
+    return HTML_MARKDOWN_PROFILES.every((profile) =>
+      htmlToMarkdown(bare, profile) === '````\nline 1\nline ```2``` a * b\n  indented\n````'
+      // SharePoint writes line breaks inside a <pre> as <br>
+      && htmlToMarkdown('<pre>a<br>b</pre>', profile) === '```\na\nb\n```'
+      // <pre><code> keeps Turndown's own rule, language and all
+      && htmlToMarkdown(coded, profile) === '```js\nconst a = 1;\nlet b = a * 2;\n```');
+  }));
+
+await check('html-markdown: link and image targets are valid CommonMark destinations', async () =>
+  page.evaluate(async () => {
+    const { htmlToMarkdown } = await import('/src/html-markdown.js');
+    const { sanitizeHtml } = await import('/src/workbench/canvas.js');
+    const md = htmlToMarkdown('<p>'
+      + '<a href="/sites/x/Shared Documents/Q3 Plan (v2).docx">Plan</a> '
+      + '<img src="/sites/x/SiteAssets/team photo.png" alt="Team\n\nphoto [2026]"> '
+      + '<a href="/sites/x/Café menu.aspx#top">Menu</a> '
+      // Browsers strip tabs/newlines anywhere and controls at the ends, so
+      // each of these still runs as javascript: in a browser.
+      + '<a href="java&#9;script:alert(1)">tab</a> '
+      + '<a href="&#1;javascript:alert(2)">ctl</a> '
+      + '<a href=" java&#10;script:alert(3)"></a> '
+      + '<img src="java&#13;script:alert(4)" alt="img">'
+      + '</p>', 'pageContent');
+    // The sanitizer judges the same variant the same way.
+    const clean = sanitizeHtml('<a href="java&#9;script:alert(5)">l</a>');
+    return md.includes('[Plan](/sites/x/Shared%20Documents/Q3%20Plan%20%28v2%29.docx)')
+      // alt text kept on one line with its brackets escaped
+      && md.includes('![Team photo \\[2026\\]](/sites/x/SiteAssets/team%20photo.png)')
+      // Unicode and fragments are legal in a destination and stay as they are
+      && md.includes('[Menu](/sites/x/Café%20menu.aspx#top)')
+      // the text of a refused link stays; its target, and an image, do not
+      && md.includes(' tab ') && md.includes(' ctl')
+      && !md.includes('script:') && !md.includes('alert') && !md.includes('img')
+      && clean === '<a>l</a>';
+  }));
+
+await check('html-markdown: an ordered list keeps a start of 0', async () =>
+  page.evaluate(async () => {
+    const { htmlToMarkdown } = await import('/src/html-markdown.js');
+    return htmlToMarkdown('<ol start="0"><li>zero</li><li>one</li></ol>', 'listField')
+        === '0. zero\n1. one'
+      && htmlToMarkdown('<ol start="3"><li>c</li></ol>', 'pageContent') === '3. c'
+      // absent, negative or junk: markdown cannot say it, so 1
+      && htmlToMarkdown('<ol><li>a</li></ol>', 'pageContent') === '1. a'
+      && htmlToMarkdown('<ol start="-2"><li>x</li></ol>', 'pageContent') === '1. x'
+      && htmlToMarkdown('<ol start="two"><li>y</li></ol>', 'pageContent') === '1. y';
+  }));
+
 await check('page-export: text parts export as markdown, not as their HTML', async () =>
   page.evaluate(async () => {
     const { buildContentExport } = await import('/src/workbench/page-export.js');
@@ -1257,6 +1400,31 @@ await check('page-export: a part markdown cannot carry falls back to its HTML', 
     // Content is never dropped silently: markdown has no <video>, so the
     // sanitized HTML rides along rather than leaving an empty section.
     return md.includes('## Embed') && md.includes('<video src="/clip.mp4">');
+  }));
+
+// Was: sanitizeHtml kept <style>, Turndown dropped it, the part converted to
+// nothing, and the fallback handed the sanitized HTML — <style> included —
+// straight back to a permissive renderer.
+await check('page-export: a dropped element cannot ride back in through the fallback', async () =>
+  page.evaluate(async () => {
+    const { buildContentExport, contentParts } = await import('/src/workbench/page-export.js');
+    const { sanitizeHtml } = await import('/src/workbench/canvas.js');
+    const { DROPPED } = await import('/src/html-markdown.js');
+    const html = '<div><style>body{display:none}</style></div>';
+    const parts = [{ kind: 'text', label: 'Styled', html, lines: [] }];
+    const item = { Title: 'P' };
+    const md = buildContentExport({ item, controls: [], parts });
+    const asHtml = buildContentExport({ item, controls: [], parts, format: 'html' });
+    // The structural guarantee: every element the converter drops is one the
+    // sanitizer removes, so no fallback can return one.
+    const covered = DROPPED.every((tag) =>
+      !sanitizeHtml(`<div><${tag}>x</${tag}></div>`).includes(`<${tag}`));
+    // A part that is nothing but a <style> reads as empty, not as a section.
+    const read = contentParts([{ kind: 'text', innerHTML: html }]).parts;
+    return covered
+      && !md.includes('<style') && !md.includes('display:none')
+      && !asHtml.includes('<style') && !asHtml.includes('display:none')
+      && read.length === 0;
   }));
 
 await check('page-export: the html format keeps content blocks as sanitized HTML', async () =>
@@ -2050,6 +2218,100 @@ await check('unit: a late response for the old library cannot overwrite the new 
     host.remove();
     return text.includes('Beta.aspx') && !text.includes('Alpha.aspx')
       && chip === 'classic publishing Pages library';
+  }));
+
+// The row-export sibling of the race above, on the same hand-resolved client.
+// Was: the only guard sat right after the item fetch, so a switch while the
+// web identity was still pending downloaded the old library's page anyway,
+// and a rejection landing after the switch painted its failure over the new
+// library's grid.
+await check('unit: a row export cannot complete against a library switched away from', async () =>
+  bothPage.evaluate(async () => {
+    const { createPagesView } = await import('/src/workbench/views/pages.js');
+    const defer = () => {
+      let resolve; let reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    };
+    const web = defer();       // awaited after the item arrives
+    const late = defer();      // Two.aspx's item, rejected after the switch
+    const LISTS = { items: [
+      { Id: 'A', Title: 'Alpha', BaseTemplate: 119, Hidden: false, RootFolder: { ServerRelativeUrl: '/x/SitePages' } },
+      { Id: 'B', Title: 'Beta', BaseTemplate: 119, Hidden: false, RootFolder: { ServerRelativeUrl: '/x/Beta' } },
+    ] };
+    const NAMES = { 'A:1': 'One.aspx', 'A:2': 'Two.aspx', 'B:1': 'Beta.aspx' };
+    const pageRow = (key) => {
+      const [lib, id] = key.split(':');
+      return { Id: Number(id), Title: NAMES[key], FileLeafRef: NAMES[key],
+        FileRef: `/x/${lib}/${NAMES[key]}`, FileDirRef: `/x/${lib}` };
+    };
+    const client = {
+      webUrl: () => 'https://tenant/x',
+      get: async (path) => {
+        if (path === 'web') return web.promise;
+        const m = path.match(/'(A|B)'.*\/items\((\d+)\)/);
+        if (!m) return {};
+        if (`${m[1]}:${m[2]}` === 'A:2') return late.promise;
+        return pageRow(`${m[1]}:${m[2]}`);
+      },
+      getAll: async (path) => {
+        if (path === 'web/lists') return LISTS;
+        if (path.includes('/fields')) return { items: [] };
+        if (path.includes("'A'")) return { items: [pageRow('A:1'), pageRow('A:2')], partial: false };
+        if (path.includes("'B'")) return { items: [pageRow('B:1')], partial: false };
+        return { items: [] };
+      },
+    };
+
+    // Every download goes through a blob URL; counting them counts downloads.
+    const made = [];
+    const original = URL.createObjectURL;
+    URL.createObjectURL = (blob) => { made.push(blob.type); return original.call(URL, blob); };
+
+    const host = document.createElement('div');
+    document.body.append(host);
+    let view;
+    const navigate = (route) => { view.load(route); };
+    view = createPagesView({ client, navigate, updateRoute: () => {} });
+    host.append(view.el);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    const until = async (cond) => {
+      for (let i = 0; i < 50 && !cond(); i += 1) await settle();
+      return cond();
+    };
+    const exportButton = (name) => [...host.querySelectorAll('.wb-table tbody tr')]
+      .find((tr) => tr.textContent.includes(name))?.querySelector('.wb-cell-export');
+    let result = false;
+    try {
+      view.load({ view: 'pages' });
+      if (!await until(() => exportButton('Two.aspx'))) return false;
+      exportButton('One.aspx').click();   // item lands, then waits on `web`
+      exportButton('Two.aspx').click();   // waits on `late`
+      for (let i = 0; i < 10; i += 1) await settle();
+
+      const picker = host.querySelector('.wb-lib-picker');
+      picker.value = 'B';
+      picker.dispatchEvent(new Event('change'));
+      if (!await until(() => exportButton('Beta.aspx'))) return false;
+
+      web.resolve({ Title: 'Tenant X', Url: 'https://tenant/x' });
+      late.reject(new Error('Late failure from the old library'));
+      for (let i = 0; i < 20; i += 1) await settle();
+      const staleDownloads = made.length;
+      const painted = [...host.querySelectorAll('.wb-grid-status')]
+        .some((s) => !s.hidden && s.textContent.includes('Late failure'));
+
+      // Not vacuous: the same gesture in the library on screen still downloads.
+      exportButton('Beta.aspx').click();
+      await until(() => made.length > staleDownloads);
+      result = staleDownloads === 0 && !painted
+        && made.length === 1 && made[0].startsWith('text/markdown');
+    } finally {
+      URL.createObjectURL = original;
+      host.remove();
+    }
+    return result;
   }));
 
 await check('both: a routed library that no longer exists fails closed', async () => {

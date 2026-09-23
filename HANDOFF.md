@@ -639,14 +639,14 @@ code merged clean; the only conflicts were the test-count paragraphs in
 `CLAUDE.md` and `tests/README.md`, resolved in favour of `main` and
 re-pinned in this docs pass.
 
-**Tests.** `workbench.mjs` grew from 133 (main) to **141** — eight new
+**Tests.** `workbench.mjs` grew from 133 (main) to **148** — 141 from the rebased branch (eight new
 checks: both html-markdown profiles' structural conventions, no markup
 surviving conversion, page text parts exporting as markdown, the HTML
 fallback for a part markdown can't carry, the html format's structural
 conventions and shared metadata frame, the naming split between the two
 `.md` stems, the row buttons exporting both formats without opening the
 page, the zip honouring the format, and action columns staying out of
-CSV/JSON/markdown. Six existing assertions were re-pinned to the new
+CSV/JSON/markdown) plus seven from the Codex review round below. Six existing assertions were re-pinned to the new
 (correct) output, three per rebased commit: from the converter commit —
 `<br>` now emits a markdown hard break; a hostile `##` inside a list item's
 field value arrives escaped (`> \## forged item`) because Turndown
@@ -654,7 +654,7 @@ neutralizes it at the source, on top of the existing blockquote; and the
 classic-page export carries converted markdown instead of embedded HTML;
 from the format/row-button commit — the detail pane's button pair, and two
 zip-menu locators that now match both entries. Every other suite is
-unchanged. **All 581 checks pass across the suites** after the rebase onto
+unchanged. **All 588 checks pass across the suites** after the rebase onto
 main (per-suite counts: `tests/README.md`).
 
 ### Live-tenant checklist

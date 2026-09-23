@@ -3,7 +3,7 @@
 Last touched: 2026-09-22
 Mode: Joe
 Branch: claude/markdown-page-export-rebase (unpushed)
-State: code rebased and green (581 checks across all suites); docs done; bundle rebuild, Codex review, and dev-tenant live verification still to run this session
+State: code rebased and green (588 checks across all suites); docs done; bundle rebuild, Codex review, and dev-tenant live verification still to run this session
 
 ## What this is
 
@@ -44,7 +44,7 @@ design.
   checklist) all updated to match the rebased code and the 581-check total.
 - Rebase itself: seven original commits collapsed to four source commits; only the test-count
   paragraphs in `CLAUDE.md`/`tests/README.md` conflicted, resolved in favour of `main`.
-- `workbench.mjs` measured at 141 (was 133 on main) after the rebase; all suites together 581
+- `workbench.mjs` measured at 148 (was 133 on main) after the rebase and the Codex review fixes; all suites together 588
   (was 573).
 
 ## Next

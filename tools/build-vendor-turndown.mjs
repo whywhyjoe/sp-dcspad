@@ -43,9 +43,15 @@ async function main() {
 
   // A bare specifier surviving into the vendored file would break the
   // unbundled paths silently — the whole reason this step exists.
-  const bareImport = /^\s*(?:import|export)\b[^;]*\bfrom\s+['"](?![./])/m;
-  if (bareImport.test(source)) {
-    throw new Error(`${SOURCE} carries a bare import; it can no longer be vendored as one file`);
+  // Every form that names a module: `import … from 'x'`, `export … from 'x'`,
+  // a side-effect `import 'x'` and a dynamic `import('x')`. Anything not
+  // relative counts — an absolute URL would be a CDN dependency, which the
+  // pad has none of either.
+  const bareImport = /(?:\bfrom\s*|\bimport\s*\(?\s*)(['"`])(?![./])([^'"`]*)\1/;
+  const found = source.match(bareImport);
+  if (found) {
+    throw new Error(`${SOURCE} carries a bare import ('${found[2]}'); `
+      + 'it can no longer be vendored as one file');
   }
   if (!/export\s*\{[^}]*\bas default\b/.test(source) && !/export\s+default\b/.test(source)) {
     throw new Error(`${SOURCE} has no default export`);

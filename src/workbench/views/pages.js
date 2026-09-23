@@ -587,6 +587,9 @@ export function createPagesView({ client, navigate, updateRoute }) {
         buildZip(entries), 'application/zip');
       masterStatus.hidden = true;
     } catch (err) {
+      // Same guard as the success path: a stale rejection must not paint the
+      // previous library's failure over the new one.
+      if (current !== sitePages) { masterStatus.hidden = true; return; }
       showFailure(masterStatus, err, `the pages in ${sitePages.title}`);
     } finally {
       // The latch clears on every path, including a throw between the last
@@ -604,18 +607,24 @@ export function createPagesView({ client, navigate, updateRoute }) {
   async function exportRowContent(row, format, btn) {
     if (btn.disabled || !current) return;
     const sitePages = current;
+    // The same identity guard the zip uses, after every await: a library
+    // switch mid-export must neither download the previous library's page
+    // nor paint its failure over the grid that replaced it. Checking only
+    // after the fetch left the web-identity and classic web-part awaits, and
+    // the whole failure path, unguarded.
+    const stale = () => current !== sitePages;
     btn.disabled = true;
     try {
       const plan = await queryPlan(sitePages);
+      if (stale()) return;
       const { item } = await pageItem(sitePages.listId, row.Id, plan.detailShapes);
-      // A library switch mid-fetch would download the previous library's page
-      // while the grid shows the new one.
-      if (current !== sitePages) return;
-      downloadText(contentFileName(item, format),
-        await contentMarkdownFor(item, sitePages, null, format),
-        'text/markdown;charset=utf-8');
+      if (stale()) return;
+      const text = await contentMarkdownFor(item, sitePages, null, format);
+      if (stale()) return;
+      downloadText(contentFileName(item, format), text, 'text/markdown;charset=utf-8');
       masterStatus.hidden = true;
     } catch (err) {
+      if (stale()) return;
       // A page this account cannot read is a fact about the site, so it goes
       // through the same register as every other denied read (denied.js).
       showFailure(masterStatus, err, row.FileLeafRef || row.Title || `page ${row.Id}`);
