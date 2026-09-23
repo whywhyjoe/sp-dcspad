@@ -15,6 +15,8 @@
 //   a view  — the view supplies the content-column set and order; the
 //             system framing (heading, ID, dates) stays identical.
 
+import { htmlToMarkdown } from '../html-markdown.js';
+
 // Types that never carry item content of their own.
 const EXCLUDED_TYPES = new Set(['Computed', 'Attachments']);
 
@@ -182,121 +184,13 @@ export function attachmentLinks(item, origin = '') {
 }
 
 // ---- HTML → markdown ------------------------------------------------------
-// Light conversion tuned for SharePoint rich-text values: paragraphs, line
-// breaks, bold/italic, links, images, lists, blockquotes, and pre survive;
-// headings flatten to bold lines (real headings would fight the per-item
-// `##` structure); nested lists flatten to their top level; tables render
-// as pipe-joined rows without a separator line (readable, not re-parseable);
-// everything else contributes its text.
+// The converter itself lives in src/html-markdown.js, shared with the Pages
+// content export. Field values use the 'listField' profile: headings flatten
+// to bold and tables join with ' | ', because this document already owns '##'
+// for its per-item structure. Re-exported so callers that reach for the
+// converter through this module keep working.
 
-const BLOCK_TAGS = new Set([
-  'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table',
-  'blockquote', 'pre', 'section', 'article', 'header', 'footer', 'hr',
-]);
-
-const collapse = (s) => s
-  .replace(/[ \t]*\n[ \t]*/g, '\n')
-  .replace(/[ \t]{2,}/g, ' ')
-  .replace(/^[ \t]+|[ \t]+$/g, '')
-  .replace(/^\n+|\n+$/g, '');
-
-function inlineChildren(node) {
-  let out = '';
-  for (const child of node.childNodes) out += inlineNode(child);
-  return out;
-}
-
-function inlineNode(node) {
-  if (node.nodeType === 3) return String(node.nodeValue).replace(/\s+/g, ' ');
-  if (node.nodeType !== 1) return '';
-  const tag = node.tagName.toLowerCase();
-  if (tag === 'br') return '\n';
-  if (tag === 'script' || tag === 'style') return '';
-  if (BLOCK_TAGS.has(tag)) {
-    const block = blockNode(node);
-    return block ? `\n${block}\n` : '';
-  }
-  const body = inlineChildren(node);
-  const core = body.trim();
-  if (tag === 'strong' || tag === 'b') return core ? `**${core}**` : '';
-  if (tag === 'em' || tag === 'i') return core ? `*${core}*` : '';
-  if (tag === 'a') {
-    const href = String(node.getAttribute('href') || '');
-    const label = core || href;
-    // mdLink escapes brackets/parens — rich-text anchors get the same
-    // hardening as attachment and URL-field links.
-    return href && !/^javascript:/i.test(href) ? mdLink(label, href) : label;
-  }
-  if (tag === 'img') {
-    const src = String(node.getAttribute('src') || '');
-    return src ? `!${mdLink(node.getAttribute('alt') || '', src)}` : '';
-  }
-  return body;
-}
-
-function blockNode(node) {
-  const tag = node.tagName.toLowerCase();
-  if (tag === 'hr') return '---';
-  if (tag === 'ul' || tag === 'ol') {
-    const items = [...node.children].filter((c) => c.tagName?.toLowerCase() === 'li');
-    return items.map((li, i) =>
-      `${tag === 'ol' ? `${i + 1}.` : '-'} ${collapse(inlineChildren(li)).replace(/\n+/g, ' ')}`)
-      .join('\n');
-  }
-  if (/^h[1-6]$/.test(tag)) {
-    const core = collapse(inlineChildren(node)).replace(/\n+/g, ' ');
-    return core ? `**${core}**` : '';
-  }
-  if (tag === 'blockquote') {
-    return blockChildren(node).split('\n').map((l) => `> ${l}`).join('\n');
-  }
-  if (tag === 'pre') {
-    return `\`\`\`\n${String(node.textContent).replace(/\s+$/, '')}\n\`\`\``;
-  }
-  if (tag === 'table') {
-    return [...node.querySelectorAll('tr')].map((tr) =>
-      [...tr.children].map((td) => collapse(inlineChildren(td)).replace(/\n+/g, ' ')).join(' | '))
-      .join('\n');
-  }
-  return blockChildren(node);
-}
-
-// Mixed containers (body, div, p): block children emit paragraphs; runs of
-// inline content between them group into paragraphs of their own.
-function blockChildren(container) {
-  const parts = [];
-  let run = '';
-  const flush = () => {
-    const text = collapse(run);
-    if (text) parts.push(text);
-    run = '';
-  };
-  for (const child of container.childNodes) {
-    const tag = child.nodeType === 1 ? child.tagName.toLowerCase() : '';
-    if (BLOCK_TAGS.has(tag)) {
-      flush();
-      const block = blockNode(child);
-      if (block) parts.push(block);
-    } else {
-      run += inlineNode(child);
-    }
-  }
-  flush();
-  return parts.join('\n\n');
-}
-
-let sharedParser = null;
-
-export function htmlToMarkdown(html) {
-  const source = String(html ?? '');
-  if (!source.trim()) return '';
-  if (typeof DOMParser === 'undefined') {
-    return source.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  }
-  sharedParser = sharedParser || new DOMParser();
-  const doc = sharedParser.parseFromString(source, 'text/html');
-  return blockChildren(doc.body).replace(/\n{3,}/g, '\n\n').trim();
-}
+export { htmlToMarkdown } from '../html-markdown.js';
 
 // ---- document builder -----------------------------------------------------
 
