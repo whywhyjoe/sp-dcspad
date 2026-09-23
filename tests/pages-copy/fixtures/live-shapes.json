@@ -1,0 +1,487 @@
+{
+ "_about": "Real web-part instances captured read-only from the dev tenant (nervedotnet /sites/NewNerve) on 2026-09-23 via GET sitepages/pages(id) — editor-authored pages only (no zz-pagecopy- page). Source web: siteId 93de26bf-15a3-4fac-8f3e-2b8007d813a9, webId 773960b7-b16d-4f81-957a-02de394949b8, webServerRelativeUrl /sites/NewNerve. See design/PAGE-COPY.md §11.",
+ "source": {
+  "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+  "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+  "webUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve",
+  "webServerRelativeUrl": "/sites/NewNerve"
+ },
+ "news": [
+  {
+   "__page": "NewNerve:CollabHome.aspx",
+   "controlType": 3,
+   "id": "00000000-0000-0000-0000-000000000001",
+   "position": {
+    "zoneIndex": 1,
+    "sectionIndex": 1,
+    "controlIndex": 1,
+    "zoneId": null,
+    "sectionFactor": 8,
+    "layoutIndex": 1
+   },
+   "webPartId": "8c88f208-6c77-4bdb-86a0-0c47b4316588",
+   "emphasis": {},
+   "addedFromPersistedData": true,
+   "webPartData": {
+    "id": "8c88f208-6c77-4bdb-86a0-0c47b4316588",
+    "instanceId": "00000000-0000-0000-0000-000000000001",
+    "title": "News",
+    "description": "Display recent news.",
+    "serverProcessedContent": {
+     "htmlStrings": {},
+     "searchablePlainTexts": {},
+     "imageSources": {},
+     "links": {
+      "baseUrl": "/sites/NewNerve"
+     }
+    },
+    "dataVersion": "1.12",
+    "properties": {
+     "layoutId": "FeaturedNews",
+     "templateId": "FeaturedNews",
+     "prefetchCount": 4,
+     "carouselSettings": {
+      "autoplay": false,
+      "autoplaySpeed": 5,
+      "dots": true,
+      "lazyLoad": true,
+      "metadata": true,
+      "swipe": true,
+      "useStockItems": false
+     },
+     "showChrome": true,
+     "showNewsMetadata": {
+      "showSocialActions": false,
+      "showAuthor": true,
+      "showDate": true
+     },
+     "filters": [
+      {
+       "filterType": 1,
+       "value": "",
+       "values": [
+        null
+       ]
+      }
+     ],
+     "newsDataSourceProp": 1,
+     "dataProviderId": "news",
+     "newsSiteList": [],
+     "renderItemsSliderValue": 4,
+     "layoutComponentId": "",
+     "pinnedItems": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "serializedFilterQuery": "<Where><Eq><FieldRef Name=\"FSObjType\" /><Value Type=\"Integer\">0</Value></Eq></Where>",
+     "propsLastEdited": "2026-07-04 15:22:21Z",
+     "compactMode": false,
+     "hideWebPartWhenEmpty": false,
+     "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+     "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9"
+    }
+   }
+  },
+  {
+   "__page": "NewNerve:Test.aspx",
+   "position": {
+    "layoutIndex": 1,
+    "zoneIndex": 2,
+    "zoneId": "489e9f43-9583-4511-824f-8585e88fe874",
+    "sectionIndex": 2,
+    "sectionFactor": 6,
+    "controlIndex": 1
+   },
+   "id": "56ac99a7-32d8-4134-9488-8ef53b45d620",
+   "controlType": 3,
+   "isFromSectionTemplate": false,
+   "addedFromPersistedData": true,
+   "webPartId": "8c88f208-6c77-4bdb-86a0-0c47b4316588",
+   "reservedWidth": 570,
+   "reservedHeight": 478,
+   "webPartData": {
+    "id": "8c88f208-6c77-4bdb-86a0-0c47b4316588",
+    "instanceId": "56ac99a7-32d8-4134-9488-8ef53b45d620",
+    "title": "News",
+    "description": "Display news posts with filtering and targeting options.",
+    "audiences": [],
+    "hideOn": {
+     "mobile": false
+    },
+    "serverProcessedContent": {
+     "htmlStrings": {},
+     "searchablePlainTexts": {},
+     "imageSources": {},
+     "links": {
+      "baseUrl": "/sites/NewNerve"
+     }
+    },
+    "dataVersion": "1.18",
+    "properties": {
+     "carouselSettings": {
+      "autoplay": false,
+      "autoplaySpeed": 5,
+      "dots": true,
+      "lazyLoad": true,
+      "metadata": true,
+      "swipe": true,
+      "useStockItems": false
+     },
+     "showChrome": true,
+     "showNewsMetadata": {
+      "showSocialActions": true,
+      "showAuthor": true,
+      "showDate": true,
+      "showSiteTitle": true
+     },
+     "isTitleEnabled": true,
+     "minimumLayoutWidth": 22,
+     "renderItemsSliderValue": 4,
+     "layoutId": "FeaturedNews",
+     "newsDataSourceProp": 1,
+     "carouselHeroWrapperComponentId": "",
+     "prefetchCount": 4,
+     "filters": [
+      {
+       "filterType": 1,
+       "value": "",
+       "values": []
+      }
+     ],
+     "dataProviderId": "news",
+     "newsSiteList": [],
+     "layoutComponentId": "",
+     "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+     "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+     "filterKQLQuery": ""
+    },
+    "containsDynamicDataSource": false
+   }
+  }
+ ],
+ "quickLinks": [
+  {
+   "__page": "NewNerve:CollabHome.aspx",
+   "controlType": 3,
+   "id": "00000000-0000-0000-0000-000000000003",
+   "position": {
+    "zoneIndex": 1,
+    "sectionIndex": 2,
+    "controlIndex": 1,
+    "zoneId": null,
+    "sectionFactor": 4,
+    "layoutIndex": 1
+   },
+   "webPartId": "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd",
+   "emphasis": {},
+   "addedFromPersistedData": true,
+   "webPartData": {
+    "id": "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd",
+    "instanceId": "00000000-0000-0000-0000-000000000003",
+    "title": "Quick links",
+    "description": "Add links to important documents and pages.",
+    "serverProcessedContent": {
+     "htmlStrings": {},
+     "searchablePlainTexts": {
+      "title": "Quick links",
+      "items[0].title": "Learn about a team site",
+      "items[1].title": "Learn how to add a page"
+     },
+     "imageSources": {},
+     "links": {
+      "baseUrl": "/sites/NewNerve",
+      "items[0].sourceItem.url": "https://go.microsoft.com/fwlink/p/?linkid=827918",
+      "items[1].sourceItem.url": "https://go.microsoft.com/fwlink/p/?linkid=827919"
+     },
+     "componentDependencies": {
+      "layoutComponentId": "706e33c8-af37-4e7b-9d22-6e5694d92a6f"
+     }
+    },
+    "dataVersion": "2.2",
+    "properties": {
+     "layoutId": "List",
+     "imageWidth": 100,
+     "shouldShowThumbnail": true,
+     "isMigrated": true,
+     "hideWebPartWhenEmpty": true,
+     "dataProviderId": "QuickLinks",
+     "buttonLayoutOptions": {
+      "showDescription": false,
+      "buttonTreatment": 2,
+      "iconPositionType": 2,
+      "textAlignmentVertical": 2,
+      "textAlignmentHorizontal": 2,
+      "linesOfText": 2
+     },
+     "listLayoutOptions": {
+      "showDescription": false,
+      "showIcon": true
+     },
+     "waffleLayoutOptions": {
+      "iconSize": 1,
+      "onlyShowThumbnail": false
+     },
+     "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+     "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+     "items": [
+      {
+       "id": 2,
+       "description": null,
+       "altText": "",
+       "thumbnailType": 3,
+       "sourceItem": {
+        "itemType": 2,
+        "fileExtension": "",
+        "progId": ""
+       }
+      },
+      {
+       "id": 1,
+       "description": null,
+       "altText": "",
+       "thumbnailType": 3,
+       "sourceItem": {
+        "itemType": 2,
+        "fileExtension": "",
+        "progId": ""
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "listOrLibrary": [
+  {
+   "__page": "NewNerve:CollabHome.aspx",
+   "controlType": 3,
+   "id": "00000000-0000-0000-0000-000000000004",
+   "position": {
+    "zoneIndex": 1,
+    "sectionIndex": 2,
+    "controlIndex": 2,
+    "zoneId": null,
+    "sectionFactor": 4,
+    "layoutIndex": 1
+   },
+   "webPartId": "f92bf067-bc19-489e-a556-7fe95f508720",
+   "emphasis": {},
+   "addedFromPersistedData": true,
+   "webPartData": {
+    "id": "f92bf067-bc19-489e-a556-7fe95f508720",
+    "instanceId": "00000000-0000-0000-0000-000000000004",
+    "title": "Document library",
+    "description": "Add a document library",
+    "serverProcessedContent": {
+     "htmlStrings": {},
+     "searchablePlainTexts": {
+      "listTitle": "Documents"
+     },
+     "imageSources": {},
+     "links": {}
+    },
+    "dataVersion": "1.0",
+    "properties": {
+     "isDocumentLibrary": true,
+     "selectedListId": "acea6a08-5afa-4db6-bda8-c3dbb165760e",
+     "selectedListUrl": "/sites/NewNerve/Shared Documents",
+     "webRelativeListUrl": "Shared Documents",
+     "webpartHeightKey": 4,
+     "selectedViewId": "3162f3c5-ec8b-4f62-bf7e-4ee1aed5b133",
+     "hideCommandBar": false
+    }
+   }
+  }
+ ],
+ "text": [
+  {
+   "__page": "NewNerve:Test.aspx",
+   "position": {
+    "layoutIndex": 1,
+    "zoneIndex": 4,
+    "zoneId": "fb213304-3dd8-42ca-98e9-b8ff0a921b15",
+    "sectionIndex": 1,
+    "sectionFactor": 100,
+    "controlIndex": 1
+   },
+   "zoneHeight": 516,
+   "zoneReflowStrategy": {
+    "axis": 1
+   },
+   "id": "9d9cc4e0-7650-42c7-9167-b7315230e783",
+   "controlType": 4,
+   "isFromSectionTemplate": true,
+   "addedFromPersistedData": true,
+   "flexibleLayoutPosition": {
+    "lg": {
+     "x": 12,
+     "y": 7,
+     "w": 10,
+     "h": 19,
+     "dataVersion": "1.0"
+    },
+    "groupId": "72a803b0-f6b3-4ae9-b0ca-410b59288f9c"
+   },
+   "contentVersion": 5,
+   "innerHTML": "<h4><a href=\"https://bing.com\">How we've reduced waste →</a></h4><p><span class=\"fontSizeMediumPlus\">Learn about the innovative strategies and initiatives we've implemented to minimize waste across our operations.</span><br>&nbsp;</p>"
+  },
+  {
+   "__page": "NewNerve:Test.aspx",
+   "position": {
+    "layoutIndex": 1,
+    "zoneIndex": 4,
+    "zoneId": "fb213304-3dd8-42ca-98e9-b8ff0a921b15",
+    "sectionIndex": 1,
+    "sectionFactor": 100,
+    "controlIndex": 2
+   },
+   "zoneHeight": 516,
+   "zoneReflowStrategy": {
+    "axis": 1
+   },
+   "id": "f6c21c19-c5bc-4792-be8e-785be0ea0e45",
+   "controlType": 4,
+   "isFromSectionTemplate": true,
+   "addedFromPersistedData": true,
+   "flexibleLayoutPosition": {
+    "lg": {
+     "x": 0,
+     "y": 7,
+     "w": 10,
+     "h": 14,
+     "dataVersion": "1.0"
+    },
+    "groupId": "72a803b0-f6b3-4ae9-b0ca-410b59288f9c"
+   },
+   "contentVersion": 5,
+   "innerHTML": "<h4><a href=\"https://www.bing.com\" data-interception=\"off\" target=\"_blank\" rel=\"noopener noreferrer\">Relecloud</a><br><a href=\"https://www.bing.com\" data-interception=\"off\" target=\"_blank\" rel=\"noopener noreferrer\">recycling →</a></h4><p class=\"noSpacingAbove spacingBelow\" data-text-type=\"withSpacing\"><span class=\"fontSizeMediumPlus\">Discover how our comprehensive recycling program is reducing waste and promoting sustainability within our offices.</span></p>"
+  },
+  {
+   "__page": "NewNerve:Test.aspx",
+   "position": {
+    "layoutIndex": 1,
+    "zoneIndex": 4,
+    "zoneId": "fb213304-3dd8-42ca-98e9-b8ff0a921b15",
+    "sectionIndex": 1,
+    "sectionFactor": 100,
+    "controlIndex": 3
+   },
+   "zoneHeight": 516,
+   "zoneReflowStrategy": {
+    "axis": 1
+   },
+   "id": "639e8324-1a50-4d52-a97a-3d9a8f9a9d7b",
+   "controlType": 4,
+   "isFromSectionTemplate": true,
+   "addedFromPersistedData": true,
+   "flexibleLayoutPosition": {
+    "lg": {
+     "x": 48,
+     "y": 7,
+     "w": 10,
+     "h": 21,
+     "dataVersion": "1.0"
+    },
+    "groupId": "72a803b0-f6b3-4ae9-b0ca-410b59288f9c"
+   },
+   "contentVersion": 5,
+   "innerHTML": "<h4><a href=\"https://bing.com\">Energy-efficient buildings →</a></h4><p><span class=\"fontSizeMediumPlus\">Learn about our efforts to make our office buildings more energy-efficient using solar panels, smart energy management systems, and sustainable building materials.</span></p>"
+  },
+  {
+   "__page": "NewNerve:Test.aspx",
+   "position": {
+    "layoutIndex": 1,
+    "zoneIndex": 4,
+    "zoneId": "fb213304-3dd8-42ca-98e9-b8ff0a921b15",
+    "sectionIndex": 1,
+    "sectionFactor": 100,
+    "controlIndex": 4
+   },
+   "zoneHeight": 516,
+   "zoneReflowStrategy": {
+    "axis": 1
+   },
+   "id": "f12b0394-84f0-4528-b998-3c20fda8124b",
+   "controlType": 4,
+   "isFromSectionTemplate": true,
+   "addedFromPersistedData": true,
+   "flexibleLayoutPosition": {
+    "lg": {
+     "x": 60,
+     "y": 7,
+     "w": 10,
+     "h": 20,
+     "dataVersion": "1.0"
+    },
+    "groupId": "72a803b0-f6b3-4ae9-b0ca-410b59288f9c"
+   },
+   "contentVersion": 5,
+   "innerHTML": "<h4><a href=\"https://bing.com\">Sustainable transportation →</a></h4><p><span class=\"fontSizeMediumPlus\">Discover how we are promoting eco-friendly transportation options, such as carpooling, biking, and the use of electric vehicles, to reduce our carbon footprint</span></p>"
+  }
+ ],
+ "titleArea": [
+  {
+   "__page": "NewNerve:_app-template.aspx",
+   "id": "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+   "instanceId": "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+   "title": "Title Region",
+   "description": "Title Region Description",
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {}
+   },
+   "dataVersion": "1.4",
+   "properties": {
+    "title": "_app-template",
+    "imageSourceType": 4,
+    "layoutType": "FullWidthImage",
+    "textAlignment": "Left",
+    "showTopicHeader": false,
+    "showPublishDate": false,
+    "topicHeader": "",
+    "authorByline": [],
+    "authors": []
+   }
+  },
+  {
+   "__page": "NewNerve:_harness-sp-pilot-listview.aspx",
+   "id": "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+   "instanceId": "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+   "title": "Title Region",
+   "description": "Title Region Description",
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {}
+   },
+   "dataVersion": "1.4",
+   "properties": {
+    "title": "_app-template",
+    "imageSourceType": 4,
+    "layoutType": "FullWidthImage",
+    "textAlignment": "Left",
+    "showTopicHeader": false,
+    "showPublishDate": false,
+    "topicHeader": "",
+    "authorByline": [],
+    "authors": []
+   }
+  }
+ ]
+}

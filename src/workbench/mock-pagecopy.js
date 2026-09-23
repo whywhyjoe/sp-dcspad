@@ -165,9 +165,9 @@ export function resetPageCopyMock() {
     { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000005', webPartId: 'df8e44e7-edd5-46d5-90da-aca1539313b8', webPartData: { id: 'df8e44e7-edd5-46d5-90da-aca1539313b8', title: 'Call to action', properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: { imageSource: '/sites/pagesrc/SiteAssets/img/logo.png' }, links: { buttonLink: '/sites/pagesrc/SitePages/Join.aspx' }, customMetadata: { imageSource: { siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, uniqueId: 'd15f0000-0000-4000-8000-000000000006' } } } } },
     { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000006', webPartId: 'f92bf067-bc19-489e-a556-7fe95f508720', webPartData: { id: 'f92bf067-bc19-489e-a556-7fe95f508720', title: 'List', properties: { selectedListId: PAGECOPY_IDS.srcEvents, selectedListUrl: '/sites/pagesrc/Lists/Events', webRelativeListUrl: '/Lists/Events' }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
     { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000007', webPartId: '91a50c94-865f-4f5c-8b4e-e49659e69772', webPartData: { id: '91a50c94-865f-4f5c-8b4e-e49659e69772', title: 'Quick chart', properties: { dataProviderType: 'list', listId: PAGECOPY_IDS.srcEvents, siteUrl: '/sites/pagesrc' }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
-    { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000008', webPartId: 'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b', webPartData: { id: 'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b', title: 'Sites', properties: { sites: [{ Url: '/sites/pagesrc/team', Title: 'Team' }] }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
-    { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000009', webPartId: 'b7dd04e1-19ce-4b24-9132-b60a1c2b910d', webPartData: { id: 'b7dd04e1-19ce-4b24-9132-b60a1c2b910d', title: 'File viewer', properties: { file: '/sites/pagesrc/Shared Documents/report.pdf', uniqueId: 'd15f0000-0000-4000-8000-000000000008', siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcDocuments }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} }, dynamicDataPaths: { fileUrl: 'WebPart.d15e0000-0000-4000-8000-000000000010.d15e0000-0000-4000-8000-000000000010:selectedDocument' } } },
-    { controlType: 3, id: 'd15e0000-0000-4000-8000-00000000000a', webPartId: '7cba020c-5ccb-42e8-b6fc-75b3149aba7b', webPartData: { id: '7cba020c-5ccb-42e8-b6fc-75b3149aba7b', title: 'Document library', properties: { selectedListId: PAGECOPY_IDS.srcDocuments }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000008', webPartId: '7cba020c-5ccb-42e8-b6fc-75b3149aba7b', webPartData: { id: '7cba020c-5ccb-42e8-b6fc-75b3149aba7b', title: 'Sites', properties: { sites: [{ Url: '/sites/pagesrc/team', Title: 'Team' }] }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: 'd15e0000-0000-4000-8000-000000000009', webPartId: 'b7dd04e1-19ce-4b24-9132-b60a1c2b910d', webPartData: { id: 'b7dd04e1-19ce-4b24-9132-b60a1c2b910d', title: 'File viewer', properties: { file: '/sites/pagesrc/Shared Documents/report.pdf', uniqueId: 'd15f0000-0000-4000-8000-000000000008', siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcDocuments }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} }, dynamicDataPaths: { fileUrl: 'WebPart.d15e0000-0000-4000-8000-00000000000a.d15e0000-0000-4000-8000-00000000000a:selectedDocument' } } },
+    { controlType: 3, id: 'd15e0000-0000-4000-8000-00000000000a', webPartId: 'f92bf067-bc19-489e-a556-7fe95f508720', webPartData: { id: 'f92bf067-bc19-489e-a556-7fe95f508720', title: 'Document library', properties: { isDocumentLibrary: true, selectedListId: PAGECOPY_IDS.srcDocuments, selectedListUrl: '/sites/pagesrc/Shared Documents' }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
     { controlType: 3, id: 'd15e0000-0000-4000-8000-00000000000b', webPartId: 'd15c0000-0000-4000-8000-000000000001', webPartData: { id: 'd15c0000-0000-4000-8000-000000000001', title: 'Site-scoped SPFx', properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
     { controlType: 3, id: 'd15e0000-0000-4000-8000-00000000000c', webPartId: 'd15c0000-0000-4000-8000-0000000000ff', webPartData: { id: 'd15c0000-0000-4000-8000-0000000000ff', title: 'Unknown part', properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
     { controlType: 3, id: 'd15e0000-0000-4000-8000-00000000000d', webPartId: '275c0095-a77e-4f6d-a2a0-6a7626911518', webPartData: { id: '275c0095-a77e-4f6d-a2a0-6a7626911518', title: 'Video', properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: { videoSource: '/sites/pagesrc/SiteAssets/big/huge.mp4' } } } },
@@ -515,19 +515,16 @@ export function pageCopyResolver(url, path, webBase) {
       { Id: 'df8e44e7-edd5-46d5-90da-aca1539313b8', Name: 'Call to action' },
       { Id: 'f92bf067-bc19-489e-a556-7fe95f508720', Name: 'List' },
       { Id: 'b7dd04e1-19ce-4b24-9132-b60a1c2b910d', Name: 'File viewer' },
-      { Id: '7cba020c-5ccb-42e8-b6fc-75b3149aba7b', Name: 'Document library' },
+      { Id: '7cba020c-5ccb-42e8-b6fc-75b3149aba7b', Name: 'Sites' },
       { Id: '275c0095-a77e-4f6d-a2a0-6a7626911518', Name: 'Video' },
     ];
     // Source includes site-scoped SPFx; pagedst lacks Quick chart; nobody lists the unknown one
+    // (Ids from a live GetClientSideWebParts: 7cba020c is Sites.)
     if (web.path === '/sites/pagesrc') {
       ids.push({ Id: '91a50c94-865f-4f5c-8b4e-e49659e69772', Name: 'Quick chart' });
       ids.push({ Id: 'd15c0000-0000-4000-8000-000000000001', Name: 'Site-scoped SPFx' });
-      ids.push({ Id: 'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b', Name: 'Sites' });
     } else if (web.path === '/sites/pagesrc/team') {
       ids.push({ Id: '91a50c94-865f-4f5c-8b4e-e49659e69772', Name: 'Quick chart' });
-      ids.push({ Id: 'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b', Name: 'Sites' });
-    } else {
-      ids.push({ Id: 'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b', Name: 'Sites' });
     }
     return { value: ids };
   }
