@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "208" : "dev";
-var injectedRevision = true ? "4cfb92ee" : "";
+var injectedBuild = true ? "220" : "dev";
+var injectedRevision = true ? "e2825155" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -405,13 +405,19 @@ function createSpRestClient({
   async function get(path, opts) {
     return entityOf(await rawGet(apiUrl(path, opts)));
   }
-  async function getAll(path, opts, { cap = PAGE_CAP, allowLargeCap = false } = {}) {
+  async function getAll(path, opts, { cap, allowLargeCap = false, shouldStop = null } = {}) {
     const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
     const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
     let url = apiUrl(path, opts);
     const items = [];
     let partial = false;
+    let stopped = false;
     while (url) {
+      if (shouldStop?.()) {
+        partial = true;
+        stopped = true;
+        break;
+      }
       const data = await rawGet(url);
       const page = collectionOf(data);
       if (!page) {
@@ -433,7 +439,7 @@ function createSpRestClient({
       }
       url = next2;
     }
-    return { items, partial };
+    return { items, partial, stopped };
   }
   return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
 }
@@ -1436,7 +1442,9 @@ function list(title, id, template, baseType, itemCount, hidden, url) {
     EntityTypeName: title.replaceAll(" ", "_x0020_"),
     Description: hidden ? "" : `${title} for the mock web.`,
     DefaultViewUrl: `${url}/Forms/AllItems.aspx`,
-    RootFolder: { ServerRelativeUrl: url }
+    RootFolder: { ServerRelativeUrl: url },
+    // No content approval (read by the Pages view — moderationApplies()).
+    EnableModeration: false
   };
 }
 var fieldSeq = 0;
@@ -2277,18 +2285,20 @@ var ITEM_VERSIONS = {
     { VersionId: 512, VersionLabel: "1.0", IsCurrentVersion: false, Created: "2026-05-10T12:00:00Z", OData__ModerationStatus: 0 }
   ]
 };
-function versionsOf(listId, item2) {
-  const known = ITEM_VERSIONS[`${listId}:${item2.Id}`];
-  if (known) return known;
+function versionsOf(list2, item2, path = "") {
+  const known = ITEM_VERSIONS[`${list2.Id}:${item2.Id}`];
   const major = item2.File?.MajorVersion || 0;
   const minor = item2.File?.MinorVersion || 0;
-  return [{
+  const versions = known || [{
     VersionId: major * 512 + minor,
     VersionLabel: `${major}.${minor}`,
     IsCurrentVersion: true,
     Created: item2.Modified,
     OData__ModerationStatus: item2.OData__ModerationStatus ?? 0
   }];
+  const select = /[?&]\$select=([^&]*)/.exec(path)?.[1];
+  const withModeration = select === void 0 || select.includes("odata__x005f_moderationstatus");
+  return versions.map(({ OData__ModerationStatus: moderation, ...rest }) => withModeration && moderation !== void 0 ? { ...rest, OData__x005f_ModerationStatus: moderation } : rest);
 }
 var ITEM_ROLE_ASSIGNMENTS = {
   // Literal, not assignment(): that helper reads ROLE_DEFINITIONS, which is
@@ -2892,7 +2902,16 @@ function mockResolver(rawUrl) {
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
       if (!single) return null;
-      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found.Id, single) };
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found, single, path) };
+      if (/\/items\(\d+\)\/fieldvaluesastext/.test(path)) return single.FieldValuesAsText || {};
+      if (/[?&]\$expand=[^&]*fieldvaluesastext/.test(path) && single.FieldValuesAsText) {
+        const asText = { ...single.FieldValuesAsText };
+        for (const key2 of Object.keys(asText)) {
+          const raw = single[key2];
+          if (raw && typeof raw === "object" && "Title" in raw) asText[key2] = String(single[`${key2}Id`] ?? "");
+        }
+        return { ...single, FieldValuesAsText: asText };
+      }
       if (/\/items\(\d+\)\/roleassignments/.test(path)) {
         return { value: ITEM_ROLE_ASSIGNMENTS[`${found.Id}:${single.Id}`] || ROLE_ASSIGNMENTS };
       }
@@ -11017,10 +11036,21 @@ async function runEeeuAudit({
       if (!includeItems || shouldStop()) continue;
       let uniqueItems = [];
       try {
-        const { items, partial } = await webClient.getAll(`${base}/items`, {
-          select: ["Id", "Title", "FileRef", "FileLeafRef", "FSObjType", "HasUniqueRoleAssignments"],
-          top: 5e3
-        }, { allowLargeCap: true });
+        const itemSelect = ["Id", "Title", "FileRef", "FileLeafRef", "FSObjType", "HasUniqueRoleAssignments"];
+        const readItems = (select) => webClient.getAll(
+          `${base}/items`,
+          { select, top: 5e3 },
+          { allowLargeCap: true, shouldStop }
+        );
+        let read;
+        try {
+          read = await readItems(itemSelect);
+        } catch (err) {
+          if (err?.status !== 400) throw err;
+          read = await readItems(itemSelect.filter((f) => f !== "Title"));
+        }
+        if (read.stopped) return;
+        const { items, partial } = read;
         uniqueItems = items.filter((it) => it.HasUniqueRoleAssignments === true);
         if (partial) {
           addProblem(webTitle, LIST_TYPE[scope], listLabel, "List items with their own permissions", {
@@ -13648,12 +13678,16 @@ var publishLabel = (published) => published === true ? "Published" : published =
 var inheritanceLabel = (broken) => broken === true ? "Broken inheritance" : broken === false ? "Inherited" : "";
 var inheritanceMarker = (broken) => broken === true ? "Broken" : "";
 var checkedOutLabel = (status) => status?.checkedOut ? status.checkedOutTo || "Checked out" : "";
+var VERSION_MODERATION_FIELD = "OData__x005f_ModerationStatus";
 function versionShapes({ hasModeration = false } = {}) {
   const base = ["VersionId", "VersionLabel", "IsCurrentVersion", "Created"];
   return [
-    { options: { select: hasModeration ? [...base, "OData__ModerationStatus"] : base } },
+    { options: { select: hasModeration ? [...base, VERSION_MODERATION_FIELD] : base } },
     { options: {} }
   ];
+}
+function moderationApplies(hasModerationField, enableModeration) {
+  return Boolean(hasModerationField) && enableModeration !== false;
 }
 function lastPublishedFrom(versions, { hasModeration = false } = {}) {
   const majors = [];
@@ -13699,7 +13733,7 @@ function resolveMetadataLayout(fields, status = {}, spec = METADATA_SPEC) {
   const byTitle = /* @__PURE__ */ new Map();
   for (const f of fields || []) {
     if (f?.InternalName) byInternal.set(lower2(f.InternalName), f);
-    if (f?.Title && !byTitle.has(lower2(f.Title))) byTitle.set(lower2(f.Title), f);
+    if (f?.Title && !f.Hidden && !byTitle.has(lower2(f.Title))) byTitle.set(lower2(f.Title), f);
   }
   const used = /* @__PURE__ */ new Set();
   const out = [];
@@ -13988,13 +14022,16 @@ ${current.rootPath}` : "");
     kind: libraryKindOf(list2),
     baseTemplate: list2.BaseTemplate,
     hidden: Boolean(list2.Hidden),
+    // Content approval on/off (null when the read did not say) — see
+    // moderationApplies() for why the field probe alone is not enough.
+    moderated: typeof list2.EnableModeration === "boolean" ? list2.EnableModeration : null,
     rootPath: list2.RootFolder?.ServerRelativeUrl || "",
     viewUrl: list2.DefaultViewUrl || list2.RootFolder?.ServerRelativeUrl || ""
   });
   function pagesLibraries() {
     if (!librariesPromise) {
       librariesPromise = client2.getAll("web/lists", {
-        select: ["Id", "Title", "BaseTemplate", "Hidden", "DefaultViewUrl", "RootFolder/ServerRelativeUrl"],
+        select: ["Id", "Title", "BaseTemplate", "Hidden", "EnableModeration", "DefaultViewUrl", "RootFolder/ServerRelativeUrl"],
         expand: "RootFolder",
         top: 5e3
       }).then(({ items }) => {
@@ -14099,7 +14136,9 @@ ${current.rootPath}` : "");
     const key2 = `${sitePages.listId}:${pageId}`;
     if (!lastPublishedCache.has(key2)) {
       const path = guidPath6(sitePages.listId, `/items(${pageId})/versions`);
-      lastPublishedCache.set(key2, queryPlan(sitePages).then((plan) => queryLadder(versionShapes(plan), (options) => client2.getAll(path, options)).then(({ value }) => lastPublishedFrom(value.items, { hasModeration: plan.hasModeration }))).catch((err) => {
+      lastPublishedCache.set(key2, queryPlan(sitePages).then((plan) => queryLadder(versionShapes(plan), (options) => client2.getAll(path, options)).then(({ value }) => lastPublishedFrom(value.items, {
+        hasModeration: moderationApplies(plan.hasModeration, sitePages.moderated)
+      }))).catch((err) => {
         lastPublishedCache.delete(key2);
         throw err;
       }));
@@ -14623,20 +14662,12 @@ ${p.html}`).join("\n\n")
         }
         layout = resolveMetadataLayout(fields, { ...pageState, id: pageId, lastPublished: published });
       }
-      let item2;
+      const item2 = await client2.get(guidPath6(listId, `/items(${pageId})`));
       let itemAsText = {};
       try {
-        item2 = await client2.get(guidPath6(listId, `/items(${pageId})`), {
-          expand: "FieldValuesAsText"
-        });
-        itemAsText = item2.FieldValuesAsText || {};
+        itemAsText = await client2.get(guidPath6(listId, `/items(${pageId})/FieldValuesAsText`)) || {};
       } catch {
-        item2 = await client2.get(guidPath6(listId, `/items(${pageId})`));
-        try {
-          itemAsText = await client2.get(guidPath6(listId, `/items(${pageId})/FieldValuesAsText`));
-        } catch {
-          itemAsText = {};
-        }
+        itemAsText = {};
       }
       status.remove();
       const form = createFieldEditorForm({

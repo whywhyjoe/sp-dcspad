@@ -288,10 +288,21 @@ export async function runEeeuAudit({
       if (!includeItems || shouldStop()) continue;
       let uniqueItems = [];
       try {
-        const { items, partial } = await webClient.getAll(`${base}/items`, {
-          select: ['Id', 'Title', 'FileRef', 'FileLeafRef', 'FSObjType', 'HasUniqueRoleAssignments'],
-          top: 5000,
-        }, { allowLargeCap: true });
+        // Title is not universal: a 119 wiki pages library (and the
+        // PointPublishing/PWA Site Pages pages.js documents) has none, and
+        // naming it 400s the whole read. Retry once without it on a 400.
+        const itemSelect = ['Id', 'Title', 'FileRef', 'FileLeafRef', 'FSObjType', 'HasUniqueRoleAssignments'];
+        const readItems = (select) => webClient.getAll(`${base}/items`, { select, top: 5000 },
+          { allowLargeCap: true, shouldStop });
+        let read;
+        try {
+          read = await readItems(itemSelect);
+        } catch (err) {
+          if (err?.status !== 400) throw err;
+          read = await readItems(itemSelect.filter((f) => f !== 'Title'));
+        }
+        if (read.stopped) return;
+        const { items, partial } = read;
         uniqueItems = items.filter((it) => it.HasUniqueRoleAssignments === true);
         // The client's ceiling (100,000) was reached: items past it were never
         // looked at. That must read as an incomplete audit, not a clean one.
