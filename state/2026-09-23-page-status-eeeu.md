@@ -31,9 +31,14 @@ decisions and the live-tenant checklist: `HANDOFF.md` → "SP Workbench: page st
 
 ## Next
 
-- [ ] Local machine: `git fetch && git checkout claude/dcspad-sp-utilities-availability-ylr25q`,
-      optionally run `tests/workbench.mjs` (both servers, see tests/README.md), then deploy to
-      dev with `deploy\Sync-Live.ps1` (default env; rebuilds the bundle — no `?v=` bump needed).
+- [ ] **This branch is not deployed anywhere.** The dev tenant runs `main` (Build #197), so
+      testing what is live tests none of this work — a first local attempt (2026-09-23) did
+      exactly that. Local machine: `git fetch origin && git checkout
+      claude/dcspad-sp-utilities-availability-ylr25q` (the checkout there was parked on
+      `claude/spworkbench-dcspad-tabs-1oapsa`), optionally run `tests/workbench.mjs`, then
+      deploy it to dev with `deploy\Sync-Live.ps1` (default env; rebuilds the bundle — no `?v=`
+      bump). Before testing, confirm the served `dcspad.workbench.js` stamps Build #209 or later,
+      not #197.
 - [ ] Run HANDOFF.md's "Live-tenant checklist" for this section on the dev FCUPortal site; tick
       items there with the evidence, as the markdown-export section did.
 - [ ] Anything the checklist breaks: fix on this branch, re-run `tests/workbench.mjs`, redeploy.
@@ -49,6 +54,21 @@ For Joe:
 - The EEEU audit lists only lists/subsites with their own permissions; inheriting ones are
   covered by the parent's row. Should every exposed list be listed individually instead? (One
   change in `scanWeb`, `src/workbench/eeeu-audit.js`.)
+
+## Found live on `main` (2026-09-23), also present on this branch
+
+A local session tested `main` (Build #197) on the dev tenant by mistake. It found four defects
+in code this branch did not change, so they are here too. It queued fix tasks for them off
+`main`; whichever lands first, merge `main` into this branch rather than fixing twice.
+- `field-editor.js` `toFormValue` sends DateTime as ISO; live `ValidateUpdateListItem` rejects
+  every ISO form and accepts only the site-locale form (`10/1/2026 9:30 AM`, site time zone), and
+  one bad field fails the whole save. Hits the Files editor; this branch's Pages Metadata tab
+  edits no DateTime field. `list-data-apply.js`'s date calibration is the likely reusable fix.
+- `canvas.js` `WEBPART_NAMES`: `1ef5ed11-…` is "Markdown", not "Code snippet".
+- `canvas.js`: `controlType: 14` (section background image) is reported as a parse error.
+- Pages grid lists folders (`SitePages/tools`) as pages, with MD/HTML export buttons. With this
+  branch the Scan columns on such a row are blank; the fix (filter `FSObjType eq 1` rows out, or
+  show them as folders) belongs in `views/pages.js` either way.
 
 ## Landmines
 
