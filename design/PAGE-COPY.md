@@ -454,3 +454,11 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   removed. Suites: workbench 165 (pre-merge), schema 138, edit 26, pages-copy pure 21 +
   runner 13. Next: Q7 shapes (waiting on the editor configuration), dialog + live test
   sections, same-web live check.
+- 2026-09-23 — **Phase 1 landed.** Dialog section 12/12, stubbed-live connect section 10/10;
+  the carry set now lists valued source columns the destination lacks. Live: Build #231
+  deployed to dev; a same-web duplicate of `zz-pagecopy-q5.aspx` through the hosted
+  Workbench ran create → staging name → content → move → Description → check-in → verify
+  with outcome `done`; read-back: canvas/layout byte-identical, Title/Description kept,
+  PromotedState 0, FirstPublishedDate null, 0.1 checked in. Found live: a modern page's
+  list-item CanvasContent1 can be null (Copy button now offered on 'empty' items too).
+  Next: Phase 2 analyzers (Q7 shapes page awaiting the editor configuration).

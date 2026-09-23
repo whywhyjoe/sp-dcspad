@@ -262,8 +262,15 @@ export function computeCarrySet({
       const name = String(src.InternalName || '');
       if (!writable(src)) continue;
       const tgt = byName.get(name);
-      if (!tgt) continue;
       const label = src.Title || name;
+      if (!tgt) {
+        // Worth saying only when there was something to lose.
+        const had = itemValueOf(item, src);
+        if (had !== null && had !== undefined && had !== '' && !(Array.isArray(had) && !had.length)) {
+          skipped.push({ internalName: name, title: label, reason: 'the destination has no such column' });
+        }
+        continue;
+      }
       const type = String(src.TypeAsString || '');
       if (!writable(tgt)) { skipped.push({ internalName: name, title: label, reason: 'read-only or hidden on the destination' }); continue; }
       if (String(tgt.TypeAsString || '') !== type) {

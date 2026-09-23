@@ -425,6 +425,7 @@ export function pageCopyResolver(url, path, webBase) {
           { Id: 'f12', Title: 'Show In Nav', InternalName: 'ShowInNav', TypeAsString: 'Boolean', Required: false, Hidden: false, ReadOnlyField: false, Choices: undefined },
           { Id: 'f13', Title: 'Related Link', InternalName: 'RelatedLink', TypeAsString: 'URL', Required: false, Hidden: false, ReadOnlyField: false, Choices: undefined },
           { Id: 'f14', Title: 'Audience', InternalName: 'Audience', TypeAsString: 'Text', Required: true, Hidden: false, ReadOnlyField: false, Choices: undefined },
+          { Id: 'f15', Title: 'Owner', InternalName: 'Owner', TypeAsString: 'User', Required: false, Hidden: false, ReadOnlyField: false, Choices: undefined },
         );
       } else {
         fields.push(
