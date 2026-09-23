@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "197" : "dev";
-var injectedRevision = true ? "82581100" : "";
+var injectedBuild = true ? "206" : "dev";
+var injectedRevision = true ? "66278ce6" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1079,8 +1079,8 @@ var mockEnsuredUserId = 9e3;
 function defaultMockWriter(url, body, contentType, headers) {
   const writes = globalThis.__DCSPAD_WB_WRITES__ ||= [];
   writes.push({ url, body, contentType, headers });
-  const lower = String(url).toLowerCase();
-  if (lower.includes("addvalidateupdateitemusingpath")) {
+  const lower3 = String(url).toLowerCase();
+  if (lower3.includes("addvalidateupdateitemusingpath")) {
     let data = {};
     try {
       data = JSON.parse(body);
@@ -1100,7 +1100,7 @@ function defaultMockWriter(url, body, contentType, headers) {
       ]
     };
   }
-  if (lower.includes("/ensureuser")) {
+  if (lower3.includes("/ensureuser")) {
     let data = {};
     try {
       data = JSON.parse(body);
@@ -1115,8 +1115,8 @@ function defaultMockWriter(url, body, contentType, headers) {
       Email: email
     };
   }
-  if (lower.includes("attachmentfiles/add(")) {
-    const name = /attachmentfiles\/add\(filename='([^']*)'\)/.exec(lower)?.[1] || "file";
+  if (lower3.includes("attachmentfiles/add(")) {
+    const name = /attachmentfiles\/add\(filename='([^']*)'\)/.exec(lower3)?.[1] || "file";
     let decoded = name;
     try {
       decoded = decodeURIComponent(name);
@@ -1124,7 +1124,7 @@ function defaultMockWriter(url, body, contentType, headers) {
     }
     return { FileName: decoded, ServerRelativeUrl: `/mock/attachments/${decoded}` };
   }
-  if (lower.includes("validateupdatelistitem")) {
+  if (lower3.includes("validateupdatelistitem")) {
     let formValues = [];
     try {
       formValues = JSON.parse(body)?.formValues || [];
@@ -1138,9 +1138,9 @@ function defaultMockWriter(url, body, contentType, headers) {
       }))
     };
   }
-  if (lower.includes("addusingpath")) {
-    const name = /addusingpath\(decodedurl='([^']*)'/.exec(lower)?.[1] || "file";
-    const folder = /getfolderbyserverrelativepath\(decodedurl='([^']*)'/.exec(lower)?.[1] || "";
+  if (lower3.includes("addusingpath")) {
+    const name = /addusingpath\(decodedurl='([^']*)'/.exec(lower3)?.[1] || "file";
+    const folder = /getfolderbyserverrelativepath\(decodedurl='([^']*)'/.exec(lower3)?.[1] || "";
     return { ServerRelativeUrl: `${decodeURIComponent(folder)}/${decodeURIComponent(name)}` };
   }
   return { ok: true };
@@ -1467,8 +1467,13 @@ var FIELDS = {
     field("Author", "Author", "User", 20, { ReadOnlyField: true }),
     field("ID", "ID", "Counter", 5, { ReadOnlyField: true })
   ],
-  // Site Pages: one field per editor type the metadata form supports, plus
-  // the content fields the editor must refuse to touch.
+  // Site Pages: the column set of the bmo FCUPortal Site Pages library that
+  // the Metadata tab's fixed layout (page-status.js METADATA_SPEC) is written
+  // against — deliberately in a DIFFERENT order from the spec, with the
+  // bmo site columns whose internal name differs from the display name
+  // (Item Type is FolderType), and with fields the spec leaves out
+  // (Description, PageCategory, CanvasContent1) so the tab can prove it
+  // hides them. Per-type editor coverage lives with the Files browser.
   "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02": [
     field("Title", "Title", "Text", 2, { Required: true }),
     field("Description", "Description", "Note", 3),
@@ -1476,11 +1481,22 @@ var FIELDS = {
       Choices: ["Announcement", "How-to", "Reference"],
       DefaultValue: "Reference"
     }),
-    field("Review date", "ReviewDate", "DateTime", 4),
-    field("Show in navigation", "ShowInNav", "Boolean", 8),
-    field("Related link", "RelatedLink", "URL", 11),
+    field("Org", "Org", "Choice", 6, { Choices: ["FCU", "CCU", "Wealth"] }),
+    field("Pillar", "Pillar", "Choice", 6, { Choices: ["Member", "Business", "Operations"] }),
+    field("Item Type", "FolderType", "Choice", 6, { Choices: ["Page", "News", "Hub"] }),
+    field("Contact", "Contact", "User", 20),
+    field("Content Category", "bmocContentCategory", "TaxonomyFieldTypeMulti", 0),
     field("Promoted state", "PromotedState", "Number", 9, { ReadOnlyField: true }),
-    field("Editor", "Editor", "User", 20, { ReadOnlyField: true }),
+    field("Name", "FileLeafRef", "File", 18),
+    field("First Published Date", "FirstPublishedDate", "DateTime", 4, { ReadOnlyField: true }),
+    field("Checked Out To", "CheckoutUser", "User", 20, { ReadOnlyField: true }),
+    field("Approval Status", "_ModerationStatus", "ModStat", 22, { ReadOnlyField: true, Hidden: true }),
+    field("Compliance Asset Id", "ComplianceAssetId", "Text", 2, { ReadOnlyField: true }),
+    field("Wiki Content", "WikiField", "Note", 3),
+    field("Modified", "Modified", "DateTime", 4, { ReadOnlyField: true }),
+    field("Created", "Created", "DateTime", 4, { ReadOnlyField: true }),
+    field("Created By", "Author", "User", 20, { ReadOnlyField: true }),
+    field("Modified By", "Editor", "User", 20, { ReadOnlyField: true }),
     field("Canvas content", "CanvasContent1", "Note", 3),
     field("ID", "ID", "Counter", 5, { ReadOnlyField: true })
   ]
@@ -2154,10 +2170,26 @@ var SITEPAGES_ITEMS = [
       Description: "Mock landing page.",
       BannerImageUrl: null,
       PageCategory: "Announcement",
-      ReviewDate: "2026-08-01T00:00:00Z",
-      ShowInNav: true,
-      RelatedLink: { Url: "https://example.com", Description: "Example" },
-      FieldValuesAsText: { Editor: "Mock Developer", CanvasContent1: "(canvas markup)" }
+      // Page status: published (3.0) with a newer draft (3.1) on top, and
+      // its own permissions — see ITEM_VERSIONS / ITEM_ROLE_ASSIGNMENTS.
+      File: { MajorVersion: 3, MinorVersion: 1, CheckOutType: 2 },
+      HasUniqueRoleAssignments: true,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
+      FirstPublishedDate: "2026-05-10T12:00:00Z",
+      FolderType: "Page",
+      Pillar: "Member",
+      Org: "FCU",
+      Contact: { Title: "Pat Example" },
+      ComplianceAssetId: "CA-0042",
+      FieldValuesAsText: {
+        Editor: "Mock Developer",
+        Author: "Mock Developer",
+        CanvasContent1: "(canvas markup)",
+        Contact: "Pat Example",
+        bmocContentCategory: "Policy;Benefits",
+        CheckoutUser: ""
+      }
     })
   },
   {
@@ -2170,7 +2202,12 @@ var SITEPAGES_ITEMS = [
       Author: { Title: "Pat Example" },
       Editor: { Title: "Pat Example" },
       CanvasContent1: LEGACY_CANVAS,
-      FieldValuesAsText: { Editor: "Pat Example" }
+      // Never published (0.4) and checked out to Pat.
+      File: { MajorVersion: 0, MinorVersion: 4, CheckOutType: 0 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: { Title: "Pat Example" },
+      FieldValuesAsText: { Editor: "Pat Example", CheckoutUser: "Pat Example" }
     })
   },
   {
@@ -2183,6 +2220,10 @@ var SITEPAGES_ITEMS = [
       Author: { Title: "Mock Developer" },
       Editor: { Title: "Mock Developer" },
       CanvasContent1: null,
+      File: { MajorVersion: 1, MinorVersion: 0, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: "Mock Developer" }
     })
   },
@@ -2197,6 +2238,10 @@ var SITEPAGES_ITEMS = [
       Author: { Title: "Pat Example" },
       Editor: { Title: "Pat Example" },
       CanvasContent1: null,
+      File: { MajorVersion: 2, MinorVersion: 0, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: "Pat Example" }
     })
   },
@@ -2210,6 +2255,10 @@ var SITEPAGES_ITEMS = [
       Author: { Title: "Mock Developer" },
       Editor: { Title: "Mock Developer" },
       CanvasContent1: null,
+      File: { MajorVersion: 0, MinorVersion: 1, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: "Mock Developer" }
     })
   }
@@ -2217,6 +2266,42 @@ var SITEPAGES_ITEMS = [
 var ITEMS = {
   "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03": PROJECT_ITEMS,
   "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02": SITEPAGES_ITEMS
+};
+var ITEM_VERSIONS = {
+  "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1": [
+    { VersionId: 1537, VersionLabel: "3.1", IsCurrentVersion: true, Created: "2026-07-18T10:00:00Z" },
+    { VersionId: 1536, VersionLabel: "3.0", IsCurrentVersion: false, Created: "2026-07-01T09:00:00Z" },
+    { VersionId: 1024, VersionLabel: "2.0", IsCurrentVersion: false, Created: "2026-06-01T09:00:00Z" },
+    { VersionId: 512, VersionLabel: "1.0", IsCurrentVersion: false, Created: "2026-05-10T12:00:00Z" }
+  ]
+};
+function versionsOf(listId, item2) {
+  const known = ITEM_VERSIONS[`${listId}:${item2.Id}`];
+  if (known) return known;
+  const major = item2.File?.MajorVersion || 0;
+  const minor = item2.File?.MinorVersion || 0;
+  return [{
+    VersionId: major * 512 + minor,
+    VersionLabel: `${major}.${minor}`,
+    IsCurrentVersion: true,
+    Created: item2.Modified
+  }];
+}
+var ITEM_ROLE_ASSIGNMENTS = {
+  // Literal, not assignment(): that helper reads ROLE_DEFINITIONS, which is
+  // declared further down and still in its temporal dead zone here.
+  "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1": [
+    {
+      PrincipalId: 3,
+      Member: { Id: 3, Title: "Mock Site Owners", LoginName: "Mock Site Owners", PrincipalType: 8 },
+      RoleDefinitionBindings: [{ Id: 1073741829, Name: "Full Control" }]
+    },
+    {
+      PrincipalId: 14,
+      Member: { Id: 14, Title: "Pat Example", LoginName: "i:0#.f|membership|pat@mock.local", PrincipalType: 1 },
+      RoleDefinitionBindings: [{ Id: 1073741827, Name: "Contribute" }]
+    }
+  ]
 };
 function mockFile(name, length, modified = "2026-07-10T09:00:00Z") {
   return {
@@ -2317,11 +2402,11 @@ var ROLE_ASSIGNMENTS = [
   assignment(5, "Mock Site Members", 8, ["Contribute"]),
   assignment(7, "Mock Site Visitors", 8, ["Read"])
 ];
-function assignment(principalId, title, principalType, roleNames2) {
+function assignment(principalId, title, principalType, roleNames3) {
   return {
     PrincipalId: principalId,
     Member: { Id: principalId, Title: title, LoginName: title, PrincipalType: principalType },
-    RoleDefinitionBindings: roleNames2.map((name) => ({
+    RoleDefinitionBindings: roleNames3.map((name) => ({
       Id: ROLE_DEFINITIONS.find((r) => r.Name === name)?.Id || 0,
       Name: name
     }))
@@ -2571,12 +2656,214 @@ var BOTH_ITEMS = {
     }
   ]
 };
+var EEEU_LOGIN = "c:0-.f|rolemanager|spo-grid-all-users/0f1e2d3c-0000-4000-8000-00000000abcd";
+var EVERYONE_LOGIN = "c:0(.s|true";
+var ORG_LINK_GROUP = "SharingLinks.3f2a1b00-1111-4222-8333-444455556666.OrganizationView.7e6d5c4b-aaaa-4bbb-8ccc-ddddeeeeffff";
+var eeeuPrincipal = (id, Title, LoginName, PrincipalType) => ({ Id: id, Title, LoginName, PrincipalType });
+var P = {
+  owners: eeeuPrincipal(21, "EEEU Owners", "EEEU Owners", 8),
+  visitors: eeeuPrincipal(22, "SharePoint EEEU Visitors", "SharePoint EEEU Visitors", 8),
+  broad: eeeuPrincipal(23, "Broad Readers", "Broad Readers", 8),
+  team: eeeuPrincipal(24, "Team Members", "Team Members", 8),
+  locked: eeeuPrincipal(25, "Locked Group", "Locked Group", 8),
+  orgLink: eeeuPrincipal(26, ORG_LINK_GROUP, ORG_LINK_GROUP, 8),
+  eeeu: eeeuPrincipal(31, "Everyone except external users", EEEU_LOGIN, 4),
+  everyone: eeeuPrincipal(32, "Everyone", EVERYONE_LOGIN, 4),
+  pat: eeeuPrincipal(14, "Pat Example", "i:0#.f|membership|pat@mock.local", 1)
+};
+var ROLE = {
+  full: { Name: "Full Control", RoleTypeKind: 5 },
+  edit: { Name: "Edit", RoleTypeKind: 6 },
+  contribute: { Name: "Contribute", RoleTypeKind: 3 },
+  read: { Name: "Read", RoleTypeKind: 2 },
+  limited: { Name: "Limited Access", RoleTypeKind: 1 }
+};
+var grant = (member, ...roles) => ({ PrincipalId: member.Id, Member: member, RoleDefinitionBindings: roles });
+var EEEU_GROUPS = [P.owners, P.visitors, P.broad, P.team, P.locked, P.orgLink];
+var EEEU_GROUP_USERS = {
+  21: [P.pat],
+  22: [P.eeeu],
+  23: [P.everyone, P.pat],
+  24: [P.pat],
+  // 25 (Locked Group): no entry — its membership read fails.
+  26: []
+};
+var EEEU_SITE_PAGES = "0e0e0e0e-0001-4000-8000-000000000001";
+var EEEU_POLICIES = "0e0e0e0e-0001-4000-8000-000000000002";
+var EEEU_ANNOUNCE = "0e0e0e0e-0001-4000-8000-000000000003";
+var EEEU_HIDDEN = "0e0e0e0e-0001-4000-8000-000000000004";
+var EEEU_TEAM_DOCS = "0e0e0e0e-0002-4000-8000-000000000001";
+var eeeuList = (id, Title, BaseTemplate, BaseType, path, unique, extra = {}) => ({
+  Id: id,
+  Title,
+  BaseTemplate,
+  BaseType,
+  Hidden: false,
+  IsCatalog: false,
+  HasUniqueRoleAssignments: unique,
+  ItemCount: 0,
+  RootFolder: { ServerRelativeUrl: path },
+  ...extra
+});
+var EEEU_WEBS = {
+  "/sites/eeeu": {
+    Title: "EEEU Audit Site",
+    unique: true,
+    grants: [
+      grant(P.owners, ROLE.full),
+      grant(P.team, ROLE.contribute),
+      grant(P.visitors, ROLE.read),
+      grant(P.eeeu, ROLE.limited)
+    ],
+    lists: [
+      eeeuList(EEEU_SITE_PAGES, "Site Pages", 119, 1, "/sites/eeeu/SitePages", true),
+      eeeuList(EEEU_POLICIES, "Policies", 101, 1, "/sites/eeeu/Policies", false),
+      eeeuList(EEEU_ANNOUNCE, "Announcements", 104, 0, "/sites/eeeu/Lists/Announcements", true),
+      eeeuList(EEEU_HIDDEN, "Hidden Stuff", 100, 0, "/sites/eeeu/Lists/Hidden", true, { Hidden: true }),
+      eeeuList(
+        "0e0e0e0e-0001-4000-8000-000000000005",
+        "User Information List",
+        112,
+        0,
+        "/sites/eeeu/_catalogs/users",
+        true,
+        { Hidden: true }
+      )
+    ],
+    subwebs: ["/sites/eeeu/team", "/sites/eeeu/quiet", "/sites/eeeu/echo"]
+  },
+  "/sites/eeeu/team": {
+    Title: "Team",
+    unique: true,
+    grants: [grant(P.owners, ROLE.full), grant(P.eeeu, ROLE.read)],
+    lists: [eeeuList(EEEU_TEAM_DOCS, "Team Docs", 101, 1, "/sites/eeeu/team/TeamDocs", true)],
+    subwebs: ["/sites/eeeu/team/deep"]
+  },
+  "/sites/eeeu/team/deep": {
+    Title: "Deep",
+    unique: true,
+    grants: [grant(P.owners, ROLE.full), grant(P.broad, ROLE.read)],
+    lists: [],
+    subwebs: []
+  },
+  "/sites/eeeu/quiet": {
+    Title: "Quiet",
+    unique: true,
+    grants: [grant(P.eeeu, ROLE.read)],
+    lists: [],
+    subwebs: []
+  },
+  "/sites/eeeu/echo": {
+    Title: "Echo",
+    unique: false,
+    grants: [grant(P.visitors, ROLE.read)],
+    lists: [],
+    subwebs: []
+  }
+};
+var EEEU_LIST_GRANTS = {
+  [EEEU_SITE_PAGES]: [grant(P.owners, ROLE.full), grant(P.broad, ROLE.read)],
+  [EEEU_ANNOUNCE]: [grant(P.owners, ROLE.full), grant(P.eeeu, ROLE.read)],
+  [EEEU_HIDDEN]: [grant(P.eeeu, ROLE.read)],
+  [EEEU_TEAM_DOCS]: [grant(P.owners, ROLE.full), grant(P.visitors, ROLE.edit)]
+};
+var eeeuItem = (Id, FileLeafRef, dir, FSObjType, unique) => ({
+  Id,
+  Title: FileLeafRef,
+  FileLeafRef,
+  FileRef: `${dir}/${FileLeafRef}`,
+  FSObjType,
+  HasUniqueRoleAssignments: unique
+});
+var EEEU_ITEMS = {
+  [EEEU_SITE_PAGES]: [
+    eeeuItem(1, "Welcome.aspx", "/sites/eeeu/SitePages", 0, true),
+    eeeuItem(2, "Internal.aspx", "/sites/eeeu/SitePages", 0, false)
+  ],
+  [EEEU_POLICIES]: [
+    eeeuItem(1, "Public", "/sites/eeeu/Policies", 1, true),
+    eeeuItem(2, "handbook.docx", "/sites/eeeu/Policies", 0, true),
+    eeeuItem(3, "notes.docx", "/sites/eeeu/Policies/Public", 0, true),
+    eeeuItem(4, "plain.docx", "/sites/eeeu/Policies", 0, false)
+  ],
+  [EEEU_ANNOUNCE]: [eeeuItem(1, "Hello", "/sites/eeeu/Lists/Announcements", 0, false)],
+  [EEEU_HIDDEN]: [eeeuItem(1, "Secret", "/sites/eeeu/Lists/Hidden", 0, true)]
+};
+var EEEU_ITEM_GRANTS = {
+  [`${EEEU_SITE_PAGES}:1`]: [grant(P.owners, ROLE.full), grant(P.eeeu, ROLE.read)],
+  [`${EEEU_POLICIES}:1`]: [grant(P.owners, ROLE.full), grant(P.orgLink, ROLE.read)],
+  [`${EEEU_POLICIES}:2`]: [grant(P.owners, ROLE.full), grant(P.team, ROLE.contribute)],
+  [`${EEEU_POLICIES}:3`]: [grant(P.owners, ROLE.full), grant(P.everyone, ROLE.contribute)],
+  [`${EEEU_HIDDEN}:1`]: [grant(P.eeeu, ROLE.read)]
+};
+function eeeuResolver(url, path, webBase) {
+  let rel = "/";
+  try {
+    rel = decodeURIComponent(new URL(webBase).pathname).replace(/\/+$/, "") || "/";
+  } catch {
+  }
+  const web = EEEU_WEBS[rel.toLowerCase()];
+  if (!web) return null;
+  const origin = (() => {
+    try {
+      return new URL(webBase).origin;
+    } catch {
+      return "";
+    }
+  })();
+  const groupUsers = /^web\/sitegroups\((\d+)\)\/users/.exec(path);
+  if (groupUsers) {
+    const users = EEEU_GROUP_USERS[groupUsers[1]];
+    return users ? { value: users } : null;
+  }
+  if (path.startsWith("web/sitegroups")) return { value: EEEU_GROUPS };
+  if (path.startsWith("web/roleassignments")) return { value: web.grants };
+  if (path.startsWith("web/webs")) {
+    return {
+      value: web.subwebs.map((sub) => ({
+        Title: EEEU_WEBS[sub].Title,
+        Url: `${origin}${sub}`,
+        ServerRelativeUrl: sub
+      }))
+    };
+  }
+  const listId = listIdOf(path);
+  if (listId) {
+    const found = web.lists.find((l) => l.Id === listId);
+    if (!found) return null;
+    const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
+    if (itemId) {
+      if (path.includes("/roleassignments")) {
+        return { value: EEEU_ITEM_GRANTS[`${found.Id}:${itemId}`] || EEEU_LIST_GRANTS[found.Id] || web.grants };
+      }
+      return (EEEU_ITEMS[found.Id] || []).find((i) => i.Id === Number(itemId)) || null;
+    }
+    if (path.includes("/roleassignments")) return { value: EEEU_LIST_GRANTS[found.Id] || web.grants };
+    if (path.includes("/items")) return { value: EEEU_ITEMS[found.Id] || [] };
+    return found;
+  }
+  if (path.startsWith("web/lists")) return { value: web.lists };
+  if (path === "web" || path.startsWith("web?")) {
+    return {
+      ...WEB,
+      Title: web.Title,
+      Url: webBase,
+      ServerRelativeUrl: rel,
+      HasUniqueRoleAssignments: web.unique
+    };
+  }
+  return void 0;
+}
 var listIdOf = (url) => /lists\(guid'([0-9a-f-]+)'\)/i.exec(url)?.[1]?.toLowerCase();
 var groupIdOf = (url) => /sitegroups\((\d+)\)/i.exec(url)?.[1];
 function mockResolver(rawUrl) {
   const url = String(rawUrl);
   const path = url.slice(url.indexOf("/_api/") + 6).toLowerCase();
   const webBase = url.slice(0, url.indexOf("/_api/")).replace(/[/]+$/, "");
+  if (/[/]sites[/]eeeu([/]|$)/i.test(webBase)) {
+    const answer = eeeuResolver(url, path, webBase);
+    if (answer !== void 0) return answer;
+  }
   const classic = /[/]sites[/]classic$/i.test(webBase);
   const both = /[/]sites[/]both$/i.test(webBase);
   const schema = /[/]sites[/]schema$/i.test(webBase);
@@ -2601,7 +2888,12 @@ function mockResolver(rawUrl) {
     const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
-      return single ?? null;
+      if (!single) return null;
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found.Id, single) };
+      if (/\/items\(\d+\)\/roleassignments/.test(path)) {
+        return { value: ITEM_ROLE_ASSIGNMENTS[`${found.Id}:${single.Id}`] || ROLE_ASSIGNMENTS };
+      }
+      return single;
     }
     if (path.includes("/items")) {
       const rows = [...itemsByList[found.Id] || []];
@@ -3178,7 +3470,6 @@ function createGrid({
   }
   let selectAll = null;
   if (selectable) {
-    const th = el2("th", "wb-select-col");
     selectAll = el2("input");
     selectAll.type = "checkbox";
     selectAll.className = "wb-select-all";
@@ -3189,41 +3480,51 @@ function createGrid({
       else visible.forEach((row) => selectedKeys.delete(keyOf(row)));
       render();
     });
-    th.append(selectAll);
-    headRow.append(th);
   }
-  columns.forEach((col, colIndex) => {
-    const th = el2("th", "", col.label ?? col.key);
-    th.dataset.colIndex = String(colIndex);
-    if (col.num) th.classList.add("wb-num");
-    if (col.width) th.style.width = col.width;
-    if (col.action) {
-      th.classList.add("wb-action-col");
+  function buildHeader() {
+    headRow.textContent = "";
+    widthsFrozen = false;
+    table2.style.tableLayout = "";
+    table2.style.width = "";
+    if (selectAll) {
+      const th = el2("th", "wb-select-col");
+      th.append(selectAll);
       headRow.append(th);
-      return;
     }
-    th.tabIndex = 0;
-    th.title = `Sort by ${col.label ?? col.key}`;
-    const arrow = el2("span", "wb-sort-arrow", "");
-    th.append(arrow);
-    const sortBy = () => {
-      if (sortKey === col.key) sortDir = -sortDir;
-      else {
-        sortKey = col.key;
-        sortDir = 1;
+    columns.forEach((col, colIndex) => {
+      const th = el2("th", "", col.label ?? col.key);
+      th.dataset.colIndex = String(colIndex);
+      if (col.num) th.classList.add("wb-num");
+      if (col.width) th.style.width = col.width;
+      if (col.action) {
+        th.classList.add("wb-action-col");
+        headRow.append(th);
+        return;
       }
-      render();
-    };
-    th.addEventListener("click", sortBy);
-    th.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        sortBy();
-      }
+      th.tabIndex = 0;
+      th.title = `Sort by ${col.label ?? col.key}`;
+      const arrow = el2("span", "wb-sort-arrow", "");
+      th.append(arrow);
+      const sortBy = () => {
+        if (sortKey === col.key) sortDir = -sortDir;
+        else {
+          sortKey = col.key;
+          sortDir = 1;
+        }
+        render();
+      };
+      th.addEventListener("click", sortBy);
+      th.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          sortBy();
+        }
+      });
+      attachResizer(th);
+      headRow.append(th);
     });
-    attachResizer(th);
-    headRow.append(th);
-  });
+  }
+  buildHeader();
   thead.append(headRow);
   const tbody = el2("tbody");
   table2.append(thead, tbody);
@@ -3388,6 +3689,16 @@ function createGrid({
     setError(err) {
       status.className = "wb-grid-status";
       showFailure(status, err, subject);
+    },
+    // Swap the column set on a live grid (the Pages status scan adds its
+    // columns this way). Rows, filter and selection are kept; a sort on a
+    // column that no longer exists is dropped. Exports read `columns` at
+    // click time, so they follow the new set.
+    setColumns(next2) {
+      columns = Array.isArray(next2) ? next2 : [];
+      if (sortKey && !columns.some((c) => c.key === sortKey && !c.action)) sortKey = null;
+      buildHeader();
+      render();
     },
     getVisibleRows: () => [...visible],
     getExportRows: () => [...exportRows()],
@@ -10453,6 +10764,318 @@ function createListsView({
   return { el: root2, load: load2, grid };
 }
 
+// ../src/workbench/eeeu-audit.js
+var DEFAULT_TARGETS = [
+  "Everyone except external users",
+  "Everyone",
+  "SharePoint EEEU Visitors"
+];
+var EEEU_CLAIM = /^c:0-\.f\|rolemanager\|spo-grid-all-users\//i;
+var EVERYONE_CLAIM = /^c:0\(\.s\|true$/i;
+var ORG_LINK = /^SharingLinks\.[0-9a-f-]+\.Organization(View|Edit)\b/i;
+var lower = (s) => String(s ?? "").trim().toLowerCase();
+function broadPrincipalKind(principal) {
+  const login = String(principal?.LoginName || "");
+  if (EEEU_CLAIM.test(login)) return "Everyone except external users";
+  if (EVERYONE_CLAIM.test(login)) return "Everyone";
+  return null;
+}
+function isOrgSharingLink(principal) {
+  return ORG_LINK.test(String(principal?.LoginName || "")) || ORG_LINK.test(String(principal?.Title || ""));
+}
+function makeMatcher({ targets = DEFAULT_TARGETS, broadGroups = /* @__PURE__ */ new Map() } = {}) {
+  const names = new Set((targets || []).map(lower).filter(Boolean));
+  return (member) => {
+    if (!member) return null;
+    const direct = broadPrincipalKind(member);
+    if (direct) return direct;
+    if (isOrgSharingLink(member)) return "Org-wide sharing link";
+    const group = broadGroups.get(lower(member.Title)) || broadGroups.get(lower(member.LoginName));
+    if (group) return `Group containing ${group}`;
+    if (names.has(lower(member.Title)) || names.has(lower(member.LoginName))) return "Named principal";
+    return null;
+  };
+}
+var bindingsOf = (a) => a?.RoleDefinitionBindings?.results || a?.RoleDefinitionBindings || [];
+var isLimitedAccess = (role) => Number(role?.RoleTypeKind) === 1 || /limited access/i.test(String(role?.Name || ""));
+function matchAssignments(assignments, matcher, { hideLimitedAccess = true } = {}) {
+  const out = [];
+  for (const a of assignments || []) {
+    const via = matcher(a?.Member);
+    if (!via) continue;
+    const roles = bindingsOf(a);
+    const real = roles.filter((r) => !isLimitedAccess(r));
+    if (hideLimitedAccess && roles.length && !real.length) continue;
+    out.push({
+      principal: a.Member?.Title || "",
+      login: a.Member?.LoginName || "",
+      permission: (hideLimitedAccess ? real : roles).map((r) => r.Name).filter(Boolean).join(", "),
+      via
+    });
+  }
+  return out;
+}
+function listScopeOf(list2) {
+  if (!list2 || isInternalList(list2)) return null;
+  if (list2.BaseTemplate === 119 || list2.BaseTemplate === 850) return "pages";
+  return list2.BaseType === 1 ? "documents" : "lists";
+}
+var LIST_TYPE = { pages: "Pages library", documents: "Library", lists: "List" };
+var itemType = (scope, item2) => {
+  if (Number(item2?.FSObjType) === 1) return "Folder";
+  return scope === "pages" ? "Page" : scope === "documents" ? "File" : "Item";
+};
+var ASSIGNMENT_OPTIONS = {
+  expand: ["Member", "RoleDefinitionBindings"],
+  select: [
+    "PrincipalId",
+    "Member/Title",
+    "Member/LoginName",
+    "Member/PrincipalType",
+    "RoleDefinitionBindings/Name",
+    "RoleDefinitionBindings/RoleTypeKind"
+  ]
+};
+async function pool(items, limit, fn, shouldStop) {
+  let next2 = 0;
+  const worker = async () => {
+    while (next2 < items.length && !shouldStop()) {
+      const item2 = items[next2++];
+      await fn(item2);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+}
+var originOf = (url) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+};
+var absolute = (webUrl, path) => path ? `${originOf(webUrl)}${encodeURI(String(path))}` : "";
+async function runEeeuAudit({
+  client: client2,
+  openWeb,
+  subsites = [],
+  scopes = { site: true, pages: true, lists: true, documents: true },
+  includeItems = true,
+  targets = DEFAULT_TARGETS,
+  hideLimitedAccess = true,
+  concurrency = 3,
+  maxDepth = 12,
+  onProgress = () => {
+  },
+  onRow = () => {
+  },
+  onProblem = () => {
+  },
+  shouldStop = () => false
+} = {}) {
+  const rows = [];
+  const problems = [];
+  const websScanned = [];
+  let seq = 0;
+  const addRow = (row) => {
+    const full = { Key: `r${++seq}`, ...row };
+    rows.push(full);
+    onRow(full, rows);
+  };
+  const addProblem = (webTitle, scope, location2, operation, err) => {
+    const full = {
+      Key: `p${++seq}`,
+      Web: webTitle,
+      Scope: scope,
+      Location: location2,
+      Operation: operation,
+      Status: err?.status ? String(err.status) : "",
+      Message: err?.message || String(err)
+    };
+    problems.push(full);
+    onProblem(full, problems);
+  };
+  onProgress("Finding groups that contain everyone\u2026");
+  const broadGroups = /* @__PURE__ */ new Map();
+  let rootWeb = { Title: "", Url: client2.webUrl() };
+  try {
+    rootWeb = await client2.get("web", { select: ["Title", "Url", "HasUniqueRoleAssignments"] });
+  } catch (err) {
+    addProblem("", "Site", client2.webUrl(), "Read the site", err);
+  }
+  try {
+    const { items: groups } = await client2.getAll("web/sitegroups", { select: ["Id", "Title", "LoginName"] });
+    let done = 0;
+    await pool(groups, concurrency, async (group) => {
+      try {
+        const { items: members } = await client2.getAll(`web/sitegroups(${group.Id})/users`, {
+          select: ["Title", "LoginName", "PrincipalType"]
+        });
+        const kind = members.map(broadPrincipalKind).find(Boolean);
+        if (kind) broadGroups.set(lower(group.Title), kind);
+      } catch (err) {
+        addProblem(rootWeb.Title, "Group", group.Title, "Read group membership", err);
+      }
+      done += 1;
+      onProgress(`Checking group membership\u2026 ${done} of ${groups.length}`);
+    }, shouldStop);
+  } catch (err) {
+    addProblem(rootWeb.Title, "Site", rootWeb.Url || client2.webUrl(), "List site groups", err);
+  }
+  const matcher = makeMatcher({ targets, broadGroups });
+  async function scanWeb(webClient, web, { isRoot }) {
+    const webTitle = web.Title || web.Url || "";
+    const webUrl = web.Url || webClient.webUrl();
+    websScanned.push({ Title: webTitle, Url: webUrl });
+    if (scopes.site && (isRoot || web.HasUniqueRoleAssignments !== false)) {
+      onProgress(`${webTitle}: site permissions\u2026`);
+      try {
+        const { items } = await webClient.getAll("web/roleassignments", ASSIGNMENT_OPTIONS);
+        for (const m of matchAssignments(items, matcher, { hideLimitedAccess })) {
+          addRow({
+            Web: webTitle,
+            Type: "Site",
+            Location: webTitle,
+            Name: webTitle,
+            SharedWith: m.principal,
+            Login: m.login,
+            Permission: m.permission,
+            Via: m.via,
+            Unique: isRoot ? "Site" : "Yes",
+            Url: webUrl
+          });
+        }
+      } catch (err) {
+        addProblem(webTitle, "Site", webUrl, "Read site permissions", err);
+      }
+    }
+    if (!scopes.pages && !scopes.lists && !scopes.documents) return;
+    if (shouldStop()) return;
+    onProgress(`${webTitle}: lists\u2026`);
+    let lists = [];
+    try {
+      ({ items: lists } = await webClient.getAll("web/lists", {
+        select: [
+          "Id",
+          "Title",
+          "BaseTemplate",
+          "BaseType",
+          "Hidden",
+          "IsCatalog",
+          "HasUniqueRoleAssignments",
+          "ItemCount",
+          "RootFolder/ServerRelativeUrl"
+        ],
+        expand: "RootFolder",
+        top: 5e3
+      }));
+    } catch (err) {
+      addProblem(webTitle, "Lists", webUrl, "List the site\u2019s lists", err);
+      return;
+    }
+    const chosen = lists.map((list2) => ({ list: list2, scope: listScopeOf(list2) })).filter(({ scope }) => scope && scopes[scope]);
+    let listNo = 0;
+    for (const { list: list2, scope } of chosen) {
+      if (shouldStop()) return;
+      listNo += 1;
+      const listPath2 = list2.RootFolder?.ServerRelativeUrl || "";
+      const listLabel = list2.Title || listPath2;
+      const base = `web/lists(guid'${list2.Id}')`;
+      onProgress(`${webTitle}: ${listLabel} (${listNo} of ${chosen.length})\u2026`);
+      if (list2.HasUniqueRoleAssignments) {
+        try {
+          const { items } = await webClient.getAll(`${base}/roleassignments`, ASSIGNMENT_OPTIONS);
+          for (const m of matchAssignments(items, matcher, { hideLimitedAccess })) {
+            addRow({
+              Web: webTitle,
+              Type: LIST_TYPE[scope],
+              Location: listLabel,
+              Name: listLabel,
+              SharedWith: m.principal,
+              Login: m.login,
+              Permission: m.permission,
+              Via: m.via,
+              Unique: "Yes",
+              Url: absolute(webUrl, listPath2)
+            });
+          }
+        } catch (err) {
+          addProblem(webTitle, LIST_TYPE[scope], listLabel, "Read list permissions", err);
+        }
+      }
+      if (!includeItems || shouldStop()) continue;
+      let uniqueItems = [];
+      try {
+        const { items } = await webClient.getAll(`${base}/items`, {
+          select: ["Id", "Title", "FileRef", "FileLeafRef", "FSObjType", "HasUniqueRoleAssignments"],
+          top: 5e3
+        }, { allowLargeCap: true });
+        uniqueItems = items.filter((it) => it.HasUniqueRoleAssignments === true);
+      } catch (err) {
+        addProblem(webTitle, LIST_TYPE[scope], listLabel, "List items with their own permissions", err);
+        continue;
+      }
+      let itemNo = 0;
+      await pool(uniqueItems, concurrency, async (item2) => {
+        const name = item2.FileLeafRef || item2.Title || `Item ${item2.Id}`;
+        try {
+          const { items } = await webClient.getAll(`${base}/items(${item2.Id})/roleassignments`, ASSIGNMENT_OPTIONS);
+          for (const m of matchAssignments(items, matcher, { hideLimitedAccess })) {
+            addRow({
+              Web: webTitle,
+              Type: itemType(scope, item2),
+              Location: listLabel,
+              Name: name,
+              SharedWith: m.principal,
+              Login: m.login,
+              Permission: m.permission,
+              Via: m.via,
+              Unique: "Yes",
+              Url: absolute(webUrl, item2.FileRef)
+            });
+          }
+        } catch (err) {
+          addProblem(webTitle, itemType(scope, item2), item2.FileRef || name, "Read item permissions", err);
+        }
+        itemNo += 1;
+        onProgress(`${webTitle}: ${listLabel} \u2014 item ${itemNo} of ${uniqueItems.length} with its own permissions`);
+      }, shouldStop);
+    }
+  }
+  await scanWeb(client2, rootWeb, { isRoot: true });
+  const visited = /* @__PURE__ */ new Set([lower(rootWeb.Url || client2.webUrl())]);
+  async function scanTree(url, depth) {
+    if (shouldStop() || depth > maxDepth) return;
+    let webClient;
+    let web;
+    try {
+      webClient = await openWeb(url);
+      web = await webClient.get("web", { select: ["Title", "Url", "HasUniqueRoleAssignments"] });
+    } catch (err) {
+      addProblem("", "Site", url, "Open subsite", err);
+      return;
+    }
+    const key2 = lower(web.Url || webClient.webUrl());
+    if (visited.has(key2)) return;
+    visited.add(key2);
+    await scanWeb(webClient, web, { isRoot: false });
+    if (shouldStop()) return;
+    let children = [];
+    try {
+      ({ items: children } = await webClient.getAll("web/webs", { select: ["Title", "Url", "ServerRelativeUrl"] }));
+    } catch (err) {
+      addProblem(web.Title || "", "Site", web.Url || url, "List subsites", err);
+      return;
+    }
+    for (const child of children) {
+      await scanTree(child.Url || child.ServerRelativeUrl, depth + 1);
+    }
+  }
+  for (const sub of subsites) {
+    await scanTree(sub.url, 1);
+  }
+  return { rows, problems, webs: websScanned, broadGroups, stopped: shouldStop() };
+}
+
 // ../src/workbench/views/security.js
 var el9 = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -10461,7 +11084,7 @@ var el9 = (tag, cls, text) => {
   return n;
 };
 var roleNames = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
-function createSecurityView({ client: client2 }) {
+function createSecurityView({ client: client2, createClient }) {
   const root2 = el9("section", "wb-view wb-view-security");
   const spWrite = createSpWriteClient({ client: client2 });
   const head = el9("div", "wb-view-head");
@@ -10815,12 +11438,206 @@ function createSecurityView({ client: client2 }) {
     });
     return wrap;
   }
+  function eeeuPane() {
+    const wrap = el9("div", "wb-tab-pane wb-eeeu");
+    const form = el9("div", "wb-eeeu-form");
+    const checkbox = (label, checked, title = "") => {
+      const lab = el9("label", "wb-eeeu-check");
+      const box = el9("input");
+      box.type = "checkbox";
+      box.checked = checked;
+      lab.append(box, document.createTextNode(` ${label}`));
+      if (title) lab.title = title;
+      return { lab, box };
+    };
+    const scopeRow = el9("div", "wb-eeeu-row");
+    scopeRow.append(el9("span", "wb-qb-label", "Scan"));
+    const scopeBoxes = {
+      site: checkbox("Site", true, "The site\u2019s own permissions"),
+      pages: checkbox("Pages libraries", true),
+      lists: checkbox("Lists", true),
+      documents: checkbox("Document libraries", true)
+    };
+    for (const { lab } of Object.values(scopeBoxes)) scopeRow.append(lab);
+    const items = checkbox(
+      "Include items and folders",
+      true,
+      "Also check every page, file, folder and item that has its own permissions \u2014 the slow part"
+    );
+    scopeRow.append(items.lab);
+    const subRow = el9("div", "wb-eeeu-row");
+    subRow.append(el9("span", "wb-qb-label", "Subsites"));
+    const subHost = el9("span", "wb-eeeu-subsites", "Loading subsites\u2026");
+    subRow.append(subHost);
+    const subBoxes = [];
+    const targetsRow = el9("details", "wb-eeeu-targets");
+    const summary = el9("summary", "", "");
+    const targetsInput = el9("textarea", "wb-eeeu-principals");
+    targetsInput.rows = 3;
+    targetsInput.value = DEFAULT_TARGETS.join("\n");
+    targetsInput.setAttribute("aria-label", "Principals to look for, one per line");
+    const syncSummary = () => {
+      const n = targetsInput.value.split("\n").map((s) => s.trim()).filter(Boolean).length;
+      summary.textContent = `Principals looked for (${n}) \u2014 plus any group containing everyone, and \u201CPeople in your organization\u201D sharing links`;
+    };
+    targetsInput.addEventListener("input", syncSummary);
+    syncSummary();
+    targetsRow.append(summary, targetsInput);
+    const runBar = el9("div", "wb-scan-bar");
+    const runBtn = el9("button", "btn", "Run EEEU audit");
+    runBtn.type = "button";
+    const cancelBtn = el9("button", "btn btn-xs", "Cancel");
+    cancelBtn.type = "button";
+    cancelBtn.hidden = true;
+    const progress = el9(
+      "span",
+      "wb-view-hint wb-eeeu-progress",
+      "Finds where everyone in the organization has access. Large sites take minutes; Cancel keeps what was found."
+    );
+    runBar.append(runBtn, cancelBtn, progress);
+    form.append(scopeRow, subRow, targetsRow, runBar);
+    const results = createGrid({
+      rowKey: "Key",
+      columns: [
+        { key: "Web", label: "Site" },
+        { key: "Type", label: "Type" },
+        { key: "Location", label: "Location" },
+        { key: "Name", label: "Name" },
+        { key: "SharedWith", label: "Shared with" },
+        { key: "Permission", label: "Permission" },
+        { key: "Via", label: "Why it counts" },
+        { key: "Unique", label: "Unique" },
+        { key: "Url", label: "URL", link: (v) => v, copyable: true }
+      ],
+      // True before a run and after a clean one; the line beside the Run
+      // button says which.
+      emptyText: "No broad-access grants to show.",
+      subject: "the broad-access grants on this site",
+      filterPlaceholder: "Filter results\u2026",
+      exportName: "sp-eeeu-audit"
+    });
+    results.setRows([]);
+    const problemsBox = el9("div", "wb-subpanel");
+    problemsBox.hidden = true;
+    const problemsTitle = el9("h3", "wb-subpanel-title", "Problems");
+    const problemsGrid = createGrid({
+      rowKey: "Key",
+      columns: [
+        { key: "Web", label: "Site" },
+        { key: "Scope", label: "Scope" },
+        { key: "Location", label: "Location" },
+        { key: "Operation", label: "Operation" },
+        { key: "Status", label: "Status" },
+        { key: "Message", label: "What SharePoint said" }
+      ],
+      emptyText: "No problems.",
+      filterPlaceholder: "Filter problems\u2026",
+      exportName: "sp-eeeu-audit-problems"
+    });
+    problemsBox.append(problemsTitle, problemsGrid.el);
+    wrap.append(form, results.el, problemsBox);
+    client2.getAll("web/webs", { select: ["Title", "Url", "ServerRelativeUrl"] }).then(({ items: webs }) => {
+      subHost.textContent = "";
+      if (!webs.length) {
+        subHost.append(el9("span", "wb-view-hint", "No subsites under this site."));
+        return;
+      }
+      for (const web of webs) {
+        const url = web.Url || web.ServerRelativeUrl;
+        const { lab, box } = checkbox(web.Title || url, false, `${url}
+Scanned with every site below it`);
+        box.dataset.url = url;
+        subBoxes.push(box);
+        subHost.append(lab);
+      }
+      subHost.append(el9("span", "wb-view-hint", " each with every site below it"));
+    }).catch((err) => {
+      subHost.textContent = "";
+      showFailure(subHost, err, "this site\u2019s subsites");
+    });
+    let runToken = 0;
+    let running = false;
+    const setRunning = (on) => {
+      running = on;
+      runBtn.disabled = on;
+      cancelBtn.hidden = !on;
+      for (const { box } of Object.values(scopeBoxes)) box.disabled = on;
+      items.box.disabled = on;
+      for (const box of subBoxes) box.disabled = on;
+      targetsInput.disabled = on;
+    };
+    cancelBtn.addEventListener("click", () => {
+      runToken += 1;
+      progress.textContent = "Stopping after the requests already in flight\u2026";
+    });
+    runBtn.addEventListener("click", async () => {
+      if (running) return;
+      const scopes = Object.fromEntries(Object.entries(scopeBoxes).map(([k, { box }]) => [k, box.checked]));
+      if (!Object.values(scopes).some(Boolean)) {
+        progress.textContent = "Tick at least one of Site, Pages libraries, Lists or Document libraries.";
+        return;
+      }
+      const token = ++runToken;
+      const shouldStop = () => token !== runToken;
+      setRunning(true);
+      problemsBox.hidden = true;
+      const found = [];
+      let lastPaint = 0;
+      const paint = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastPaint < 250) return;
+        lastPaint = now;
+        results.setRows([...found]);
+      };
+      results.setRows([]);
+      results.setLoading("Scanning\u2026");
+      const started = Date.now();
+      try {
+        const audit = await runEeeuAudit({
+          client: client2,
+          openWeb: async (url) => {
+            const other = createClient();
+            await other.connectWeb(url);
+            return other;
+          },
+          subsites: subBoxes.filter((b) => b.checked).map((b) => ({ url: b.dataset.url })),
+          scopes,
+          includeItems: items.box.checked,
+          targets: targetsInput.value.split("\n").map((s) => s.trim()).filter(Boolean),
+          onProgress: (text) => {
+            if (!shouldStop()) progress.textContent = text;
+          },
+          onRow: (row) => {
+            found.push(row);
+            paint();
+          },
+          shouldStop
+        });
+        paint(true);
+        if (!found.length) results.setRows([]);
+        const secs = Math.max(1, Math.round((Date.now() - started) / 1e3));
+        const webs = audit.webs.length;
+        progress.textContent = `${audit.stopped ? "Cancelled \u2014 partial results. " : ""}${audit.rows.length} broad-access grant${audit.rows.length === 1 ? "" : "s"} across ${webs} site${webs === 1 ? "" : "s"}; ${audit.problems.length} problem${audit.problems.length === 1 ? "" : "s"} (${secs}s). Lists and subsites that inherit are covered by their parent\u2019s row.`;
+        if (audit.problems.length) {
+          problemsTitle.textContent = `Problems (${audit.problems.length})`;
+          problemsGrid.setRows(audit.problems);
+          problemsBox.hidden = false;
+        }
+      } catch (err) {
+        results.setError(err);
+      } finally {
+        setRunning(false);
+      }
+    });
+    return wrap;
+  }
   const TABS = [
     { id: "groups", label: "Groups", build: groupsPane },
     { id: "members", label: "Members", build: membersPane },
     { id: "roledefs", label: "Role definitions", build: roleDefsPane },
     { id: "assignments", label: "Role assignments", build: assignmentsPane },
-    { id: "inheritance", label: "Inheritance scan", build: inheritancePane }
+    { id: "inheritance", label: "Inheritance scan", build: inheritancePane },
+    { id: "eeeu", label: "EEEU audit", build: eeeuPane }
   ];
   function activate(tab) {
     for (const btn of tabsBar.children) {
@@ -11965,7 +12782,9 @@ var NO_EDIT_INTERNAL = /* @__PURE__ */ new Set([
   "CanvasContent1",
   "LayoutWebpartsContent",
   "ContentType",
-  "Attachments"
+  "Attachments",
+  "WikiField",
+  "PublishingPageContent"
 ]);
 function isEditable(field2) {
   return !field2.ReadOnlyField && !field2.Hidden && EDITABLE_TYPES.has(String(field2.TypeAsString || "")) && !NO_EDIT_INTERNAL.has(String(field2.InternalName || ""));
@@ -12153,29 +12972,41 @@ function createFieldEditor(field2, initialValue) {
     }
   };
 }
-function readOnlyRow(field2, displayText) {
+function readOnlyRow(field2, displayText, hint = "") {
   const row = el14("div", "wb-editor-row wb-editor-readonly");
   row.dataset.internal = field2.InternalName || "";
   const label = el14("label", "wb-editor-label", field2.Title || field2.InternalName);
   label.append(el14("span", "wb-editor-type", String(field2.TypeAsString || "")));
   const value = el14("div", "wb-editor-static", displayText || "");
-  value.title = field2.ReadOnlyField ? "Read-only field" : "Not editable in the workbench";
+  value.title = hint || (field2.ReadOnlyField ? "Read-only field" : "Not editable in the workbench");
   row.append(label, value);
   return row;
 }
-function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSave }) {
+function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSave, layout = null }) {
   const root2 = el14("div", "wb-editor-form");
   const rows = el14("div", "wb-editor-rows");
   const editors = [];
-  const shown = (fields || []).filter((f) => !f.Hidden);
-  for (const field2 of shown) {
+  const entries = Array.isArray(layout) ? layout : (fields || []).filter((f) => !f.Hidden).map((field2) => ({ field: field2 }));
+  for (const entry of entries) {
+    if (!entry.field) {
+      rows.append(readOnlyRow(
+        { InternalName: entry.internal || "", Title: entry.label || "" },
+        String(entry.text ?? ""),
+        "Page status, read from SharePoint \u2014 not an editable field"
+      ));
+      continue;
+    }
+    const field2 = entry.label ? { ...entry.field, Title: entry.label } : entry.field;
     const internal = field2.InternalName;
     if (isEditable(field2)) {
       const editor = createFieldEditor(field2, item2[internal]);
       editors.push(editor);
       rows.append(editor.el);
     } else {
-      const display = itemAsText?.[internal] ?? (item2[internal] === null || item2[internal] === void 0 || typeof item2[internal] === "object" ? "" : String(item2[internal]));
+      const text = itemAsText?.[internal];
+      const raw = item2[internal];
+      let display = text ?? (raw === null || raw === void 0 || typeof raw === "object" ? "" : String(raw));
+      if (typeof entry.display === "function") display = entry.display(raw, text);
       rows.append(readOnlyRow(field2, String(display ?? "")));
     }
   }
@@ -12305,8 +13136,12 @@ var METADATA_SKIP = /* @__PURE__ */ new Set([
   "PublishingPageContent",
   "WikiField",
   "Author",
-  "Editor"
+  "Editor",
   // flattened into Created/Modified lines
+  // Carried by the status lines (see `status` below), in words.
+  "HasUniqueRoleAssignments",
+  "OData__ModerationStatus",
+  "OData__UIVersionString"
 ]);
 function buildContentExport({
   item: item2 = {},
@@ -12316,7 +13151,8 @@ function buildContentExport({
   webUrl = "",
   libraryTitle = "",
   libraryRootPath = "",
-  format = "markdown"
+  format = "markdown",
+  status = null
 }) {
   if (!CONTENT_FORMATS.includes(format)) {
     throw new Error(`Unknown page content format: ${format}`);
@@ -12353,6 +13189,12 @@ function buildContentExport({
   metaLine("Description", item2.Description);
   metaLine("Created", item2.Created ? `${item2.Created}${author ? ` by ${author}` : ""}` : "");
   metaLine("Modified", item2.Modified ? `${item2.Modified}${editor ? ` by ${editor}` : ""}` : "");
+  if (status) {
+    metaLine("Publish status", status.published === true ? "Published" : status.published === false ? "Unpublished" : "");
+    metaLine("Last published", status.lastPublished ? String(status.lastPublished) : "");
+    metaLine("Permissions", status.brokenInheritance === true ? "Broken inheritance" : status.brokenInheritance === false ? "Inherited" : "");
+    if (status.checkedOut) metaLine("Checked out to", status.checkedOutTo || "Checked out");
+  }
   metaLine("Site", siteTitle);
   metaLine("Library", libraryTitle);
   metaLine("URL", fullUrl);
@@ -12708,6 +13550,160 @@ function classicContentParts({ item: item2 = {}, webParts = [], contentKind = nu
   return { parts, unreadable: 0 };
 }
 
+// ../src/workbench/page-status.js
+function pageStatusShapes({ hasModeration = false } = {}) {
+  const moderation = hasModeration ? ["OData__ModerationStatus"] : [];
+  const file = ["File/MajorVersion", "File/MinorVersion", "File/CheckOutType"];
+  return [
+    {
+      options: {
+        select: ["Id", "HasUniqueRoleAssignments", ...file, "CheckoutUser/Title", ...moderation],
+        expand: ["File", "CheckoutUser"]
+      }
+    },
+    // Without the people projection: the check-out holder's name is lost, the
+    // fact that the page is checked out is not.
+    {
+      options: { select: ["Id", "HasUniqueRoleAssignments", ...file, ...moderation], expand: ["File"] },
+      lost: "the checked-out-to names"
+    },
+    // Without the File expand: the version label still says published or not.
+    {
+      options: { select: ["Id", "HasUniqueRoleAssignments", "OData__UIVersionString", ...moderation] },
+      lost: "the check-out state"
+    },
+    {
+      options: { select: ["Id", "HasUniqueRoleAssignments"] },
+      lost: "the publish and check-out state"
+    }
+  ];
+}
+function parseVersionLabel(label) {
+  const m = /^(\d+)\.(\d+)$/.exec(String(label ?? "").trim());
+  return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
+}
+var numberOrNull = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+function derivePageStatus(item2 = {}) {
+  const file = item2.File && typeof item2.File === "object" ? item2.File : null;
+  const label = parseVersionLabel(item2.OData__UIVersionString ?? item2._UIVersionString);
+  const major = numberOrNull(file?.MajorVersion) ?? label?.major ?? null;
+  const minor = numberOrNull(file?.MinorVersion) ?? label?.minor ?? null;
+  const moderation = numberOrNull(item2.OData__ModerationStatus ?? item2._ModerationStatus);
+  let published = null;
+  if (major !== null) {
+    published = major > 0;
+    if (major === 1 && minor === 0 && (moderation === 1 || moderation === 2)) published = false;
+  }
+  const holder = item2.CheckoutUser && typeof item2.CheckoutUser === "object" ? String(item2.CheckoutUser.Title || "") : "";
+  const checkOutType = numberOrNull(file?.CheckOutType);
+  let checkedOut = null;
+  if (holder) checkedOut = true;
+  else if (checkOutType !== null) checkedOut = checkOutType !== 2;
+  else if ("CheckoutUser" in item2 || "CheckoutUserId" in item2) {
+    checkedOut = Boolean(item2.CheckoutUserId);
+  }
+  const unique = item2.HasUniqueRoleAssignments;
+  return {
+    published,
+    checkedOut,
+    checkedOutTo: holder,
+    brokenInheritance: typeof unique === "boolean" ? unique : null
+  };
+}
+var publishLabel = (published) => published === true ? "Published" : published === false ? "Unpublished" : "";
+var inheritanceLabel = (broken) => broken === true ? "Broken inheritance" : broken === false ? "Inherited" : "";
+var inheritanceMarker = (broken) => broken === true ? "Broken" : "";
+var checkedOutLabel = (status) => status?.checkedOut ? status.checkedOutTo || "Checked out" : "";
+function versionShapes({ hasModeration = false } = {}) {
+  const base = ["VersionId", "VersionLabel", "IsCurrentVersion", "Created"];
+  return [
+    { options: { select: hasModeration ? [...base, "OData__ModerationStatus"] : base } },
+    { options: {} }
+  ];
+}
+function lastPublishedFrom(versions) {
+  let best = null;
+  for (const v of versions || []) {
+    const label = parseVersionLabel(v?.VersionLabel);
+    if (!label || label.major < 1 || label.minor !== 0) continue;
+    const moderation = numberOrNull(v.OData__ModerationStatus ?? v._ModerationStatus);
+    if (moderation === 1 || moderation === 2) continue;
+    if (!best || label.major > best.label.major) best = { label, v };
+  }
+  return best ? String(best.v.Created || best.v.Modified || "") : "";
+}
+var METADATA_SPEC = [
+  { status: "id", label: "ID" },
+  { field: "FileLeafRef", label: "Name" },
+  { field: "Title", label: "Title" },
+  { status: "published", label: "Publish Status" },
+  { status: "lastPublished", label: "Publish Date" },
+  { field: "FirstPublishedDate", label: "First Published Date", aliases: ["First Published Date"] },
+  { status: "inheritance", label: "Permissions" },
+  { field: "CheckoutUser", label: "Checked Out To", aliases: ["Checked Out To"], status: "checkedOutTo" },
+  { field: "PromotedState", label: "Promoted State", display: "promoted" },
+  { field: "bmocContentCategory", label: "Content Category", aliases: ["Content Category"] },
+  { field: "Modified", label: "Modified" },
+  { field: "Editor", label: "Modified By" },
+  { field: "Created", label: "Created" },
+  { field: "Author", label: "Created By" },
+  { field: "FolderType", label: "Item Type", aliases: ["Item Type"] },
+  { field: "Contact", label: "Contact" },
+  { field: "Pillar", label: "Pillar" },
+  { field: "Org", label: "Org" },
+  { field: "ComplianceAssetId", label: "Compliance Asset ID", aliases: ["Compliance Asset Id", "Compliance Asset ID"] },
+  { field: "WikiField", label: "Wiki Content", aliases: ["Wiki Content"] }
+];
+var promotedStateText = (v) => Number(v) === 2 ? "Promoted" : "False";
+var lower2 = (s) => String(s ?? "").toLowerCase();
+function resolveMetadataLayout(fields, status = {}, spec = METADATA_SPEC) {
+  const byInternal = /* @__PURE__ */ new Map();
+  const byTitle = /* @__PURE__ */ new Map();
+  for (const f of fields || []) {
+    if (f?.InternalName) byInternal.set(lower2(f.InternalName), f);
+    if (f?.Title && !byTitle.has(lower2(f.Title))) byTitle.set(lower2(f.Title), f);
+  }
+  const used = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const entry of spec) {
+    let field2 = entry.field ? byInternal.get(lower2(entry.field)) : null;
+    if (!field2 && entry.aliases) {
+      for (const alias of entry.aliases) {
+        field2 = byTitle.get(lower2(alias));
+        if (field2) break;
+      }
+    }
+    if (field2 && !used.has(field2.InternalName)) {
+      used.add(field2.InternalName);
+      const resolved = { field: field2, label: entry.label };
+      if (entry.display === "promoted") resolved.display = promotedStateText;
+      out.push(resolved);
+      continue;
+    }
+    if (!entry.status) continue;
+    const text = statusText(entry.status, status);
+    if (text === null) continue;
+    out.push({ internal: `__status_${entry.status}`, label: entry.label, text });
+  }
+  return out;
+}
+function statusText(kind, status) {
+  switch (kind) {
+    case "id":
+      return status.id === void 0 || status.id === null ? null : String(status.id);
+    case "published":
+      return status.published === null || status.published === void 0 ? null : publishLabel(status.published);
+    case "lastPublished":
+      return status.lastPublished === null || status.lastPublished === void 0 ? null : String(status.lastPublished).slice(0, 10);
+    case "inheritance":
+      return status.brokenInheritance === null || status.brokenInheritance === void 0 ? null : inheritanceLabel(status.brokenInheritance);
+    case "checkedOutTo":
+      return status.checkedOut === null || status.checkedOut === void 0 ? null : status.checkedOut ? status.checkedOutTo || "Checked out" : "";
+    default:
+      return null;
+  }
+}
+
 // ../src/workbench/views/pages.js?v=2
 var PAGE_SELECT_BASE = [
   "Id",
@@ -12733,6 +13729,9 @@ function pageQueryPlan(fieldInternalNames, kind) {
     showPromoted,
     showTitle,
     gridSelect,
+    // Content approval's field. Only probed, never assumed: naming it on a
+    // library without it is the same 400 as PromotedState.
+    hasModeration: names ? names.has("_ModerationStatus") : false,
     // Ladders, not single shapes — see queryLadder(). Rung 0 is the query we
     // want; every rung below it gives something up to stay answerable.
     gridShapes: [
@@ -12855,6 +13854,13 @@ function reducedChip(lost, where, because = "") {
 SharePoint said: ${because}` : "");
   return chip;
 }
+function statusChip(text, on, title = "") {
+  const chip = el15("span", `wb-role-chip wb-page-status ${on ? "wb-status-on" : "wb-status-off"}`, text);
+  if (title) chip.title = title;
+  return chip;
+}
+var roleNames2 = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
+var supportsStatus = (sitePages) => sitePages?.kind === "modern" || sitePages?.kind === "publishing";
 function createPagesView({ client: client2, navigate, updateRoute }) {
   const root2 = el15("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
@@ -12931,6 +13937,13 @@ ${current.rootPath}` : "");
   let fieldsPromise = null;
   let detailRun = 0;
   let loadRun = 0;
+  const statusCache = /* @__PURE__ */ new Map();
+  const lastPublishedCache = /* @__PURE__ */ new Map();
+  let statusRung = 0;
+  let gridRows = [];
+  let gridPlan = null;
+  let scanned = false;
+  let scanning = false;
   const toLibrary = (list2) => ({
     listId: list2.Id,
     title: list2.Title,
@@ -12964,6 +13977,12 @@ ${current.rootPath}` : "");
     fieldsPromise = null;
     planPromise = null;
     detailRung = 0;
+    statusCache.clear();
+    lastPublishedCache.clear();
+    statusRung = 0;
+    gridRows = [];
+    gridPlan = null;
+    scanned = false;
     if (grid) {
       grid.el.remove();
       grid = null;
@@ -13005,6 +14024,7 @@ ${current.rootPath}` : "");
       }
     }
     const web = await webIdentity();
+    const status = await exportStatusFor(item2, sitePages);
     return buildContentExport({
       item: item2,
       format,
@@ -13013,8 +14033,139 @@ ${current.rootPath}` : "");
       siteTitle: web.Title || "",
       webUrl: web.Url || client2.webUrl(),
       libraryTitle: sitePages.title,
-      libraryRootPath: sitePages.rootPath
+      libraryRootPath: sitePages.rootPath,
+      status
     });
+  }
+  function pageStatus(sitePages, pageId) {
+    const key2 = `${sitePages.listId}:${pageId}`;
+    if (!statusCache.has(key2)) {
+      const path = guidPath6(sitePages.listId, `/items(${pageId})`);
+      statusCache.set(key2, queryPlan(sitePages).then((plan) => queryLadder(
+        pageStatusShapes(plan),
+        (options) => client2.get(path, options),
+        statusRung
+      )).then(({ value, lost, index, reason }) => {
+        if (current === sitePages) statusRung = index;
+        return { status: derivePageStatus(value), lost, reason };
+      }).catch((err) => {
+        statusCache.delete(key2);
+        throw err;
+      }));
+    }
+    return statusCache.get(key2);
+  }
+  function lastPublished(sitePages, pageId, status) {
+    if (status?.published === false) return Promise.resolve("");
+    if (status?.published !== true) return Promise.resolve(null);
+    const key2 = `${sitePages.listId}:${pageId}`;
+    if (!lastPublishedCache.has(key2)) {
+      const path = guidPath6(sitePages.listId, `/items(${pageId})/versions`);
+      lastPublishedCache.set(key2, queryPlan(sitePages).then((plan) => queryLadder(versionShapes(plan), (options) => client2.getAll(path, options))).then(({ value }) => lastPublishedFrom(value.items)).catch(() => {
+        lastPublishedCache.delete(key2);
+        return null;
+      }));
+    }
+    return lastPublishedCache.get(key2);
+  }
+  async function exportStatusFor(item2, sitePages) {
+    if (!supportsStatus(sitePages) || item2?.Id === void 0) return null;
+    try {
+      const { status } = await pageStatus(sitePages, item2.Id);
+      const published = await lastPublished(sitePages, item2.Id, status);
+      return { ...status, lastPublished: published ? String(published).slice(0, 10) : "" };
+    } catch {
+      return null;
+    }
+  }
+  function gridColumns(plan, sitePages, withStatus) {
+    const statusOf = (row) => row.__status || {};
+    return [
+      { key: "FileLeafRef", label: "Name", mono: true },
+      // Dropped with the field itself: a library without Title would
+      // otherwise carry a column that can only ever be blank.
+      ...plan.showTitle ? [{ key: "Title", label: "Title" }] : [],
+      {
+        key: "Folder",
+        label: "Folder",
+        value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
+        format: (v) => v ? `/${v}` : ""
+      },
+      ...plan.showPromoted ? [{ key: "PromotedState", label: "Promoted", format: promotedLabel }] : [],
+      ...withStatus ? [
+        { key: "PublishStatus", label: "Published", value: (row) => publishLabel(statusOf(row).published) },
+        { key: "CheckedOut", label: "Checked out", value: (row) => checkedOutLabel(statusOf(row)) },
+        {
+          key: "Inheritance",
+          label: "Inheritance",
+          value: (row) => inheritanceMarker(statusOf(row).brokenInheritance)
+        }
+      ] : [],
+      { key: "Modified", label: "Modified", format: fmtDate4 },
+      { key: "Editor", label: "Editor", value: (row) => row.Editor?.Title || "" },
+      {
+        key: "Export",
+        label: "",
+        // Controls only — no data, so CSV/JSON/markdown skip it.
+        action: true,
+        value: (row) => row.Id,
+        format: () => "",
+        render: (_id, row) => rowExportCell(row)
+      },
+      {
+        key: "FileRef",
+        label: "",
+        format: () => "",
+        render: (fileRef) => {
+          if (!fileRef) return null;
+          const a = document.createElement("a");
+          a.className = "wb-cell-link";
+          a.href = fileRef;
+          a.title = "Open the page in a new tab";
+          a.textContent = "\u2197";
+          bindNewTab(a);
+          return a;
+        }
+      }
+    ];
+  }
+  const scanBtn = el15("button", "btn btn-xs wb-scan-status", "Scan Page Status");
+  scanBtn.type = "button";
+  scanBtn.title = "Add Published, Checked out and Inheritance columns for every page \u2014 one extra query";
+  scanBtn.addEventListener("click", () => scanStatus());
+  async function scanStatus() {
+    if (scanning || !grid || !current) return;
+    const sitePages = current;
+    const run = loadRun;
+    const stale = () => current !== sitePages || run !== loadRun;
+    scanning = true;
+    scanBtn.disabled = true;
+    scanBtn.textContent = "Scanning\u2026";
+    masterStatus.classList.remove("wb-error");
+    masterStatus.hidden = true;
+    try {
+      const plan = await queryPlan(sitePages);
+      const path = guidPath6(sitePages.listId, "/items");
+      const { value, lost, reason } = await queryLadder(pageStatusShapes(plan), (options) => client2.getAll(path, { ...options, top: 5e3 }));
+      if (stale()) return;
+      const byId = new Map(value.items.map((it) => [String(it.Id), derivePageStatus(it)]));
+      for (const row of gridRows) row.__status = byId.get(String(row.Id)) || derivePageStatus({});
+      scanned = true;
+      grid.setColumns(gridColumns(gridPlan || plan, sitePages, true));
+      strip.querySelector(".wb-reduced-chip.wb-scan-reduced")?.remove();
+      if (lost) {
+        const chip = reducedChip(lost, `the page status of ${sitePages.title}`, reason);
+        chip.classList.add("wb-scan-reduced");
+        strip.insertBefore(chip, libraryLink);
+      }
+    } catch (err) {
+      if (stale()) return;
+      showFailure(masterStatus, err, `the page status of ${sitePages.title}`);
+    } finally {
+      scanning = false;
+      scanBtn.disabled = false;
+      scanBtn.textContent = scanned ? "Rescan Page Status" : "Scan Page Status";
+    }
   }
   let exporting = false;
   async function exportContentZip(format = "markdown") {
@@ -13156,46 +14307,11 @@ ${current.rootPath}` : "");
           options: { ...plan.gridShapes[0].options, ...paging },
           webUrl: client2.webUrl()
         };
+        gridPlan = plan;
+        scanned = false;
+        gridRows = [];
         grid = createGrid({
-          columns: [
-            { key: "FileLeafRef", label: "Name", mono: true },
-            // Dropped with the field itself: a library without Title would
-            // otherwise carry a column that can only ever be blank.
-            ...plan.showTitle ? [{ key: "Title", label: "Title" }] : [],
-            {
-              key: "Folder",
-              label: "Folder",
-              value: (row) => folderOf(row.FileDirRef, sitePages.rootPath),
-              format: (v) => v ? `/${v}` : ""
-            },
-            ...plan.showPromoted ? [{ key: "PromotedState", label: "Promoted", format: promotedLabel }] : [],
-            { key: "Modified", label: "Modified", format: fmtDate4 },
-            { key: "Editor", label: "Editor", value: (row) => row.Editor?.Title || "" },
-            {
-              key: "Export",
-              label: "",
-              // Controls only — no data, so CSV/JSON/markdown skip it.
-              action: true,
-              value: (row) => row.Id,
-              format: () => "",
-              render: (_id, row) => rowExportCell(row)
-            },
-            {
-              key: "FileRef",
-              label: "",
-              format: () => "",
-              render: (fileRef) => {
-                if (!fileRef) return null;
-                const a = document.createElement("a");
-                a.className = "wb-cell-link";
-                a.href = fileRef;
-                a.title = "Open the page in a new tab";
-                a.textContent = "\u2197";
-                bindNewTab(a);
-                return a;
-              }
-            }
-          ],
+          columns: gridColumns(plan, sitePages, false),
           onOpen: (row) => navigate({
             view: "pages",
             pageId: row.Id,
@@ -13224,6 +14340,11 @@ ${current.rootPath}` : "");
           // than the one SharePoint rejected.
           descriptor
         });
+        if (supportsStatus(sitePages)) {
+          scanBtn.textContent = "Scan Page Status";
+          scanBtn.disabled = false;
+          grid.actionsEl.prepend(scanBtn);
+        }
         gridPane.append(grid.el);
         grid.setLoading("Loading pages\u2026");
         const { value, lost, reason } = await queryLadder(plan.gridShapes, (options) => {
@@ -13233,6 +14354,7 @@ ${current.rootPath}` : "");
         const { items, partial } = value;
         if (run !== loadRun) return;
         if (lost) strip.insertBefore(reducedChip(lost, sitePages.title, reason), libraryLink);
+        gridRows = items;
         grid.setRows(items, { partial });
         pagesLoaded = true;
       }
@@ -13428,12 +14550,23 @@ ${p.html}`).join("\n\n")
     }
     return wrap;
   }
-  function metadataPane(listId, pageId) {
+  function metadataPane(sitePages, pageId) {
+    const listId = sitePages.listId;
     const wrap = el15("div", "wb-tab-pane");
     const status = el15("div", "wb-grid-status", "Loading metadata\u2026");
     wrap.append(status);
     (async () => {
       const fields = await listFields(listId);
+      let layout = null;
+      if (supportsStatus(sitePages)) {
+        let pageState = {};
+        try {
+          ({ status: pageState } = await pageStatus(sitePages, pageId));
+        } catch {
+        }
+        const published = await lastPublished(sitePages, pageId, pageState);
+        layout = resolveMetadataLayout(fields, { ...pageState, id: pageId, lastPublished: published });
+      }
       let item2;
       let itemAsText = {};
       try {
@@ -13454,12 +14587,61 @@ ${p.html}`).join("\n\n")
         fields,
         item: item2,
         itemAsText,
+        layout,
         onSave: (formValues) => spWrite.validateUpdateListItem({ listId, itemId: pageId }, formValues)
       });
       wrap.append(form.el);
     })().catch((err) => {
       showFailure(status, err, "this page\u2019s metadata");
     });
+    return wrap;
+  }
+  function permissionsPane(sitePages, pageId) {
+    const wrap = el15("div", "wb-tab-pane");
+    const bar = el15("div", "wb-scan-bar wb-page-perm-bar");
+    const hint = el15("span", "wb-view-hint", "");
+    bar.append(hint);
+    const path = guidPath6(sitePages.listId, `/items(${pageId})/roleassignments`);
+    const options = {
+      expand: ["Member", "RoleDefinitionBindings"],
+      select: [
+        "PrincipalId",
+        "Member/Id",
+        "Member/Title",
+        "Member/LoginName",
+        "Member/PrincipalType",
+        "RoleDefinitionBindings/Id",
+        "RoleDefinitionBindings/Name"
+      ]
+    };
+    const permGrid = createGrid({
+      rowKey: "PrincipalId",
+      columns: [
+        { key: "Member", label: "Principal", value: (row) => row.Member?.Title || "" },
+        { key: "LoginName", label: "Login", value: (row) => row.Member?.LoginName || "", mono: true, copyable: true },
+        { key: "PrincipalType", label: "Type", value: (row) => row.Member?.PrincipalType, format: principalTypeName },
+        { key: "Roles", label: "Roles", value: roleNames2 }
+      ],
+      emptyText: "No role assignments.",
+      subject: "this page\u2019s permissions",
+      filterPlaceholder: "Filter assignments\u2026",
+      exportName: "sp-page-permissions",
+      descriptor: { path, options, webUrl: client2.webUrl() }
+    });
+    wrap.append(bar, permGrid.el);
+    pageStatus(sitePages, pageId).then(({ status }) => {
+      if (status.brokenInheritance === null) return;
+      const broken = status.brokenInheritance;
+      bar.prepend(statusChip(
+        inheritanceLabel(broken),
+        broken,
+        broken ? "This page has its own permissions, separate from its library." : "This page inherits its permissions from its library."
+      ));
+      hint.textContent = broken ? "Unique to this page." : "Inherited \u2014 the permissions of the nearest parent with its own.";
+    }).catch(() => {
+    });
+    permGrid.setLoading("Loading permissions\u2026");
+    client2.getAll(path, options).then(({ items, partial }) => permGrid.setRows(items, { partial })).catch((err) => permGrid.setError(err));
     return wrap;
   }
   function rawPane(item2, parsed, webParts = []) {
@@ -13541,6 +14723,36 @@ ${fullUrl}`;
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
+    if (supportsStatus(sitePages)) {
+      const chips = el15("span", "wb-page-status-chips");
+      headRow.append(chips);
+      pageStatus(sitePages, route.pageId).then(({ status: status2, lost, reason }) => {
+        if (run !== detailRun) return;
+        if (status2.published !== null) {
+          chips.append(statusChip(
+            publishLabel(status2.published),
+            status2.published,
+            status2.published ? "A major version of this page has been published." : "No major version of this page has been published yet."
+          ));
+        }
+        if (status2.brokenInheritance) {
+          chips.append(statusChip(
+            "Inheritance broken",
+            true,
+            "This page has its own permissions \u2014 see the Permissions tab."
+          ));
+        }
+        if (status2.checkedOut) {
+          chips.append(statusChip(
+            "Checked out",
+            true,
+            status2.checkedOutTo ? `Checked out to ${status2.checkedOutTo}` : "Checked out"
+          ));
+        }
+        if (lost) chips.append(reducedChip(lost, "this page\u2019s status", reason));
+      }).catch(() => {
+      });
+    }
     const actions = el15("span", "wb-detail-actions");
     const exportContent = el15("button", "btn btn-xs", "Export MD");
     exportContent.type = "button";
@@ -13558,7 +14770,6 @@ ${fullUrl}`;
       bindNewTab(open);
       actions.append(open);
     }
-    headRow.append(actions);
     const downloadContent = async (format) => {
       downloadText(
         contentFileName(item2, format),
@@ -13584,8 +14795,10 @@ ${fullUrl}`;
       notice.title = parsed.errors.join("\n");
       detailPane.append(notice);
     }
-    const tabsBar = el15("div", "wb-tabs");
+    const tabsRow = el15("div", "wb-tabs wb-tabs-with-actions");
+    const tabsBar = el15("div", "wb-tab-list");
     tabsBar.setAttribute("role", "tablist");
+    tabsRow.append(tabsBar, actions);
     const body = el15("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     const TABS = [
@@ -13598,7 +14811,8 @@ ${fullUrl}`;
           `\u26A0 This page\u2019s web parts could not be read, so embedded content may be missing \u2014 ${webPartError.message || String(webPartError)}`
         ) : null)
       },
-      { id: "metadata", label: "Metadata", build: () => metadataPane(sitePages.listId, route.pageId) },
+      { id: "metadata", label: "Metadata", build: () => metadataPane(sitePages, route.pageId) },
+      ...supportsStatus(sitePages) ? [{ id: "permissions", label: "Permissions", build: () => permissionsPane(sitePages, route.pageId) }] : [],
       ...isCanvas ? [{ id: "structure", label: "Structure", build: () => structurePane(parsed) }] : [],
       {
         id: "webparts",
@@ -13624,7 +14838,7 @@ ${fullUrl}`;
       btn.addEventListener("click", () => activate(tab));
       tabsBar.append(btn);
     }
-    detailPane.append(tabsBar, body);
+    detailPane.append(tabsRow, body);
     activate(TABS.find((t) => t.id === route.tab) || TABS[0]);
   }
   async function applyRouteLibrary(route) {
