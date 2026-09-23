@@ -22,6 +22,7 @@
 // One module per web part under ./page-copy-analyzers/, so each shape is
 // written, reviewed and fixture-tested on its own.
 
+import header from './page-copy-analyzers/header.js';
 import text from './page-copy-analyzers/text.js';
 import quickLinks from './page-copy-analyzers/quick-links.js';
 import news from './page-copy-analyzers/news.js';
@@ -42,4 +43,4 @@ export function createAnalyzers(list = []) {
 }
 
 // The registry the dialog uses.
-export const ANALYZERS = createAnalyzers([text, quickLinks, news, listLibrary]);
+export const ANALYZERS = createAnalyzers([header, text, quickLinks, news, listLibrary]);

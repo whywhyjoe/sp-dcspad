@@ -2,6 +2,7 @@
 // each run against its live-captured fixture (fixtures/live-shapes.json).
 
 const MODULES = [
+  './analyzers/header.mjs',
   './analyzers/text.mjs',
   './analyzers/quick-links.mjs',
   './analyzers/news.mjs',
