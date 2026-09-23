@@ -329,6 +329,19 @@ html.dcspad-suspended #wb-mount { display: none; }
 }
 .wb-scan-bar { display: flex; align-items: center; gap: 12px; }
 
+/* ---- Permissions → EEEU audit form ---- */
+.wb-eeeu-form { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.wb-eeeu-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.wb-eeeu-subsites { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.wb-eeeu-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--fg); }
+.wb-eeeu-targets summary { cursor: pointer; font-size: 12px; color: var(--fg-dim); }
+.wb-eeeu-principals {
+  display: block; margin-top: 6px; width: min(520px, 100%);
+  font: 12px/1.5 var(--mono); color: var(--fg);
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-s); padding: 6px 8px;
+}
+.wb-eeeu-progress { min-width: 0; }
+
 /* ---- toolbar menus (export, copy-as) ---- */
 .wb-menu-wrap { position: relative; display: inline-flex; }
 .wb-menu {

@@ -522,7 +522,8 @@ await check('security: tabs render and groups load', async () => {
   await page.waitForSelector('.wb-tab-body .wb-table tbody tr');
   const tabs = await page.locator('.wb-tab').allTextContents();
   const rows = await page.locator('.wb-tab-body .wb-table tbody tr').count();
-  return tabs.join(',') === 'Groups,Members,Role definitions,Role assignments,Inheritance scan' && rows === 3;
+  return tabs.join(',') === 'Groups,Members,Role definitions,Role assignments,Inheritance scan,EEEU audit'
+    && rows === 3;
 });
 
 await check('perm: head links jump to the SP permission panels', async () => {
@@ -2899,6 +2900,145 @@ await check('classic: the bulk zip carries the same merged web-part content', as
 });
 
 await classicPage.close();
+
+// ---- EEEU audit (Permissions → EEEU audit) --------------------------------
+// Its own mock web tree (/sites/eeeu, see mock-data.js), so the default web's
+// groups and assignments — asserted by the Permissions checks above — stay
+// untouched.
+
+const eeeuPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await eeeuPage.goto(WB_URL);
+await eeeuPage.waitForSelector('.wb-home-cards');
+
+await check('eeeu: matching is by claim, group membership, org links and name — not Limited Access', async () =>
+  eeeuPage.evaluate(async () => {
+    const {
+      broadPrincipalKind, isOrgSharingLink, makeMatcher, matchAssignments, listScopeOf, DEFAULT_TARGETS,
+    } = await import('/src/workbench/eeeu-audit.js');
+    const eeeu = { Title: 'Tout le monde sauf les utilisateurs externes', LoginName: 'c:0-.f|rolemanager|spo-grid-all-users/abc' };
+    const everyone = { Title: 'Everyone', LoginName: 'c:0(.s|true' };
+    const link = { Title: 'SharingLinks.3f2a1b00-1111-4222-8333-444455556666.OrganizationEdit.7e6d', LoginName: 'x' };
+    const anonymous = { Title: 'SharingLinks.3f2a1b00-1111-4222-8333-444455556666.AnonymousView.7e6d', LoginName: 'y' };
+    const match = makeMatcher({
+      targets: DEFAULT_TARGETS,
+      broadGroups: new Map([['broad readers', 'Everyone']]),
+    });
+    const hits = matchAssignments([
+      { Member: eeeu, RoleDefinitionBindings: [{ Name: 'Limited Access', RoleTypeKind: 1 }] },
+      { Member: eeeu, RoleDefinitionBindings: [{ Name: 'Read', RoleTypeKind: 2 }, { Name: 'Limited Access', RoleTypeKind: 1 }] },
+      { Member: { Title: 'Broad Readers', LoginName: 'Broad Readers' }, RoleDefinitionBindings: [{ Name: 'Edit' }] },
+      { Member: { Title: 'Team', LoginName: 'Team' }, RoleDefinitionBindings: [{ Name: 'Full Control' }] },
+    ], match);
+    const noisy = matchAssignments([
+      { Member: eeeu, RoleDefinitionBindings: [{ Name: 'Limited Access', RoleTypeKind: 1 }] },
+    ], match, { hideLimitedAccess: false });
+    return broadPrincipalKind(eeeu) === 'Everyone except external users'   // localized title, same claim
+      && broadPrincipalKind(everyone) === 'Everyone'
+      && broadPrincipalKind({ Title: 'Everyone except external users', LoginName: 'i:0#.f|membership|x' }) === null
+      && isOrgSharingLink(link) && !isOrgSharingLink(anonymous)
+      && match({ Title: 'SharePoint EEEU Visitors', LoginName: 'SharePoint EEEU Visitors' }) === 'Named principal'
+      && match({ Title: 'Broad Readers' }) === 'Group containing Everyone'
+      && match(link) === 'Org-wide sharing link' && match({ Title: 'Team' }) === null
+      // Limited Access-only is noise and dropped; mixed keeps the real role only
+      && hits.length === 2 && hits[0].permission === 'Read' && hits[1].via === 'Group containing Everyone'
+      && noisy.length === 1 && noisy[0].permission === 'Limited Access'
+      && listScopeOf({ BaseTemplate: 119, BaseType: 1 }) === 'pages'
+      && listScopeOf({ BaseTemplate: 850, BaseType: 1 }) === 'pages'
+      && listScopeOf({ BaseTemplate: 101, BaseType: 1 }) === 'documents'
+      && listScopeOf({ BaseTemplate: 100, BaseType: 0 }) === 'lists'
+      && listScopeOf({ BaseTemplate: 100, BaseType: 0, Hidden: true }) === null
+      && listScopeOf({ BaseTemplate: 112, BaseType: 0 }) === null;
+  }));
+
+await eeeuPage.fill('#wb-site-input', '/sites/eeeu');
+await eeeuPage.locator('#wb-site-open').click();
+await eeeuPage.waitForFunction(() =>
+  document.getElementById('wb-status-context').textContent.includes('/sites/eeeu'));
+await eeeuPage.locator('.wb-rail-btn', { hasText: 'Permissions' }).click();
+await eeeuPage.locator('.wb-view-security .wb-tab', { hasText: 'EEEU audit' }).click();
+await eeeuPage.waitForSelector('.wb-eeeu-subsites .wb-eeeu-check');
+
+await check('eeeu: the form offers four scopes, items, direct subsites and the principal list', async () => {
+  const scopes = await eeeuPage.locator('.wb-eeeu-row').first().locator('.wb-eeeu-check').allTextContents();
+  const subs = await eeeuPage.locator('.wb-eeeu-subsites .wb-eeeu-check').allTextContents();
+  const principals = await eeeuPage.inputValue('.wb-eeeu-principals');
+  const subsChecked = await eeeuPage.$$eval('.wb-eeeu-subsites input', (b) => b.map((x) => x.checked));
+  return scopes.map((s) => s.trim()).join('|')
+      === 'Site|Pages libraries|Lists|Document libraries|Include items and folders'
+    // direct children only — Deep (under Team) is never listed on its own
+    && subs.map((s) => s.trim()).join('|') === 'Team|Quiet|Echo'
+    && subsChecked.every((c) => c === false)
+    && principals.split('\n').join('|')
+      === 'Everyone except external users|Everyone|SharePoint EEEU Visitors';
+});
+
+await check('eeeu: a full run finds every broad grant, walks ticked subsite trees, reports problems', async () => {
+  const tick = (name) => eeeuPage.locator('.wb-eeeu-subsites .wb-eeeu-check', { hasText: name })
+    .locator('input').check();
+  await tick('Team');
+  await tick('Echo');
+  await eeeuPage.locator('.wb-eeeu-form .btn', { hasText: 'Run EEEU audit' }).click();
+  await eeeuPage.waitForFunction(() =>
+    /broad-access grant/.test(document.querySelector('.wb-eeeu-progress')?.textContent || ''));
+  const rows = await eeeuPage.$$eval('.wb-eeeu > .wb-grid .wb-table tbody tr', (trs) =>
+    trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())));
+  const find = (type, name) => rows.find((r) => r[1] === type && r[3] === name);
+  const siteRow = find('Site', 'EEEU Audit Site');
+  const pageLib = find('Pages library', 'Site Pages');
+  const page = find('Page', 'Welcome.aspx');
+  const folder = find('Folder', 'Public');
+  const file = find('File', 'notes.docx');
+  const list = find('List', 'Announcements');
+  const team = find('Site', 'Team');
+  const teamDocs = find('Library', 'Team Docs');
+  const deep = find('Site', 'Deep');
+  const summary = await eeeuPage.locator('.wb-eeeu-progress').textContent();
+  const problems = await eeeuPage.locator('.wb-eeeu .wb-subpanel .wb-table tbody').textContent();
+  const all = rows.map((r) => r.join(' ')).join('\n');
+  return rows.length === 9
+    && siteRow && siteRow[4] === 'SharePoint EEEU Visitors' && siteRow[6] === 'Group containing Everyone except external users'
+    && pageLib && pageLib[4] === 'Broad Readers' && pageLib[6] === 'Group containing Everyone'
+    && page && page[6] === 'Everyone except external users' && page[5] === 'Read'
+    && folder && folder[6] === 'Org-wide sharing link'
+    && file && file[6] === 'Everyone' && file[5] === 'Contribute'
+    && list && list[6] === 'Everyone except external users'
+    && team && teamDocs && teamDocs[5] === 'Edit'
+    // Deep sits under Team: scanned with its ticked parent, never listed itself
+    && deep && deep[0] === 'Deep'
+    // skipped: hidden/system lists, Limited Access noise, inheriting lists and
+    // subsites, unticked subsites, grants to ordinary groups
+    && !all.includes('Hidden Stuff') && !all.includes('Limited Access')
+    && !all.includes('Quiet') && !all.includes('Echo') && !all.includes('handbook.docx')
+    && !find('Library', 'Policies')
+    && summary.includes('9 broad-access grants across 4 sites') && summary.includes('1 problem')
+    && problems.includes('Locked Group') && problems.includes('Read group membership');
+});
+
+await check('eeeu: results export, and a narrowed scope skips the rest', async () => {
+  await eeeuPage.locator('.wb-eeeu > .wb-grid .wb-grid-actions .btn', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    eeeuPage.waitForEvent('download'),
+    eeeuPage.locator('.wb-eeeu > .wb-grid .wb-menu-item', { hasText: 'Download CSV' }).click(),
+  ]);
+  const csv = readFileSync(await download.path(), 'utf8');
+  // Site scope only, no items, no subsites: one row, the site's own.
+  for (const name of ['Pages libraries', 'Lists', 'Document libraries', 'Include items and folders']) {
+    await eeeuPage.locator('.wb-eeeu-row .wb-eeeu-check', { hasText: name }).locator('input').uncheck();
+  }
+  for (const name of ['Team', 'Echo']) {
+    await eeeuPage.locator('.wb-eeeu-subsites .wb-eeeu-check', { hasText: name }).locator('input').uncheck();
+  }
+  await eeeuPage.locator('.wb-eeeu-form .btn', { hasText: 'Run EEEU audit' }).click();
+  await eeeuPage.waitForFunction(() =>
+    /1 broad-access grant across 1 site/.test(document.querySelector('.wb-eeeu-progress')?.textContent || ''));
+  const types = await eeeuPage.$$eval('.wb-eeeu > .wb-grid .wb-table tbody tr td:nth-child(2)',
+    (tds) => tds.map((td) => td.textContent));
+  return csv.includes('Why it counts') && csv.includes('Org-wide sharing link')
+    && csv.includes('notes.docx')
+    && types.join(',') === 'Site';
+});
+
+await eeeuPage.close();
 
 // ---- live path (injected context + stubbed /_api) -------------------------
 

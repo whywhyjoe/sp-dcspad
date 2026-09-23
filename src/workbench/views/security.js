@@ -8,6 +8,8 @@ import { decodeBasePermissions, principalTypeName } from '../perm-kinds.js';
 import { createSpWriteClient } from '../sp-write.js';
 import { LINK_GROUPS, linkUrl } from '../config-links.js';
 import { BASE_TEMPLATE_NAMES } from './lists.js';
+import { DEFAULT_TARGETS, runEeeuAudit } from '../eeeu-audit.js';
+import { showFailure } from '../denied.js';
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -20,7 +22,7 @@ const roleNames = (row) =>
   (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || [])
     .map((r) => r.Name).filter(Boolean).join(', ');
 
-export function createSecurityView({ client }) {
+export function createSecurityView({ client, createClient }) {
   const root = el('section', 'wb-view wb-view-security');
   const spWrite = createSpWriteClient({ client });
 
@@ -418,12 +420,218 @@ export function createSecurityView({ client }) {
     return wrap;
   }
 
+  // ---- EEEU / broad-access audit (explicit; see eeeu-audit.js) ----
+  function eeeuPane() {
+    const wrap = el('div', 'wb-tab-pane wb-eeeu');
+    const form = el('div', 'wb-eeeu-form');
+
+    const checkbox = (label, checked, title = '') => {
+      const lab = el('label', 'wb-eeeu-check');
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = checked;
+      lab.append(box, document.createTextNode(` ${label}`));
+      if (title) lab.title = title;
+      return { lab, box };
+    };
+
+    // What to scan: four kinds, no per-list picking (Joe, 2026-09-23).
+    const scopeRow = el('div', 'wb-eeeu-row');
+    scopeRow.append(el('span', 'wb-qb-label', 'Scan'));
+    const scopeBoxes = {
+      site: checkbox('Site', true, 'The site’s own permissions'),
+      pages: checkbox('Pages libraries', true),
+      lists: checkbox('Lists', true),
+      documents: checkbox('Document libraries', true),
+    };
+    for (const { lab } of Object.values(scopeBoxes)) scopeRow.append(lab);
+    const items = checkbox('Include items and folders', true,
+      'Also check every page, file, folder and item that has its own permissions — the slow part');
+    scopeRow.append(items.lab);
+
+    // Subsites: the direct children, one checkbox each; a ticked one is
+    // scanned with everything below it.
+    const subRow = el('div', 'wb-eeeu-row');
+    subRow.append(el('span', 'wb-qb-label', 'Subsites'));
+    const subHost = el('span', 'wb-eeeu-subsites', 'Loading subsites…');
+    subRow.append(subHost);
+    const subBoxes = [];
+
+    const targetsRow = el('details', 'wb-eeeu-targets');
+    const summary = el('summary', '', '');
+    const targetsInput = el('textarea', 'wb-eeeu-principals');
+    targetsInput.rows = 3;
+    targetsInput.value = DEFAULT_TARGETS.join('\n');
+    targetsInput.setAttribute('aria-label', 'Principals to look for, one per line');
+    const syncSummary = () => {
+      const n = targetsInput.value.split('\n').map((s) => s.trim()).filter(Boolean).length;
+      summary.textContent = `Principals looked for (${n}) — plus any group containing everyone, `
+        + 'and “People in your organization” sharing links';
+    };
+    targetsInput.addEventListener('input', syncSummary);
+    syncSummary();
+    targetsRow.append(summary, targetsInput);
+
+    const runBar = el('div', 'wb-scan-bar');
+    const runBtn = el('button', 'btn', 'Run EEEU audit');
+    runBtn.type = 'button';
+    const cancelBtn = el('button', 'btn btn-xs', 'Cancel');
+    cancelBtn.type = 'button';
+    cancelBtn.hidden = true;
+    const progress = el('span', 'wb-view-hint wb-eeeu-progress',
+      'Finds where everyone in the organization has access. Large sites take minutes; '
+      + 'Cancel keeps what was found.');
+    runBar.append(runBtn, cancelBtn, progress);
+
+    form.append(scopeRow, subRow, targetsRow, runBar);
+
+    const results = createGrid({
+      rowKey: 'Key',
+      columns: [
+        { key: 'Web', label: 'Site' },
+        { key: 'Type', label: 'Type' },
+        { key: 'Location', label: 'Location' },
+        { key: 'Name', label: 'Name' },
+        { key: 'SharedWith', label: 'Shared with' },
+        { key: 'Permission', label: 'Permission' },
+        { key: 'Via', label: 'Why it counts' },
+        { key: 'Unique', label: 'Unique' },
+        { key: 'Url', label: 'URL', link: (v) => v, copyable: true },
+      ],
+      emptyText: 'Run the audit to see results.',
+      subject: 'the broad-access grants on this site',
+      filterPlaceholder: 'Filter results…',
+      exportName: 'sp-eeeu-audit',
+    });
+    results.setRows([]);
+
+    const problemsBox = el('div', 'wb-subpanel');
+    problemsBox.hidden = true;
+    const problemsTitle = el('h3', 'wb-subpanel-title', 'Problems');
+    const problemsGrid = createGrid({
+      rowKey: 'Key',
+      columns: [
+        { key: 'Web', label: 'Site' },
+        { key: 'Scope', label: 'Scope' },
+        { key: 'Location', label: 'Location' },
+        { key: 'Operation', label: 'Operation' },
+        { key: 'Status', label: 'Status' },
+        { key: 'Message', label: 'What SharePoint said' },
+      ],
+      emptyText: 'No problems.',
+      filterPlaceholder: 'Filter problems…',
+      exportName: 'sp-eeeu-audit-problems',
+    });
+    problemsBox.append(problemsTitle, problemsGrid.el);
+
+    wrap.append(form, results.el, problemsBox);
+
+    client.getAll('web/webs', { select: ['Title', 'Url', 'ServerRelativeUrl'] })
+      .then(({ items: webs }) => {
+        subHost.textContent = '';
+        if (!webs.length) {
+          subHost.append(el('span', 'wb-view-hint', 'No subsites under this site.'));
+          return;
+        }
+        for (const web of webs) {
+          const url = web.Url || web.ServerRelativeUrl;
+          const { lab, box } = checkbox(web.Title || url, false, `${url}\nScanned with every site below it`);
+          box.dataset.url = url;
+          subBoxes.push(box);
+          subHost.append(lab);
+        }
+        subHost.append(el('span', 'wb-view-hint', ' each with every site below it'));
+      })
+      .catch((err) => {
+        subHost.textContent = '';
+        showFailure(subHost, err, 'this site’s subsites');
+      });
+
+    let runToken = 0;
+    let running = false;
+    const setRunning = (on) => {
+      running = on;
+      runBtn.disabled = on;
+      cancelBtn.hidden = !on;
+      for (const { box } of Object.values(scopeBoxes)) box.disabled = on;
+      items.box.disabled = on;
+      for (const box of subBoxes) box.disabled = on;
+      targetsInput.disabled = on;
+    };
+    cancelBtn.addEventListener('click', () => {
+      runToken += 1;
+      progress.textContent = 'Stopping after the requests already in flight…';
+    });
+
+    runBtn.addEventListener('click', async () => {
+      if (running) return;
+      const scopes = Object.fromEntries(Object.entries(scopeBoxes).map(([k, { box }]) => [k, box.checked]));
+      if (!Object.values(scopes).some(Boolean)) {
+        progress.textContent = 'Tick at least one of Site, Pages libraries, Lists or Document libraries.';
+        return;
+      }
+      const token = ++runToken;
+      const shouldStop = () => token !== runToken;
+      setRunning(true);
+      problemsBox.hidden = true;
+      const found = [];
+      let lastPaint = 0;
+      const paint = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastPaint < 250) return;
+        lastPaint = now;
+        results.setRows([...found]);
+      };
+      results.setRows([]);
+      results.setLoading('Scanning…');
+      const started = Date.now();
+      try {
+        const audit = await runEeeuAudit({
+          client,
+          openWeb: async (url) => {
+            const other = createClient();
+            await other.connectWeb(url);
+            return other;
+          },
+          subsites: subBoxes.filter((b) => b.checked).map((b) => ({ url: b.dataset.url })),
+          scopes,
+          includeItems: items.box.checked,
+          targets: targetsInput.value.split('\n').map((s) => s.trim()).filter(Boolean),
+          onProgress: (text) => { if (!shouldStop()) progress.textContent = text; },
+          onRow: (row) => { found.push(row); paint(); },
+          shouldStop,
+        });
+        paint(true);
+        if (!found.length) results.setRows([]);
+        const secs = Math.max(1, Math.round((Date.now() - started) / 1000));
+        const webs = audit.webs.length;
+        progress.textContent = `${audit.stopped ? 'Cancelled — partial results. ' : ''}`
+          + `${audit.rows.length} broad-access grant${audit.rows.length === 1 ? '' : 's'} across `
+          + `${webs} site${webs === 1 ? '' : 's'}; ${audit.problems.length} problem`
+          + `${audit.problems.length === 1 ? '' : 's'} (${secs}s). Lists and subsites that inherit `
+          + 'are covered by their parent’s row.';
+        if (audit.problems.length) {
+          problemsTitle.textContent = `Problems (${audit.problems.length})`;
+          problemsGrid.setRows(audit.problems);
+          problemsBox.hidden = false;
+        }
+      } catch (err) {
+        results.setError(err);
+      } finally {
+        setRunning(false);
+      }
+    });
+
+    return wrap;
+  }
+
   const TABS = [
     { id: 'groups', label: 'Groups', build: groupsPane },
     { id: 'members', label: 'Members', build: membersPane },
     { id: 'roledefs', label: 'Role definitions', build: roleDefsPane },
     { id: 'assignments', label: 'Role assignments', build: assignmentsPane },
     { id: 'inheritance', label: 'Inheritance scan', build: inheritancePane },
+    { id: 'eeeu', label: 'EEEU audit', build: eeeuPane },
   ];
 
   function activate(tab) {
