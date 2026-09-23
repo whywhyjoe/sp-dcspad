@@ -196,7 +196,10 @@ export function createSpRestClient({
   // list): it raises the ceiling to LARGE_PAGE_CAP without changing the
   // default 5000 ceiling anyone else sees. Returns { items, partial } —
   // partial=true means more rows remained.
-  async function getAll(path, opts, { cap = PAGE_CAP, allowLargeCap = false } = {}) {
+  // No `cap` means the ceiling itself — with allowLargeCap that is
+  // LARGE_PAGE_CAP. (A `cap = PAGE_CAP` default here once silently held an
+  // allowLargeCap caller that passed no cap — the EEEU item scan — to 5000.)
+  async function getAll(path, opts, { cap, allowLargeCap = false } = {}) {
     const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
     const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
     let url = apiUrl(path, opts);

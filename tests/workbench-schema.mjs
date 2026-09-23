@@ -3012,8 +3012,13 @@ await check('pure: sp-rest getAll follows odata.nextLink past the default 5000 c
     const capped = await client.getAll("web/lists(guid'L1')/items", {});
     callN = 0;
     const large = await client.getAll("web/lists(guid'L1')/items", {}, { cap: 100000, allowLargeCap: true });
+    // allowLargeCap with NO cap (the EEEU item scan) must get the large
+    // ceiling too — a cap default of 5000 once held it there on live SPO.
+    callN = 0;
+    const noCap = await client.getAll("web/lists(guid'L1')/items", {}, { allowLargeCap: true });
     return capped.items.length === 5000 && capped.partial === true
-      && large.items.length === 9000 && large.partial === false;
+      && large.items.length === 9000 && large.partial === false
+      && noCap.items.length === 9000 && noCap.partial === false;
   }));
 
 await check('live: captureListData reads items with an unprojected $select=* (never a bare lookup/user internal name) and asks getAll for the opt-in 100000 cap', () =>

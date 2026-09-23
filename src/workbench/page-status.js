@@ -135,6 +135,18 @@ export function versionShapes({ hasModeration = false } = {}) {
   ];
 }
 
+// Whether a missing moderation value must make "last published" unknown.
+// The _ModerationStatus FIELD exists on every pages library, approval or not
+// (hidden), so the field probe alone says nothing — and live SPO silently
+// drops OData__ModerationStatus from items(id)/versions when the library does
+// not run content approval. Treating that absence as "unknown" blanked
+// Publish Date on every non-approval library (dev tenant, 2026-09-23). Only
+// the list's own EnableModeration says approval is on; unknown (null) keeps
+// the conservative reading.
+export function moderationApplies(hasModerationField, enableModeration) {
+  return Boolean(hasModerationField) && enableModeration !== false;
+}
+
 // The date the page's CURRENT published version was published: the newest
 // major (x.0) version, skipping one still pending, rejected or scheduled when
 // the library runs approval. '' when the page was never published.
@@ -206,7 +218,10 @@ export function resolveMetadataLayout(fields, status = {}, spec = METADATA_SPEC)
   const byTitle = new Map();
   for (const f of fields || []) {
     if (f?.InternalName) byInternal.set(lower(f.InternalName), f);
-    if (f?.Title && !byTitle.has(lower(f.Title))) byTitle.set(lower(f.Title), f);
+    // Display-name aliases only match visible fields: SharePoint's hidden
+    // built-ins reuse friendly titles (FSObjType is titled "Item Type"), and
+    // an alias is for the name people know a column by, never plumbing.
+    if (f?.Title && !f.Hidden && !byTitle.has(lower(f.Title))) byTitle.set(lower(f.Title), f);
   }
   const used = new Set();
   const out = [];
