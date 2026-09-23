@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "206" : "dev";
-var injectedRevision = true ? "66278ce6" : "";
+var injectedBuild = true ? "208" : "dev";
+var injectedRevision = true ? "4cfb92ee" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -293,25 +293,27 @@ function nextLinkOf(data) {
 function entityOf(data) {
   return data?.d ?? data;
 }
+var inFlight = 0;
+var waiters = [];
+async function withSlot(work) {
+  if (inFlight >= MAX_CONCURRENT) {
+    await new Promise((resolve) => waiters.push(resolve));
+  } else {
+    inFlight++;
+  }
+  try {
+    return await work();
+  } finally {
+    const next2 = waiters.shift();
+    if (next2) next2();
+    else inFlight--;
+  }
+}
 function createSpRestClient({
   getContext = getSpContext,
   fetchImpl = (...args) => fetch(...args),
   mockResolver: mockResolver2 = null
 } = {}) {
-  let inFlight = 0;
-  const waiters = [];
-  async function withSlot(work) {
-    if (inFlight >= MAX_CONCURRENT) {
-      await new Promise((resolve) => waiters.push(resolve));
-    }
-    inFlight++;
-    try {
-      return await work();
-    } finally {
-      inFlight--;
-      waiters.shift()?.();
-    }
-  }
   let targetWebUrl = "";
   function context() {
     const ctx2 = getContext();
@@ -2269,10 +2271,10 @@ var ITEMS = {
 };
 var ITEM_VERSIONS = {
   "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1": [
-    { VersionId: 1537, VersionLabel: "3.1", IsCurrentVersion: true, Created: "2026-07-18T10:00:00Z" },
-    { VersionId: 1536, VersionLabel: "3.0", IsCurrentVersion: false, Created: "2026-07-01T09:00:00Z" },
-    { VersionId: 1024, VersionLabel: "2.0", IsCurrentVersion: false, Created: "2026-06-01T09:00:00Z" },
-    { VersionId: 512, VersionLabel: "1.0", IsCurrentVersion: false, Created: "2026-05-10T12:00:00Z" }
+    { VersionId: 1537, VersionLabel: "3.1", IsCurrentVersion: true, Created: "2026-07-18T10:00:00Z", OData__ModerationStatus: 0 },
+    { VersionId: 1536, VersionLabel: "3.0", IsCurrentVersion: false, Created: "2026-07-01T09:00:00Z", OData__ModerationStatus: 0 },
+    { VersionId: 1024, VersionLabel: "2.0", IsCurrentVersion: false, Created: "2026-06-01T09:00:00Z", OData__ModerationStatus: 0 },
+    { VersionId: 512, VersionLabel: "1.0", IsCurrentVersion: false, Created: "2026-05-10T12:00:00Z", OData__ModerationStatus: 0 }
   ]
 };
 function versionsOf(listId, item2) {
@@ -2284,7 +2286,8 @@ function versionsOf(listId, item2) {
     VersionId: major * 512 + minor,
     VersionLabel: `${major}.${minor}`,
     IsCurrentVersion: true,
-    Created: item2.Modified
+    Created: item2.Modified,
+    OData__ModerationStatus: item2.OData__ModerationStatus ?? 0
   }];
 }
 var ITEM_ROLE_ASSIGNMENTS = {
@@ -10853,7 +10856,14 @@ var originOf = (url) => {
     return "";
   }
 };
-var absolute = (webUrl, path) => path ? `${originOf(webUrl)}${encodeURI(String(path))}` : "";
+var encodePath = (path) => String(path).split("/").map((segment) => {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment));
+  } catch {
+    return encodeURIComponent(segment);
+  }
+}).join("/");
+var absolute = (webUrl, path) => path ? `${originOf(webUrl)}${encodePath(path)}` : "";
 async function runEeeuAudit({
   client: client2,
   openWeb,
@@ -10902,6 +10912,7 @@ async function runEeeuAudit({
   } catch (err) {
     addProblem("", "Site", client2.webUrl(), "Read the site", err);
   }
+  if (shouldStop()) return { rows, problems, webs: websScanned, broadGroups, stopped: true };
   try {
     const { items: groups } = await client2.getAll("web/sitegroups", { select: ["Id", "Title", "LoginName"] });
     let done = 0;
@@ -10923,6 +10934,7 @@ async function runEeeuAudit({
   }
   const matcher = makeMatcher({ targets, broadGroups });
   async function scanWeb(webClient, web, { isRoot }) {
+    if (shouldStop()) return;
     const webTitle = web.Title || web.Url || "";
     const webUrl = web.Url || webClient.webUrl();
     websScanned.push({ Title: webTitle, Url: webUrl });
@@ -11005,15 +11017,21 @@ async function runEeeuAudit({
       if (!includeItems || shouldStop()) continue;
       let uniqueItems = [];
       try {
-        const { items } = await webClient.getAll(`${base}/items`, {
+        const { items, partial } = await webClient.getAll(`${base}/items`, {
           select: ["Id", "Title", "FileRef", "FileLeafRef", "FSObjType", "HasUniqueRoleAssignments"],
           top: 5e3
         }, { allowLargeCap: true });
         uniqueItems = items.filter((it) => it.HasUniqueRoleAssignments === true);
+        if (partial) {
+          addProblem(webTitle, LIST_TYPE[scope], listLabel, "List items with their own permissions", {
+            message: `Only the first ${items.length.toLocaleString("en-US")} items were checked \u2014 the list is larger than the audit can read, so grants on later items are not in these results.`
+          });
+        }
       } catch (err) {
         addProblem(webTitle, LIST_TYPE[scope], listLabel, "List items with their own permissions", err);
         continue;
       }
+      if (shouldStop()) return;
       let itemNo = 0;
       await pool(uniqueItems, concurrency, async (item2) => {
         const name = item2.FileLeafRef || item2.Title || `Item ${item2.Id}`;
@@ -11049,6 +11067,7 @@ async function runEeeuAudit({
     let web;
     try {
       webClient = await openWeb(url);
+      if (shouldStop()) return;
       web = await webClient.get("web", { select: ["Title", "Url", "HasUniqueRoleAssignments"] });
     } catch (err) {
       addProblem("", "Site", url, "Open subsite", err);
@@ -11438,6 +11457,8 @@ function createSecurityView({ client: client2, createClient }) {
     });
     return wrap;
   }
+  let stopAudit = () => {
+  };
   function eeeuPane() {
     const wrap = el9("div", "wb-tab-pane wb-eeeu");
     const form = el9("div", "wb-eeeu-form");
@@ -11570,6 +11591,9 @@ Scanned with every site below it`);
       runToken += 1;
       progress.textContent = "Stopping after the requests already in flight\u2026";
     });
+    stopAudit = () => {
+      runToken += 1;
+    };
     runBtn.addEventListener("click", async () => {
       if (running) return;
       const scopes = Object.fromEntries(Object.entries(scopeBoxes).map(([k, { box }]) => [k, box.checked]));
@@ -11660,7 +11684,7 @@ Scanned with every site below it`);
     }
     if (!tabsBar.querySelector(".wb-tab.active")) activate(TABS[0]);
   }
-  return { el: root2, load: load2 };
+  return { el: root2, load: load2, destroy: () => stopAudit() };
 }
 
 // ../src/workbench/views/site.js
@@ -13583,16 +13607,26 @@ function parseVersionLabel(label) {
   return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
 }
 var numberOrNull = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+var NOT_LIVE = /* @__PURE__ */ new Set([1, 2, 4]);
+function moderationOf(entity2) {
+  if (!entity2 || typeof entity2 !== "object") return null;
+  for (const key2 of ["OData__ModerationStatus", "OData__x005f_ModerationStatus", "_ModerationStatus"]) {
+    const n = numberOrNull(entity2[key2]);
+    if (n !== null) return n;
+  }
+  const fv = entity2.FieldValues;
+  return fv && typeof fv === "object" ? numberOrNull(fv._ModerationStatus ?? fv.OData__ModerationStatus) : null;
+}
 function derivePageStatus(item2 = {}) {
   const file = item2.File && typeof item2.File === "object" ? item2.File : null;
   const label = parseVersionLabel(item2.OData__UIVersionString ?? item2._UIVersionString);
   const major = numberOrNull(file?.MajorVersion) ?? label?.major ?? null;
   const minor = numberOrNull(file?.MinorVersion) ?? label?.minor ?? null;
-  const moderation = numberOrNull(item2.OData__ModerationStatus ?? item2._ModerationStatus);
+  const moderation = moderationOf(item2);
   let published = null;
   if (major !== null) {
     published = major > 0;
-    if (major === 1 && minor === 0 && (moderation === 1 || moderation === 2)) published = false;
+    if (major === 1 && minor === 0 && NOT_LIVE.has(moderation)) published = false;
   }
   const holder = item2.CheckoutUser && typeof item2.CheckoutUser === "object" ? String(item2.CheckoutUser.Title || "") : "";
   const checkOutType = numberOrNull(file?.CheckOutType);
@@ -13621,16 +13655,20 @@ function versionShapes({ hasModeration = false } = {}) {
     { options: {} }
   ];
 }
-function lastPublishedFrom(versions) {
-  let best = null;
+function lastPublishedFrom(versions, { hasModeration = false } = {}) {
+  const majors = [];
   for (const v of versions || []) {
     const label = parseVersionLabel(v?.VersionLabel);
     if (!label || label.major < 1 || label.minor !== 0) continue;
-    const moderation = numberOrNull(v.OData__ModerationStatus ?? v._ModerationStatus);
-    if (moderation === 1 || moderation === 2) continue;
-    if (!best || label.major > best.label.major) best = { label, v };
+    majors.push({ label, v, moderation: moderationOf(v) });
   }
-  return best ? String(best.v.Created || best.v.Modified || "") : "";
+  majors.sort((a, b) => b.label.major - a.label.major);
+  for (const m of majors) {
+    if (m.moderation === null && hasModeration) return null;
+    if (NOT_LIVE.has(m.moderation)) continue;
+    return String(m.v.Created || m.v.Modified || "");
+  }
+  return "";
 }
 var METADATA_SPEC = [
   { status: "id", label: "ID" },
@@ -14061,22 +14099,30 @@ ${current.rootPath}` : "");
     const key2 = `${sitePages.listId}:${pageId}`;
     if (!lastPublishedCache.has(key2)) {
       const path = guidPath6(sitePages.listId, `/items(${pageId})/versions`);
-      lastPublishedCache.set(key2, queryPlan(sitePages).then((plan) => queryLadder(versionShapes(plan), (options) => client2.getAll(path, options))).then(({ value }) => lastPublishedFrom(value.items)).catch(() => {
+      lastPublishedCache.set(key2, queryPlan(sitePages).then((plan) => queryLadder(versionShapes(plan), (options) => client2.getAll(path, options)).then(({ value }) => lastPublishedFrom(value.items, { hasModeration: plan.hasModeration }))).catch((err) => {
         lastPublishedCache.delete(key2);
-        return null;
+        throw err;
       }));
     }
     return lastPublishedCache.get(key2);
   }
   async function exportStatusFor(item2, sitePages) {
     if (!supportsStatus(sitePages) || item2?.Id === void 0) return null;
+    let status;
     try {
-      const { status } = await pageStatus(sitePages, item2.Id);
-      const published = await lastPublished(sitePages, item2.Id, status);
-      return { ...status, lastPublished: published ? String(published).slice(0, 10) : "" };
+      ({ status } = await pageStatus(sitePages, item2.Id));
     } catch {
       return null;
     }
+    let published = null;
+    try {
+      published = await lastPublished(sitePages, item2.Id, status);
+    } catch {
+    }
+    return {
+      ...status,
+      lastPublished: published ? String(published).slice(0, 10) : published
+    };
   }
   function gridColumns(plan, sitePages, withStatus) {
     const statusOf = (row) => row.__status || {};
@@ -14146,8 +14192,9 @@ ${current.rootPath}` : "");
     try {
       const plan = await queryPlan(sitePages);
       const path = guidPath6(sitePages.listId, "/items");
-      const { value, lost, reason } = await queryLadder(pageStatusShapes(plan), (options) => client2.getAll(path, { ...options, top: 5e3 }));
+      const { value, lost, reason, index } = await queryLadder(pageStatusShapes(plan), (options) => client2.getAll(path, { ...options, orderby: "FileLeafRef", top: 5e3 }), statusRung);
       if (stale()) return;
+      statusRung = index;
       const byId = new Map(value.items.map((it) => [String(it.Id), derivePageStatus(it)]));
       for (const row of gridRows) row.__status = byId.get(String(row.Id)) || derivePageStatus({});
       scanned = true;
@@ -14157,6 +14204,12 @@ ${current.rootPath}` : "");
         const chip = reducedChip(lost, `the page status of ${sitePages.title}`, reason);
         chip.classList.add("wb-scan-reduced");
         strip.insertBefore(chip, libraryLink);
+      }
+      const missing = gridRows.filter((row) => !byId.has(String(row.Id))).length;
+      if (value.partial || missing) {
+        masterStatus.textContent = `Page status was read for ${value.items.length} pages` + (missing ? `; ${missing} page${missing === 1 ? "" : "s"} on screen came back without it` : "") + " \u2014 those rows are blank, not Unpublished.";
+        masterStatus.classList.remove("wb-error", "wb-denied");
+        masterStatus.hidden = false;
       }
     } catch (err) {
       if (stale()) return;
@@ -14558,13 +14611,16 @@ ${p.html}`).join("\n\n")
     (async () => {
       const fields = await listFields(listId);
       let layout = null;
+      let statusFailure = null;
       if (supportsStatus(sitePages)) {
         let pageState = {};
+        let published = null;
         try {
           ({ status: pageState } = await pageStatus(sitePages, pageId));
-        } catch {
+          published = await lastPublished(sitePages, pageId, pageState);
+        } catch (err) {
+          statusFailure = err;
         }
-        const published = await lastPublished(sitePages, pageId, pageState);
         layout = resolveMetadataLayout(fields, { ...pageState, id: pageId, lastPublished: published });
       }
       let item2;
@@ -14590,6 +14646,13 @@ ${p.html}`).join("\n\n")
         layout,
         onSave: (formValues) => spWrite.validateUpdateListItem({ listId, itemId: pageId }, formValues)
       });
+      if (statusFailure) {
+        wrap.append(showFailure(
+          el15("div", "wb-grid-status wb-page-status-failed"),
+          statusFailure,
+          "this page\u2019s publish and permission status"
+        ));
+      }
       wrap.append(form.el);
     })().catch((err) => {
       showFailure(status, err, "this page\u2019s metadata");
@@ -14750,7 +14813,9 @@ ${fullUrl}`;
           ));
         }
         if (lost) chips.append(reducedChip(lost, "this page\u2019s status", reason));
-      }).catch(() => {
+      }).catch((err) => {
+        if (run !== detailRun) return;
+        chips.append(showFailure(el15("span", "wb-page-status-failed"), err, "this page\u2019s status"));
       });
     }
     const actions = el15("span", "wb-detail-actions");
