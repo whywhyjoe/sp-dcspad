@@ -1166,6 +1166,129 @@ await check('pages: the action column header is inert and the filter skips it', 
     && filtered.action === 0 && filtered.data === 1;
 });
 
+// ---- page status (Joe, 2026-09-23) ----------------------------------------
+
+await check('page-status: published means ever published, never _ModerationStatus alone', async () =>
+  page.evaluate(async () => {
+    const { derivePageStatus, lastPublishedFrom, parseVersionLabel, pageStatusShapes } =
+      await import('/src/workbench/page-status.js');
+    const s = (item) => derivePageStatus(item);
+    const draftOverPublished = s({ File: { MajorVersion: 3, MinorVersion: 1, CheckOutType: 2 }, HasUniqueRoleAssignments: true });
+    const neverPublished = s({ File: { MajorVersion: 0, MinorVersion: 4, CheckOutType: 0 }, CheckoutUser: { Title: 'Pat' } });
+    // No approval on the library: every item reads 0 ("Approved"), drafts
+    // included — the version, not the moderation field, decides.
+    const draftApprovedFlag = s({ File: { MajorVersion: 0, MinorVersion: 2 }, OData__ModerationStatus: 0 });
+    // Approval on: 1.0 pending or rejected has never been published; a 2.0
+    // pending approval still has an approved 1.0 under it.
+    const pendingFirst = s({ File: { MajorVersion: 1, MinorVersion: 0 }, OData__ModerationStatus: 2 });
+    const rejectedFirst = s({ File: { MajorVersion: 1, MinorVersion: 0 }, OData__ModerationStatus: 1 });
+    const pendingSecond = s({ File: { MajorVersion: 2, MinorVersion: 0 }, OData__ModerationStatus: 2 });
+    const fromLabel = s({ OData__UIVersionString: '2.3' });
+    const unknown = s({});
+    const last = lastPublishedFrom([
+      { VersionLabel: '3.1', Created: '2026-07-18T10:00:00Z' },
+      { VersionLabel: '3.0', Created: '2026-07-01T09:00:00Z' },
+      { VersionLabel: '1.0', Created: '2026-05-10T12:00:00Z' },
+    ]);
+    const lastSkipsPending = lastPublishedFrom([
+      { VersionLabel: '2.0', Created: '2026-08-01T00:00:00Z', OData__ModerationStatus: 2 },
+      { VersionLabel: '1.0', Created: '2026-05-10T12:00:00Z', OData__ModerationStatus: 0 },
+    ]);
+    const shapes = pageStatusShapes({ hasModeration: false });
+    const withMod = pageStatusShapes({ hasModeration: true });
+    return draftOverPublished.published === true && draftOverPublished.brokenInheritance === true
+      && draftOverPublished.checkedOut === false
+      && neverPublished.published === false && neverPublished.checkedOut === true
+      && neverPublished.checkedOutTo === 'Pat'
+      && draftApprovedFlag.published === false
+      && pendingFirst.published === false && rejectedFirst.published === false
+      && pendingSecond.published === true
+      && fromLabel.published === true && fromLabel.checkedOut === null
+      && unknown.published === null && unknown.brokenInheritance === null && unknown.checkedOut === null
+      && last === '2026-07-01T09:00:00Z' && lastSkipsPending === '2026-05-10T12:00:00Z'
+      && lastPublishedFrom([{ VersionLabel: '0.3', Created: 'x' }]) === ''
+      && parseVersionLabel('12.40').major === 12 && parseVersionLabel('x') === null
+      // _ModerationStatus is only named when the library has the field.
+      && !JSON.stringify(shapes).includes('ModerationStatus')
+      && withMod[0].options.select.includes('OData__ModerationStatus')
+      && shapes[0].options.expand.includes('File') && shapes[0].options.expand.includes('CheckoutUser');
+  }));
+
+await check('page-status: Metadata layout follows the spec order and hides unlisted fields', async () =>
+  page.evaluate(async () => {
+    const { resolveMetadataLayout } = await import('/src/workbench/page-status.js');
+    const f = (Title, InternalName) => ({ Title, InternalName, TypeAsString: 'Text' });
+    const fields = [
+      f('Org', 'Org'), f('Item Type', 'FolderType'), f('Description', 'Description'),
+      f('Title', 'Title'), f('Name', 'FileLeafRef'),
+      // A site column whose internal name was mangled — found by display name.
+      f('Content Category', 'Content_x0020_Category0'),
+    ];
+    const layout = resolveMetadataLayout(fields, {
+      id: 7, published: true, lastPublished: '2026-07-01T09:00:00Z', brokenInheritance: false,
+      checkedOut: false, checkedOutTo: '',
+    });
+    const order = layout.map((e) => e.field?.InternalName || e.internal).join(',');
+    const text = Object.fromEntries(layout.filter((e) => !e.field).map((e) => [e.internal, e.text]));
+    // Unknown status (a refused read) leaves its rows out entirely.
+    const unknown = resolveMetadataLayout([f('Title', 'Title')], { id: 3 })
+      .map((e) => e.field?.InternalName || e.internal).join(',');
+    return order === '__status_id,FileLeafRef,Title,__status_published,__status_lastPublished,'
+        + '__status_inheritance,__status_checkedOutTo,Content_x0020_Category0,FolderType,Org'
+      && text.__status_id === '7' && text.__status_published === 'Published'
+      && text.__status_lastPublished === '2026-07-01'
+      && text.__status_inheritance === 'Inherited'
+      && text.__status_checkedOutTo === ''
+      && layout.find((e) => e.field?.InternalName === 'FolderType').label === 'Item Type'
+      && unknown === '__status_id,Title';
+  }));
+
+await check('pages: Scan Page Status adds Published, Checked out and Inheritance columns', async () => {
+  await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  const header = async () => headerText(
+    await page.locator('.wb-view-pages .wb-table thead th').allTextContents());
+  const before = await header();
+  const btn = page.locator('.wb-view-pages .wb-grid-toolbar .wb-scan-status');
+  const label = await btn.textContent();
+  await btn.click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.wb-view-pages .wb-table thead th')]
+    .some((th) => th.textContent.includes('Published')));
+  const after = await header();
+  const cells = async (name) => {
+    const row = page.locator('.wb-view-pages .wb-table tbody tr', { hasText: name }).first();
+    const idx = (col) => after.indexOf(col);
+    const tds = await row.locator('td').allTextContents();
+    // +1: the leading selection checkbox column has no header text.
+    return {
+      published: tds[idx('Published') + 1], checkedOut: tds[idx('Checked out') + 1],
+      inheritance: tds[idx('Inheritance') + 1],
+    };
+  };
+  const home = await cells('Home.aspx');
+  const news = await cells('News-Update.aspx');
+  const hebdo = await cells('Hebdo.aspx');
+  // The scan columns ride along in the grid's exports.
+  await page.locator('.wb-view-pages .wb-grid-actions .btn', { hasText: 'Export' }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('.wb-view-pages .wb-menu-item', { hasText: 'Download CSV' }).click(),
+  ]);
+  const csv = readFileSync(await download.path(), 'utf8');
+  const relabelled = await btn.textContent();
+  return label === 'Scan Page Status' && relabelled === 'Rescan Page Status'
+    && !before.includes('Published')
+    // between the page's own facts and the Modified/Editor pair
+    && after.indexOf('Published') > after.indexOf('Promoted')
+    && after.indexOf('Inheritance') < after.indexOf('Modified')
+    // published even with a newer draft on top; own permissions marked
+    && home.published === 'Published' && home.inheritance === 'Broken' && home.checkedOut === ''
+    && news.published === 'Unpublished' && news.checkedOut === 'Pat Example' && news.inheritance === ''
+    && hebdo.published === 'Unpublished'
+    && csv.includes('Published') && csv.includes('Checked out') && csv.includes('Inheritance')
+    && csv.includes('Pat Example') && csv.includes('Broken');
+});
+
 await check('pages: drilldown opens on Extract with the reordered tabs and URL copy', async () => {
   await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
     .locator('td.wb-mono').first().click();
@@ -1176,13 +1299,74 @@ await check('pages: drilldown opens on Extract with the reordered tabs and URL c
   const fragText = await frag.textContent();
   const fragTitle = await frag.getAttribute('title');
   const actions = await page.locator('.wb-detail-actions .btn').allTextContents();
-  return tabs.join(',') === 'Extract,Metadata,Structure,Web parts,Raw'
+  // The actions moved off the head row onto the tab row, outside the tablist.
+  const placement = await page.evaluate(() => {
+    const bar = document.querySelector('.wb-view-pages .wb-detail-actions');
+    return {
+      onTabRow: Boolean(bar?.closest('.wb-tabs')),
+      inHead: Boolean(bar?.closest('.wb-detail-head')),
+      inTablist: Boolean(bar?.closest('[role="tablist"]')),
+    };
+  });
+  return tabs.join(',') === 'Extract,Metadata,Permissions,Structure,Web parts,Raw'
+    && placement.onTabRow && !placement.inHead && !placement.inTablist
     && active === 'Extract'
     && fragText === '/SitePages/Home.aspx'
     && fragTitle.includes(`${new URL(WB_URL).origin}/SitePages/Home.aspx`)
     && actions.join(',').includes('Export MD')
     && actions.join(',').includes('Export HTML')
     && actions.join(',').includes('Export raw');
+});
+
+await check('pages: status chips follow the kind chip in the loud register', async () => {
+  await page.waitForSelector('.wb-view-pages .wb-page-status');
+  const seen = await page.evaluate(() => {
+    const head = document.querySelector('.wb-view-pages .wb-detail-head');
+    const kids = [...head.children];
+    const kind = head.querySelector('.wb-detail-kind');
+    const chips = [...head.querySelectorAll('.wb-page-status')];
+    return {
+      texts: chips.map((c) => c.textContent),
+      on: chips.map((c) => c.classList.contains('wb-status-on')),
+      status: chips.every((c) => c.classList.contains('wb-role-chip') && !c.classList.contains('wb-info-chip')),
+      shouty: chips.every((c) => getComputedStyle(c).textTransform === 'uppercase'),
+      after: chips.every((c) => kids.indexOf(c.parentElement) > kids.indexOf(kind)),
+    };
+  });
+  // Home: published (3.0 under a 3.1 draft), own permissions, not checked out.
+  return seen.texts.join(',') === 'Published,Inheritance broken'
+    && seen.on.every(Boolean) && seen.status && seen.shouty && seen.after;
+});
+
+await check('pages: a checked-out, never-published page says so in its chips', async () => {
+  await page.locator('.wb-view-pages .wb-back').click();
+  await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'News-Update.aspx' })
+    .locator('td.wb-mono').first().click();
+  await page.waitForSelector('.wb-view-pages .wb-page-status');
+  await page.waitForFunction(() =>
+    document.querySelectorAll('.wb-view-pages .wb-page-status').length >= 2);
+  const chips = await page.evaluate(() => [...document.querySelectorAll('.wb-view-pages .wb-page-status')]
+    .map((c) => ({ text: c.textContent, on: c.classList.contains('wb-status-on'), title: c.title })));
+  await page.locator('.wb-view-pages .wb-back').click();
+  await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
+    .locator('td.wb-mono').first().click();
+  await page.waitForSelector('.wb-text-rendered');
+  const unpublished = chips.find((c) => c.text === 'Unpublished');
+  const out = chips.find((c) => c.text === 'Checked out');
+  return chips.length === 2 && unpublished && !unpublished.on
+    && out && out.on && out.title.includes('Pat Example');
+});
+
+await check('pages: Permissions tab shows the page’s own assignments under an inheritance chip', async () => {
+  await page.locator('.wb-view-pages .wb-tab', { hasText: 'Permissions' }).click();
+  await page.waitForSelector('.wb-view-pages .wb-tab-body .wb-table tbody tr', { hasText: 'Pat Example' });
+  const chip = await page.locator('.wb-view-pages .wb-tab-body .wb-page-status').textContent();
+  const text = await page.locator('.wb-view-pages .wb-tab-body .wb-table').textContent();
+  const active = await page.locator('.wb-view-pages .wb-tab.active').textContent();
+  // Home has unique permissions: the item's own set, not the web's visitors.
+  return active === 'Permissions' && chip === 'Broken inheritance'
+    && text.includes('Pat Example') && text.includes('Contribute')
+    && text.includes('Mock Site Owners') && !text.includes('Mock Site Visitors');
 });
 
 await check('pages: structure tab parses the canvas and flags the malformed entry', async () => {
@@ -1260,6 +1444,33 @@ await check('page-export: content export merges metadata and content per spec', 
         fileDirRef: '/SitePages/News/fr', libraryRootPath: '/SitePages',
       }) === 'FCUPortal | SitePages | News/fr'
       && exportFileStem({ FileLeafRef: 'News-Update.aspx' }) === 'news-update';
+  }));
+
+await check('page-export: the metadata block carries the page status in words', async () =>
+  page.evaluate(async () => {
+    const { buildContentExport } = await import('/src/workbench/page-export.js');
+    const item = {
+      Id: 2, Title: 'News', FileLeafRef: 'News.aspx', HasUniqueRoleAssignments: true,
+      OData__ModerationStatus: 0,
+    };
+    const md = buildContentExport({
+      item,
+      status: {
+        published: true, lastPublished: '2026-07-01', brokenInheritance: true,
+        checkedOut: true, checkedOutTo: 'Pat Example',
+      },
+    });
+    const unknown = buildContentExport({ item, status: { published: null, brokenInheritance: null } });
+    const none = buildContentExport({ item });
+    return md.includes('- Publish status: Published')
+      && md.includes('- Last published: 2026-07-01')
+      && md.includes('- Permissions: Broken inheritance')
+      && md.includes('- Checked out to: Pat Example')
+      // the raw flags are said in words above, not dumped again
+      && !md.includes('HasUniqueRoleAssignments') && !md.includes('ModerationStatus')
+      // unknown is left out, never guessed
+      && !unknown.includes('Publish status') && !unknown.includes('Permissions:')
+      && !none.includes('Publish status');
   }));
 
 await check('html-markdown: the two profiles keep their structural conventions', async () =>
@@ -1623,23 +1834,41 @@ await check('page-export: the export report names what could not be read', async
       && !buildExportReport({ total: 2, exported: 2, failures: [] }).includes('Not exported');
   }));
 
-await check('pages: metadata tab maps field types to editors and guards content fields', async () => {
+await check('pages: metadata tab lists only the spec rows, in order, editing only the simple ones', async () => {
   await page.locator('.wb-view-pages .wb-tab', { hasText: 'Metadata' }).click();
   await page.waitForSelector('.wb-editor-row');
-  const kinds = await page.evaluate(() =>
-    [...document.querySelectorAll('.wb-editor-row')].map((row) => {
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-view-pages .wb-editor-row')].map((row) => {
       const readonly = row.classList.contains('wb-editor-readonly');
       const control = row.querySelector('select') ? 'select'
         : row.querySelector('textarea') ? 'textarea'
           : row.querySelector('input')?.type || 'static';
-      return `${row.dataset.internal}:${control}:${readonly ? 'ro' : 'edit'}`;
-    }).join('|'));
-  return kinds.includes('PageCategory:select:edit')
-    && kinds.includes('ReviewDate:datetime-local:edit')
-    && kinds.includes('ShowInNav:checkbox:edit')
-    && kinds.includes('RelatedLink:text:edit')
-    && kinds.includes('CanvasContent1:static:ro')
-    && kinds.includes('Editor:static:ro');
+      const label = row.querySelector('.wb-editor-label')?.firstChild?.textContent || '';
+      const value = row.querySelector('.wb-editor-static')?.textContent ?? '';
+      return { internal: row.dataset.internal, control, readonly, label, value };
+    }));
+  const order = rows.map((r) => r.internal).join(',');
+  const row = (internal) => rows.find((r) => r.internal === internal) || {};
+  // Joe's order (2026-09-23), the mock's schema order deliberately differs.
+  return order === '__status_id,FileLeafRef,Title,__status_published,__status_lastPublished,'
+      + 'FirstPublishedDate,__status_inheritance,CheckoutUser,PromotedState,bmocContentCategory,'
+      + 'Modified,Editor,Created,Author,FolderType,Contact,Pillar,Org,ComplianceAssetId,WikiField'
+    && row('__status_id').value === '1'
+    && row('__status_published').value === 'Published'
+    // LAST published: the 3.0 under Home's 3.1 draft — not the draft, not 1.0
+    && row('__status_lastPublished').value === '2026-07-01'
+    && row('__status_inheritance').value === 'Broken inheritance'
+    && row('PromotedState').value === 'False'
+    && row('bmocContentCategory').value === 'Policy;Benefits' && row('bmocContentCategory').readonly
+    && row('Contact').value === 'Pat Example' && row('Contact').readonly
+    && row('Editor').label === 'Modified By' && row('Author').label === 'Created By'
+    && row('FolderType').label === 'Item Type' && row('FolderType').control === 'select'
+    && row('Org').control === 'select' && row('Pillar').control === 'select'
+    && row('Title').control === 'text' && !row('Title').readonly
+    // a page body is never editable from a metadata form
+    && row('WikiField').readonly
+    && !order.includes('Description') && !order.includes('PageCategory')
+    && !order.includes('CanvasContent1');
 });
 
 await check('pages: saving metadata posts ValidateUpdateListItem through the mock writer', async () => {
@@ -2532,7 +2761,9 @@ await check('classic: drilldown hides Structure and says why', async () => {
   const chip = classicPage.locator('.wb-view-pages .wb-detail-kind');
   const chipText = await chip.textContent();
   const chipTitle = await chip.getAttribute('title');
-  return tabs.join(',') === 'Extract,Metadata,Web parts,Raw'
+  // A classic publishing Pages library is in page-status scope, so it gets
+  // the Permissions tab too; only Structure is canvas-only.
+  return tabs.join(',') === 'Extract,Metadata,Permissions,Web parts,Raw'
     && chipText === 'classic publishing page'
     && chipTitle.includes('Structure tab does not apply');
 });
@@ -2701,9 +2932,18 @@ await live.route('**/_api/**', async (route) => {
   seenHeaders.push(route.request().headers().accept || '');
   liveUrls.push(url);
   if (url.includes("lists(guid'11111111-0000-0000-0000-000000000003')/items(7)")) {
-    pageDetailUrl = url;
     const expand = new URL(url).searchParams.get('$expand') || '';
     const select = new URL(url).searchParams.get('$select') || '';
+    // The page-status read (page-status.js) is its own small query, not the
+    // detail fetch — answered as SharePoint would, and kept out of
+    // pageDetailUrl so the detail-shape assertions below see the detail.
+    if (select.includes('HasUniqueRoleAssignments')) {
+      return route.fulfill({ json: {
+        Id: 7, HasUniqueRoleAssignments: false,
+        File: { MajorVersion: 1, MinorVersion: 0, CheckOutType: 2 }, CheckoutUser: null,
+      } });
+    }
+    pageDetailUrl = url;
     if (!expand.split(',').includes('Author') || !expand.split(',').includes('Editor')) {
       return route.fulfill({
         status: 400,
@@ -2885,6 +3125,10 @@ await check('live: a library that rejects the people projection still opens the 
   await live.route(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/, (route) => {
     const url = route.request().url();
     const select = new URL(url).searchParams.get('$select') || '';
+    // The status read has its own ladder; only detail shapes are counted.
+    if (select.includes('HasUniqueRoleAssignments')) {
+      return route.fulfill({ json: { Id: 7, HasUniqueRoleAssignments: false } });
+    }
     shapes.push(select);
     if (select.includes('Author/Title')) {
       return route.fulfill({

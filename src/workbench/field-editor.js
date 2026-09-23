@@ -34,8 +34,11 @@ export const EDITABLE_TYPES = new Set([
 
 // Fields whose values are item *content*, not metadata — corrupting a modern
 // page body from a metadata form is the one unrecoverable mistake here.
+// WikiField and PublishingPageContent are the classic page bodies — the same
+// hazard as CanvasContent1 once the Metadata tab lists Wiki Content.
 export const NO_EDIT_INTERNAL = new Set([
   'CanvasContent1', 'LayoutWebpartsContent', 'ContentType', 'Attachments',
+  'WikiField', 'PublishingPageContent',
 ]);
 
 export function isEditable(field) {
@@ -245,14 +248,15 @@ export function createFieldEditor(field, initialValue) {
   };
 }
 
-// Read-only display row for hidden-from-editing fields.
-function readOnlyRow(field, displayText) {
+// Read-only display row for hidden-from-editing fields. `hint` overrides the
+// value's tooltip (a synthesized row is neither a field nor read-only).
+function readOnlyRow(field, displayText, hint = '') {
   const row = el('div', 'wb-editor-row wb-editor-readonly');
   row.dataset.internal = field.InternalName || '';
   const label = el('label', 'wb-editor-label', field.Title || field.InternalName);
   label.append(el('span', 'wb-editor-type', String(field.TypeAsString || '')));
   const value = el('div', 'wb-editor-static', displayText || '');
-  value.title = field.ReadOnlyField ? 'Read-only field' : 'Not editable in the workbench';
+  value.title = hint || (field.ReadOnlyField ? 'Read-only field' : 'Not editable in the workbench');
   row.append(label, value);
   return row;
 }
@@ -261,22 +265,43 @@ function readOnlyRow(field, displayText) {
 // itemAsText = FieldValuesAsText (display strings for complex types).
 // onSave(formValues) must return a promise; a thrown err.fieldErrors map
 // ({ InternalName: message }) is routed back onto the matching editors.
-export function createFieldEditorForm({ fields, item = {}, itemAsText = {}, onSave }) {
+//
+// layout (optional) fixes which rows appear and in what order, instead of
+// every non-hidden field in schema order. Entries:
+//   { field, label?, display? }  a list field; label renames the row, display
+//                                (value, text) => string replaces the shown
+//                                text (read-only rows only)
+//   { internal, label, text }    a synthesized read-only row
+// A layout field is still edited only when isEditable() allows it.
+export function createFieldEditorForm({ fields, item = {}, itemAsText = {}, onSave, layout = null }) {
   const root = el('div', 'wb-editor-form');
   const rows = el('div', 'wb-editor-rows');
   const editors = [];
 
-  const shown = (fields || []).filter((f) => !f.Hidden);
-  for (const field of shown) {
+  const entries = Array.isArray(layout)
+    ? layout
+    : (fields || []).filter((f) => !f.Hidden).map((field) => ({ field }));
+  for (const entry of entries) {
+    if (!entry.field) {
+      rows.append(readOnlyRow(
+        { InternalName: entry.internal || '', Title: entry.label || '' },
+        String(entry.text ?? ''),
+        'Page status, read from SharePoint — not an editable field',
+      ));
+      continue;
+    }
+    const field = entry.label ? { ...entry.field, Title: entry.label } : entry.field;
     const internal = field.InternalName;
     if (isEditable(field)) {
       const editor = createFieldEditor(field, item[internal]);
       editors.push(editor);
       rows.append(editor.el);
     } else {
-      const display = itemAsText?.[internal]
-        ?? (item[internal] === null || item[internal] === undefined
-          || typeof item[internal] === 'object' ? '' : String(item[internal]));
+      const text = itemAsText?.[internal];
+      const raw = item[internal];
+      let display = text
+        ?? (raw === null || raw === undefined || typeof raw === 'object' ? '' : String(raw));
+      if (typeof entry.display === 'function') display = entry.display(raw, text);
       rows.append(readOnlyRow(field, String(display ?? '')));
     }
   }

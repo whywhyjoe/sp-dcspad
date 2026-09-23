@@ -138,11 +138,16 @@ const METADATA_SKIP = new Set([
   'CanvasContent1', 'LayoutWebpartsContent', 'FieldValuesAsText',
   'PublishingPageContent', 'WikiField',
   'Author', 'Editor',   // flattened into Created/Modified lines
+  // Carried by the status lines (see `status` below), in words.
+  'HasUniqueRoleAssignments', 'OData__ModerationStatus', 'OData__UIVersionString',
 ]);
 
+// `status` (optional) is the page-status read (page-status.js): { published,
+// lastPublished, brokenInheritance, checkedOut, checkedOutTo }. Unknown
+// members (null) are left out rather than guessed.
 export function buildContentExport({
   item = {}, controls = [], parts = null, siteTitle = '', webUrl = '',
-  libraryTitle = '', libraryRootPath = '', format = 'markdown',
+  libraryTitle = '', libraryRootPath = '', format = 'markdown', status = null,
 }) {
   // An unrecognized format must not silently fall through to markdown and
   // hand back a document the caller did not ask for.
@@ -181,6 +186,14 @@ export function buildContentExport({
     ? `${item.Created}${author ? ` by ${author}` : ''}` : '');
   metaLine('Modified', item.Modified
     ? `${item.Modified}${editor ? ` by ${editor}` : ''}` : '');
+  if (status) {
+    metaLine('Publish status', status.published === true ? 'Published'
+      : status.published === false ? 'Unpublished' : '');
+    metaLine('Last published', status.lastPublished ? String(status.lastPublished) : '');
+    metaLine('Permissions', status.brokenInheritance === true ? 'Broken inheritance'
+      : status.brokenInheritance === false ? 'Inherited' : '');
+    if (status.checkedOut) metaLine('Checked out to', status.checkedOutTo || 'Checked out');
+  }
   metaLine('Site', siteTitle);
   metaLine('Library', libraryTitle);
   metaLine('URL', fullUrl);

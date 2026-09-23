@@ -67,19 +67,35 @@ const FIELDS = {
     field('Author', 'Author', 'User', 20, { ReadOnlyField: true }),
     field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true }),
   ],
-  // Site Pages: one field per editor type the metadata form supports, plus
-  // the content fields the editor must refuse to touch.
+  // Site Pages: the column set of the bmo FCUPortal Site Pages library that
+  // the Metadata tab's fixed layout (page-status.js METADATA_SPEC) is written
+  // against — deliberately in a DIFFERENT order from the spec, with the
+  // bmo site columns whose internal name differs from the display name
+  // (Item Type is FolderType), and with fields the spec leaves out
+  // (Description, PageCategory, CanvasContent1) so the tab can prove it
+  // hides them. Per-type editor coverage lives with the Files browser.
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02': [
     field('Title', 'Title', 'Text', 2, { Required: true }),
     field('Description', 'Description', 'Note', 3),
     field('Page category', 'PageCategory', 'Choice', 6, {
       Choices: ['Announcement', 'How-to', 'Reference'], DefaultValue: 'Reference',
     }),
-    field('Review date', 'ReviewDate', 'DateTime', 4),
-    field('Show in navigation', 'ShowInNav', 'Boolean', 8),
-    field('Related link', 'RelatedLink', 'URL', 11),
+    field('Org', 'Org', 'Choice', 6, { Choices: ['FCU', 'CCU', 'Wealth'] }),
+    field('Pillar', 'Pillar', 'Choice', 6, { Choices: ['Member', 'Business', 'Operations'] }),
+    field('Item Type', 'FolderType', 'Choice', 6, { Choices: ['Page', 'News', 'Hub'] }),
+    field('Contact', 'Contact', 'User', 20),
+    field('Content Category', 'bmocContentCategory', 'TaxonomyFieldTypeMulti', 0),
     field('Promoted state', 'PromotedState', 'Number', 9, { ReadOnlyField: true }),
-    field('Editor', 'Editor', 'User', 20, { ReadOnlyField: true }),
+    field('Name', 'FileLeafRef', 'File', 18),
+    field('First Published Date', 'FirstPublishedDate', 'DateTime', 4, { ReadOnlyField: true }),
+    field('Checked Out To', 'CheckoutUser', 'User', 20, { ReadOnlyField: true }),
+    field('Approval Status', '_ModerationStatus', 'ModStat', 22, { ReadOnlyField: true, Hidden: true }),
+    field('Compliance Asset Id', 'ComplianceAssetId', 'Text', 2, { ReadOnlyField: true }),
+    field('Wiki Content', 'WikiField', 'Note', 3),
+    field('Modified', 'Modified', 'DateTime', 4, { ReadOnlyField: true }),
+    field('Created', 'Created', 'DateTime', 4, { ReadOnlyField: true }),
+    field('Created By', 'Author', 'User', 20, { ReadOnlyField: true }),
+    field('Modified By', 'Editor', 'User', 20, { ReadOnlyField: true }),
     field('Canvas content', 'CanvasContent1', 'Note', 3),
     field('ID', 'ID', 'Counter', 5, { ReadOnlyField: true }),
   ],
@@ -751,10 +767,26 @@ const SITEPAGES_ITEMS = [
       Description: 'Mock landing page.',
       BannerImageUrl: null,
       PageCategory: 'Announcement',
-      ReviewDate: '2026-08-01T00:00:00Z',
-      ShowInNav: true,
-      RelatedLink: { Url: 'https://example.com', Description: 'Example' },
-      FieldValuesAsText: { Editor: 'Mock Developer', CanvasContent1: '(canvas markup)' },
+      // Page status: published (3.0) with a newer draft (3.1) on top, and
+      // its own permissions — see ITEM_VERSIONS / ITEM_ROLE_ASSIGNMENTS.
+      File: { MajorVersion: 3, MinorVersion: 1, CheckOutType: 2 },
+      HasUniqueRoleAssignments: true,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
+      FirstPublishedDate: '2026-05-10T12:00:00Z',
+      FolderType: 'Page',
+      Pillar: 'Member',
+      Org: 'FCU',
+      Contact: { Title: 'Pat Example' },
+      ComplianceAssetId: 'CA-0042',
+      FieldValuesAsText: {
+        Editor: 'Mock Developer',
+        Author: 'Mock Developer',
+        CanvasContent1: '(canvas markup)',
+        Contact: 'Pat Example',
+        bmocContentCategory: 'Policy;Benefits',
+        CheckoutUser: '',
+      },
     }),
   },
   {
@@ -767,7 +799,12 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Pat Example' },
       Editor: { Title: 'Pat Example' },
       CanvasContent1: LEGACY_CANVAS,
-      FieldValuesAsText: { Editor: 'Pat Example' },
+      // Never published (0.4) and checked out to Pat.
+      File: { MajorVersion: 0, MinorVersion: 4, CheckOutType: 0 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: { Title: 'Pat Example' },
+      FieldValuesAsText: { Editor: 'Pat Example', CheckoutUser: 'Pat Example' },
     }),
   },
   {
@@ -780,6 +817,10 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Mock Developer' },
       Editor: { Title: 'Mock Developer' },
       CanvasContent1: null,
+      File: { MajorVersion: 1, MinorVersion: 0, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: 'Mock Developer' },
     }),
   },
@@ -794,6 +835,10 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Pat Example' },
       Editor: { Title: 'Pat Example' },
       CanvasContent1: null,
+      File: { MajorVersion: 2, MinorVersion: 0, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: 'Pat Example' },
     }),
   },
@@ -807,6 +852,10 @@ const SITEPAGES_ITEMS = [
       Author: { Title: 'Mock Developer' },
       Editor: { Title: 'Mock Developer' },
       CanvasContent1: null,
+      File: { MajorVersion: 0, MinorVersion: 1, CheckOutType: 2 },
+      HasUniqueRoleAssignments: false,
+      OData__ModerationStatus: 0,
+      CheckoutUser: null,
       FieldValuesAsText: { Editor: 'Mock Developer' },
     }),
   },
@@ -815,6 +864,54 @@ const SITEPAGES_ITEMS = [
 const ITEMS = {
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e03': PROJECT_ITEMS,
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02': SITEPAGES_ITEMS,
+};
+
+// Item version histories (items(n)/versions), keyed "listId:itemId". Home's
+// current version is the 3.1 draft; the page was last PUBLISHED as 3.0 on
+// 2026-07-01, which is what the Metadata tab's Publish Date must show — not
+// the draft's date, not the first publish. Items without an entry get one
+// synthesized from File.MajorVersion (see versionsOf).
+const ITEM_VERSIONS = {
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1': [
+    { VersionId: 1537, VersionLabel: '3.1', IsCurrentVersion: true, Created: '2026-07-18T10:00:00Z' },
+    { VersionId: 1536, VersionLabel: '3.0', IsCurrentVersion: false, Created: '2026-07-01T09:00:00Z' },
+    { VersionId: 1024, VersionLabel: '2.0', IsCurrentVersion: false, Created: '2026-06-01T09:00:00Z' },
+    { VersionId: 512, VersionLabel: '1.0', IsCurrentVersion: false, Created: '2026-05-10T12:00:00Z' },
+  ],
+};
+
+function versionsOf(listId, item) {
+  const known = ITEM_VERSIONS[`${listId}:${item.Id}`];
+  if (known) return known;
+  const major = item.File?.MajorVersion || 0;
+  const minor = item.File?.MinorVersion || 0;
+  return [{
+    VersionId: major * 512 + minor,
+    VersionLabel: `${major}.${minor}`,
+    IsCurrentVersion: true,
+    Created: item.Modified,
+  }];
+}
+
+// Pages whose permissions are their own (HasUniqueRoleAssignments), keyed
+// "listId:itemId". Anything else answers with the web's assignments, which
+// is what an inheriting item's endpoint returns on a web whose libraries
+// inherit too.
+const ITEM_ROLE_ASSIGNMENTS = {
+  // Literal, not assignment(): that helper reads ROLE_DEFINITIONS, which is
+  // declared further down and still in its temporal dead zone here.
+  '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1': [
+    {
+      PrincipalId: 3,
+      Member: { Id: 3, Title: 'Mock Site Owners', LoginName: 'Mock Site Owners', PrincipalType: 8 },
+      RoleDefinitionBindings: [{ Id: 1073741829, Name: 'Full Control' }],
+    },
+    {
+      PrincipalId: 14,
+      Member: { Id: 14, Title: 'Pat Example', LoginName: 'i:0#.f|membership|pat@mock.local', PrincipalType: 1 },
+      RoleDefinitionBindings: [{ Id: 1073741827, Name: 'Contribute' }],
+    },
+  ],
 };
 
 // Folder tree for the Files browser, keyed by lower-cased server-relative
@@ -1265,7 +1362,12 @@ export function mockResolver(rawUrl) {
     const itemId = /\/items\((\d+)\)/.exec(path)?.[1];
     if (itemId) {
       const single = (itemsByList[found.Id] || []).find((i) => i.Id === Number(itemId));
-      return single ?? null;
+      if (!single) return null;
+      if (/\/items\(\d+\)\/versions/.test(path)) return { value: versionsOf(found.Id, single) };
+      if (/\/items\(\d+\)\/roleassignments/.test(path)) {
+        return { value: ITEM_ROLE_ASSIGNMENTS[`${found.Id}:${single.Id}`] || ROLE_ASSIGNMENTS };
+      }
+      return single;
     }
     // The mock ignores $filter/$select on items — live-stub tests assert the
     // real query URLs instead. A single-field $orderby IS honored: the Items
