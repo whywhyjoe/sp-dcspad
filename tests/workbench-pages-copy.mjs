@@ -16,6 +16,7 @@ const WB_URL = process.env.DCSPAD_WORKBENCH_URL
 
 const SECTIONS = [
   './pages-copy/pure.mjs',
+  './pages-copy/analyzers.mjs',
   './pages-copy/runner.mjs',
   './pages-copy/dialog.mjs',
   './pages-copy/live.mjs',

@@ -22,6 +22,11 @@
 // One module per web part under ./page-copy-analyzers/, so each shape is
 // written, reviewed and fixture-tested on its own.
 
+import text from './page-copy-analyzers/text.js';
+import quickLinks from './page-copy-analyzers/quick-links.js';
+import news from './page-copy-analyzers/news.js';
+import listLibrary from './page-copy-analyzers/list-library.js';
+
 export function createAnalyzers(list = []) {
   const byId = new Map();
   for (const analyzer of list) {
@@ -36,5 +41,5 @@ export function createAnalyzers(list = []) {
   };
 }
 
-// The registry the dialog uses. Filled in Phase 2 as each analyzer lands.
-export const ANALYZERS = createAnalyzers([]);
+// The registry the dialog uses.
+export const ANALYZERS = createAnalyzers([text, quickLinks, news, listLibrary]);
