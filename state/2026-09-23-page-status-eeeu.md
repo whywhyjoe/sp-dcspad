@@ -45,8 +45,9 @@ viewer is NOT in scope (the Workbench's Permissions view already covers groups/m
   Contact (`Contact`, person single — read-only: Workbench can't edit people yet) · Pillar ·
   Org (`Org`, single choice) · Compliance Asset ID (ComplianceAssetId) · Wiki Content
   (WikiField). Scheduled start date (`_PublishStartDate`) is dropped.
-  Editable: Name, Title, Item Type, Pillar, Org (plus anything else simple); hard ones
-  (managed metadata, person, computed/system) read-only.
+  Editable: Title, Item Type, Pillar, Org (plus anything else simple); hard ones
+  (managed metadata, person, computed/system) read-only. Name (FileLeafRef) stays read-only as
+  it was before — a rename breaks every link to the page; say so if it should become editable.
 - Per-page `.md` export metadata block gains the publish status.
 
 ## Decisions — EEEU audit (Permissions view, new tab "EEEU audit")
@@ -63,9 +64,10 @@ viewer is NOT in scope (the Workbench's Permissions view already covers groups/m
 - Subsites: the site's direct subsites listed as checkboxes; a checked subsite is scanned with
   its whole tree (sub-subsites are never listed individually).
 - Limited Access–only matches hidden (noise from item-level shares).
-- Output: one results grid (Type, Site, Location, Name, Shared with, Permission, Unique, Link)
+- Output: one results grid (Site, Type, Location, Name, Shared with, Permission, Why it counts,
+  Unique, URL)
   + a Problems grid; grid exports. No "folder containing matching files" summary rows.
-- Speed: bounded concurrency (4) + sp-rest.js's 429/503 retry; Cancel keeps partial results
+- Speed: bounded concurrency (3 — sp-rest.js's own ceiling) + its 429/503 retry; Cancel keeps partial results
   (no 10-minute timeout).
 
 ## Done
