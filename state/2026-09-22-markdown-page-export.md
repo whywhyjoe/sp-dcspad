@@ -2,8 +2,8 @@
 
 Last touched: 2026-09-22
 Mode: Joe
-Branch: claude/markdown-page-export-rebase (unpushed)
-State: DONE on the branch — rebased, two Codex rounds closed, bundles at Build #197 deployed to dev and the live checklist green; unpushed, no PR opened (not asked)
+Branch: main (PR #20 merged 2026-09-22; the feature branch is deleted)
+State: DONE and merged — rebased, two Codex rounds closed, bundles at Build #197 deployed to dev, live checklist green, PR #20 merged into main; the original branch is archived as the tag archive/workbench-markdown-extraction-tpuu10
 
 ## What this is
 
@@ -54,7 +54,7 @@ design.
 - [x] Deploy to the dev tenant and run the live-tenant checklist — Build #197, all items green
       (HANDOFF.md records the evidence).
 - [x] Record live results in `HANDOFF.md`'s checklist.
-- [ ] Push the branch / open the PR when Joe says so (not asked this session).
+- [x] Pushed and merged as PR #20 (merge commit f8e0217); superseded remote branches archived as tags and deleted.
 
 ## Open questions
 
