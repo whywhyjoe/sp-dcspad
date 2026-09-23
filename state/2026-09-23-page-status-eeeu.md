@@ -3,7 +3,7 @@
 Last touched: 2026-09-23
 Mode: Joe
 Branch: claude/dcspad-sp-utilities-availability-ylr25q
-State: BUILT on the branch (mock-tested, 161/161 workbench checks) — waiting on the live-tenant check below and a PR
+State: BUILT on the branch (mock-tested, 165/165 workbench checks; ChatGPT review round 1 closed) — waiting on the live-tenant check below and a PR
 
 ## What this is
 
@@ -79,6 +79,17 @@ viewer is NOT in scope (the Workbench's Permissions view already covers groups/m
   — commit 1d8945a.
 - Tests: `tests/workbench.mjs` 150 → 161 (7 page status, 4 EEEU); workbench-edit 26,
   workbench-schema 138, workbench-hosted 10 all still green. CLAUDE.md + tests/README.md counts.
+
+## Review round 1 (ChatGPT, 2026-09-23) — all nine findings fixed
+
+- sp-rest.js: one request queue shared by every client (createClient() used to get its own 3
+  slots), with slot hand-off so the ceiling can't briefly reach 4.
+- EEEU: a capped (100,000) item read is a Problems row; links encode path segments ('#');
+  stop checks after every await; the view's destroy() cancels an audit on site switch.
+- Page status: Scheduled (4) is not live; moderation read from every payload shape, and on a
+  moderated library unreadable per-version moderation makes Publish Date unknown, not approved;
+  the scan uses the grid's $orderby/$top, keeps the ladder rung, and says when rows came back
+  without status; status-read failures are shown (denied.js register) instead of swallowed.
 
 ## Next
 

@@ -421,6 +421,7 @@ export function createSecurityView({ client, createClient }) {
   }
 
   // ---- EEEU / broad-access audit (explicit; see eeeu-audit.js) ----
+  let stopAudit = () => {};
   function eeeuPane() {
     const wrap = el('div', 'wb-tab-pane wb-eeeu');
     const form = el('div', 'wb-eeeu-form');
@@ -564,6 +565,9 @@ export function createSecurityView({ client, createClient }) {
       runToken += 1;
       progress.textContent = 'Stopping after the requests already in flight…';
     });
+    // The view is torn down when the inspected site changes (shell reset);
+    // an audit of the old site must not keep crawling behind the new one.
+    stopAudit = () => { runToken += 1; };
 
     runBtn.addEventListener('click', async () => {
       if (running) return;
@@ -661,5 +665,5 @@ export function createSecurityView({ client, createClient }) {
     if (!tabsBar.querySelector('.wb-tab.active')) activate(TABS[0]);
   }
 
-  return { el: root, load };
+  return { el: root, load, destroy: () => stopAudit() };
 }

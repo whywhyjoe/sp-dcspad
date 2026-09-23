@@ -52,6 +52,24 @@ export function parseVersionLabel(label) {
 
 const numberOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+// _ModerationStatus: 0 Approved, 1 Rejected, 2 Pending, 3 Draft, 4 Scheduled
+// (MS-WSSFO). A major version in 1, 2 or 4 has not gone live — a scheduled
+// one is waiting for its publishing start date.
+const NOT_LIVE = new Set([1, 2, 4]);
+
+// Where a moderation value can sit: top level under its OData name (items,
+// and versions when the select names it), the x005f-escaped form some version
+// payloads use, the bare internal name, or a FieldValues dictionary.
+function moderationOf(entity) {
+  if (!entity || typeof entity !== 'object') return null;
+  for (const key of ['OData__ModerationStatus', 'OData__x005f_ModerationStatus', '_ModerationStatus']) {
+    const n = numberOrNull(entity[key]);
+    if (n !== null) return n;
+  }
+  const fv = entity.FieldValues;
+  return fv && typeof fv === 'object' ? numberOrNull(fv._ModerationStatus ?? fv.OData__ModerationStatus) : null;
+}
+
 // One item (from pageStatusShapes, or any item that happens to carry the same
 // fields) -> the status the view shows. Each member is null when this read
 // could not say — a chip or cell for it is then left out rather than guessed.
@@ -64,16 +82,17 @@ export function derivePageStatus(item = {}) {
   const label = parseVersionLabel(item.OData__UIVersionString ?? item._UIVersionString);
   const major = numberOrNull(file?.MajorVersion) ?? label?.major ?? null;
   const minor = numberOrNull(file?.MinorVersion) ?? label?.minor ?? null;
-  const moderation = numberOrNull(item.OData__ModerationStatus ?? item._ModerationStatus);
+  const moderation = moderationOf(item);
 
   let published = null;
   if (major !== null) {
     published = major > 0;
-    // Content approval: submitting 0.x for approval makes it 1.0 at once,
-    // Pending (2) until approved and Rejected (1) if turned down. A 1.0 in
-    // either state has never actually been published. (A later x.0 pending
-    // approval still has an earlier approved major under it.)
-    if (major === 1 && minor === 0 && (moderation === 1 || moderation === 2)) published = false;
+    // Content approval / scheduling: submitting 0.x makes it 1.0 at once,
+    // Pending (2) until approved, Rejected (1) if turned down, or Scheduled
+    // (4) until its start date. A 1.0 in any of those has never actually
+    // been published. (A later x.0 in one of them still has an earlier live
+    // major under it.)
+    if (major === 1 && minor === 0 && NOT_LIVE.has(moderation)) published = false;
   }
 
   const holder = item.CheckoutUser && typeof item.CheckoutUser === 'object'
@@ -117,18 +136,27 @@ export function versionShapes({ hasModeration = false } = {}) {
 }
 
 // The date the page's CURRENT published version was published: the newest
-// major (x.0) version, skipping one still pending or rejected when the library
-// runs approval. '' when the page was never published.
-export function lastPublishedFrom(versions) {
-  let best = null;
+// major (x.0) version, skipping one still pending, rejected or scheduled when
+// the library runs approval. '' when the page was never published.
+//
+// `hasModeration` — the library carries _ModerationStatus. Then a candidate
+// version whose moderation could NOT be read (the versions read fell back to
+// a shape without it) makes the answer unknown (null) rather than letting a
+// pending or scheduled version pass as live.
+export function lastPublishedFrom(versions, { hasModeration = false } = {}) {
+  const majors = [];
   for (const v of versions || []) {
     const label = parseVersionLabel(v?.VersionLabel);
     if (!label || label.major < 1 || label.minor !== 0) continue;
-    const moderation = numberOrNull(v.OData__ModerationStatus ?? v._ModerationStatus);
-    if (moderation === 1 || moderation === 2) continue;
-    if (!best || label.major > best.label.major) best = { label, v };
+    majors.push({ label, v, moderation: moderationOf(v) });
   }
-  return best ? String(best.v.Created || best.v.Modified || '') : '';
+  majors.sort((a, b) => b.label.major - a.label.major);
+  for (const m of majors) {
+    if (m.moderation === null && hasModeration) return null;
+    if (NOT_LIVE.has(m.moderation)) continue;
+    return String(m.v.Created || m.v.Modified || '');
+  }
+  return '';
 }
 
 // ---- Metadata tab row layout ------------------------------------------------

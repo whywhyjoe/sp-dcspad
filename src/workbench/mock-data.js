@@ -873,10 +873,10 @@ const ITEMS = {
 // synthesized from File.MajorVersion (see versionsOf).
 const ITEM_VERSIONS = {
   '5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02:1': [
-    { VersionId: 1537, VersionLabel: '3.1', IsCurrentVersion: true, Created: '2026-07-18T10:00:00Z' },
-    { VersionId: 1536, VersionLabel: '3.0', IsCurrentVersion: false, Created: '2026-07-01T09:00:00Z' },
-    { VersionId: 1024, VersionLabel: '2.0', IsCurrentVersion: false, Created: '2026-06-01T09:00:00Z' },
-    { VersionId: 512, VersionLabel: '1.0', IsCurrentVersion: false, Created: '2026-05-10T12:00:00Z' },
+    { VersionId: 1537, VersionLabel: '3.1', IsCurrentVersion: true, Created: '2026-07-18T10:00:00Z', OData__ModerationStatus: 0 },
+    { VersionId: 1536, VersionLabel: '3.0', IsCurrentVersion: false, Created: '2026-07-01T09:00:00Z', OData__ModerationStatus: 0 },
+    { VersionId: 1024, VersionLabel: '2.0', IsCurrentVersion: false, Created: '2026-06-01T09:00:00Z', OData__ModerationStatus: 0 },
+    { VersionId: 512, VersionLabel: '1.0', IsCurrentVersion: false, Created: '2026-05-10T12:00:00Z', OData__ModerationStatus: 0 },
   ],
 };
 
@@ -890,6 +890,7 @@ function versionsOf(listId, item) {
     VersionLabel: `${major}.${minor}`,
     IsCurrentVersion: true,
     Created: item.Modified,
+    OData__ModerationStatus: item.OData__ModerationStatus ?? 0,
   }];
 }
 

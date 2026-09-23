@@ -1215,6 +1215,57 @@ await check('page-status: published means ever published, never _ModerationStatu
       && shapes[0].options.expand.includes('File') && shapes[0].options.expand.includes('CheckoutUser');
   }));
 
+// Review round 1 (2026-09-23): scheduling, and moderation the versions read
+// could not return.
+await check('page-status: scheduled is not live, and unreadable moderation is unknown, not approved', async () =>
+  page.evaluate(async () => {
+    const { derivePageStatus, lastPublishedFrom } = await import('/src/workbench/page-status.js');
+    // _ModerationStatus 4 = Scheduled: a 1.0 waiting for its start date.
+    const scheduledFirst = derivePageStatus({ File: { MajorVersion: 1, MinorVersion: 0 }, OData__ModerationStatus: 4 });
+    const scheduledLater = lastPublishedFrom([
+      { VersionLabel: '3.0', Created: '2026-09-30T00:00:00Z', OData__ModerationStatus: 4 },
+      { VersionLabel: '2.0', Created: '2026-06-01T00:00:00Z', OData__ModerationStatus: 0 },
+    ]);
+    // The version payload's other shapes are read too.
+    const escaped = lastPublishedFrom([
+      { VersionLabel: '2.0', Created: 'b', OData__x005f_ModerationStatus: 2 },
+      { VersionLabel: '1.0', Created: 'a', FieldValues: { _ModerationStatus: 0 } },
+    ], { hasModeration: true });
+    // A moderated library whose versions came back without moderation: the
+    // newest major could be pending, so the date is unknown (null)…
+    const lost = lastPublishedFrom([
+      { VersionLabel: '2.0', Created: 'b' }, { VersionLabel: '1.0', Created: 'a' },
+    ], { hasModeration: true });
+    // …but without approval on the library, a bare major is simply live.
+    const plain = lastPublishedFrom([{ VersionLabel: '2.0', Created: 'b' }]);
+    return scheduledFirst.published === false
+      && scheduledLater === '2026-06-01T00:00:00Z'
+      && escaped === 'a' && lost === null && plain === 'b';
+  }));
+
+await check('sp-rest: every client shares one three-request ceiling', async () =>
+  page.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js?v=2');
+    let inFlight = 0;
+    let peak = 0;
+    const fetchImpl = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 15));
+      inFlight -= 1;
+      return new Response(JSON.stringify({ value: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const getContext = () => ({ live: true, pageContext: { webAbsoluteUrl: location.origin } });
+    // Two independent clients — the schema dialog's target web, the EEEU
+    // audit's subsites — must not each get three slots of their own.
+    const a = createSpRestClient({ getContext, fetchImpl });
+    const b = createSpRestClient({ getContext, fetchImpl });
+    await Promise.all(Array.from({ length: 12 }, (_, i) => (i % 2 ? a : b).get('web')));
+    return peak === 3;
+  }));
+
 await check('page-status: Metadata layout follows the spec order and hides unlisted fields', async () =>
   page.evaluate(async () => {
     const { resolveMetadataLayout } = await import('/src/workbench/page-status.js');
@@ -2950,6 +3001,65 @@ await check('eeeu: matching is by claim, group membership, org links and name �
       && listScopeOf({ BaseTemplate: 112, BaseType: 0 }) === null;
   }));
 
+// Review round 1: a capped item read is a Problem (never a clean result),
+// links survive '#' in a name, and Cancel stops before the next request.
+await check('eeeu: a capped read is reported, # survives in links, cancel stops new requests', async () =>
+  eeeuPage.evaluate(async () => {
+    const { runEeeuAudit } = await import('/src/workbench/eeeu-audit.js');
+    const EEEU = { Title: 'Everyone except external users', LoginName: 'c:0-.f|rolemanager|spo-grid-all-users/t' };
+    const requests = [];
+    const fake = (webUrl, { onRequest = () => {} } = {}) => ({
+      webUrl: () => webUrl,
+      async get(path) {
+        requests.push(`${webUrl} ${path}`);
+        onRequest(path);
+        return { Title: 'Big', Url: webUrl, HasUniqueRoleAssignments: true };
+      },
+      async getAll(path) {
+        requests.push(`${webUrl} ${path}`);
+        onRequest(path);
+        if (path === 'web/sitegroups' || path === 'web/roleassignments' || path === 'web/webs') {
+          return { items: [], partial: false };
+        }
+        if (path === 'web/lists') {
+          return { items: [{ Id: 'l1', Title: 'Docs', BaseTemplate: 101, BaseType: 1, HasUniqueRoleAssignments: false,
+            RootFolder: { ServerRelativeUrl: '/sites/big/Docs' } }], partial: false };
+        }
+        if (path.endsWith('/items')) {
+          // The client's ceiling was hit: more rows existed than were returned.
+          return { items: [{ Id: 9, FileLeafRef: 'Budget#2026.xlsx', FileRef: '/sites/big/Docs/Budget#2026.xlsx',
+            FSObjType: 0, HasUniqueRoleAssignments: true }], partial: true };
+        }
+        if (path.endsWith('/roleassignments')) {
+          return { items: [{ Member: EEEU, RoleDefinitionBindings: [{ Name: 'Read', RoleTypeKind: 2 }] }], partial: false };
+        }
+        return { items: [], partial: false };
+      },
+    });
+    const origin = 'https://tenant.example';
+    const audit = await runEeeuAudit({
+      client: fake(`${origin}/sites/big`),
+      openWeb: async () => fake(`${origin}/sites/big/sub`),
+      scopes: { site: true, pages: false, lists: false, documents: true },
+    });
+    const file = audit.rows.find((r) => r.Type === 'File');
+    const capped = audit.problems.find((p) => p.Location === 'Docs');
+
+    // Cancel lands while the subsite is being opened: nothing on it runs.
+    let stop = false;
+    requests.length = 0;
+    await runEeeuAudit({
+      client: fake(`${origin}/sites/big`),
+      openWeb: async () => { stop = true; return fake(`${origin}/sites/big/sub`); },
+      subsites: [{ url: `${origin}/sites/big/sub` }],
+      scopes: { site: true, pages: false, lists: false, documents: false },
+      shouldStop: () => stop,
+    });
+    return file && file.Url === `${origin}/sites/big/Docs/Budget%232026.xlsx`
+      && capped && capped.Message.includes('Only the first 1 items were checked')
+      && !requests.some((r) => r.includes('/sites/big/sub '));
+  }));
+
 await eeeuPage.fill('#wb-site-input', '/sites/eeeu');
 await eeeuPage.locator('#wb-site-open').click();
 await eeeuPage.waitForFunction(() =>
@@ -3308,6 +3418,22 @@ await check('live: a library that rejects the people projection still opens the 
   await live.unroute(/lists\(guid'11111111-0000-0000-0000-000000000003'\)\/items\(7\)/);
   return shapes.length === 2 && shapes[1].startsWith('*')
     && quiet && said.includes('author and editor names') && noError === 0;
+});
+
+await check('live: the status scan reads the grid’s own ordered set', async () => {
+  // Review round 1: an unordered 5,000-row status read caps a different set
+  // from the grid's FileLeafRef-ordered one, leaving visible rows blank.
+  await live.waitForSelector('.wb-view-pages .wb-scan-status');
+  await live.locator('.wb-view-pages .wb-scan-status').click();
+  await live.waitForFunction(() => [...document.querySelectorAll('.wb-view-pages .wb-table thead th')]
+    .some((th) => th.textContent.includes('Published')));
+  const scanUrl = liveUrls.find((u) => u.includes("11111111-0000-0000-0000-000000000003')/items?")
+    && u.includes('HasUniqueRoleAssignments')) || '';
+  const grid = liveUrls.find((u) => u.includes("11111111-0000-0000-0000-000000000003')/items?")
+    && !u.includes('HasUniqueRoleAssignments')) || '';
+  const q = (u, k) => new URL(u).searchParams.get(k);
+  return Boolean(scanUrl) && q(scanUrl, '$orderby') === 'FileLeafRef'
+    && q(scanUrl, '$orderby') === q(grid, '$orderby') && q(scanUrl, '$top') === q(grid, '$top');
 });
 
 await check('live: a subweb enumeration SharePoint refuses is stated, not alarmed about', async () => {

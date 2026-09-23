@@ -572,8 +572,11 @@ export function createPagesView({ client, navigate, updateRoute }) {
   }
 
   // The date the current published version was published ('' = never
-  // published; null = the versions could not be read). Only a published page
-  // pays for the versions request.
+  // published; null = cannot say — status unknown, or the versions read
+  // could not tell a live major from a pending/scheduled one). Only a
+  // published page pays for the versions request. A failed read REJECTS (and
+  // is evicted so the next visit retries): the caller decides whether the
+  // failure is shown (Metadata tab) or absorbed (export).
   function lastPublished(sitePages, pageId, status) {
     if (status?.published === false) return Promise.resolve('');
     if (status?.published !== true) return Promise.resolve(null);
@@ -581,24 +584,30 @@ export function createPagesView({ client, navigate, updateRoute }) {
     if (!lastPublishedCache.has(key)) {
       const path = guidPath(sitePages.listId, `/items(${pageId})/versions`);
       lastPublishedCache.set(key, queryPlan(sitePages)
-        .then((plan) => queryLadder(versionShapes(plan), (options) => client.getAll(path, options)))
-        .then(({ value }) => lastPublishedFrom(value.items))
-        .catch(() => { lastPublishedCache.delete(key); return null; }));
+        .then((plan) => queryLadder(versionShapes(plan), (options) => client.getAll(path, options))
+          .then(({ value }) => lastPublishedFrom(value.items, { hasModeration: plan.hasModeration })))
+        .catch((err) => { lastPublishedCache.delete(key); throw err; }));
     }
     return lastPublishedCache.get(key);
   }
 
   // Status for the .md export's metadata block — best effort: a page whose
-  // status cannot be read still exports, just without those lines.
+  // status cannot be read still exports, just without those lines (unknown
+  // is left out, never guessed).
   async function exportStatusFor(item, sitePages) {
     if (!supportsStatus(sitePages) || item?.Id === undefined) return null;
+    let status;
     try {
-      const { status } = await pageStatus(sitePages, item.Id);
-      const published = await lastPublished(sitePages, item.Id, status);
-      return { ...status, lastPublished: published ? String(published).slice(0, 10) : '' };
+      ({ status } = await pageStatus(sitePages, item.Id));
     } catch {
       return null;
     }
+    let published = null;
+    try { published = await lastPublished(sitePages, item.Id, status); } catch { /* line omitted */ }
+    return {
+      ...status,
+      lastPublished: published ? String(published).slice(0, 10) : published,
+    };
   }
 
   // The grid's column set. The three status columns ride in only after a
@@ -680,9 +689,15 @@ export function createPagesView({ client, navigate, updateRoute }) {
     try {
       const plan = await queryPlan(sitePages);
       const path = guidPath(sitePages.listId, '/items');
-      const { value, lost, reason } = await queryLadder(pageStatusShapes(plan), (options) =>
-        client.getAll(path, { ...options, top: 5000 }));
+      // The grid's own order and cap, so above 5,000 pages the scan reads
+      // the same first 5,000 rows the grid is showing — an unordered read
+      // would cap a different set and leave visible rows blank.
+      const { value, lost, reason, index } = await queryLadder(pageStatusShapes(plan), (options) =>
+        client.getAll(path, { ...options, orderby: 'FileLeafRef', top: 5000 }), statusRung);
       if (stale()) return;
+      // The step that answered is a fact about this list's schema: every
+      // later status read (rescan, drilldown, export) starts there.
+      statusRung = index;
       const byId = new Map(value.items.map((it) => [String(it.Id), derivePageStatus(it)]));
       for (const row of gridRows) row.__status = byId.get(String(row.Id)) || derivePageStatus({});
       scanned = true;
@@ -692,6 +707,14 @@ export function createPagesView({ client, navigate, updateRoute }) {
         const chip = reducedChip(lost, `the page status of ${sitePages.title}`, reason);
         chip.classList.add('wb-scan-reduced');
         strip.insertBefore(chip, libraryLink);
+      }
+      const missing = gridRows.filter((row) => !byId.has(String(row.Id))).length;
+      if (value.partial || missing) {
+        masterStatus.textContent = `Page status was read for ${value.items.length} pages`
+          + (missing ? `; ${missing} page${missing === 1 ? '' : 's'} on screen came back without it` : '')
+          + ' — those rows are blank, not Unpublished.';
+        masterStatus.classList.remove('wb-error', 'wb-denied');
+        masterStatus.hidden = false;
       }
     } catch (err) {
       if (stale()) return;
@@ -1190,11 +1213,19 @@ export function createPagesView({ client, navigate, updateRoute }) {
     (async () => {
       const fields = await listFields(listId);
       let layout = null;
+      let statusFailure = null;
       if (supportsStatus(sitePages)) {
-        // Status is best effort: a refused or denied read leaves its rows out.
+        // Status is best effort — the form still renders — but a failed read
+        // is said above the form (denied.js register) rather than left to
+        // look like fields that simply aren't there.
         let pageState = {};
-        try { ({ status: pageState } = await pageStatus(sitePages, pageId)); } catch { /* rows omitted */ }
-        const published = await lastPublished(sitePages, pageId, pageState);
+        let published = null;
+        try {
+          ({ status: pageState } = await pageStatus(sitePages, pageId));
+          published = await lastPublished(sitePages, pageId, pageState);
+        } catch (err) {
+          statusFailure = err;
+        }
         layout = resolveMetadataLayout(fields, { ...pageState, id: pageId, lastPublished: published });
       }
       // Values + display text. FieldValuesAsText covers complex types; if the
@@ -1221,6 +1252,10 @@ export function createPagesView({ client, navigate, updateRoute }) {
         onSave: (formValues) =>
           spWrite.validateUpdateListItem({ listId, itemId: pageId }, formValues),
       });
+      if (statusFailure) {
+        wrap.append(showFailure(el('div', 'wb-grid-status wb-page-status-failed'),
+          statusFailure, 'this page’s publish and permission status'));
+      }
       wrap.append(form.el);
     })().catch((err) => {
       showFailure(status, err, 'this page’s metadata');
@@ -1396,7 +1431,13 @@ export function createPagesView({ client, navigate, updateRoute }) {
             status.checkedOutTo ? `Checked out to ${status.checkedOutTo}` : 'Checked out'));
         }
         if (lost) chips.append(reducedChip(lost, 'this page’s status', reason));
-      }).catch(() => { /* chips are best effort; the page itself is readable */ });
+      }).catch((err) => {
+        // The page itself is readable, so no error bar over it — but an
+        // unreadable status must not look like "no status": say so in the
+        // chip row, in the register the failure belongs to (denied.js).
+        if (run !== detailRun) return;
+        chips.append(showFailure(el('span', 'wb-page-status-failed'), err, 'this page’s status'));
+      });
     }
 
     // The export/open actions live on the tab row (right-aligned), leaving

@@ -297,6 +297,9 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-page-status-chips { display: inline-flex; align-items: center; gap: 6px; align-self: center; }
 .wb-page-status-chips:empty { display: none; }
 .wb-page-perm-bar { flex: none; }
+/* A status read that failed, said in the head row / above the Metadata form
+   (paint comes from denied.js's .wb-denied / .wb-error). */
+.wb-page-status-chips .wb-page-status-failed { font-size: 11.5px; white-space: nowrap; }
 .wb-tab {
   background: transparent; border: none; border-bottom: 2px solid transparent;
   color: var(--fg-dim); font: 500 12.5px/1 var(--sans);

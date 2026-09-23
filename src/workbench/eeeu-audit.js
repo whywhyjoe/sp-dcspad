@@ -132,7 +132,14 @@ async function pool(items, limit, fn, shouldStop) {
 }
 
 const originOf = (url) => { try { return new URL(url).origin; } catch { return ''; } };
-const absolute = (webUrl, path) => (path ? `${originOf(webUrl)}${encodeURI(String(path))}` : '');
+// Segment by segment, decode-then-encode (the same rule as pages.js): encodeURI
+// leaves '#' and '?' alone, so /Docs/Budget#2026.xlsx would open /Docs/Budget
+// with the rest as a fragment. A literal '%' that is not an escape survives
+// via the catch.
+const encodePath = (path) => String(path).split('/').map((segment) => {
+  try { return encodeURIComponent(decodeURIComponent(segment)); } catch { return encodeURIComponent(segment); }
+}).join('/');
+const absolute = (webUrl, path) => (path ? `${originOf(webUrl)}${encodePath(path)}` : '');
 
 // Runs the audit. `client` is the inspected (root) web; `openWeb(url)`
 // resolves a client for another web on the same tenant (subsites).
@@ -187,6 +194,7 @@ export async function runEeeuAudit({
   } catch (err) {
     addProblem('', 'Site', client.webUrl(), 'Read the site', err);
   }
+  if (shouldStop()) return { rows, problems, webs: websScanned, broadGroups, stopped: true };
   try {
     const { items: groups } = await client.getAll('web/sitegroups', { select: ['Id', 'Title', 'LoginName'] });
     let done = 0;
@@ -210,6 +218,7 @@ export async function runEeeuAudit({
 
   // 2. One web: its own grants (only when it has its own), then its lists.
   async function scanWeb(webClient, web, { isRoot }) {
+    if (shouldStop()) return;
     const webTitle = web.Title || web.Url || '';
     const webUrl = web.Url || webClient.webUrl();
     websScanned.push({ Title: webTitle, Url: webUrl });
@@ -279,15 +288,25 @@ export async function runEeeuAudit({
       if (!includeItems || shouldStop()) continue;
       let uniqueItems = [];
       try {
-        const { items } = await webClient.getAll(`${base}/items`, {
+        const { items, partial } = await webClient.getAll(`${base}/items`, {
           select: ['Id', 'Title', 'FileRef', 'FileLeafRef', 'FSObjType', 'HasUniqueRoleAssignments'],
           top: 5000,
         }, { allowLargeCap: true });
         uniqueItems = items.filter((it) => it.HasUniqueRoleAssignments === true);
+        // The client's ceiling (100,000) was reached: items past it were never
+        // looked at. That must read as an incomplete audit, not a clean one.
+        if (partial) {
+          addProblem(webTitle, LIST_TYPE[scope], listLabel, 'List items with their own permissions', {
+            message: `Only the first ${items.length.toLocaleString('en-US')} items were checked — `
+              + 'the list is larger than the audit can read, so grants on later items are not in '
+              + 'these results.',
+          });
+        }
       } catch (err) {
         addProblem(webTitle, LIST_TYPE[scope], listLabel, 'List items with their own permissions', err);
         continue;
       }
+      if (shouldStop()) return;
       let itemNo = 0;
       await pool(uniqueItems, concurrency, async (item) => {
         const name = item.FileLeafRef || item.Title || `Item ${item.Id}`;
@@ -319,6 +338,7 @@ export async function runEeeuAudit({
     let web;
     try {
       webClient = await openWeb(url);
+      if (shouldStop()) return;
       web = await webClient.get('web', { select: ['Title', 'Url', 'HasUniqueRoleAssignments'] });
     } catch (err) {
       addProblem('', 'Site', url, 'Open subsite', err);
