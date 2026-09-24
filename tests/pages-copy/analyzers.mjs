@@ -12,7 +12,7 @@ const MODULES = [
 export async function run({ browser, check, WB_URL }) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   await page.goto(WB_URL);
-  await page.waitForSelector('.wb-home-cards');
+  await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
   for (const path of MODULES) {
     const mod = await import(path);
     await mod.checks({ page, check });

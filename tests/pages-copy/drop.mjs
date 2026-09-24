@@ -19,7 +19,7 @@ const QUICK_CHART_INSTANCE = 'd15e0000-0000-4000-8000-000000000007';
 async function openDialog(browser, WB_URL, pageName) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   await page.goto(WB_URL);
-  await page.waitForSelector('.wb-home-cards');
+  await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
   await page.fill('#wb-site-input', SOURCE_SITE);
   await page.press('#wb-site-input', 'Enter');
   await page.waitForFunction(

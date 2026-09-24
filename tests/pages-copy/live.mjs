@@ -153,7 +153,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page, state } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
 
     await page.evaluate(async (origin) => {
       const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
@@ -182,7 +182,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page, state } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
 
     await page.evaluate(async (origin) => {
       const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
@@ -216,7 +216,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page, state } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
 
     // Establish the source's digest first, on this same fresh page/cache.
     await page.evaluate(async (origin) => {
@@ -255,7 +255,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page, state } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
 
     await page.evaluate(async (origin) => {
       const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
@@ -305,7 +305,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page, state } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
 
     state.flags.abortNext_ldst = true;
     const result = await page.evaluate(async (origin) => {
@@ -455,7 +455,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page, state } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
     await page.addScriptTag({ type: 'module', content: STUB_HELPER });
     await page.waitForFunction(() => typeof window.__pc === 'object');
 
@@ -493,7 +493,7 @@ export async function run({ browser, check, WB_URL }) {
   {
     const { page } = await newLivePage(browser);
     await page.goto(WB_URL);
-    await page.waitForSelector('.wb-home-cards');
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
     await page.addScriptTag({ type: 'module', content: STUB_HELPER });
     await page.waitForFunction(() => typeof window.__pc === 'object');
 

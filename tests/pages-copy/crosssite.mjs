@@ -215,7 +215,7 @@ const HELPER_LINES = [
 export async function run({ browser, check, WB_URL }) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   await page.goto(WB_URL);
-  await page.waitForSelector('.wb-home-cards');
+  await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
   await page.addScriptTag({ type: 'module', content: HELPER_LINES.join('\n') });
   await page.waitForFunction(() => typeof window.__cs === 'object');
 

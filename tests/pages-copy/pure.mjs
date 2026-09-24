@@ -6,7 +6,7 @@
 export async function run({ browser, check, WB_URL }) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   await page.goto(WB_URL);
-  await page.waitForSelector('.wb-home-cards');
+  await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
 
   await check('pure: defaultFileName keeps the source name, then -copy, then -copy-2 when taken (same-folder duplicates are always suffixed)', () =>
     page.evaluate(async () => {

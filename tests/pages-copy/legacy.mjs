@@ -157,7 +157,7 @@ const HELPER_LINES = [
 export async function run({ browser, check, WB_URL }) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   await page.goto(WB_URL);
-  await page.waitForSelector('.wb-home-cards');
+  await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
   // addScriptTag's promise resolves once the <script type=module> element's
   // own load event fires, which in practice can land before the module body
   // has finished executing (its dependency graph is still being evaluated) —

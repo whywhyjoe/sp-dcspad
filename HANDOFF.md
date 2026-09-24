@@ -964,6 +964,55 @@ without it):
 6. The EEEU item read named `Title`, which a 119 wiki library lacks — the
    whole read 400'd into a Problems row. It retries once without `Title`.
 
+## SP Workbench: page copy (2026-09-23)
+
+Branch `claude/page-copy` (not merged; no PR opened yet). The plan, the live spike's
+answers (§11) and a dated progress log (§12) are in `design/PAGE-COPY.md` — read §1
+(decisions), §11 and §12 first; this section is the orientation only.
+
+**What it does.** Pages detail → **Copy…** (modern Site Pages, 119): duplicate the page
+in its own site, or copy it to another site or site collection on the tenant. The dialog
+reads its own snapshot (the sitepages DTO — never the item field), connects a fresh
+client per destination, runs a bound preflight (names, folder, carry set, per-part
+verdicts, assets), and executes a frozen plan with a run journal (`page-copy-run.js`).
+
+**Decision 2 (engine), settled by the spike:** the sitepages API, created by *path A* —
+`POST sitepages/pages`, a staging Title (`{stem}~copy-{id}`) that names the file, the
+content save, then `MoveFileByPath` to the final name/folder, Description and the carry
+set through `ValidateUpdateListItem`, `SetCommentsDisabled`, publish only when ticked
+(else a minor check-in), and a read-back verify. `CopyFileByPath` is used only for a
+legacy-HTML canvas within its own site. Why: a whole-file copy of a promoted page lands
+still promoted (in the news query within a second), and `addTemplateFile` (path B) makes
+a file without the Site Page content type.
+
+**Live-proven behaviours (don't "fix" these away):** savepage blanks `Description` (write
+it via VULI); a custom-thumbnail page's DTO `BannerImageUrl` *is* the thumbnail and
+`BannerThumbnailUrl` is a tokened CDN URL (never copy it); only the DTO's
+`CommentsDisabled` reflects `SetCommentsDisabled`; `Folders/AddUsingPath` refuses an
+existing folder (probe first); a modern page's list-item `CanvasContent1` can be null
+(the Copy button accepts 'empty' items); `AddImageFromExternalUrl` cannot fetch
+same-tenant files (assets always go over the bytes path).
+
+**Live-verified (dev, Build #237):** same-web duplicate on NewNerve; cross-site copies of
+`zz-pagecopy-xsite.aspx` to `/sites/TestSiteCollection` (published, rendered, assets
+fetched from the destination) and to `/sites/NewNerve/sputils-test`. No read-only account
+exists on the tenant, so reader visibility was established structurally (published major,
+inherited permissions, Visitors = Read) — see §12.
+
+**Open items.**
+- Analyzers still to write (they need editor-authored shapes): Image (SharePoint file),
+  Image gallery, Hero, Call to action, Countdown, File viewer, Events, Highlighted content,
+  Quick chart, Sites. `zz-pagecopy-shapes.aspx` on the dev web holds a default instance of
+  each, waiting for its properties to be set in the page editor (§11 Q7); until then those
+  parts copy verbatim with their references reported "unverified".
+- User/Lookup/Taxonomy columns are not carried by the API engine (documented limitation).
+- Cross-web DateTime carry uses the source's display text; a destination in a different
+  regional format may reject it (reported per field, page kept).
+- Every `zz-pagecopy-*` artefact on the three dev webs must be recycled when testing ends.
+
+Suite: `tests/workbench-pages-copy.mjs` (106 checks; sections in `tests/pages-copy/`,
+own mock webs in `src/workbench/mock-pagecopy.js`).
+
 ## Roadmap (seams reserved)
 
 - **Site Inspector** — v1 + Tier 2 shipped as the **SP Workbench** (above).
