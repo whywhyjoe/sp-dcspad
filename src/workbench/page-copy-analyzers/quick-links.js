@@ -207,6 +207,14 @@ export default {
           imageSources[key] = next;
           count += 1;
         }
+        // Live shape (§11 Q7): the editor keeps the picked thumbnail's
+        // absolute url in the part-level `imagePicker` too. It follows only
+        // when it names this very file.
+        if (typeof props.imagePicker === 'string' && underSource(props.imagePicker, ctx)
+            && sourceRelativePath(props.imagePicker).toLowerCase() === sourceRelativePath(value).toLowerCase()) {
+          const picked = /^https?:\/\//i.test(props.imagePicker) && mapping.url ? mapping.url : mapping.path;
+          if (picked !== undefined && picked !== props.imagePicker) { props.imagePicker = picked; count += 1; }
+        }
         // The thumbnail's identity mirrors across up to three places — only
         // whichever of them actually exist on this instance get written.
         if (mapping.ids) {

@@ -296,8 +296,13 @@ export async function checks({ page, check }) {
       imageGuids.webId = mapping.ids.webId;
       imageGuids.listId = mapping.ids.listId;
       imageGuids.uniqueId = mapping.ids.uniqueId;
+      // The part-level imagePicker names the same thumbnail by absolute url
+      // (live shape) and follows it.
+      const hadPicker = typeof expected.webPartData.properties.imagePicker === 'string';
+      if (hadPicker) expected.webPartData.properties.imagePicker = mapping.url;
 
-      return n === 9 // 1 path + 4 customMetadata ids + 4 item.image.guids ids
+      return hadPicker
+        && n === 10 // 1 path + 4 customMetadata ids + 4 item.image.guids ids + imagePicker
         && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: customThumbControl, source: editorSource }));
 }

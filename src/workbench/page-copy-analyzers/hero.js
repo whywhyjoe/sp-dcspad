@@ -106,6 +106,44 @@ function patchIdBag(bag, mapping, ctx, aliasMap) {
   return count;
 }
 
+// Swap every source GUID token (dashed or bare, any case) in a string for its
+// mapped destination counterpart. Only whole GUID tokens named in `pairs`
+// change, so a URL that embeds file identity (the Graph v2.1 thumbnail url
+// the editor stores beside an image) follows the transfer; anything else in
+// it is kept.
+function swapGuids(value, pairs, ctx) {
+  let out = String(value);
+  for (const [from, to] of pairs) {
+    const f = ctx.normalizeGuid(from);
+    const t = ctx.normalizeGuid(to);
+    if (!f || !t || f === t) continue;
+    for (const [a, b] of [[f, t], [f.replace(/-/g, ''), t.replace(/-/g, '')]]) {
+      out = out.replace(new RegExp(a, 'gi'), b);
+    }
+  }
+  return out;
+}
+
+// The editor stores two derived copies of a tile image's location beside its
+// ids: `resolvedUrl` (the file's absolute url) and `imageUrl` (a thumbnail
+// url embedding site/web/list/item ids). Both follow a verified mapping; a
+// value that does not name the source file is left alone.
+function patchDerivedUrls(image, sourceIds, mapping, ctx) {
+  if (!image || typeof image !== 'object') return 0;
+  let n = 0;
+  if (typeof image.resolvedUrl === 'string' && underSource(image.resolvedUrl, ctx)) {
+    const next = /^https?:\/\//i.test(image.resolvedUrl) && mapping.url ? mapping.url : mapping.path;
+    if (next && next !== image.resolvedUrl) { image.resolvedUrl = next; n += 1; }
+  }
+  if (typeof image.imageUrl === 'string' && sourceIds?.uniqueId
+      && image.imageUrl.toLowerCase().includes(ctx.normalizeGuid(sourceIds.uniqueId))) {
+    const pairs = ['siteId', 'webId', 'listId', 'uniqueId'].map((k) => [sourceIds[k], mapping.ids[k]]);
+    const next = swapGuids(image.imageUrl, pairs, ctx);
+    if (next !== image.imageUrl) { image.imageUrl = next; n += 1; }
+  }
+  return n;
+}
+
 export default {
   id: 'c4bd7b2f-7b6e-4599-8485-16504575f590',
   label: 'Hero',
@@ -188,8 +226,10 @@ export default {
           imageSources[key] = nextPath;
           count += 1;
         }
+        const sourceIds = { ...ids };
         count += patchIdBag(meta, mapping, ctx, CUSTOM_ID_ALIASES);
         count += patchIdBag(item?.image, mapping, ctx, IMAGE_PROP_ALIASES);
+        count += patchDerivedUrls(item?.image, sourceIds, mapping, ctx);
       }
     }
 

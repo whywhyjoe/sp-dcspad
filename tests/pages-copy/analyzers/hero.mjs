@@ -105,8 +105,18 @@ export async function checks({ page, check }) {
       img.webId = mapping.ids.webId;
       img.listId = mapping.ids.listId;
       img.id = mapping.ids.uniqueId;
+      // Derived copies of the location follow too (live shape): resolvedUrl
+      // becomes the destination url, and imageUrl's embedded site/web/list/
+      // item GUIDs are swapped for the destination's — nothing else in it.
+      const srcImg = control.webPartData.properties.content[0].image;
+      img.resolvedUrl = mapping.url;
+      let swapped = srcImg.imageUrl;
+      for (const [from, to] of [[srcImg.siteId, mapping.ids.siteId], [srcImg.webId, mapping.ids.webId], [srcImg.listId, mapping.ids.listId], [srcImg.id, mapping.ids.uniqueId]]) {
+        swapped = swapped.replace(new RegExp(from, 'gi'), to).replace(new RegExp(from.replace(/-/g, ''), 'gi'), to.replace(/-/g, ''));
+      }
+      img.imageUrl = swapped;
 
-      return n === 9 && JSON.stringify(copy) === JSON.stringify(expected);
+      return n === 11 && img.imageUrl !== srcImg.imageUrl && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: heroConfigured, src: source }));
 
   await check('analyzer hero: patch with rewriteLinks true and a mapLink mapping rewrites only the slide link, leaving the image and previewImage untouched', () =>

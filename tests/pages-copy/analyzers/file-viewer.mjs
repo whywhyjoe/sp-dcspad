@@ -81,6 +81,36 @@ export async function checks({ page, check }) {
       return n === 7 && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: realControl, source: realSource }));
 
+  await check('analyzer file viewer: with a target web, properties.webAbsoluteUrl (the web holding the document) follows it to the destination web too', () =>
+    page.evaluate(async ({ control, source }) => {
+      const { analyzerContext } = await import('/src/workbench/page-copy.js');
+      const analyzer = (await import('/src/workbench/page-copy-analyzers/file-viewer.js')).default;
+      const mapping = {
+        path: '/sites/pagedst/SiteAssets/SitePages/zz-pagecopy-report-copy/zz-pagecopy-report.pdf',
+        ids: {
+          siteId: 'd1510000-0000-4000-8000-000000000003',
+          webId: 'd1520000-0000-4000-8000-000000000003',
+          listId: 'd1540000-0000-4000-8000-000000000003',
+          uniqueId: 'd15f0000-0000-4000-8000-0000000000a1',
+        },
+        url: 'https://t.sharepoint.com/sites/pagedst/SiteAssets/SitePages/zz-pagecopy-report-copy/zz-pagecopy-report.pdf',
+      };
+      const target = { webUrl: 'https://t.sharepoint.com/sites/pagedst', webPath: '/sites/pagedst' };
+      const ctx = { ...analyzerContext({ web: source }), target, mapAsset: () => mapping };
+      const copy = structuredClone(control);
+      const n = analyzer.patch(copy, ctx);
+
+      const expected = structuredClone(control);
+      expected.webPartData.properties.file = mapping.url;
+      Object.assign(expected.webPartData.properties, mapping.ids);
+      expected.webPartData.properties.webAbsoluteUrl = target.webUrl;
+      expected.webPartData.serverProcessedContent.links.serverRelativeUrl = mapping.path;
+      expected.webPartData.serverProcessedContent.links.wopiurl = mapping.path;
+
+      return typeof control.webPartData.properties.webAbsoluteUrl === 'string'
+        && n === 8 && JSON.stringify(copy) === JSON.stringify(expected);
+    }, { control: realControl, source: realSource }));
+
   await check('analyzer file viewer: a Doc.aspx/WOPI sourcedoc={guid} form of wopiurl has only its GUID token rewritten, the rest of the url untouched', () =>
     page.evaluate(async ({ control, source }) => {
       const { analyzerContext } = await import('/src/workbench/page-copy.js');

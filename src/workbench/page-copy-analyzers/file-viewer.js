@@ -139,6 +139,14 @@ export default {
       if (next !== undefined && props.file !== next) { props.file = next; count += 1; }
     }
 
+    // Live shape (§11 Q7): `webAbsoluteUrl` is the web holding the document —
+    // the destination web once the document has been transferred there.
+    if (typeof props.webAbsoluteUrl === 'string' && ctx.target?.webUrl
+        && underSource(props.webAbsoluteUrl, ctx)) {
+      const nextWeb = String(ctx.target.webUrl).replace(/\/+$/, '');
+      if (props.webAbsoluteUrl.replace(/\/+$/, '') !== nextWeb) { props.webAbsoluteUrl = nextWeb; count += 1; }
+    }
+
     if (mapping.ids) {
       for (const idKey of ['siteId', 'webId', 'listId', 'uniqueId']) {
         if (!(idKey in props)) continue;
