@@ -378,7 +378,7 @@ export async function run({ browser, check, WB_URL }) {
       && cross.plan.target.finalPath === '/sites/pagedst/SitePages/Quarterly-Update-copy.aspx';
   });
 
-  await check('runner: cross-site asset folders — discardCopy recycles the leaf asset folder and the transferred files but never the shared SiteAssets/SitePages parent, and never calls discardPage', () => {
+  await check('runner: cross-site asset folders — discardCopy recycles the transferred files, leaves the leaf asset folder it created in place (reported), never touches the shared SiteAssets/SitePages parent, and never calls discardPage', () => {
     const assets = cross.result.journal.assets || [];
     const sharedParent = assets.find((a) => a.kind === 'folder' && a.path.endsWith('/SiteAssets/SitePages'));
     const leaf = assets.find((a) => a.kind === 'folder' && a.path.endsWith('/SiteAssets/SitePages/Quarterly-Update-copy'));
@@ -395,7 +395,7 @@ export async function run({ browser, check, WB_URL }) {
       // DTO's BannerImageUrl). The banner itself is only in the header part.
       && files.length === 1 && files[0].path.endsWith('/thumb.png')
       && !recycled.some((r) => r.toLowerCase() === parentPath.toLowerCase())
-      && recycled.includes(leaf.path)
+      && !recycled.includes(leaf.path) && (cross.discard.leftovers || []).some((l) => l.path === leaf.path)
       && files.every((f) => recycled.includes(f.path))
       && recycled.includes(cross.result.journal.currentPath)
       && !everyWriteUrl.some((u) => u.includes('/discardpage'));
@@ -417,76 +417,87 @@ export async function run({ browser, check, WB_URL }) {
       && pubFail.result.outcome === 'done-with-warnings';
   });
 
-  // ---- discardCopy ownership guards (xo review) -----------------------------
-  // Driven against a fake target client so each guard is exercised exactly:
-  // the remembered path no longer naming this run's page, and an asset folder
-  // that holds something this run never confirmed creating.
+  // ---- discardCopy ownership guards (Codex review) --------------------------
+  // Driven against a fake target client so each guard is exercised exactly.
+  // The page is recycled by its list-item id, never by a remembered path;
+  // without a confirmed id it is only reported; asset folders are never
+  // recycled (a folder takes everything in it, whoever put it there).
 
   const guards = await page.evaluate(async () => {
     const { discardCopy } = await import('/src/workbench/page-copy-run.js');
-    function fakePages({ idAt = {}, fileNameById = {}, itemCount = {} }) {
+    function fakePages({ fileRefById = {} } = {}) {
       const calls = [];
       return {
         calls,
-        async fileItemId(path) { calls.push(['fileItemId', path]); return idAt[path] ?? null; },
-        async getPage(id) { calls.push(['getPage', id]); return { FileName: fileNameById[id] }; },
-        async sitePagesLibrary() { return { rootPath: '/sites/d/SitePages' }; },
-        async folderItemCount(path) { calls.push(['folderItemCount', path]); return itemCount[path] ?? 0; },
+        async sitePagesLibrary() { calls.push(['sitePagesLibrary']); return { id: 'L-FROM-READ', rootPath: '/sites/d/SitePages' }; },
+        async itemFileRef(listId, id) { calls.push(['itemFileRef', listId, id]); return id in fileRefById ? fileRefById[id] : null; },
+        async recycleItem(listId, id) { calls.push(['recycleItem', listId, id]); },
         async recycleFile(path) { calls.push(['recycleFile', path]); },
         async recycleFolder(path) { calls.push(['recycleFolder', path]); },
       };
     }
-    const recycledOf = (p) => p.calls.filter((c) => c[0].startsWith('recycle')).map((c) => c[1]);
+    const recycles = (p) => p.calls.filter((c) => c[0].startsWith('recycle'));
 
-    // (a) The staging save renamed the page to stage~copy.aspx, but the run
-    // never learned it; another page has since taken the old name.
-    const a = fakePages({
-      idAt: { '/sites/d/SitePages/Untitled_1.aspx': 99, '/sites/d/SitePages/stage~copy.aspx': 5 },
-      fileNameById: { 5: 'stage~copy.aspx' },
-    });
+    // (a) The move into SitePages/Reports landed but its response was lost,
+    // so the journal still remembers the staging path, and another page now
+    // sits at SitePages/Copy.aspx. The item id finds the real page.
+    const a = fakePages({ fileRefById: { 5: '/sites/d/SitePages/Reports/Copy.aspx' } });
     const aRes = await discardCopy(
-      { createdBy: 'this run', pageId: 5, currentPath: '/sites/d/SitePages/Untitled_1.aspx', assets: [] },
+      { createdBy: 'this run', pageId: 5, libraryId: 'L', currentPath: '/sites/d/SitePages/Copy~copy-abc123.aspx', assets: [] },
       { target: { pages: a } },
     );
 
-    // (b) The remembered path still names this run's page: recycled as-is.
-    const b = fakePages({ idAt: { '/sites/d/SitePages/Mine.aspx': 5 } });
-    await discardCopy(
-      { createdBy: 'this run', pageId: 5, currentPath: '/sites/d/SitePages/Mine.aspx', assets: [] },
+    // (b) CopyFileByPath landed but the id lookup failed: no confirmed id,
+    // so nothing is recycled by path — reported instead.
+    const b = fakePages();
+    const bRes = await discardCopy(
+      { createdBy: 'this run', pageId: null, currentPath: '/sites/d/SitePages/Legacy.aspx', assets: [] },
       { target: { pages: b } },
     );
 
-    // (c) A folder this run created still holds an item it never confirmed
-    // (another copy's file, or an upload whose response was lost) — kept;
-    // an empty one is recycled.
-    const c = fakePages({
-      idAt: { '/sites/d/SitePages/Mine.aspx': 5 },
-      itemCount: { '/sites/d/SiteAssets/SitePages/Shared': 1, '/sites/d/SiteAssets/SitePages/Mine': 0 },
-    });
+    // (c) Confirmed files are recycled; asset folders this run created are
+    // left and reported. No libraryId in the journal: read from the library.
+    const c = fakePages({ fileRefById: { 5: '/sites/d/SitePages/Mine.aspx' } });
     const cRes = await discardCopy({
       createdBy: 'this run', pageId: 5, currentPath: '/sites/d/SitePages/Mine.aspx',
       assets: [
-        { path: '/sites/d/SiteAssets/SitePages/Shared', kind: 'folder', confirmed: true, recyclable: true },
         { path: '/sites/d/SiteAssets/SitePages/Mine', kind: 'folder', confirmed: true, recyclable: true },
+        { path: '/sites/d/SiteAssets/SitePages/Mine/a.png', kind: 'file', confirmed: true, recyclable: true },
       ],
     }, { target: { pages: c } });
 
+    // (d) The item is already gone: nothing to recycle, nothing to report.
+    const d = fakePages();
+    const dRes = await discardCopy(
+      { createdBy: 'this run', pageId: 7, libraryId: 'L', currentPath: '/sites/d/SitePages/Gone.aspx', assets: [] },
+      { target: { pages: d } },
+    );
+
     return {
-      aRecycled: recycledOf(a), aLeftovers: aRes.leftovers,
-      bRecycled: recycledOf(b),
-      cRecycled: recycledOf(c), cLeftovers: cRes.leftovers.map((l) => l.path),
+      aRecycles: recycles(a), aRecycled: aRes.recycled, aLeftovers: aRes.leftovers.length,
+      bRecycles: recycles(b), bLeftovers: bRes.leftovers.map((l) => l.path),
+      cRecycles: recycles(c), cRecycled: cRes.recycled, cLeftovers: cRes.leftovers.map((l) => l.path),
+      dRecycles: recycles(d), dRecycled: dRes.recycled, dLeftovers: dRes.leftovers.length,
     };
   });
 
-  await check('runner: discardCopy never recycles a remembered page path that now names a different item — it finds this run\'s page again by its id and recycles that instead', () =>
-    JSON.stringify(guards.aRecycled) === JSON.stringify(['/sites/d/SitePages/stage~copy.aspx'])
-      && guards.aLeftovers.length === 0
-      && JSON.stringify(guards.bRecycled) === JSON.stringify(['/sites/d/SitePages/Mine.aspx']));
+  await check('runner: discardCopy recycles the page by its list-item id — after a move whose response was lost it recycles the page in its real folder, never the remembered staging path or a same-named root page', () =>
+    JSON.stringify(guards.aRecycles) === JSON.stringify([['recycleItem', 'L', 5]])
+      && JSON.stringify(guards.aRecycled) === JSON.stringify(['/sites/d/SitePages/Reports/Copy.aspx'])
+      && guards.aLeftovers === 0);
 
-  await check('runner: discardCopy recycles a folder it created only when it is empty — one still holding an unconfirmed item is left and reported as a leftover', () =>
-    !guards.cRecycled.includes('/sites/d/SiteAssets/SitePages/Shared')
-      && guards.cRecycled.includes('/sites/d/SiteAssets/SitePages/Mine')
-      && guards.cLeftovers.includes('/sites/d/SiteAssets/SitePages/Shared'));
+  await check('runner: a page whose item id was never confirmed is reported as left behind, never recycled by its remembered path', () =>
+    guards.bRecycles.length === 0
+      && JSON.stringify(guards.bLeftovers) === JSON.stringify(['/sites/d/SitePages/Legacy.aspx']));
+
+  await check('runner: discardCopy recycles the confirmed files but leaves the asset folder it created in place and reports it; with no libraryId journaled it reads the library id', () =>
+    guards.cRecycles.some((r) => r[0] === 'recycleItem' && r[1] === 'L-FROM-READ' && r[2] === 5)
+      && guards.cRecycles.some((r) => r[0] === 'recycleFile' && r[1] === '/sites/d/SiteAssets/SitePages/Mine/a.png')
+      && !guards.cRecycles.some((r) => r[0] === 'recycleFolder')
+      && guards.cLeftovers.includes('/sites/d/SiteAssets/SitePages/Mine'));
+
+  await check('runner: a page item that no longer exists is neither recycled nor reported', () =>
+    guards.dRecycles.length === 0 && guards.dRecycled.length === 0 && guards.dLeftovers === 0);
 
   await page.close();
 }

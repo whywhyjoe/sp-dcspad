@@ -99,6 +99,8 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
   const { source, target } = deps;
   const { pages, write } = target;
   const journal = newJournal(plan);
+  // Discard recycles the page by item id in this library (see discardCopy).
+  journal.libraryId = plan.target.libraryId || null;
   const transferResults = new Map();
   let dto = null;
   let saved = null;
@@ -202,6 +204,9 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
           }
           const info = await pages.fileInfo(uploaded.serverRelativeUrl);
           transferResults.set(asset.key, {
+            // The source file actually transferred — mapAsset() checks a
+            // part's own path against it before authorizing a patch.
+            sourcePath: asset.sourcePath,
             path: uploaded.serverRelativeUrl,
             ids: {
               siteId: info?.SiteId, webId: info?.WebId, listId: info?.ListId, uniqueId: info?.UniqueId,
@@ -367,60 +372,42 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
 
 // Cleans up only what THIS run confirmed creating — never a page the
 // operator merely opened, never anything inferred from a name. Acts even
-// when the run stopped mid-way with steps left 'unknown': whatever made it
-// into journal.assets/currentPath as confirmed is fair game; whatever didn't
-// is left alone, because it was never confirmed.
+// when the run stopped mid-way with steps left 'unknown': the page (by its
+// confirmed item id) and the files in journal.assets are fair game; whatever
+// wasn't confirmed is left alone, and so are asset folders (below).
 export async function discardCopy(journal, { target } = {}) {
   const { pages } = target;
   const recycled = [];
   const leftovers = [];
   if (!journal || journal.createdBy !== 'this run') return { recycled, leftovers };
 
-  // Reading by a confirmed id is not inference — createPage returned this
-  // id, so asking SharePoint what it is now is just catching up on a path
-  // the run never got to learn, or one that changed under it.
-  async function pathFromId() {
-    try {
-      const [dto, library] = await Promise.all([pages.getPage(journal.pageId), pages.sitePagesLibrary()]);
-      const root = String(library?.rootPath || '').replace(/\/+$/, '');
-      const name = dto?.FileName || '';
-      if (root && name) return `${root}/${name}`;
-      leftovers.push({ path: `(page id ${journal.pageId})`, error: 'its current file name could not be read' });
-    } catch (err) {
-      leftovers.push({ path: `(page id ${journal.pageId})`, error: err?.message || String(err) });
-    }
-    return '';
-  }
-
-  let currentPath = journal.currentPath;
+  // The page is recycled by its list-item id, never by a remembered path.
+  // The run learns the path in steps (create, the staging save's rename,
+  // the move), and a lost or failed read between them leaves it stale — its
+  // old name free for another page to take. The id createPage returned
+  // (or the copied file's own item id) is never reused within the list, so
+  // it names exactly this run's page wherever it has gone since.
+  const pageLabel = journal.currentPath || `(page id ${journal.pageId})`;
   if (journal.pageId) {
-    if (!currentPath) {
-      // dto.Url absent at create, and the run stopped before 'name' read it.
-      currentPath = await pathFromId();
-    } else {
-      // The staging save renames the file, and the run learns the new name
-      // only from the read that follows it. If that read failed, currentPath
-      // still holds the old name, now free for another page to take. A
-      // remembered path is recycled only while it still names this run's
-      // item; otherwise the page is found again by its id.
-      let idAtPath = null;
-      try {
-        idAtPath = await pages.fileItemId(currentPath);
-      } catch (err) {
-        leftovers.push({ path: currentPath, error: err?.message || String(err) });
-        currentPath = '';
-      }
-      if (currentPath && Number(idAtPath) !== Number(journal.pageId)) currentPath = await pathFromId();
-    }
-  }
-
-  if (currentPath) {
     try {
-      await pages.recycleFile(currentPath);
-      recycled.push(currentPath);
+      const libraryId = journal.libraryId || (await pages.sitePagesLibrary())?.id;
+      if (!libraryId) throw new Error('the Site Pages library could not be read');
+      const fileRef = await pages.itemFileRef(libraryId, journal.pageId);
+      if (fileRef !== null) {   // null: the item is already gone — nothing to recycle
+        await pages.recycleItem(libraryId, journal.pageId);
+        recycled.push(fileRef || pageLabel);
+      }
     } catch (err) {
-      leftovers.push({ path: currentPath, error: err?.message || String(err) });
+      leftovers.push({ path: pageLabel, error: err?.message || String(err) });
     }
+  } else if (journal.currentPath) {
+    // A file this run created whose item id it never learned (the id lookup
+    // after CopyFileByPath failed). A path alone can't prove the file there
+    // is still this run's, so it is reported, not recycled.
+    leftovers.push({
+      path: journal.currentPath,
+      error: 'not recycled: its item id was never confirmed, so the file at this path cannot be proven to be this copy',
+    });
   }
 
   const fileAssets = (journal.assets || []).filter((a) => a.kind === 'file' && a.confirmed);
@@ -433,29 +420,15 @@ export async function discardCopy(journal, { target } = {}) {
     }
   }
 
-  // Deepest first: a parent folder recycled before its child would take the
-  // child with it and turn the child's own recycle into a spurious failure.
-  const folderAssets = (journal.assets || [])
-    .filter((a) => a.kind === 'folder' && a.confirmed && a.recyclable)
-    .sort((a, b) => b.path.split('/').length - a.path.split('/').length);
-  for (const folder of folderAssets) {
-    try {
-      // Creating a folder doesn't make this run the owner of everything
-      // later put in it: another copy of a same-named page shares the asset
-      // folder, and an upload whose response was lost is not this run's to
-      // remove. Only an empty folder is recycled; anything else is left and
-      // reported.
-      const remaining = await pages.folderItemCount(folder.path);
-      if (remaining === null) continue;   // already gone — nothing to do
-      if (remaining > 0) {
-        leftovers.push({ path: folder.path, error: `not recycled: it still holds ${remaining} item(s) this run did not confirm creating` });
-        continue;
-      }
-      await pages.recycleFolder(folder.path);
-      recycled.push(folder.path);
-    } catch (err) {
-      leftovers.push({ path: folder.path, error: err?.message || String(err) });
-    }
+  // Asset folders this run created are left in place and reported, never
+  // recycled. Creating a folder doesn't make this run the owner of what is
+  // later put in it: another copy of a same-named page shares the folder,
+  // and an upload whose response was lost is not this run's to remove.
+  // Recycling a folder takes everything in it, and no check made before the
+  // recycle can rule out something arriving in between — so only the files
+  // this run confirmed uploading are removed, above.
+  for (const folder of (journal.assets || []).filter((a) => a.kind === 'folder' && a.confirmed && a.recyclable)) {
+    leftovers.push({ path: folder.path, error: 'asset folder left in place: a folder is recycled with everything in it, including files this run did not create' });
   }
 
   return { recycled, leftovers };

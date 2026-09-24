@@ -121,6 +121,21 @@ export function createSpPages({ client, write }) {
     return write.postJson(path, {}, { fallback: 'Could not recycle the file', code: 'page-recycle' });
   }
 
+  // A page's list item, by id. Item ids are never reused within a list, so
+  // this names exactly the page a run created — wherever it has since been
+  // renamed or moved — which a remembered path cannot. discardCopy() uses it.
+  async function itemFileRef(listId, itemId) {
+    const item = await catchNotFound(client.get(
+      `web/lists(guid'${listId}')/items(${Number(itemId)})`, { select: ['FileRef'] },
+    ));
+    return item ? String(item.FileRef || '') : null;
+  }
+
+  async function recycleItem(listId, itemId) {
+    const path = `web/lists(guid'${listId}')/items(${Number(itemId)})/recycle`;
+    return write.postJson(path, {}, { fallback: 'Could not recycle the page', code: 'page-recycle' });
+  }
+
   async function recycleFolder(serverRelativeUrl) {
     const path = `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl)}')/recycle`;
     return write.postJson(path, {}, { fallback: 'Could not recycle the folder', code: 'page-recycle' });
@@ -203,18 +218,6 @@ export function createSpPages({ client, write }) {
       { select: ['Exists'] },
     ));
     return Boolean(folder?.Exists);
-  }
-
-  // How many files and subfolders sit directly in a folder (SP.Folder's
-  // ItemCount), or null when the folder doesn't exist. discardCopy() recycles
-  // a folder it created only when this reads 0.
-  async function folderItemCount(serverRelativeUrl) {
-    const folder = await catchNotFound(client.get(
-      `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl)}')`,
-      { select: ['Exists', 'ItemCount'] },
-    ));
-    if (!folder?.Exists) return null;
-    return Number(folder.ItemCount || 0);
   }
 
   // Live: sp-files.js's own reader (its digest cache and 50 MB default are
@@ -307,6 +310,8 @@ export function createSpPages({ client, write }) {
     discardPage,
     recycleFile,
     recycleFolder,
+    itemFileRef,
+    recycleItem,
     moveFileByPath,
     copyFileByPath,
     addImageFromExternalUrl,
@@ -315,7 +320,6 @@ export function createSpPages({ client, write }) {
     fileItemId,
     exists,
     folderExists,
-    folderItemCount,
     readFileBytes,
     clientSideWebParts,
     setCommentsDisabled,

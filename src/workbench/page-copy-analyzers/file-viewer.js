@@ -145,9 +145,13 @@ export default {
         && underSource(props.webAbsoluteUrl, ctx)) {
       // Keep the value's own form: a server-relative value takes the web's
       // path, an absolute one its url.
+      // A root web's path trims to '' — its server-relative form is '/'.
       const relative = props.webAbsoluteUrl.startsWith('/') && !props.webAbsoluteUrl.startsWith('//');
-      const nextWeb = String(relative ? (ctx.target.webPath ?? '') : ctx.target.webUrl).replace(/\/+$/, '');
-      if (nextWeb && props.webAbsoluteUrl.replace(/\/+$/, '') !== nextWeb) {
+      const nextWeb = relative
+        ? (String(ctx.target.webPath ?? '').replace(/\/+$/, '') || '/')
+        : String(ctx.target.webUrl).replace(/\/+$/, '');
+      const currentWeb = props.webAbsoluteUrl.replace(/\/+$/, '') || (relative ? '/' : '');
+      if (nextWeb && currentWeb !== nextWeb) {
         props.webAbsoluteUrl = nextWeb;
         count += 1;
       }

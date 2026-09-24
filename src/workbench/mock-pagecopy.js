@@ -518,11 +518,7 @@ export function pageCopyResolver(url, path, webBase) {
     const exists = web.folders.has(lowerPath)
       || web.lists.some((l) => String(l.RootFolder?.ServerRelativeUrl || '').toLowerCase() === lowerPath)
       || [...web.files.keys()].some((k) => k.startsWith(`${lowerPath}/`));
-    // SP.Folder.ItemCount: files and subfolders directly inside, not deeper.
-    const directChild = (k) => k.startsWith(`${lowerPath}/`) && !k.slice(lowerPath.length + 1).includes('/');
-    const itemCount = [...web.files.keys()].filter(directChild).length
-      + [...web.folders].filter(directChild).length;
-    return { Exists: exists, ServerRelativeUrl: folderPath, ItemCount: exists ? itemCount : 0 };
+    return { Exists: exists, ServerRelativeUrl: folderPath };
   }
 
   // web/getfilebyid('guid')
@@ -1036,6 +1032,20 @@ export function pageCopyWriter(url, body, contentType, headers) {
 
       return { ServerRelativeUrl: imagePath };
     }
+  }
+
+  // web/lists(guid'L')/items(N)/recycle — recycles the page item (and its
+  // file) by id, wherever the file now lives. discardCopy() uses this.
+  const itemRecycle = /web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/recycle$/i.exec(pathLower);
+  if (itemRecycle) {
+    record();
+    const itemId = Number(itemRecycle[2]);
+    const page = web.pages.get(itemId);
+    if (!page) throw new SpFileError('Item does not exist.', { code: 'not-found', status: 404 });
+    const fileRef = String(page.item?.FileRef || page.dto?.FileRef || '').toLowerCase();
+    if (fileRef) web.files.delete(fileRef);
+    web.pages.delete(itemId);
+    return {};
   }
 
   // web/lists(guid'L')/items(N)/validateupdatelistitem

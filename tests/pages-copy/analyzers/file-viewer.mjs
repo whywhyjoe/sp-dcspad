@@ -111,7 +111,7 @@ export async function checks({ page, check }) {
         && n === 8 && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: realControl, source: realSource }));
 
-  await check('analyzer file viewer: a server-relative webAbsoluteUrl keeps its form — it becomes the target web PATH, not its absolute url', () =>
+  await check('analyzer file viewer: a server-relative webAbsoluteUrl keeps its form — it becomes the target web PATH, not its absolute url, and "/" for a root destination web', () =>
     page.evaluate(async ({ control, source }) => {
       const { analyzerContext } = await import('/src/workbench/page-copy.js');
       const analyzer = (await import('/src/workbench/page-copy-analyzers/file-viewer.js')).default;
@@ -130,8 +130,15 @@ export async function checks({ page, check }) {
       const copy = structuredClone(control);
       copy.webPartData.properties.webAbsoluteUrl = '/sites/NewNerve';
       analyzer.patch(copy, ctx);
+      // A root destination web: its path trims to '', its server-relative
+      // form is '/', and the value still moves off the source.
+      const rootCtx = { ...ctx, target: { webUrl: 'https://t.sharepoint.com', webPath: '' } };
+      const rootCopy = structuredClone(control);
+      rootCopy.webPartData.properties.webAbsoluteUrl = '/sites/NewNerve';
+      analyzer.patch(rootCopy, rootCtx);
       return copy.webPartData.properties.webAbsoluteUrl === '/sites/pagedst'
-        && copy.webPartData.properties.uniqueId === mapping.ids.uniqueId;
+        && copy.webPartData.properties.uniqueId === mapping.ids.uniqueId
+        && rootCopy.webPartData.properties.webAbsoluteUrl === '/';
     }, { control: realControl, source: realSource }));
 
   await check('analyzer file viewer: a Doc.aspx/WOPI sourcedoc={guid} form of wopiurl has only its GUID token rewritten, the rest of the url untouched', () =>

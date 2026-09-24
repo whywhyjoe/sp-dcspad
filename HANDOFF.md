@@ -1020,7 +1020,7 @@ canvas. Every `zz-pagecopy-*` artefact has since been recycled on all three webs
 - Links into the source web are rewritten only when the opt-in is ticked; tile links to a
   page that wasn't copied keep pointing at the source (by design).
 
-Suite: `tests/workbench-pages-copy.mjs` (158 checks; sections in `tests/pages-copy/`,
+Suite: `tests/workbench-pages-copy.mjs` (161 checks; sections in `tests/pages-copy/`,
 own mock webs in `src/workbench/mock-pagecopy.js`).
 
 ## Roadmap (seams reserved)

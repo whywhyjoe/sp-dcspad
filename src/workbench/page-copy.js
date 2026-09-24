@@ -815,7 +815,15 @@ export function rewriteContent(snapshot, plan, transferResults = new Map(), anal
       mapAsset: (identity) => {
         if (!identity) return null;
         const key = assetKey({ uniqueId: identity.ids?.uniqueId ?? identity.uniqueId, path: identity.path });
-        return transferResults.get(key) || null;
+        const result = transferResults.get(key) || null;
+        // Requests are deduped by UniqueId, so two parts naming different
+        // files but carrying the same (stale) id share one key, and only one
+        // file is transferred. A mapping authorizes a patch only when the
+        // path the part names IS that file; otherwise the part keeps its
+        // source reference.
+        if (result && identity.path && result.sourcePath
+            && lower(decodeSafe(identity.path)) !== lower(decodeSafe(result.sourcePath))) return null;
+        return result;
       },
       mapLink: (value) => (plan.rewriteLinks
         ? rewriteLink(value, { fromPath: snapshot.web.webServerRelativeUrl, toPath: plan.target.webServerRelativeUrl, origin: originOf(snapshot.web.webUrl) })

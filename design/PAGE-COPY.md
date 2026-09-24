@@ -23,7 +23,7 @@ semantics; anything marked *spike* is a tenant question.
 | Save | `POST …/pages({id})/savepage`, header `If-Match: *`, body `{ "__metadata":{"type":"SP.Publishing.SitePage"}, AuthorByline, CanvasContent1, Description, LayoutWebpartsContent, Title, TopicHeader, BannerImageUrl }`; when a custom thumbnail is set the `BannerImageUrl` sent is the thumbnail URL. PnPjs then **re-reads** the page to refresh identity and URLs. `savepageasdraft` is not demonstrated by this source. | PnP-pages 362–378, 393–397 |
 | Publish | `POST …/pages({id})/publish` (no body). | PnP-pages 383 |
 | Discard checkout | `POST …/pages({id})/discardPage` body `{ "__metadata":{"type":"SP.Publishing.SitePage"} }`. This undoes a checkout; it does **not** delete a page. | PnP-pages 415 |
-| Delete a created page | `POST {web}/_api/web/GetFileByServerRelativePath(decodedUrl='…')/recycle` (standard file API; not page-specific). | — |
+| Delete a created page | `POST {web}/_api/web/lists(guid'…')/items({id})/recycle` → the recycle-bin item GUID (standard list-item API; not page-specific). By id rather than `GetFileByServerRelativePath(…)/recycle`, so it names the created page wherever it has moved (§7; verified live 2026-09-24). | — |
 | Image import | `POST {web}/_api/sitepages/AddImageFromExternalUrl?imageFileName='..'&pageName='..'&externalUrl='..'&$select=ServerRelativeUrl` → `{ ServerRelativeUrl }` into `SiteAssets/SitePages/{pageName}/`. Demonstrates **image** import from a URL the server can fetch; authenticated same-tenant URLs and non-image files are *spike* questions. | PnP-pages 591–615 |
 | Banner metadata | `GET {web}/_api/web/getFileByServerRelativePath(decodedUrl='..')?$select=ListId,WebId,UniqueId,SiteId,Name` → `BannerImageUrl = {web}/_layouts/15/getpreview.ashx?guidSite&guidWeb&guidFile`; header part gets `serverProcessedContent.imageSources.imageSource` (server-relative path) and `customMetadata.imageSource {siteId, webId, listId, uniqueId}`, plus the same four ids in `properties`. The copy path resolves an existing preview URL back to its file by those GUIDs. | PnP-pages 318–354, 506–538 |
 | Author byline | `AuthorByline` in the DTO is an array of **UPN strings**; the list item's `_AuthorByline` is a person field. Never map one onto the other blindly. | PnP-pages 664 |
@@ -311,9 +311,15 @@ assets: [{ path, confirmed }], steps: [{ name, status: 'done' | 'failed' | 'unkn
   confirmed, which operation is uncertain, and where to look (the target folder URL, the
   staging name). `sp-write.js post()` retries only on 403 before any success, so a retry never
   double-creates; that is the only automatic retry and the journal notes it.
-- **Cleanup offer** ("Discard copy") recycles only confirmed resources created by this run —
-  the page file (by its confirmed path, `recycleFile`) and confirmed assets; `discardPage`
-  alone is never treated as deletion. Cleanup failures are reported with the leftovers list.
+- **Cleanup offer** ("Discard copy") recycles only confirmed resources created by this run.
+  - The page is recycled **by its list-item id** (`items(id)/recycle`), never by a remembered
+    path: the path is learned in steps and can go stale, but an item id is never reused within
+    a list. A page whose id was never confirmed is reported, not recycled.
+  - The confirmed asset files are recycled.
+  - Asset folders are left in place and reported. A folder is recycled with everything in it,
+    and no check made beforehand can rule out another run's file arriving in between.
+  - `discardPage` alone is never treated as deletion. Cleanup failures and everything left in
+    place are reported in the leftovers list.
 - **Metadata** VULI is per-field, not atomic (`sp-write.js:166`): field failures are reported
   per field with the page kept.
 - v2 (not in this plan): retry-from-failed-step, reconciliation by re-listing the folder.
@@ -390,12 +396,8 @@ keeps the page-copy mock webs out of the default fixtures.
   Accepted and fixed, each with a check:
   - Dialog: switching to "Another site" or editing the URL now abandons a connect still in
     flight (`connectSeq`). Before, the late answer could install the wrong web as the destination.
-  - Discard: a remembered page path is recycled only while it still names this run's item.
-    Otherwise the page is found again by its id, because the staging save renames the file and
-    the old name is free for another page.
-  - Discard: an asset folder this run created is recycled only when it is empty. Other
-    content is left and reported, because a folder is shared by same-named pages and may hold
-    an upload whose response was lost.
+  - Discard: a remembered page path is no longer trusted (superseded in round 2, below).
+  - Discard: asset folders are no longer recycled on emptiness (superseded in round 2, below).
   - Runner: a publish that fails with Promote ticked still marks the draft `PromotedState 1`
     (a `promote` step).
   - Hero: `resolvedUrl` follows only when it names the same file, and the `imageUrl` GUID swap
@@ -415,6 +417,23 @@ keeps the page-copy mock webs out of the default fixtures.
     (`journal.assets`), and that list is what cleanup reads. A lost response anywhere in the step
     still marks it `unknown` and stops, which is what §7 requires. Again the stricter
     criterion came from the request wording, not the spec.
+
+  **Round 2** (Codex desktop, re-review of `0e19e27`). Codex agreed with both disputed items
+  above and confirmed the other round-1 fixes. It found five more, all accepted and fixed:
+  - Discard rebuilt a recovered page path from the file name alone, losing its folder, so a
+    move whose response was lost could make it recycle an unrelated root-level page. Discard
+    now recycles the page by list-item id (`items(id)/recycle`). Proven live on dev: after a
+    move into a folder, `FileRef` read by id named the real path, and the recycle removed the
+    file and item into the recycle bin.
+  - A page with no confirmed id (the id lookup after `CopyFileByPath` failed) was recycled by
+    remembered path. It is now reported instead.
+  - The empty-folder check was check-then-act: a file arriving between the count and the
+    recycle would be taken too. Asset folders are now never recycled, only reported.
+  - `mapAsset` authorized a patch by UniqueId alone. Two parts naming different files under
+    one stale id shared a key, so both got the one transferred file's mapping. The transfer
+    result now carries its `sourcePath`, and a part naming another path gets `null`.
+  - File viewer: a relative `webAbsoluteUrl` copied to a root destination web stayed on the
+    source (its path trimmed to `''`). The root is now `/`.
 
 ## 11. Spike results (dev tenant, 2026-09-23)
 
@@ -555,3 +574,8 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   that fails on the old code, apart from the Quick links one, which only adds coverage. Two
   disputed and kept, both positions recorded in §10. Suite: workbench-pages-copy 158
   (analyzers 72, runner 16, live 11), 765 in total. Not redeployed: dev still runs Build #245.
+- 2026-09-24 — **Codex re-review, round 2** (§10): five findings fixed. Discard now recycles
+  the page by list-item id, never recycles asset folders, and reports a page with no confirmed
+  id. `mapAsset` checks the transferred file's source path. A root destination web gives `/`.
+  The by-id recycle was verified live on dev with a throwaway `zz-pagecopy-` page (recycled).
+  Suite: workbench-pages-copy 161 (pure 22, runner 18), 768 in total.

@@ -373,7 +373,7 @@ export async function run({ browser, check, WB_URL }) {
   });
 
   // ---- #11 an upload failure mid-run: outcome failed, page already created, discard -----
-  // ---- recycles the page and the uploaded files but never the shared SiteAssets/SitePages --
+  // ---- recycles the page and the uploaded files but no asset folder -------------------------
 
   const failed = await page.evaluate(() => window.__cs.run({
     injectFailMatch: { match: 'thumb.png', code: 'write', status: 500 },
@@ -392,7 +392,7 @@ export async function run({ browser, check, WB_URL }) {
       && recycled.includes(failed.result.journal.currentPath);
   });
 
-  await check('crosssite: discardCopy never recycles the shared SiteAssets/SitePages parent folder, only the leaf folder it created for this page', () => {
+  await check('crosssite: discardCopy recycles no asset folder — the shared SiteAssets/SitePages parent is untouched and the leaf folder it created is left in place and reported', () => {
     const folderAssets = (failed.result.journal.assets || []).filter((a) => a.kind === 'folder');
     const sharedParent = folderAssets.find((a) => a.path.toLowerCase().endsWith('/siteassets/sitepages'));
     const leaf = folderAssets.find((a) => a.path.toLowerCase().includes('/siteassets/sitepages/') && a !== sharedParent);
@@ -401,7 +401,8 @@ export async function run({ browser, check, WB_URL }) {
     // and skips it); if it were, it would be non-recyclable. Never recycled.
     return (!sharedParent || sharedParent.recyclable === false)
       && !recycled.some((r) => /\/siteassets\/sitepages$/i.test(r))
-      && Boolean(leaf) && leaf.recyclable === true && recycled.includes(leaf.path);
+      && Boolean(leaf) && leaf.recyclable === true && !recycled.includes(leaf.path)
+      && (failed.discard?.leftovers || []).some((l) => l.path === leaf.path);
   });
 
   await page.close();

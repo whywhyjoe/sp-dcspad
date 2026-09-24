@@ -312,6 +312,37 @@ export async function run({ browser, check, WB_URL }) {
         && !('Description' in savedThumb);
     }));
 
+  // Codex review: requests are deduped by UniqueId, so two parts naming
+  // different files under one (stale) id share a key and only one file is
+  // transferred. mapAsset must authorize a patch only for the file the part
+  // actually names.
+  await check('pure: rewriteContent\'s mapAsset hands out a mapping only when the part\'s path is the transferred source file — a different path under the same id gets null; an id-only identity still maps', () =>
+    page.evaluate(async () => {
+      const { rewriteContent } = await import('/src/workbench/page-copy.js');
+      const U = '11111111-2222-4333-8444-555555555555';
+      const control = { controlType: 3, id: 'w1', webPartId: 'aaaaaaaa-0000-4000-8000-00000000abcd', webPartData: { id: 'aaaaaaaa-0000-4000-8000-00000000abcd', properties: {} } };
+      const canvasRaw = JSON.stringify([control]);
+      const snapshot = {
+        dto: { Title: 'Q', BannerImageUrl: '', BannerThumbnailUrl: '', Description: '', TopicHeader: '', AuthorByline: [] },
+        canvasRaw, layoutRaw: '[]', canvas: JSON.parse(canvasRaw), layout: [], customThumbnail: false,
+        web: { webUrl: 'https://t.sharepoint.com/sites/src', webServerRelativeUrl: '/sites/src' },
+      };
+      const plan = { sameWeb: false, dropped: [], title: 'Q', target: { webUrl: 'https://t.sharepoint.com/sites/dst', webServerRelativeUrl: '/sites/dst' }, rewriteLinks: false };
+      const transferred = { sourcePath: '/sites/src/SiteAssets/a.png', path: '/sites/dst/SiteAssets/SitePages/Q/a.png', ids: { uniqueId: 'd1' }, url: 'https://t.sharepoint.com/sites/dst/SiteAssets/SitePages/Q/a.png' };
+      const seen = {};
+      const stub = {
+        patch(instance, ctx) {
+          seen.a = ctx.mapAsset({ path: '/sites/src/SiteAssets/a.png', ids: { uniqueId: U } });
+          seen.b = ctx.mapAsset({ path: '/sites/src/SiteAssets/b.png', ids: { uniqueId: U } });
+          seen.aEncodedCase = ctx.mapAsset({ path: '/sites/src/SiteAssets/A.png', ids: { uniqueId: U } });
+          seen.idOnly = ctx.mapAsset({ ids: { uniqueId: U } });
+          return 0;
+        },
+      };
+      rewriteContent(snapshot, plan, new Map([[U, transferred]]), { forId: () => stub, text: null, header: null });
+      return seen.a === transferred && seen.b === null && seen.aEncodedCase === transferred && seen.idOnly === transferred;
+    }));
+
   await check('pure: rewriteContent with a changed title patches only the header part\'s properties.title, leaving the canvas and other layout parts untouched', () =>
     page.evaluate(async () => {
       const m = await import('/src/workbench/page-copy.js');
