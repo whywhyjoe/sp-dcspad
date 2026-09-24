@@ -999,18 +999,28 @@ fetched from the destination) and to `/sites/NewNerve/sputils-test`. No read-onl
 exists on the tenant, so reader visibility was established structurally (published major,
 inherited permissions, Visitors = Read) — see §12.
 
+**Analyzers (all 15, one module each under `page-copy-analyzers/`).** Transfer + patch:
+Title area (banner/thumbnail), Text (inline images), Quick links, Image, Image gallery,
+Hero, Call to action, Countdown, File viewer. Data → warn (kept, reported): News,
+List/Library, Events, Highlighted content, Quick chart. Data-only: Sites. Shapes are the
+real editor-authored capture in `tests/pages-copy/fixtures/live-shapes-editor.json`. The
+editor keeps derived copies of a picked file's location (Hero `resolvedUrl`/`imageUrl`,
+Quick links `imagePicker`, File viewer `webAbsoluteUrl`) — they follow the mapping too
+(§11 Q7).
+
+**Live-verified full page (dev, Build #245):** `zz-pagecopy-shapes.aspx`, one instance of
+every analyzed part, copied to `/sites/TestSiteCollection` and published: outcome `done`,
+8 assets transferred, no transferred file's source id or path left anywhere in the saved
+canvas. Every `zz-pagecopy-*` artefact has since been recycled on all three webs.
+
 **Open items.**
-- Analyzers still to write (they need editor-authored shapes): Image (SharePoint file),
-  Image gallery, Hero, Call to action, Countdown, File viewer, Events, Highlighted content,
-  Quick chart, Sites. `zz-pagecopy-shapes.aspx` on the dev web holds a default instance of
-  each, waiting for its properties to be set in the page editor (§11 Q7); until then those
-  parts copy verbatim with their references reported "unverified".
 - User/Lookup/Taxonomy columns are not carried by the API engine (documented limitation).
 - Cross-web DateTime carry uses the source's display text; a destination in a different
   regional format may reject it (reported per field, page kept).
-- Every `zz-pagecopy-*` artefact on the three dev webs must be recycled when testing ends.
+- Links into the source web are rewritten only when the opt-in is ticked; tile links to a
+  page that wasn't copied keep pointing at the source (by design).
 
-Suite: `tests/workbench-pages-copy.mjs` (106 checks; sections in `tests/pages-copy/`,
+Suite: `tests/workbench-pages-copy.mjs` (149 checks; sections in `tests/pages-copy/`,
 own mock webs in `src/workbench/mock-pagecopy.js`).
 
 ## Roadmap (seams reserved)

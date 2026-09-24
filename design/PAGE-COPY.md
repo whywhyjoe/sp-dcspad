@@ -436,9 +436,17 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   `df8e44e7…`, Countdown `62cac389…`, File and media `b7dd04e1…`, List/Document library
   `f92bf067…`, Events `20745d7d…`, Highlighted content `daf0b71c…`, News `8c88f208…`,
   Quick chart `91a50c94…`, **Sites `7cba020c…`** (canvas.js's label table calls it "Document
-  library") and Organization chart `e84a8ca2…` (labelled "Sites" there). Configured instance
-  shapes: pending (`zz-pagecopy-shapes.aspx` built with default instances; configuration in
-  the editor requested from Joe).
+  library") and Organization chart `e84a8ca2…` (labelled "Sites" there — both labels since
+  corrected, and `1ef5ed11…` = Markdown added). Configured instance shapes: captured
+  editor-authored — every part on `zz-pagecopy-shapes.aspx` configured in the page editor
+  (headless, driven by the spike's `editor.mjs`), published, and harvested into
+  `tests/pages-copy/fixtures/live-shapes-editor.json`. The editor stores **derived copies**
+  of a picked file's location beside its path and ids, and a complete copy must follow them
+  too: Hero `image.resolvedUrl` (absolute url) and `image.imageUrl` (a Graph v2.1 thumbnail
+  url embedding the site/web/list/item GUIDs); Quick links part-level `imagePicker`
+  (absolute url of the picked thumbnail); File viewer `webAbsoluteUrl` (the web holding the
+  document). A tile's *link* target keeps its own `previewImage` bag (ids, resolvedUrl,
+  imageUrl of the linked page) — that is link data, not a transferred asset, and stays.
 
 ## 12. Progress log
 
@@ -493,3 +501,22 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   Dev runs this branch (Build #237), not `main`. **Open:** the ten editor-shaped analyzers
   (§11 Q7) — configure the shapes page, harvest with the spike's `q7-harvest`, write one
   analyzer per shape, then re-prove a complete copy into TestSiteCollection as §9 asks.
+- 2026-09-23 — **Phase 2 complete; all four phases done.** The `zz-pagecopy Category` test
+  column was verified empty (0 items carrying a value) and deleted; the shapes page was
+  configured in the editor by the orchestrator (no human step) and harvested (§11 Q7). Ten
+  analyzers landed on those shapes, blind-reviewed: Image, Image gallery, Hero, Call to
+  action, Countdown and File viewer transfer and patch (path and ids move together); Events,
+  Highlighted content and Quick chart are data → warn; Sites is data-only (its subweb urls
+  are sites, not links to rewrite — patch always 0). Full-page proof, Build #244 then #245:
+  `zz-pagecopy-shapes.aspx` (15 parts) copied dev → `/sites/TestSiteCollection`, published,
+  outcome `done`, verify clean, 8 assets transferred (thumb.png, banner.png, hero.png,
+  logo.png, logo-2.png, two gallery images, the PDF). #244's read-back found three derived fields
+  still naming the source (§11 Q7: Hero resolvedUrl/imageUrl, Quick links imagePicker, File
+  viewer webAbsoluteUrl); #245 follows them, and the re-run's read-back shows **no
+  transferred file's source id or path anywhere** — every file-bearing part carries only
+  destination ids, the data parts are unchanged by design, and the only source references
+  left are tile link targets (a page in the source web, links not rewritten by default).
+  Reader-level: 1.0 published, PromotedState 0, inherits permissions; the rendered page
+  pulls the destination hero.png through afdcache (200). Suites: workbench-pages-copy 149
+  (analyzers 67) — 756 total. Tenant: every `zz-pagecopy-*` page, folder and asset on the
+  three webs recycled; inventory empty; no `zz-pagecopy` field remains.
