@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "248" : "dev";
-var injectedRevision = true ? "0e19e27a" : "";
+var injectedBuild = true ? "250" : "dev";
+var injectedRevision = true ? "2d9d3736" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1879,9 +1879,7 @@ function pageCopyResolver(url, path, webBase) {
     }
     const lowerPath = folderPath.toLowerCase().replace(/\/+$/, "");
     const exists = web.folders.has(lowerPath) || web.lists.some((l) => String(l.RootFolder?.ServerRelativeUrl || "").toLowerCase() === lowerPath) || [...web.files.keys()].some((k) => k.startsWith(`${lowerPath}/`));
-    const directChild = (k) => k.startsWith(`${lowerPath}/`) && !k.slice(lowerPath.length + 1).includes("/");
-    const itemCount = [...web.files.keys()].filter(directChild).length + [...web.folders].filter(directChild).length;
-    return { Exists: exists, ServerRelativeUrl: folderPath, ItemCount: exists ? itemCount : 0 };
+    return { Exists: exists, ServerRelativeUrl: folderPath };
   }
   const fileByIdMatch = /web\/getfilebyid\('([0-9a-f-]+)'\)/i.exec(pathLower);
   if (fileByIdMatch) {
@@ -2348,6 +2346,17 @@ function pageCopyWriter(url, body, contentType, headers) {
         });
         return { ServerRelativeUrl: imagePath };
       }
+    }
+    const itemRecycle = /web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/recycle$/i.exec(pathLower);
+    if (itemRecycle) {
+      record();
+      const itemId = Number(itemRecycle[2]);
+      const page = web.pages.get(itemId);
+      if (!page) throw new SpFileError("Item does not exist.", { code: "not-found", status: 404 });
+      const fileRef = String(page.item?.FileRef || page.dto?.FileRef || "").toLowerCase();
+      if (fileRef) web.files.delete(fileRef);
+      web.pages.delete(itemId);
+      return {};
     }
     if (/web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/validateupdatelistitem/i.test(pathLower)) {
       record();
@@ -15535,7 +15544,9 @@ function rewriteContent(snapshot, plan, transferResults = /* @__PURE__ */ new Ma
       mapAsset: (identity) => {
         if (!identity) return null;
         const key2 = assetKey({ uniqueId: identity.ids?.uniqueId ?? identity.uniqueId, path: identity.path });
-        return transferResults.get(key2) || null;
+        const result = transferResults.get(key2) || null;
+        if (result && identity.path && result.sourcePath && lower3(decodeSafe(identity.path)) !== lower3(decodeSafe(result.sourcePath))) return null;
+        return result;
       },
       mapLink: (value) => plan.rewriteLinks ? rewriteLink(value, { fromPath: snapshot.web.webServerRelativeUrl, toPath: plan.target.webServerRelativeUrl, origin: originOf2(snapshot.web.webUrl) }) : null
     };
@@ -15730,6 +15741,17 @@ function createSpPages({ client: client2, write }) {
     const path = `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')/recycle`;
     return write.postJson(path, {}, { fallback: "Could not recycle the file", code: "page-recycle" });
   }
+  async function itemFileRef(listId, itemId) {
+    const item2 = await catchNotFound(client2.get(
+      `web/lists(guid'${listId}')/items(${Number(itemId)})`,
+      { select: ["FileRef"] }
+    ));
+    return item2 ? String(item2.FileRef || "") : null;
+  }
+  async function recycleItem(listId, itemId) {
+    const path = `web/lists(guid'${listId}')/items(${Number(itemId)})/recycle`;
+    return write.postJson(path, {}, { fallback: "Could not recycle the page", code: "page-recycle" });
+  }
   async function recycleFolder(serverRelativeUrl2) {
     const path = `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')/recycle`;
     return write.postJson(path, {}, { fallback: "Could not recycle the folder", code: "page-recycle" });
@@ -15794,14 +15816,6 @@ function createSpPages({ client: client2, write }) {
       { select: ["Exists"] }
     ));
     return Boolean(folder?.Exists);
-  }
-  async function folderItemCount(serverRelativeUrl2) {
-    const folder = await catchNotFound(client2.get(
-      `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')`,
-      { select: ["Exists", "ItemCount"] }
-    ));
-    if (!folder?.Exists) return null;
-    return Number(folder.ItemCount || 0);
   }
   async function readFileBytes2(serverRelativeUrl2) {
     if (client2.context().live) {
@@ -15880,6 +15894,8 @@ function createSpPages({ client: client2, write }) {
     discardPage,
     recycleFile,
     recycleFolder,
+    itemFileRef,
+    recycleItem,
     moveFileByPath,
     copyFileByPath,
     addImageFromExternalUrl,
@@ -15888,7 +15904,6 @@ function createSpPages({ client: client2, write }) {
     fileItemId,
     exists,
     folderExists,
-    folderItemCount,
     readFileBytes: readFileBytes2,
     clientSideWebParts,
     setCommentsDisabled,
@@ -16850,6 +16865,7 @@ async function runCopy(frozen, deps, { onStep } = {}) {
   const { source, target } = deps;
   const { pages, write } = target;
   const journal = newJournal(plan);
+  journal.libraryId = plan.target.libraryId || null;
   const transferResults = /* @__PURE__ */ new Map();
   let dto = null;
   let saved = null;
@@ -16930,6 +16946,9 @@ async function runCopy(frozen, deps, { onStep } = {}) {
           }
           const info = await pages.fileInfo(uploaded.serverRelativeUrl);
           transferResults.set(asset.key, {
+            // The source file actually transferred — mapAsset() checks a
+            // part's own path against it before authorizing a patch.
+            sourcePath: asset.sourcePath,
             path: uploaded.serverRelativeUrl,
             ids: {
               siteId: info?.SiteId,
@@ -17075,40 +17094,24 @@ async function discardCopy(journal, { target } = {}) {
   const recycled = [];
   const leftovers = [];
   if (!journal || journal.createdBy !== "this run") return { recycled, leftovers };
-  async function pathFromId() {
-    try {
-      const [dto, library] = await Promise.all([pages.getPage(journal.pageId), pages.sitePagesLibrary()]);
-      const root2 = String(library?.rootPath || "").replace(/\/+$/, "");
-      const name = dto?.FileName || "";
-      if (root2 && name) return `${root2}/${name}`;
-      leftovers.push({ path: `(page id ${journal.pageId})`, error: "its current file name could not be read" });
-    } catch (err) {
-      leftovers.push({ path: `(page id ${journal.pageId})`, error: err?.message || String(err) });
-    }
-    return "";
-  }
-  let currentPath = journal.currentPath;
+  const pageLabel = journal.currentPath || `(page id ${journal.pageId})`;
   if (journal.pageId) {
-    if (!currentPath) {
-      currentPath = await pathFromId();
-    } else {
-      let idAtPath = null;
-      try {
-        idAtPath = await pages.fileItemId(currentPath);
-      } catch (err) {
-        leftovers.push({ path: currentPath, error: err?.message || String(err) });
-        currentPath = "";
-      }
-      if (currentPath && Number(idAtPath) !== Number(journal.pageId)) currentPath = await pathFromId();
-    }
-  }
-  if (currentPath) {
     try {
-      await pages.recycleFile(currentPath);
-      recycled.push(currentPath);
+      const libraryId = journal.libraryId || (await pages.sitePagesLibrary())?.id;
+      if (!libraryId) throw new Error("the Site Pages library could not be read");
+      const fileRef = await pages.itemFileRef(libraryId, journal.pageId);
+      if (fileRef !== null) {
+        await pages.recycleItem(libraryId, journal.pageId);
+        recycled.push(fileRef || pageLabel);
+      }
     } catch (err) {
-      leftovers.push({ path: currentPath, error: err?.message || String(err) });
+      leftovers.push({ path: pageLabel, error: err?.message || String(err) });
     }
+  } else if (journal.currentPath) {
+    leftovers.push({
+      path: journal.currentPath,
+      error: "not recycled: its item id was never confirmed, so the file at this path cannot be proven to be this copy"
+    });
   }
   const fileAssets = (journal.assets || []).filter((a) => a.kind === "file" && a.confirmed);
   for (const asset of fileAssets) {
@@ -17119,20 +17122,8 @@ async function discardCopy(journal, { target } = {}) {
       leftovers.push({ path: asset.path, error: err?.message || String(err) });
     }
   }
-  const folderAssets = (journal.assets || []).filter((a) => a.kind === "folder" && a.confirmed && a.recyclable).sort((a, b) => b.path.split("/").length - a.path.split("/").length);
-  for (const folder of folderAssets) {
-    try {
-      const remaining = await pages.folderItemCount(folder.path);
-      if (remaining === null) continue;
-      if (remaining > 0) {
-        leftovers.push({ path: folder.path, error: `not recycled: it still holds ${remaining} item(s) this run did not confirm creating` });
-        continue;
-      }
-      await pages.recycleFolder(folder.path);
-      recycled.push(folder.path);
-    } catch (err) {
-      leftovers.push({ path: folder.path, error: err?.message || String(err) });
-    }
+  for (const folder of (journal.assets || []).filter((a) => a.kind === "folder" && a.confirmed && a.recyclable)) {
+    leftovers.push({ path: folder.path, error: "asset folder left in place: a folder is recycled with everything in it, including files this run did not create" });
   }
   return { recycled, leftovers };
 }
@@ -18546,8 +18537,9 @@ var file_viewer_default = {
     }
     if (typeof props.webAbsoluteUrl === "string" && ctx2.target?.webUrl && underSource8(props.webAbsoluteUrl, ctx2)) {
       const relative = props.webAbsoluteUrl.startsWith("/") && !props.webAbsoluteUrl.startsWith("//");
-      const nextWeb = String(relative ? ctx2.target.webPath ?? "" : ctx2.target.webUrl).replace(/\/+$/, "");
-      if (nextWeb && props.webAbsoluteUrl.replace(/\/+$/, "") !== nextWeb) {
+      const nextWeb = relative ? String(ctx2.target.webPath ?? "").replace(/\/+$/, "") || "/" : String(ctx2.target.webUrl).replace(/\/+$/, "");
+      const currentWeb = props.webAbsoluteUrl.replace(/\/+$/, "") || (relative ? "/" : "");
+      if (nextWeb && currentWeb !== nextWeb) {
         props.webAbsoluteUrl = nextWeb;
         count += 1;
       }
