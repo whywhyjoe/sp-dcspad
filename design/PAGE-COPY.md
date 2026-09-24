@@ -480,3 +480,16 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   Remaining Phase 2: analyzers for Image (SharePoint file), Hero, Image gallery, Call to
   action, Countdown, File viewer, Events, Highlighted content, Quick chart, Sites — blocked
   on the editor configuration of `zz-pagecopy-shapes.aspx` (§11 Q7).
+- 2026-09-23 — **Phase 3 landed; status at close of session.** Per-part drop (with dynamic
+  consumer confirmation) and the legacy-HTML same-web path; docs (CLAUDE.md file map,
+  HANDOFF, tests/README); bundles rebuilt (Build #240). Full suites green under Edge:
+  smoke 76, monaco 50, config 33, hosted 15, darkmode 8, splash 3, ux 18, files 63,
+  workbench-hosted 10, workbench 167, workbench-edit 26, workbench-schema 138,
+  workbench-pages-copy 106 — 713. Tenant: every `zz-pagecopy-*` page/asset from the spike and
+  live checks recycled on the three webs EXCEPT what the open analyzer work needs:
+  `SitePages/zz-pagecopy-shapes.aspx`, `SiteAssets/zz-pagecopy-assets/`,
+  `Shared Documents/zz-pagecopy-docs/`, and the dev Site Pages column
+  `zz-pagecopy Category` (a column delete bypasses the recycle bin — left for a human).
+  Dev runs this branch (Build #237), not `main`. **Open:** the ten editor-shaped analyzers
+  (§11 Q7) — configure the shapes page, harvest with the spike's `q7-harvest`, write one
+  analyzer per shape, then re-prove a complete copy into TestSiteCollection as §9 asks.
