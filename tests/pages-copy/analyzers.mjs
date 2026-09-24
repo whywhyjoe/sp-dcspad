@@ -7,6 +7,16 @@ const MODULES = [
   './analyzers/quick-links.mjs',
   './analyzers/news.mjs',
   './analyzers/list-library.mjs',
+  './analyzers/image.mjs',
+  './analyzers/image-gallery.mjs',
+  './analyzers/hero.mjs',
+  './analyzers/call-to-action.mjs',
+  './analyzers/countdown.mjs',
+  './analyzers/file-viewer.mjs',
+  './analyzers/events.mjs',
+  './analyzers/highlighted-content.mjs',
+  './analyzers/quick-chart.mjs',
+  './analyzers/sites.mjs',
 ];
 
 export async function run({ browser, check, WB_URL }) {

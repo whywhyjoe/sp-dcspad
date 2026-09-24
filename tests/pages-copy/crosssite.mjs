@@ -244,8 +244,11 @@ export async function run({ browser, check, WB_URL }) {
     const transferred = main.plan.assets.filter((a) => a.destName);
     const byName = (n) => transferred.filter((a) => a.destName === n);
     const names = ['banner.jpg', 'thumb.png', 'chart.png', 'logo.png'];
-    return transferred.length === 4
+    // Other parts' files (Image, Hero, File viewer…) may transfer too now
+    // that their analyzers exist; every transfer lands in the one folder.
+    return transferred.length >= 4
       && names.every((n) => byName(n).length === 1 && byName(n)[0].destPath === `${destFolder}/${n}`)
+      && transferred.every((a) => a.destPath.startsWith(`${destFolder}/`))
       && main.plan.assets.every((a) => !a.retainReason);
   });
 

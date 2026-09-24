@@ -27,6 +27,16 @@ import text from './page-copy-analyzers/text.js';
 import quickLinks from './page-copy-analyzers/quick-links.js';
 import news from './page-copy-analyzers/news.js';
 import listLibrary from './page-copy-analyzers/list-library.js';
+import image from './page-copy-analyzers/image.js';
+import imageGallery from './page-copy-analyzers/image-gallery.js';
+import hero from './page-copy-analyzers/hero.js';
+import callToAction from './page-copy-analyzers/call-to-action.js';
+import countdown from './page-copy-analyzers/countdown.js';
+import fileViewer from './page-copy-analyzers/file-viewer.js';
+import events from './page-copy-analyzers/events.js';
+import highlightedContent from './page-copy-analyzers/highlighted-content.js';
+import quickChart from './page-copy-analyzers/quick-chart.js';
+import sites from './page-copy-analyzers/sites.js';
 
 export function createAnalyzers(list = []) {
   const byId = new Map();
@@ -43,4 +53,7 @@ export function createAnalyzers(list = []) {
 }
 
 // The registry the dialog uses.
-export const ANALYZERS = createAnalyzers([header, text, quickLinks, news, listLibrary]);
+export const ANALYZERS = createAnalyzers([
+  header, text, quickLinks, news, listLibrary, image, imageGallery, hero,
+  callToAction, countdown, fileViewer, events, highlightedContent, quickChart, sites,
+]);

@@ -1,14 +1,30 @@
 // Quick links analyzer (design/PAGE-COPY.md §5.1-5.2, web part id c70391ea).
 //
-// Shapes observed (§11 Q7 + the mock fixture, src/workbench/mock-pagecopy.js
-// 'c70391ea'): webPartData.properties.items[] holds each tile — an
-// editor-authored page's items carry only { id, description, altText,
-// thumbnailType, sourceItem: { itemType, fileExtension, progId } }; a
-// custom-thumbnail item (thumbnailType 3) additionally carries the file's
-// own { siteId, webId, listId, uniqueId } on the item itself. The rendered
-// thumbnail/icon lives in serverProcessedContent.imageSources, keyed
-// 'items[N].image.url' — an asset (§5.2 "asset → copied"). The link each
-// tile points at lives in serverProcessedContent.links, keyed
+// Shapes observed (§11 Q7, the real editor-authored capture with a custom
+// thumbnail — tests/pages-copy/fixtures/live-shapes-editor.json →
+// quickLinksCustomThumb — and the mock fixture, src/workbench/
+// mock-pagecopy.js 'c70391ea'): webPartData.properties.items[] holds each
+// tile. The real capture's item carries { sourceItem: { guids: { siteId,
+// webId, listId, uniqueId }, itemType, fileExtension, progId },
+// thumbnailType, id, description, image: { guids: { siteId, webId, listId,
+// uniqueId }, imageFit, minCanvasWidth }, altText,
+// rawPreviewImageMinCanvasWidth } — the thumbnail's own identity lives
+// under item.image.guids, never flat on the item; sourceItem.guids names
+// the link target instead and is never touched here (§5.2 "link" only
+// rewrites the URL, never the guids next to it — the same split the header
+// and image analyzers keep between a part's own asset and a part's own
+// link). The rendered thumbnail/icon lives in serverProcessedContent.
+// imageSources, keyed 'items[N].image.url' — an asset (§5.2 "asset →
+// copied"), whose identity mirrors onto serverProcessedContent.
+// customMetadata[same key] (the real capture's key casing is lower-case:
+// siteid/webid/listid/uniqueid, plus mincanvaswidth/fixedwidth that are
+// never touched) — the same "primary customMetadata, properties/item
+// fallback" split image.js uses, so itemIds() below resolves whichever
+// location actually carries the ids rather than assuming one shape:
+// customMetadata first, then item.image.guids, then a flat item.{siteId,
+// webId,listId,uniqueId} (the hand-built mock's shape, kept working so the
+// mock fixture never needs to model the real nesting). The link each tile
+// points at lives in serverProcessedContent.links, keyed
 // 'items[N].sourceItem.url' — a link into the source web when it resolves
 // there (§5.2 "link"), never a ref when it points elsewhere (e.g. the stock
 // go.microsoft.com fwlinks on out-of-the-box pages). links.baseUrl names the
@@ -43,13 +59,69 @@ function itemIndex(key) {
   return m ? Number(m[1]) : null;
 }
 
-function itemIds(item) {
+// Resolves the canonical id keys to whichever key names them in a
+// case-insensitive object (customMetadata's real capture uses lower-case
+// siteid/webid/listid/uniqueid; item.image.guids and the mock's flat item
+// use camelCase) — never assumed, the same convention image.js's
+// customImageIds() uses.
+function idKeyMap(obj) {
+  const keyMap = {};
+  if (obj && typeof obj === 'object') {
+    for (const actualKey of Object.keys(obj)) {
+      const lower = actualKey.toLowerCase();
+      if (lower === 'siteid') keyMap.siteId = actualKey;
+      else if (lower === 'webid') keyMap.webId = actualKey;
+      else if (lower === 'listid') keyMap.listId = actualKey;
+      else if (lower === 'uniqueid') keyMap.uniqueId = actualKey;
+    }
+  }
+  return keyMap;
+}
+
+function readIds(obj) {
+  const keyMap = idKeyMap(obj);
   return {
-    siteId: item?.siteId,
-    webId: item?.webId,
-    listId: item?.listId,
-    uniqueId: item?.uniqueId,
+    siteId: keyMap.siteId ? obj[keyMap.siteId] : undefined,
+    webId: keyMap.webId ? obj[keyMap.webId] : undefined,
+    listId: keyMap.listId ? obj[keyMap.listId] : undefined,
+    uniqueId: keyMap.uniqueId ? obj[keyMap.uniqueId] : undefined,
   };
+}
+
+function hasAnyId(ids) {
+  return Boolean(ids) && (ids.siteId !== undefined || ids.webId !== undefined || ids.listId !== undefined || ids.uniqueId !== undefined);
+}
+
+// The thumbnail's own identity, first location that actually carries it
+// wins (never merged, so a stale mirror can't blend with a fresh one):
+// serverProcessedContent.customMetadata[same imageSources key] is primary,
+// item.image.guids is the real capture's own mirror, and a flat
+// item.{siteId,webId,listId,uniqueId} is the hand-built mock's shape.
+function itemIds(customEntry, item) {
+  const fromCustom = readIds(customEntry);
+  if (hasAnyId(fromCustom)) return fromCustom;
+  const fromImageGuids = readIds(item?.image?.guids);
+  if (hasAnyId(fromImageGuids)) return fromImageGuids;
+  return readIds(item);
+}
+
+// Writes only the ids a mapping supplies into whichever keys `obj` actually
+// has (never inventing a field) — returns how many values actually changed.
+// Compares through normalizeGuid so a differently-formatted-but-equal guid
+// (braces, case) is never counted as a change.
+function writeIds(obj, ids, normalizeGuid) {
+  const keyMap = idKeyMap(obj);
+  let count = 0;
+  for (const idKey of ['siteId', 'webId', 'listId', 'uniqueId']) {
+    const actualKey = keyMap[idKey];
+    if (!actualKey) continue;
+    const nextId = ids?.[idKey];
+    if (nextId !== undefined && normalizeGuid(obj[actualKey]) !== normalizeGuid(nextId)) {
+      obj[actualKey] = nextId;
+      count += 1;
+    }
+  }
+  return count;
 }
 
 export default {
@@ -68,11 +140,12 @@ export default {
       if (!underSource(value, ctx)) continue;
       const idx = itemIndex(key);
       const item = idx != null ? items[idx] : undefined;
+      const customEntry = spc.customMetadata?.[key];
       refs.push({
         path: ['webPartData', 'serverProcessedContent', 'imageSources', key],
         value,
         class: 'asset',
-        asset: { path: sourceRelativePath(value), ids: itemIds(item) },
+        asset: { path: sourceRelativePath(value), ids: itemIds(customEntry, item) },
       });
     }
 
@@ -125,7 +198,8 @@ export default {
         if (!underSource(value, ctx)) continue;
         const idx = itemIndex(key);
         const item = idx != null ? items[idx] : undefined;
-        const mapping = ctx.mapAsset({ path: sourceRelativePath(value), ids: itemIds(item) });
+        const customEntry = spc.customMetadata?.[key];
+        const mapping = ctx.mapAsset({ path: sourceRelativePath(value), ids: itemIds(customEntry, item) });
         if (!mapping) continue;
         const isAbsolute = /^https?:\/\//i.test(String(value));
         const next = isAbsolute && mapping.url ? mapping.url : mapping.path;
@@ -133,13 +207,13 @@ export default {
           imageSources[key] = next;
           count += 1;
         }
-        if (item && mapping.ids) {
-          for (const idKey of ['siteId', 'webId', 'listId', 'uniqueId']) {
-            const nextId = mapping.ids[idKey];
-            if (nextId !== undefined && ctx.normalizeGuid(item[idKey]) !== ctx.normalizeGuid(nextId)) {
-              item[idKey] = nextId;
-              count += 1;
-            }
+        // The thumbnail's identity mirrors across up to three places — only
+        // whichever of them actually exist on this instance get written.
+        if (mapping.ids) {
+          count += writeIds(customEntry, mapping.ids, ctx.normalizeGuid);
+          if (item) {
+            count += writeIds(item.image?.guids, mapping.ids, ctx.normalizeGuid);
+            count += writeIds(item, mapping.ids, ctx.normalizeGuid);
           }
         }
       }
