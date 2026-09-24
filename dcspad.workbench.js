@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "240" : "dev";
-var injectedRevision = true ? "7ff0f57a" : "";
+var injectedBuild = true ? "246" : "dev";
+var injectedRevision = true ? "f23891f7" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -17363,13 +17363,51 @@ function itemIndex(key2) {
   const m = /^items\[(\d+)\]/.exec(String(key2 || ""));
   return m ? Number(m[1]) : null;
 }
-function itemIds(item2) {
+function idKeyMap(obj) {
+  const keyMap = {};
+  if (obj && typeof obj === "object") {
+    for (const actualKey of Object.keys(obj)) {
+      const lower5 = actualKey.toLowerCase();
+      if (lower5 === "siteid") keyMap.siteId = actualKey;
+      else if (lower5 === "webid") keyMap.webId = actualKey;
+      else if (lower5 === "listid") keyMap.listId = actualKey;
+      else if (lower5 === "uniqueid") keyMap.uniqueId = actualKey;
+    }
+  }
+  return keyMap;
+}
+function readIds(obj) {
+  const keyMap = idKeyMap(obj);
   return {
-    siteId: item2?.siteId,
-    webId: item2?.webId,
-    listId: item2?.listId,
-    uniqueId: item2?.uniqueId
+    siteId: keyMap.siteId ? obj[keyMap.siteId] : void 0,
+    webId: keyMap.webId ? obj[keyMap.webId] : void 0,
+    listId: keyMap.listId ? obj[keyMap.listId] : void 0,
+    uniqueId: keyMap.uniqueId ? obj[keyMap.uniqueId] : void 0
   };
+}
+function hasAnyId(ids) {
+  return Boolean(ids) && (ids.siteId !== void 0 || ids.webId !== void 0 || ids.listId !== void 0 || ids.uniqueId !== void 0);
+}
+function itemIds(customEntry, item2) {
+  const fromCustom = readIds(customEntry);
+  if (hasAnyId(fromCustom)) return fromCustom;
+  const fromImageGuids = readIds(item2?.image?.guids);
+  if (hasAnyId(fromImageGuids)) return fromImageGuids;
+  return readIds(item2);
+}
+function writeIds(obj, ids, normalizeGuid2) {
+  const keyMap = idKeyMap(obj);
+  let count = 0;
+  for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+    const actualKey = keyMap[idKey];
+    if (!actualKey) continue;
+    const nextId = ids?.[idKey];
+    if (nextId !== void 0 && normalizeGuid2(obj[actualKey]) !== normalizeGuid2(nextId)) {
+      obj[actualKey] = nextId;
+      count += 1;
+    }
+  }
+  return count;
 }
 var quick_links_default = {
   id: "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd",
@@ -17385,11 +17423,12 @@ var quick_links_default = {
       if (!underSource2(value, ctx2)) continue;
       const idx = itemIndex(key2);
       const item2 = idx != null ? items[idx] : void 0;
+      const customEntry = spc.customMetadata?.[key2];
       refs.push({
         path: ["webPartData", "serverProcessedContent", "imageSources", key2],
         value,
         class: "asset",
-        asset: { path: sourceRelativePath2(value), ids: itemIds(item2) }
+        asset: { path: sourceRelativePath2(value), ids: itemIds(customEntry, item2) }
       });
     }
     if (links.baseUrl && underSource2(links.baseUrl, ctx2)) {
@@ -17436,7 +17475,8 @@ var quick_links_default = {
         if (!underSource2(value, ctx2)) continue;
         const idx = itemIndex(key2);
         const item2 = idx != null ? items[idx] : void 0;
-        const mapping = ctx2.mapAsset({ path: sourceRelativePath2(value), ids: itemIds(item2) });
+        const customEntry = spc.customMetadata?.[key2];
+        const mapping = ctx2.mapAsset({ path: sourceRelativePath2(value), ids: itemIds(customEntry, item2) });
         if (!mapping) continue;
         const isAbsolute = /^https?:\/\//i.test(String(value));
         const next2 = isAbsolute && mapping.url ? mapping.url : mapping.path;
@@ -17444,13 +17484,18 @@ var quick_links_default = {
           imageSources[key2] = next2;
           count += 1;
         }
-        if (item2 && mapping.ids) {
-          for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
-            const nextId = mapping.ids[idKey];
-            if (nextId !== void 0 && ctx2.normalizeGuid(item2[idKey]) !== ctx2.normalizeGuid(nextId)) {
-              item2[idKey] = nextId;
-              count += 1;
-            }
+        if (typeof props.imagePicker === "string" && underSource2(props.imagePicker, ctx2) && sourceRelativePath2(props.imagePicker).toLowerCase() === sourceRelativePath2(value).toLowerCase()) {
+          const picked = /^https?:\/\//i.test(props.imagePicker) && mapping.url ? mapping.url : mapping.path;
+          if (picked !== void 0 && picked !== props.imagePicker) {
+            props.imagePicker = picked;
+            count += 1;
+          }
+        }
+        if (mapping.ids) {
+          count += writeIds(customEntry, mapping.ids, ctx2.normalizeGuid);
+          if (item2) {
+            count += writeIds(item2.image?.guids, mapping.ids, ctx2.normalizeGuid);
+            count += writeIds(item2, mapping.ids, ctx2.normalizeGuid);
           }
         }
       }
@@ -17655,6 +17700,1147 @@ var list_library_default = {
   }
 };
 
+// ../src/workbench/page-copy-analyzers/image.js
+function decodePath4(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function splitPath3(raw) {
+  const m = /^([^?#]*)/.exec(raw);
+  return m ? m[1] : raw;
+}
+function underSource3(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath4(raw), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath4(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath3(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath4(splitPath3(raw));
+  try {
+    return decodePath4(splitPath3(new URL(raw).pathname));
+  } catch {
+    return raw;
+  }
+}
+function customImageIds(customImageSource) {
+  const keyMap = {};
+  if (customImageSource && typeof customImageSource === "object") {
+    for (const actualKey of Object.keys(customImageSource)) {
+      const lower5 = actualKey.toLowerCase();
+      if (lower5 === "siteid") keyMap.siteId = actualKey;
+      else if (lower5 === "webid") keyMap.webId = actualKey;
+      else if (lower5 === "listid") keyMap.listId = actualKey;
+      else if (lower5 === "uniqueid") keyMap.uniqueId = actualKey;
+    }
+  }
+  return keyMap;
+}
+function imageIds(customImageSource, props) {
+  const keyMap = customImageIds(customImageSource);
+  if (Object.keys(keyMap).length) {
+    return {
+      siteId: keyMap.siteId ? customImageSource[keyMap.siteId] : void 0,
+      webId: keyMap.webId ? customImageSource[keyMap.webId] : void 0,
+      listId: keyMap.listId ? customImageSource[keyMap.listId] : void 0,
+      uniqueId: keyMap.uniqueId ? customImageSource[keyMap.uniqueId] : void 0
+    };
+  }
+  return { siteId: props?.siteId, webId: props?.webId, listId: props?.listId, uniqueId: props?.uniqueId };
+}
+var image_default = {
+  id: "d1d91016-032f-456d-98a4-721247c305e8",
+  label: "Image",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const spc = instance?.webPartData?.serverProcessedContent || {};
+    const imageSources = spc.imageSources || {};
+    const refs = [];
+    const imageValue = imageSources.imageSource;
+    if (imageValue && underSource3(imageValue, ctx2)) {
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "imageSources", "imageSource"],
+        value: imageValue,
+        class: "asset",
+        asset: { path: sourceRelativePath3(imageValue), ids: imageIds(spc.customMetadata?.imageSource, props) }
+      });
+    }
+    const linkValue = props.linkUrl;
+    if (linkValue && underSource3(linkValue, ctx2)) {
+      refs.push({
+        path: ["webPartData", "properties", "linkUrl"],
+        value: linkValue,
+        class: "link"
+      });
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const spc = instance?.webPartData?.serverProcessedContent;
+    let count = 0;
+    if (props && spc) {
+      const imageSources = spc.imageSources;
+      const imageValue = imageSources?.imageSource;
+      if (imageValue && underSource3(imageValue, ctx2)) {
+        const mapping = ctx2.mapAsset({ path: sourceRelativePath3(imageValue), ids: imageIds(spc.customMetadata?.imageSource, props) });
+        if (mapping && mapping.path !== void 0 && mapping.ids) {
+          const nextPath = /^https?:\/\//i.test(String(imageSources.imageSource)) && mapping.url ? mapping.url : mapping.path;
+          if (imageSources.imageSource !== nextPath) {
+            imageSources.imageSource = nextPath;
+            count += 1;
+          }
+          const customImageSource = spc.customMetadata?.imageSource;
+          if (customImageSource && typeof customImageSource === "object") {
+            const keyMap = customImageIds(customImageSource);
+            for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+              const actualKey = keyMap[idKey];
+              if (!actualKey) continue;
+              const nextId = mapping.ids[idKey];
+              if (nextId !== void 0 && ctx2.normalizeGuid(customImageSource[actualKey]) !== ctx2.normalizeGuid(nextId)) {
+                customImageSource[actualKey] = nextId;
+                count += 1;
+              }
+            }
+          }
+          for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+            if (!(idKey in props)) continue;
+            const nextId = mapping.ids[idKey];
+            if (nextId !== void 0 && ctx2.normalizeGuid(props[idKey]) !== ctx2.normalizeGuid(nextId)) {
+              props[idKey] = nextId;
+              count += 1;
+            }
+          }
+        }
+      }
+      const linkValue = props.linkUrl;
+      if (linkValue && underSource3(linkValue, ctx2)) {
+        const mapped = ctx2.mapLink(linkValue);
+        if (mapped != null && mapped !== linkValue) {
+          props.linkUrl = mapped;
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/image-gallery.js
+var PER_IMAGE_LIST_SOURCE_TYPE = 1;
+function decodePath5(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function splitPath4(raw) {
+  const m = /^([^?#]*)/.exec(raw);
+  return m ? m[1] : raw;
+}
+function underSource4(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath5(raw), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath5(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath4(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath5(splitPath4(raw));
+  try {
+    return decodePath5(splitPath4(new URL(raw).pathname));
+  } catch {
+    return raw;
+  }
+}
+var IMAGE_URL_KEY = /^images\[(\d+)\]\.url$/;
+function imageIndex(key2) {
+  const m = IMAGE_URL_KEY.exec(String(key2 || ""));
+  return m ? Number(m[1]) : null;
+}
+function imageIds2(item2) {
+  return {
+    siteId: item2?.siteId,
+    webId: item2?.webId,
+    listId: item2?.listId,
+    uniqueId: item2?.id
+  };
+}
+var CUSTOM_META_ID_KEYS = [
+  ["siteId", "siteid"],
+  ["webId", "webid"],
+  ["listId", "listid"],
+  ["uniqueId", "uniqueid"]
+];
+var image_gallery_default = {
+  id: "af8be689-990e-492a-81f7-ba3e4cd3ed9c",
+  label: "Image gallery",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const spc = instance?.webPartData?.serverProcessedContent || {};
+    const images = Array.isArray(props.images) ? props.images : [];
+    const imageSources = spc.imageSources || {};
+    const refs = [];
+    for (const [key2, value] of Object.entries(imageSources)) {
+      if (imageIndex(key2) == null) continue;
+      if (!underSource4(value, ctx2)) continue;
+      const idx = imageIndex(key2);
+      const item2 = images[idx];
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "imageSources", key2],
+        value,
+        class: "asset",
+        asset: { path: sourceRelativePath4(value), ids: imageIds2(item2) }
+      });
+    }
+    const sourceType = props.imageSourceType;
+    if (sourceType !== void 0 && sourceType !== PER_IMAGE_LIST_SOURCE_TYPE) {
+      refs.push({
+        path: ["webPartData", "properties", "imageSourceType"],
+        value: sourceType,
+        class: "data",
+        note: "library/folder source \u2014 images resolve at render time against whatever list/folder this names, not the per-image list"
+      });
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const spc = instance?.webPartData?.serverProcessedContent;
+    const imageSources = spc?.imageSources;
+    if (!props || !spc || !imageSources) return 0;
+    const images = Array.isArray(props.images) ? props.images : [];
+    const customMetadata = spc.customMetadata;
+    let count = 0;
+    for (const key2 of Object.keys(imageSources)) {
+      const idx = imageIndex(key2);
+      if (idx == null) continue;
+      const value = imageSources[key2];
+      if (!underSource4(value, ctx2)) continue;
+      const item2 = images[idx];
+      const mapping = ctx2.mapAsset({ path: sourceRelativePath4(value), ids: imageIds2(item2) });
+      if (!mapping || mapping.path === void 0 || !mapping.ids) continue;
+      const nextPath = /^https?:\/\//i.test(String(imageSources[key2])) && mapping.url ? mapping.url : mapping.path;
+      if (imageSources[key2] !== nextPath) {
+        imageSources[key2] = nextPath;
+        count += 1;
+      }
+      const cm = customMetadata && typeof customMetadata === "object" ? customMetadata[key2] : void 0;
+      if (cm && typeof cm === "object") {
+        for (const [idKey, cmKey] of CUSTOM_META_ID_KEYS) {
+          if (!(cmKey in cm)) continue;
+          const nextId = mapping.ids[idKey];
+          if (nextId !== void 0 && ctx2.normalizeGuid(cm[cmKey]) !== ctx2.normalizeGuid(nextId)) {
+            cm[cmKey] = nextId;
+            count += 1;
+          }
+        }
+      }
+      if (item2) {
+        for (const idKey of ["siteId", "webId", "listId"]) {
+          if (!(idKey in item2)) continue;
+          const nextId = mapping.ids[idKey];
+          if (nextId !== void 0 && ctx2.normalizeGuid(item2[idKey]) !== ctx2.normalizeGuid(nextId)) {
+            item2[idKey] = nextId;
+            count += 1;
+          }
+        }
+        if ("id" in item2) {
+          const nextId = mapping.ids.uniqueId;
+          if (nextId !== void 0 && ctx2.normalizeGuid(item2.id) !== ctx2.normalizeGuid(nextId)) {
+            item2.id = nextId;
+            count += 1;
+          }
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/hero.js
+var IMAGE_KEY = /^content\[(\d+)\]\.image\.url$/;
+var PREVIEW_KEY = /^content\[(\d+)\]\.previewImage\.url$/;
+var LINK_KEY = /^content\[(\d+)\]\.link$/;
+var CUSTOM_ID_ALIASES = {
+  siteId: ["siteId", "siteid"],
+  webId: ["webId", "webid"],
+  listId: ["listId", "listid"],
+  uniqueId: ["uniqueId", "uniqueid"]
+};
+var IMAGE_PROP_ALIASES = {
+  siteId: ["siteId"],
+  webId: ["webId"],
+  listId: ["listId"],
+  uniqueId: ["id"]
+};
+function decodePath6(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function underSource5(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath6(raw), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath6(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath5(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath6(raw.split(/[?#]/)[0]);
+  try {
+    return decodeURIComponent(new URL(raw).pathname);
+  } catch {
+    return raw;
+  }
+}
+function tileIndex(key2) {
+  const m = /^content\[(\d+)\]/.exec(String(key2 || ""));
+  return m ? Number(m[1]) : null;
+}
+function normalizeCustomIds(meta) {
+  if (!meta || typeof meta !== "object") return null;
+  return {
+    siteId: meta.siteId ?? meta.siteid,
+    webId: meta.webId ?? meta.webid,
+    listId: meta.listId ?? meta.listid,
+    uniqueId: meta.uniqueId ?? meta.uniqueid
+  };
+}
+function imageIds3(image) {
+  if (!image || typeof image !== "object") return null;
+  return { siteId: image.siteId, webId: image.webId, listId: image.listId, uniqueId: image.id };
+}
+function patchIdBag(bag, mapping, ctx2, aliasMap) {
+  if (!bag || typeof bag !== "object") return 0;
+  let count = 0;
+  for (const [idKey, aliases] of Object.entries(aliasMap)) {
+    const nextId = mapping.ids[idKey];
+    if (nextId === void 0) continue;
+    for (const alias of aliases) {
+      if (!(alias in bag)) continue;
+      if (ctx2.normalizeGuid(bag[alias]) !== ctx2.normalizeGuid(nextId)) {
+        bag[alias] = nextId;
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+function swapGuids(value, pairs, ctx2) {
+  let out = String(value);
+  for (const [from, to] of pairs) {
+    const f = ctx2.normalizeGuid(from);
+    const t = ctx2.normalizeGuid(to);
+    if (!f || !t || f === t) continue;
+    for (const [a, b] of [[f, t], [f.replace(/-/g, ""), t.replace(/-/g, "")]]) {
+      out = out.replace(new RegExp(a, "gi"), b);
+    }
+  }
+  return out;
+}
+function patchDerivedUrls(image, sourceIds, mapping, ctx2) {
+  if (!image || typeof image !== "object") return 0;
+  let n = 0;
+  if (typeof image.resolvedUrl === "string" && underSource5(image.resolvedUrl, ctx2)) {
+    const next2 = /^https?:\/\//i.test(image.resolvedUrl) && mapping.url ? mapping.url : mapping.path;
+    if (next2 && next2 !== image.resolvedUrl) {
+      image.resolvedUrl = next2;
+      n += 1;
+    }
+  }
+  if (typeof image.imageUrl === "string" && sourceIds?.uniqueId && image.imageUrl.toLowerCase().includes(ctx2.normalizeGuid(sourceIds.uniqueId))) {
+    const pairs = ["siteId", "webId", "listId", "uniqueId"].map((k) => [sourceIds[k], mapping.ids[k]]);
+    const next2 = swapGuids(image.imageUrl, pairs, ctx2);
+    if (next2 !== image.imageUrl) {
+      image.imageUrl = next2;
+      n += 1;
+    }
+  }
+  return n;
+}
+var hero_default = {
+  id: "c4bd7b2f-7b6e-4599-8485-16504575f590",
+  label: "Hero",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const spc = instance?.webPartData?.serverProcessedContent || {};
+    const content = Array.isArray(props.content) ? props.content : [];
+    const imageSources = spc.imageSources || {};
+    const links = spc.links || {};
+    const customMetadata = spc.customMetadata || {};
+    const refs = [];
+    for (const [key2, value] of Object.entries(imageSources)) {
+      if (!underSource5(value, ctx2)) continue;
+      const idx = tileIndex(key2);
+      const item2 = idx != null ? content[idx] : void 0;
+      if (IMAGE_KEY.test(key2)) {
+        const ids = normalizeCustomIds(customMetadata[key2]) || imageIds3(item2?.image) || {};
+        refs.push({
+          path: ["webPartData", "serverProcessedContent", "imageSources", key2],
+          value,
+          class: "asset",
+          asset: { path: sourceRelativePath5(value), ids }
+        });
+      } else if (PREVIEW_KEY.test(key2)) {
+        refs.push({
+          path: ["webPartData", "serverProcessedContent", "imageSources", key2],
+          value,
+          class: "config",
+          note: "auto-selected preview image taken from the linked item, not a file the tile owns"
+        });
+      }
+    }
+    for (const [key2, value] of Object.entries(links)) {
+      if (!LINK_KEY.test(key2)) continue;
+      if (!underSource5(value, ctx2)) continue;
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "links", key2],
+        value,
+        class: "link"
+      });
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const spc = instance?.webPartData?.serverProcessedContent;
+    if (!props || !spc) return 0;
+    const content = Array.isArray(props.content) ? props.content : [];
+    const imageSources = spc.imageSources;
+    const links = spc.links;
+    const customMetadata = spc.customMetadata;
+    let count = 0;
+    if (imageSources) {
+      for (const key2 of Object.keys(imageSources)) {
+        if (!IMAGE_KEY.test(key2)) continue;
+        const value = imageSources[key2];
+        if (!underSource5(value, ctx2)) continue;
+        const idx = tileIndex(key2);
+        const item2 = idx != null ? content[idx] : void 0;
+        const meta = customMetadata?.[key2];
+        const ids = normalizeCustomIds(meta) || imageIds3(item2?.image) || {};
+        const mapping = ctx2.mapAsset({ path: sourceRelativePath5(value), ids });
+        if (!mapping || mapping.path === void 0 || !mapping.ids) continue;
+        const nextPath = /^https?:\/\//i.test(String(imageSources[key2])) && mapping.url ? mapping.url : mapping.path;
+        if (imageSources[key2] !== nextPath) {
+          imageSources[key2] = nextPath;
+          count += 1;
+        }
+        const sourceIds = { ...ids };
+        count += patchIdBag(meta, mapping, ctx2, CUSTOM_ID_ALIASES);
+        count += patchIdBag(item2?.image, mapping, ctx2, IMAGE_PROP_ALIASES);
+        count += patchDerivedUrls(item2?.image, sourceIds, mapping, ctx2);
+      }
+    }
+    if (links) {
+      for (const key2 of Object.keys(links)) {
+        if (!LINK_KEY.test(key2)) continue;
+        const value = links[key2];
+        if (!underSource5(value, ctx2)) continue;
+        const mapped = ctx2.mapLink(value);
+        if (mapped != null && mapped !== value) {
+          links[key2] = mapped;
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/call-to-action.js
+function decodePath7(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function underSource6(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath7(raw), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath7(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath6(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath7(raw.split(/[?#]/)[0]);
+  try {
+    return decodeURIComponent(new URL(raw).pathname);
+  } catch {
+    return raw;
+  }
+}
+function imageIds4(props) {
+  const info = props?.image?.itemInfo;
+  return { siteId: info?.siteId, webId: info?.webId, listId: info?.listId, uniqueId: info?.uniqueId };
+}
+var call_to_action_default = {
+  id: "df8e44e7-edd5-46d5-90da-aca1539313b8",
+  label: "Call to action",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const spc = instance?.webPartData?.serverProcessedContent || {};
+    const imageSources = spc.imageSources || {};
+    const links = spc.links || {};
+    const refs = [];
+    const bgValue = imageSources["image.url"];
+    if (bgValue && underSource6(bgValue, ctx2)) {
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "imageSources", "image.url"],
+        value: bgValue,
+        class: "asset",
+        asset: { path: sourceRelativePath6(bgValue), ids: imageIds4(props) }
+      });
+    }
+    const linkValue = links["button.linkUrl"];
+    if (linkValue && underSource6(linkValue, ctx2)) {
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "links", "button.linkUrl"],
+        value: linkValue,
+        class: "link"
+      });
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const spc = instance?.webPartData?.serverProcessedContent;
+    if (!props || !spc) return 0;
+    const imageSources = spc.imageSources;
+    const links = spc.links;
+    let count = 0;
+    if (imageSources) {
+      const bgValue = imageSources["image.url"];
+      if (bgValue && underSource6(bgValue, ctx2)) {
+        const mapping = ctx2.mapAsset({ path: sourceRelativePath6(bgValue), ids: imageIds4(props) });
+        if (mapping && mapping.path !== void 0 && mapping.ids) {
+          const isAbsolute = /^https?:\/\//i.test(String(bgValue));
+          const next2 = isAbsolute && mapping.url ? mapping.url : mapping.path;
+          if (next2 !== void 0 && next2 !== bgValue) {
+            imageSources["image.url"] = next2;
+            count += 1;
+          }
+          const itemInfo = props.image?.itemInfo;
+          if (itemInfo) {
+            for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+              if (!(idKey in itemInfo)) continue;
+              const nextId = mapping.ids[idKey];
+              if (nextId !== void 0 && ctx2.normalizeGuid(itemInfo[idKey]) !== ctx2.normalizeGuid(nextId)) {
+                itemInfo[idKey] = nextId;
+                count += 1;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (links) {
+      const linkValue = links["button.linkUrl"];
+      if (linkValue && underSource6(linkValue, ctx2)) {
+        const mapped = ctx2.mapLink(linkValue);
+        if (mapped != null && mapped !== linkValue) {
+          links["button.linkUrl"] = mapped;
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/countdown.js
+function decodePath8(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function splitPath5(raw) {
+  const m = /^([^?#]*)/.exec(raw);
+  return m ? m[1] : raw;
+}
+function underSource7(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath8(raw), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath8(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath7(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath8(splitPath5(raw));
+  try {
+    return decodePath8(splitPath5(new URL(raw).pathname));
+  } catch {
+    return raw;
+  }
+}
+function backgroundIds(bg) {
+  return {
+    siteId: bg?.siteId,
+    webId: bg?.webId,
+    listId: bg?.listId,
+    uniqueId: bg?.id
+  };
+}
+var countdown_default = {
+  id: "62cac389-787f-495d-beca-e11786162ef4",
+  label: "Countdown timer",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const spc = instance?.webPartData?.serverProcessedContent || {};
+    const imageSources = spc.imageSources || {};
+    const refs = [];
+    const bgValue = imageSources["backgroundImage.url"];
+    if (bgValue && underSource7(bgValue, ctx2)) {
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "imageSources", "backgroundImage.url"],
+        value: bgValue,
+        class: "asset",
+        asset: { path: sourceRelativePath7(bgValue), ids: backgroundIds(props.backgroundImage) }
+      });
+    }
+    const buttonURL = props.buttonURL;
+    if (typeof buttonURL === "string" && buttonURL && underSource7(buttonURL, ctx2)) {
+      refs.push({
+        path: ["webPartData", "properties", "buttonURL"],
+        value: buttonURL,
+        class: "link",
+        note: "call-to-action link into the source web"
+      });
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const spc = instance?.webPartData?.serverProcessedContent;
+    const imageSources = spc?.imageSources;
+    let count = 0;
+    if (props && imageSources) {
+      const bgValue = imageSources["backgroundImage.url"];
+      if (bgValue && underSource7(bgValue, ctx2)) {
+        const bg = props.backgroundImage;
+        const mapping = ctx2.mapAsset({ path: sourceRelativePath7(bgValue), ids: backgroundIds(bg) });
+        if (mapping && mapping.path !== void 0 && mapping.ids) {
+          const isAbsolute = /^https?:\/\//i.test(String(bgValue));
+          const next2 = isAbsolute && mapping.url ? mapping.url : mapping.path;
+          if (next2 !== void 0 && next2 !== bgValue) {
+            imageSources["backgroundImage.url"] = next2;
+            count += 1;
+          }
+          if (bg && typeof bg === "object") {
+            if ("id" in bg && mapping.ids.uniqueId !== void 0 && bg.id !== mapping.ids.uniqueId) {
+              bg.id = mapping.ids.uniqueId;
+              count += 1;
+            }
+            for (const idKey of ["siteId", "webId", "listId"]) {
+              if (!(idKey in bg)) continue;
+              const nextId = mapping.ids[idKey];
+              if (nextId !== void 0 && bg[idKey] !== nextId) {
+                bg[idKey] = nextId;
+                count += 1;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (props && typeof props.buttonURL === "string" && props.buttonURL && underSource7(props.buttonURL, ctx2)) {
+      const mapped = ctx2.mapLink ? ctx2.mapLink(props.buttonURL) : null;
+      if (typeof mapped === "string" && mapped && mapped !== props.buttonURL) {
+        props.buttonURL = mapped;
+        count += 1;
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/file-viewer.js
+function decodePath9(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function splitPath6(raw) {
+  const m = /^([^?#]*)/.exec(String(raw ?? ""));
+  return m ? m[1] : raw;
+}
+function underSource8(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath9(splitPath6(raw)), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath9(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath8(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath9(splitPath6(raw));
+  try {
+    return decodePath9(splitPath6(new URL(raw).pathname));
+  } catch {
+    return raw;
+  }
+}
+function fileIds(props) {
+  return { siteId: props?.siteId, webId: props?.webId, listId: props?.listId, uniqueId: props?.uniqueId };
+}
+function identityInSourceWeb(ids, ctx2) {
+  const siteId = ctx2.sourceIds?.siteId;
+  const webId = ctx2.sourceIds?.webId;
+  if (!siteId && !webId) return true;
+  if (ids.siteId && siteId && ctx2.normalizeGuid(ids.siteId) !== siteId) return false;
+  if (ids.webId && webId && ctx2.normalizeGuid(ids.webId) !== webId) return false;
+  return true;
+}
+function sourceDocToken(value) {
+  const raw = String(value ?? "");
+  const m = /sourcedoc=(%7b|\{)?([0-9a-f-]{32,36})(%7d|\})?/i.exec(raw);
+  return m ? { full: m[0], prefix: m[1] || "", guid: m[2], suffix: m[3] || "" } : null;
+}
+var file_viewer_default = {
+  id: "b7dd04e1-19ce-4b24-9132-b60a1c2b910d",
+  label: "File and media",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const links = instance?.webPartData?.serverProcessedContent?.links || {};
+    const ids = fileIds(props);
+    const refs = [];
+    const fileUnderSource = Boolean(props.file) && underSource8(props.file, ctx2);
+    const serverRelUnderSource = Boolean(links.serverRelativeUrl) && underSource8(links.serverRelativeUrl, ctx2);
+    const wopiUnderSource = Boolean(links.wopiurl) && underSource8(links.wopiurl, ctx2);
+    const wopiToken = links.wopiurl ? sourceDocToken(links.wopiurl) : null;
+    const wopiMatchesFile = Boolean(wopiToken) && Boolean(ids.uniqueId) && ctx2.normalizeGuid(wopiToken.guid) === ctx2.normalizeGuid(ids.uniqueId) && identityInSourceWeb(ids, ctx2);
+    if (!fileUnderSource && !serverRelUnderSource && !wopiUnderSource && !wopiMatchesFile) return refs;
+    const canonicalPath = serverRelUnderSource && sourceRelativePath8(links.serverRelativeUrl) || fileUnderSource && sourceRelativePath8(props.file) || wopiUnderSource && !wopiToken && sourceRelativePath8(links.wopiurl) || "";
+    const asset = { path: canonicalPath, ids };
+    if (fileUnderSource) {
+      refs.push({ path: ["webPartData", "properties", "file"], value: props.file, class: "asset", asset });
+    }
+    if (serverRelUnderSource) {
+      refs.push({ path: ["webPartData", "serverProcessedContent", "links", "serverRelativeUrl"], value: links.serverRelativeUrl, class: "asset", asset });
+    }
+    if (wopiUnderSource || wopiMatchesFile) {
+      refs.push({ path: ["webPartData", "serverProcessedContent", "links", "wopiurl"], value: links.wopiurl, class: "asset", asset });
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const links = instance?.webPartData?.serverProcessedContent?.links;
+    if (!props) return 0;
+    const ids = fileIds(props);
+    const fileUnderSource = Boolean(props.file) && underSource8(props.file, ctx2);
+    const serverRelUnderSource = Boolean(links?.serverRelativeUrl) && underSource8(links.serverRelativeUrl, ctx2);
+    const canonicalPath = serverRelUnderSource && sourceRelativePath8(links.serverRelativeUrl) || fileUnderSource && sourceRelativePath8(props.file) || "";
+    if (!canonicalPath && !ids.uniqueId) return 0;
+    const mapping = ctx2.mapAsset({ path: canonicalPath, ids });
+    if (!mapping) return 0;
+    let count = 0;
+    if (fileUnderSource) {
+      const next2 = mapping.url !== void 0 ? mapping.url : mapping.path;
+      if (next2 !== void 0 && props.file !== next2) {
+        props.file = next2;
+        count += 1;
+      }
+    }
+    if (typeof props.webAbsoluteUrl === "string" && ctx2.target?.webUrl && underSource8(props.webAbsoluteUrl, ctx2)) {
+      const nextWeb = String(ctx2.target.webUrl).replace(/\/+$/, "");
+      if (props.webAbsoluteUrl.replace(/\/+$/, "") !== nextWeb) {
+        props.webAbsoluteUrl = nextWeb;
+        count += 1;
+      }
+    }
+    if (mapping.ids) {
+      for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+        if (!(idKey in props)) continue;
+        const nextId = mapping.ids[idKey];
+        if (nextId !== void 0 && props[idKey] !== nextId) {
+          props[idKey] = nextId;
+          count += 1;
+        }
+      }
+    }
+    if (links) {
+      if (serverRelUnderSource && mapping.path !== void 0 && links.serverRelativeUrl !== mapping.path) {
+        links.serverRelativeUrl = mapping.path;
+        count += 1;
+      }
+      if (links.wopiurl) {
+        const original = links.wopiurl;
+        const token = sourceDocToken(original);
+        const tokenMatches = Boolean(token) && Boolean(ids.uniqueId) && ctx2.normalizeGuid(token.guid) === ctx2.normalizeGuid(ids.uniqueId) && identityInSourceWeb(ids, ctx2);
+        let next2 = original;
+        if (tokenMatches && mapping.ids?.uniqueId) {
+          const replacement = `sourcedoc=${token.prefix}${mapping.ids.uniqueId}${token.suffix}`;
+          const at = original.indexOf(token.full);
+          next2 = `${original.slice(0, at)}${replacement}${original.slice(at + token.full.length)}`;
+        } else if (underSource8(original, ctx2) && mapping.path !== void 0) {
+          const isAbsolute = /^https?:\/\//i.test(original);
+          next2 = isAbsolute && mapping.url !== void 0 ? mapping.url : mapping.path;
+        }
+        if (next2 !== original) {
+          links.wopiurl = next2;
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/events.js
+var EVENTS_SOURCE = {
+  7: { label: "this site", contextRelative: true }
+};
+function sourceNote2(mode, hasSelectedSites) {
+  if (hasSelectedSites) {
+    return "Events source: selected sites \u2014 keeps pointing at the source web/site";
+  }
+  const known = EVENTS_SOURCE[mode];
+  const label = known ? known.label : `source mode ${JSON.stringify(mode)}`;
+  return known && known.contextRelative ? `Events source: ${label} \u2014 context-relative; may re-resolve against the destination web instead of the source` : `Events source: ${label} \u2014 keeps pointing at the source web/site`;
+}
+function isPlainObject3(v) {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+function underSourceWeb2(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(raw, ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  let path = url.pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+  }
+  return ctx2.underPath(path, ctx2.sourceWebPath);
+}
+function computeRefs2(instance, ctx2) {
+  const props = instance?.webPartData?.properties;
+  const out = [];
+  if (isPlainObject3(props)) {
+    const sites = Array.isArray(props.sites) ? props.sites.filter((id) => typeof id === "string" && id) : [];
+    const note = sourceNote2(props.dataSource, sites.length > 0);
+    if (typeof props.siteId === "string" && props.siteId) {
+      out.push({ path: ["webPartData", "properties", "siteId"], value: props.siteId, class: "data", note });
+    }
+    if (typeof props.webId === "string" && props.webId) {
+      out.push({ path: ["webPartData", "properties", "webId"], value: props.webId, class: "data", note });
+    }
+    if (typeof props.selectedListId === "string" && props.selectedListId) {
+      out.push({
+        path: ["webPartData", "properties", "selectedListId"],
+        value: props.selectedListId,
+        class: "data",
+        note
+      });
+    }
+    sites.forEach((id, i) => {
+      out.push({
+        path: ["webPartData", "properties", "sites", i],
+        value: id,
+        class: "data",
+        note: "Events source: selected sites \u2014 keeps pointing at the source web/site"
+      });
+    });
+  }
+  const links = instance?.webPartData?.serverProcessedContent?.links;
+  if (isPlainObject3(links)) {
+    for (const [key2, value] of Object.entries(links)) {
+      if (key2 === "baseUrl") continue;
+      if (typeof value !== "string" || !underSourceWeb2(value, ctx2)) continue;
+      out.push({
+        path: ["webPartData", "serverProcessedContent", "links", key2],
+        value,
+        class: "link",
+        note: "link into the source web"
+      });
+    }
+  }
+  return out;
+}
+function setAtPath2(root2, path, value) {
+  let node = root2;
+  for (let i = 0; i < path.length - 1; i += 1) node = node[path[i]];
+  node[path[path.length - 1]] = value;
+}
+var events_default = {
+  id: "20745d7d-8581-4a6c-bf26-68279bc123fc",
+  label: "Events",
+  refs(instance, ctx2) {
+    return computeRefs2(instance, ctx2);
+  },
+  // §5.2 "data → warn": the site/web/list data refs are never patched —
+  // kept as-is with the warning refs() already produced. Only 'link' refs
+  // are ever authorized to change, and only via ctx.mapLink.
+  patch(instance, ctx2) {
+    let changed = 0;
+    for (const ref of computeRefs2(instance, ctx2)) {
+      if (ref.class !== "link") continue;
+      const mapped = ctx2.mapLink ? ctx2.mapLink(ref.value) : null;
+      if (typeof mapped !== "string" || !mapped || mapped === ref.value) continue;
+      setAtPath2(instance, ref.path, mapped);
+      changed += 1;
+    }
+    return changed;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/highlighted-content.js
+var CONTENT_LOCATION_SOURCE = {
+  1: { label: "this site", contextRelative: true }
+};
+function sourceNote3(mode, hasSelectedSites) {
+  if (hasSelectedSites) {
+    return "Highlighted content source: selected sites \u2014 keeps pointing at the source web/site";
+  }
+  const known = CONTENT_LOCATION_SOURCE[mode];
+  const label = known ? known.label : `source mode ${JSON.stringify(mode)}`;
+  return known && known.contextRelative ? `Highlighted content source: ${label} \u2014 context-relative; may re-resolve against the destination web instead of the source` : `Highlighted content source: ${label} \u2014 keeps pointing at the source web/site`;
+}
+function isPlainObject4(v) {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+function underSourceWeb3(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(raw, ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  let path = url.pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+  }
+  return ctx2.underPath(path, ctx2.sourceWebPath);
+}
+function computeRefs3(instance, ctx2) {
+  const props = instance?.webPartData?.properties;
+  const out = [];
+  if (isPlainObject4(props)) {
+    const sites = Array.isArray(props.sites) ? props.sites.filter((id) => typeof id === "string" && id) : [];
+    const contentLocation = isPlainObject4(props.query) ? props.query.contentLocation : void 0;
+    const note = sourceNote3(contentLocation, sites.length > 0);
+    if (typeof props.siteId === "string" && props.siteId) {
+      out.push({ path: ["webPartData", "properties", "siteId"], value: props.siteId, class: "data", note });
+    }
+    if (typeof props.webId === "string" && props.webId) {
+      out.push({ path: ["webPartData", "properties", "webId"], value: props.webId, class: "data", note });
+    }
+    sites.forEach((id, i) => {
+      out.push({
+        path: ["webPartData", "properties", "sites", i],
+        value: id,
+        class: "data",
+        note: "Highlighted content source: selected sites \u2014 keeps pointing at the source web/site"
+      });
+    });
+  }
+  const links = instance?.webPartData?.serverProcessedContent?.links;
+  if (isPlainObject4(links)) {
+    for (const [key2, value] of Object.entries(links)) {
+      if (key2 === "baseUrl") continue;
+      if (typeof value !== "string" || !underSourceWeb3(value, ctx2)) continue;
+      out.push({
+        path: ["webPartData", "serverProcessedContent", "links", key2],
+        value,
+        class: "link",
+        note: "link into the source web"
+      });
+    }
+  }
+  return out;
+}
+function setAtPath3(root2, path, value) {
+  let node = root2;
+  for (let i = 0; i < path.length - 1; i += 1) node = node[path[i]];
+  node[path[path.length - 1]] = value;
+}
+var highlighted_content_default = {
+  id: "daf0b71c-6de8-4ef7-b511-faae7c388708",
+  label: "Highlighted content",
+  refs(instance, ctx2) {
+    return computeRefs3(instance, ctx2);
+  },
+  // §5.2 "data → warn": the site/web data refs are never patched — kept
+  // as-is with the warning refs() already produced. Only 'link' refs are
+  // ever authorized to change, and only via ctx.mapLink.
+  patch(instance, ctx2) {
+    let changed = 0;
+    for (const ref of computeRefs3(instance, ctx2)) {
+      if (ref.class !== "link") continue;
+      const mapped = ctx2.mapLink ? ctx2.mapLink(ref.value) : null;
+      if (typeof mapped !== "string" || !mapped || mapped === ref.value) continue;
+      setAtPath3(instance, ref.path, mapped);
+      changed += 1;
+    }
+    return changed;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/quick-chart.js
+function isPlainObject5(v) {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+function computeRefs4(instance) {
+  const props = instance?.webPartData?.properties;
+  if (!isPlainObject5(props)) return [];
+  const listId = props.selectedListId;
+  if (typeof listId !== "string" || !listId.trim()) return [];
+  const out = [
+    {
+      path: ["webPartData", "properties", "selectedListId"],
+      value: listId,
+      class: "data",
+      note: "Quick chart data source \u2014 identity id (selectedListId); keeps pointing at the source list"
+    }
+  ];
+  for (const key2 of ["selectedLabelFieldName", "selectedValueFieldName"]) {
+    const value = props[key2];
+    if (typeof value === "string" && value) {
+      out.push({
+        path: ["webPartData", "properties", key2],
+        value,
+        class: "data",
+        note: `Quick chart data source \u2014 column name (${key2}); keeps pointing at the source list's own column`
+      });
+    }
+  }
+  return out;
+}
+var quick_chart_default = {
+  id: "91a50c94-865f-4f5c-8b4e-e49659e69772",
+  label: "Quick chart",
+  // eslint-disable-next-line no-unused-vars -- ctx is part of the analyzer contract
+  refs(instance, ctx2) {
+    return computeRefs4(instance);
+  },
+  // §5.2 "data → warn": the list data source is never patched — kept as-is
+  // with the warning refs() already produced.
+  // eslint-disable-next-line no-unused-vars -- (instance, ctx) is part of the analyzer contract
+  patch(instance, ctx2) {
+    return 0;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/sites.js
+var GUID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isPlainObject6(v) {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+function siteLabel(entry, i, spc) {
+  const fromSpc = isPlainObject6(spc?.searchablePlainTexts) ? spc.searchablePlainTexts[`sites[${i}].Title`] : void 0;
+  if (typeof fromSpc === "string" && fromSpc.trim()) return fromSpc.trim();
+  return typeof entry?.Acronym === "string" && entry.Acronym || `Site ${i + 1}`;
+}
+function computeRefs5(instance, ctx2) {
+  const props = instance?.webPartData?.properties;
+  const spc = instance?.webPartData?.serverProcessedContent;
+  const sites = Array.isArray(props?.sites) ? props.sites : [];
+  if (!sites.length) return [];
+  const sourceWebId = ctx2.normalizeGuid(ctx2.sourceIds?.webId);
+  const out = [];
+  sites.forEach((entry, i) => {
+    if (!isPlainObject6(entry)) return;
+    const ref = isPlainObject6(entry.ItemReference) ? entry.ItemReference : {};
+    const label = siteLabel(entry, i, spc);
+    const isSourceWeb = Boolean(sourceWebId) && ctx2.normalizeGuid(ref.WebId) === sourceWebId;
+    const idNote = isSourceWeb ? `${label} \u2014 points at the source site itself` : `${label} \u2014 another site \u2014 unaffected by the copy`;
+    for (const key2 of ["SiteId", "WebId", "GroupId"]) {
+      const value = ref[key2];
+      if (typeof value === "string" && GUID_RE3.test(value)) {
+        out.push({ path: ["webPartData", "properties", "sites", i, "ItemReference", key2], value, class: "data", note: idNote });
+      }
+    }
+    const url = isPlainObject6(spc?.links) ? spc.links[`sites[${i}].Url`] : void 0;
+    if (typeof url === "string" && url) {
+      out.push({
+        path: ["webPartData", "serverProcessedContent", "links", `sites[${i}].Url`],
+        value: url,
+        class: "data",
+        note: idNote
+      });
+    }
+  });
+  return out;
+}
+var sites_default = {
+  id: "7cba020c-5ccb-42e8-b6fc-75b3149aba7b",
+  label: "Sites",
+  refs(instance, ctx2) {
+    return computeRefs5(instance, ctx2);
+  },
+  // §5.2 "data → warn": site references are kept as-is with the warning
+  // refs() already produced — never patched.
+  patch() {
+    return 0;
+  }
+};
+
 // ../src/workbench/page-copy-analyzers.js
 function createAnalyzers(list2 = []) {
   const byId = /* @__PURE__ */ new Map();
@@ -17669,7 +18855,23 @@ function createAnalyzers(list2 = []) {
     ids: () => [...byId.keys()]
   };
 }
-var ANALYZERS = createAnalyzers([header_default, text_default, quick_links_default, news_default, list_library_default]);
+var ANALYZERS = createAnalyzers([
+  header_default,
+  text_default,
+  quick_links_default,
+  news_default,
+  list_library_default,
+  image_default,
+  image_gallery_default,
+  hero_default,
+  call_to_action_default,
+  countdown_default,
+  file_viewer_default,
+  events_default,
+  highlighted_content_default,
+  quick_chart_default,
+  sites_default
+]);
 
 // ../src/workbench/views/pages.js?v=2
 var PAGE_SELECT_BASE = [
