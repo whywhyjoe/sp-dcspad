@@ -462,3 +462,21 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   PromotedState 0, FirstPublishedDate null, 0.1 checked in. Found live: a modern page's
   list-item CanvasContent1 can be null (Copy button now offered on 'empty' items too).
   Next: Phase 2 analyzers (Q7 shapes page awaiting the editor configuration).
+- 2026-09-23 — **Phase 2 live (partial).** Analyzers landed: Title area (header), Text,
+  Quick links, News, List/Library (blind-reviewed; analyzers section 24/24, cross-site mock
+  section 14/14). Live found: `Folders/AddUsingPath` refuses an existing folder — the run now
+  probes each asset-folder level and journals only what it created (fixed in Build #237).
+  Live on Build #237: `zz-pagecopy-xsite.aspx` (banner + custom thumbnail + Text link/image +
+  Document library part) copied dev → `/sites/TestSiteCollection` (published) and dev →
+  `/sites/NewNerve/sputils-test` (draft), both outcome `done`, verify clean. Proof on the
+  other site collection: 1.0 published, PromotedState 0; no source site/web id anywhere in
+  canvas/layout/banner; the only source paths left are the Text link (rewrite off by
+  default) and the Document library part's list (data → warn, by design); banner, thumbnail
+  and Text image transferred to `SiteAssets/SitePages/zz-pagecopy-xsite/` and fetched 200;
+  the rendered page shows body and title and pulls the banner through the afdcache CDN
+  from the destination path. Reader check: no read-only account exists on this tenant, so
+  visibility was established structurally — page 1.0 published, page/Site Pages/Site Assets
+  and the asset folder all inherit, and `TestSiteCollection Visitors` holds Read on the web.
+  Remaining Phase 2: analyzers for Image (SharePoint file), Hero, Image gallery, Call to
+  action, Countdown, File viewer, Events, Highlighted content, Quick chart, Sites — blocked
+  on the editor configuration of `zz-pagecopy-shapes.aspx` (§11 Q7).
