@@ -561,25 +561,28 @@ export function openPageCopyDialog({
         urlInput.value = '';
         connect(client.webUrl());
       });
+      // Changing the destination abandons any connect still in flight: its
+      // answer would otherwise land after this and install a web the form no
+      // longer names as the target. Bumping connectSeq makes that connect
+      // stale, and since a stale connect returns without touching the
+      // button, Connect is re-enabled here.
+      function abandonDestination(status) {
+        connectSeq += 1;
+        connectBtn.disabled = false;
+        connected = false;
+        targetEligible = false;
+        connectedUrl = null;
+        invalidatePreflight();
+        showTargetStatus(status);
+        refreshGate();
+      }
       otherRadio.addEventListener('change', () => {
         if (!otherRadio.checked) return;
         urlInput.disabled = false;
-        connected = false;
-        targetEligible = false;
-        connectedUrl = null;
-        invalidatePreflight();
-        showTargetStatus('Enter a site and Connect.');
-        refreshGate();
+        abandonDestination('Enter a site and Connect.');
       });
       connectBtn.addEventListener('click', () => connect(urlInput.value.trim()));
-      urlInput.addEventListener('input', () => {
-        connected = false;
-        targetEligible = false;
-        connectedUrl = null;
-        invalidatePreflight();
-        showTargetStatus('Connect to check this site.');
-        refreshGate();
-      });
+      urlInput.addEventListener('input', () => abandonDestination('Connect to check this site.'));
 
       // ---- preflight (Check) -------------------------------------------------
       async function runPreflight() {

@@ -305,4 +305,33 @@ export async function checks({ page, check }) {
         && n === 10 // 1 path + 4 customMetadata ids + 4 item.image.guids ids + imagePicker
         && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: customThumbControl, source: editorSource }));
+
+  await check('analyzer quick links: an imagePicker naming a DIFFERENT file in the source web stays unchanged while the thumbnail itself still moves', () =>
+    page.evaluate(async ({ control, source }) => {
+      const { analyzerContext } = await import('/src/workbench/page-copy.js');
+      const analyzer = (await import('/src/workbench/page-copy-analyzers/quick-links.js')).default;
+      const mapping = {
+        path: '/sites/pagedst/SiteAssets/SitePages/zz-pagecopy-shapes-copy/logo.png',
+        ids: {
+          siteId: 'aaaaaaaa-1111-4000-8000-000000000001',
+          webId: 'bbbbbbbb-2222-4000-8000-000000000002',
+          listId: 'cccccccc-3333-4000-8000-000000000003',
+          uniqueId: 'dddddddd-4444-4000-8000-000000000004',
+        },
+        url: `${location.origin}/sites/pagedst/SiteAssets/SitePages/zz-pagecopy-shapes-copy/logo.png`,
+      };
+      const ctx = {
+        ...analyzerContext({ web: source }),
+        target: { webUrl: `${location.origin}/sites/pagedst`, webPath: '/sites/pagedst' },
+        rewriteLinks: false,
+        mapAsset: () => mapping,
+        mapLink: () => null,
+      };
+      const copy = structuredClone(control);
+      const other = 'https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/zz-pagecopy-assets/other.png';
+      copy.webPartData.properties.imagePicker = other;
+      const n = analyzer.patch(copy, ctx);
+      return n === 9 && copy.webPartData.properties.imagePicker === other
+        && copy.webPartData.serverProcessedContent.imageSources['items[0].image.url'] === mapping.path;
+    }, { control: customThumbControl, source: editorSource }));
 }

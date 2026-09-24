@@ -298,6 +298,20 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
     if (r.err) {
       if (r.network) return finish('unknown');
       warnings = true;
+      // The publish itself failed, so the page stays a draft — but the
+      // operator's promote choice must survive it: mark the draft the same
+      // way the not-publishing branch below does, so publishing it later is
+      // what makes it news.
+      if (!published && plan.promoteAsNews) {
+        const p = await attempt(journal, onStep, 'promote', async () => {
+          await write.validateUpdateListItem(
+            { listId: plan.target.libraryId, itemId: journal.pageId },
+            [{ FieldName: 'PromotedState', FieldValue: '1' }],
+          );
+          return 'publish failed; promoted on publish';
+        });
+        if (p.err && p.network) return finish('unknown');
+      }
     }
   } else if (plan.promoteAsNews) {
     // Not publishing yet, but the operator wants it promoted the moment it
@@ -362,19 +376,41 @@ export async function discardCopy(journal, { target } = {}) {
   const leftovers = [];
   if (!journal || journal.createdBy !== 'this run') return { recycled, leftovers };
 
-  let currentPath = journal.currentPath;
-  if (!currentPath && journal.pageId) {
-    // Reading by a confirmed id is not inference — createPage returned this
-    // id, so asking SharePoint what it is now is just catching up on a path
-    // the run never got to learn (dto.Url absent at create, run stopped
-    // before the 'name' step could read it back).
+  // Reading by a confirmed id is not inference — createPage returned this
+  // id, so asking SharePoint what it is now is just catching up on a path
+  // the run never got to learn, or one that changed under it.
+  async function pathFromId() {
     try {
       const [dto, library] = await Promise.all([pages.getPage(journal.pageId), pages.sitePagesLibrary()]);
       const root = String(library?.rootPath || '').replace(/\/+$/, '');
       const name = dto?.FileName || '';
-      if (root && name) currentPath = `${root}/${name}`;
+      if (root && name) return `${root}/${name}`;
+      leftovers.push({ path: `(page id ${journal.pageId})`, error: 'its current file name could not be read' });
     } catch (err) {
       leftovers.push({ path: `(page id ${journal.pageId})`, error: err?.message || String(err) });
+    }
+    return '';
+  }
+
+  let currentPath = journal.currentPath;
+  if (journal.pageId) {
+    if (!currentPath) {
+      // dto.Url absent at create, and the run stopped before 'name' read it.
+      currentPath = await pathFromId();
+    } else {
+      // The staging save renames the file, and the run learns the new name
+      // only from the read that follows it. If that read failed, currentPath
+      // still holds the old name, now free for another page to take. A
+      // remembered path is recycled only while it still names this run's
+      // item; otherwise the page is found again by its id.
+      let idAtPath = null;
+      try {
+        idAtPath = await pages.fileItemId(currentPath);
+      } catch (err) {
+        leftovers.push({ path: currentPath, error: err?.message || String(err) });
+        currentPath = '';
+      }
+      if (currentPath && Number(idAtPath) !== Number(journal.pageId)) currentPath = await pathFromId();
     }
   }
 
@@ -404,6 +440,17 @@ export async function discardCopy(journal, { target } = {}) {
     .sort((a, b) => b.path.split('/').length - a.path.split('/').length);
   for (const folder of folderAssets) {
     try {
+      // Creating a folder doesn't make this run the owner of everything
+      // later put in it: another copy of a same-named page shares the asset
+      // folder, and an upload whose response was lost is not this run's to
+      // remove. Only an empty folder is recycled; anything else is left and
+      // reported.
+      const remaining = await pages.folderItemCount(folder.path);
+      if (remaining === null) continue;   // already gone — nothing to do
+      if (remaining > 0) {
+        leftovers.push({ path: folder.path, error: `not recycled: it still holds ${remaining} item(s) this run did not confirm creating` });
+        continue;
+      }
       await pages.recycleFolder(folder.path);
       recycled.push(folder.path);
     } catch (err) {

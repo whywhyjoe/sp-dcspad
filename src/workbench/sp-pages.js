@@ -205,6 +205,18 @@ export function createSpPages({ client, write }) {
     return Boolean(folder?.Exists);
   }
 
+  // How many files and subfolders sit directly in a folder (SP.Folder's
+  // ItemCount), or null when the folder doesn't exist. discardCopy() recycles
+  // a folder it created only when this reads 0.
+  async function folderItemCount(serverRelativeUrl) {
+    const folder = await catchNotFound(client.get(
+      `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl)}')`,
+      { select: ['Exists', 'ItemCount'] },
+    ));
+    if (!folder?.Exists) return null;
+    return Number(folder.ItemCount || 0);
+  }
+
   // Live: sp-files.js's own reader (its digest cache and 50 MB default are
   // shared with everything else that reads document bytes). Mock: the mock
   // web answers with { mockBytes: <length>, contentType } rather than real
@@ -303,6 +315,7 @@ export function createSpPages({ client, write }) {
     fileItemId,
     exists,
     folderExists,
+    folderItemCount,
     readFileBytes,
     clientSideWebParts,
     setCommentsDisabled,

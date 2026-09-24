@@ -111,6 +111,29 @@ export async function checks({ page, check }) {
         && n === 8 && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: realControl, source: realSource }));
 
+  await check('analyzer file viewer: a server-relative webAbsoluteUrl keeps its form — it becomes the target web PATH, not its absolute url', () =>
+    page.evaluate(async ({ control, source }) => {
+      const { analyzerContext } = await import('/src/workbench/page-copy.js');
+      const analyzer = (await import('/src/workbench/page-copy-analyzers/file-viewer.js')).default;
+      const mapping = {
+        path: '/sites/pagedst/SiteAssets/SitePages/zz-pagecopy-report-copy/zz-pagecopy-report.pdf',
+        ids: {
+          siteId: 'd1510000-0000-4000-8000-000000000003',
+          webId: 'd1520000-0000-4000-8000-000000000003',
+          listId: 'd1540000-0000-4000-8000-000000000003',
+          uniqueId: 'd15f0000-0000-4000-8000-0000000000a1',
+        },
+        url: 'https://t.sharepoint.com/sites/pagedst/SiteAssets/SitePages/zz-pagecopy-report-copy/zz-pagecopy-report.pdf',
+      };
+      const target = { webUrl: 'https://t.sharepoint.com/sites/pagedst', webPath: '/sites/pagedst' };
+      const ctx = { ...analyzerContext({ web: source }), target, mapAsset: () => mapping };
+      const copy = structuredClone(control);
+      copy.webPartData.properties.webAbsoluteUrl = '/sites/NewNerve';
+      analyzer.patch(copy, ctx);
+      return copy.webPartData.properties.webAbsoluteUrl === '/sites/pagedst'
+        && copy.webPartData.properties.uniqueId === mapping.ids.uniqueId;
+    }, { control: realControl, source: realSource }));
+
   await check('analyzer file viewer: a Doc.aspx/WOPI sourcedoc={guid} form of wopiurl has only its GUID token rewritten, the rest of the url untouched', () =>
     page.evaluate(async ({ control, source }) => {
       const { analyzerContext } = await import('/src/workbench/page-copy.js');

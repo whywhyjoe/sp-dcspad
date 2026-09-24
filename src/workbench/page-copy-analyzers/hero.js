@@ -106,6 +106,17 @@ function patchIdBag(bag, mapping, ctx, aliasMap) {
   return count;
 }
 
+// A GUID (dashed or bare) as a whole token: not preceded or followed by
+// another hex digit, so a longer hex run that merely contains it is never
+// matched. GUIDs are hex and dashes only, so they need no regex escaping.
+function guidToken(guid) {
+  return new RegExp(`(?<![0-9a-f])${guid}(?![0-9a-f])`, 'gi');
+}
+
+function guidForms(guid) {
+  return [guid, guid.replace(/-/g, '')];
+}
+
 // Swap every source GUID token (dashed or bare, any case) in a string for its
 // mapped destination counterpart. Only whole GUID tokens named in `pairs`
 // change, so a URL that embeds file identity (the Graph v2.1 thumbnail url
@@ -117,9 +128,9 @@ function swapGuids(value, pairs, ctx) {
     const f = ctx.normalizeGuid(from);
     const t = ctx.normalizeGuid(to);
     if (!f || !t || f === t) continue;
-    for (const [a, b] of [[f, t], [f.replace(/-/g, ''), t.replace(/-/g, '')]]) {
-      out = out.replace(new RegExp(a, 'gi'), b);
-    }
+    const [fDashed, fBare] = guidForms(f);
+    const [tDashed, tBare] = guidForms(t);
+    out = out.replace(guidToken(fDashed), tDashed).replace(guidToken(fBare), tBare);
   }
   return out;
 }
@@ -127,16 +138,20 @@ function swapGuids(value, pairs, ctx) {
 // The editor stores two derived copies of a tile image's location beside its
 // ids: `resolvedUrl` (the file's absolute url) and `imageUrl` (a thumbnail
 // url embedding site/web/list/item ids). Both follow a verified mapping; a
-// value that does not name the source file is left alone.
-function patchDerivedUrls(image, sourceIds, mapping, ctx) {
+// value that does not name the transferred file is left alone —
+// `resolvedUrl` must name the same file as the image source, and `imageUrl`
+// must carry the file's own id as a whole token.
+function patchDerivedUrls(image, sourcePath, sourceIds, mapping, ctx) {
   if (!image || typeof image !== 'object') return 0;
   let n = 0;
-  if (typeof image.resolvedUrl === 'string' && underSource(image.resolvedUrl, ctx)) {
+  if (typeof image.resolvedUrl === 'string' && underSource(image.resolvedUrl, ctx)
+      && sourceRelativePath(image.resolvedUrl).toLowerCase() === String(sourcePath).toLowerCase()) {
     const next = /^https?:\/\//i.test(image.resolvedUrl) && mapping.url ? mapping.url : mapping.path;
     if (next && next !== image.resolvedUrl) { image.resolvedUrl = next; n += 1; }
   }
-  if (typeof image.imageUrl === 'string' && sourceIds?.uniqueId
-      && image.imageUrl.toLowerCase().includes(ctx.normalizeGuid(sourceIds.uniqueId))) {
+  const itemId = sourceIds?.uniqueId ? ctx.normalizeGuid(sourceIds.uniqueId) : '';
+  if (typeof image.imageUrl === 'string' && itemId
+      && guidForms(itemId).some((form) => guidToken(form).test(image.imageUrl))) {
     const pairs = ['siteId', 'webId', 'listId', 'uniqueId'].map((k) => [sourceIds[k], mapping.ids[k]]);
     const next = swapGuids(image.imageUrl, pairs, ctx);
     if (next !== image.imageUrl) { image.imageUrl = next; n += 1; }
@@ -229,7 +244,7 @@ export default {
         const sourceIds = { ...ids };
         count += patchIdBag(meta, mapping, ctx, CUSTOM_ID_ALIASES);
         count += patchIdBag(item?.image, mapping, ctx, IMAGE_PROP_ALIASES);
-        count += patchDerivedUrls(item?.image, sourceIds, mapping, ctx);
+        count += patchDerivedUrls(item?.image, sourceRelativePath(value), sourceIds, mapping, ctx);
       }
     }
 

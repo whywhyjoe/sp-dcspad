@@ -518,7 +518,11 @@ export function pageCopyResolver(url, path, webBase) {
     const exists = web.folders.has(lowerPath)
       || web.lists.some((l) => String(l.RootFolder?.ServerRelativeUrl || '').toLowerCase() === lowerPath)
       || [...web.files.keys()].some((k) => k.startsWith(`${lowerPath}/`));
-    return { Exists: exists, ServerRelativeUrl: folderPath };
+    // SP.Folder.ItemCount: files and subfolders directly inside, not deeper.
+    const directChild = (k) => k.startsWith(`${lowerPath}/`) && !k.slice(lowerPath.length + 1).includes('/');
+    const itemCount = [...web.files.keys()].filter(directChild).length
+      + [...web.folders].filter(directChild).length;
+    return { Exists: exists, ServerRelativeUrl: folderPath, ItemCount: exists ? itemCount : 0 };
   }
 
   // web/getfilebyid('guid')

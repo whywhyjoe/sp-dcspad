@@ -143,8 +143,14 @@ export default {
     // the destination web once the document has been transferred there.
     if (typeof props.webAbsoluteUrl === 'string' && ctx.target?.webUrl
         && underSource(props.webAbsoluteUrl, ctx)) {
-      const nextWeb = String(ctx.target.webUrl).replace(/\/+$/, '');
-      if (props.webAbsoluteUrl.replace(/\/+$/, '') !== nextWeb) { props.webAbsoluteUrl = nextWeb; count += 1; }
+      // Keep the value's own form: a server-relative value takes the web's
+      // path, an absolute one its url.
+      const relative = props.webAbsoluteUrl.startsWith('/') && !props.webAbsoluteUrl.startsWith('//');
+      const nextWeb = String(relative ? (ctx.target.webPath ?? '') : ctx.target.webUrl).replace(/\/+$/, '');
+      if (nextWeb && props.webAbsoluteUrl.replace(/\/+$/, '') !== nextWeb) {
+        props.webAbsoluteUrl = nextWeb;
+        count += 1;
+      }
     }
 
     if (mapping.ids) {

@@ -108,13 +108,14 @@ export async function checks({ page, check }) {
       // Derived copies of the location follow too (live shape): resolvedUrl
       // becomes the destination url, and imageUrl's embedded site/web/list/
       // item GUIDs are swapped for the destination's — nothing else in it.
+      // Written out literally rather than recomputed, so the check does not
+      // share the swap logic it is testing.
       const srcImg = control.webPartData.properties.content[0].image;
       img.resolvedUrl = mapping.url;
-      let swapped = srcImg.imageUrl;
-      for (const [from, to] of [[srcImg.siteId, mapping.ids.siteId], [srcImg.webId, mapping.ids.webId], [srcImg.listId, mapping.ids.listId], [srcImg.id, mapping.ids.uniqueId]]) {
-        swapped = swapped.replace(new RegExp(from, 'gi'), to).replace(new RegExp(from.replace(/-/g, ''), 'gi'), to.replace(/-/g, ''));
-      }
-      img.imageUrl = swapped;
+      img.imageUrl = 'https://nervedotnet.sharepoint.com/_api/v2.1/sites/nervedotnet.sharepoint.com,'
+        + 'd1510000-0000-4000-8000-000000000003,d1520000-0000-4000-8000-000000000003'
+        + '/lists/d1540000-0000-4000-8000-000000000003/items/d15f0000-0000-4000-8000-0000000000a1'
+        + '/driveItem/thumbnails/0/c400x99999/content?prefer=noRedirect,extendCacheMaxAge&clientType=modernWebPart&format=webp';
 
       return n === 11 && img.imageUrl !== srcImg.imageUrl && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: heroConfigured, src: source }));
@@ -138,4 +139,60 @@ export async function checks({ page, check }) {
 
       return n === 1 && JSON.stringify(copy) === JSON.stringify(expected);
     }, { control: heroConfigured, src: source }));
+
+  // Guards on the derived fields (xo review): each is rewritten only when it
+  // demonstrably names the transferred file, and the GUID swap touches whole
+  // GUID tokens only.
+  const derivedMapping = {
+    path: '/sites/pagedst/SiteAssets/SitePages/x/hero.png',
+    ids: {
+      siteId: 'd1510000-0000-4000-8000-000000000003',
+      webId: 'd1520000-0000-4000-8000-000000000003',
+      listId: 'd1540000-0000-4000-8000-000000000003',
+      uniqueId: 'd15f0000-0000-4000-8000-0000000000a1',
+    },
+    url: 'https://t.sharepoint.com/sites/pagedst/SiteAssets/SitePages/x/hero.png',
+  };
+
+  await check('analyzer hero: a resolvedUrl naming a DIFFERENT file in the source web is left alone while the image source, ids and imageUrl still move', () =>
+    page.evaluate(async ({ control, src, mapping }) => {
+      const { analyzerContext } = await import('/src/workbench/page-copy.js');
+      const analyzer = (await import('/src/workbench/page-copy-analyzers/hero.js')).default;
+      const ctx = { ...analyzerContext({ web: src }), mapAsset: () => mapping, mapLink: () => null };
+      const copy = structuredClone(control);
+      const other = 'https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/zz-pagecopy-assets/other.png';
+      copy.webPartData.properties.content[0].image.resolvedUrl = other;
+      const n = analyzer.patch(copy, ctx);
+      const img = copy.webPartData.properties.content[0].image;
+      return n === 10 && img.resolvedUrl === other
+        && copy.webPartData.serverProcessedContent.imageSources['content[0].image.url'] === mapping.path
+        && img.imageUrl.includes('d15f0000-0000-4000-8000-0000000000a1');
+    }, { control: heroConfigured, src: source, mapping: derivedMapping }));
+
+  await check('analyzer hero: the imageUrl swap changes whole GUID tokens only — a longer hex run containing the item id (bare) is kept byte-for-byte', () =>
+    page.evaluate(async ({ control, src, mapping }) => {
+      const { analyzerContext } = await import('/src/workbench/page-copy.js');
+      const analyzer = (await import('/src/workbench/page-copy-analyzers/hero.js')).default;
+      const ctx = { ...analyzerContext({ web: src }), mapAsset: () => mapping, mapLink: () => null };
+      const copy = structuredClone(control);
+      const img = copy.webPartData.properties.content[0].image;
+      const decoy = '0612ddc56e8314e33a69f1e22f74638550';   // contains the bare item id, is not it
+      img.imageUrl = `${img.imageUrl}&cache=${decoy}`;
+      analyzer.patch(copy, ctx);
+      return img.imageUrl.endsWith(`&cache=${decoy}`)
+        && img.imageUrl.includes('/items/d15f0000-0000-4000-8000-0000000000a1/')
+        && !img.imageUrl.includes('612ddc56-e831-4e33-a69f-1e22f7463855');
+    }, { control: heroConfigured, src: source, mapping: derivedMapping }));
+
+  await check('analyzer hero: an imageUrl carrying the item id only in bare, upper-case form is still recognised and swapped to the bare destination id', () =>
+    page.evaluate(async ({ control, src, mapping }) => {
+      const { analyzerContext } = await import('/src/workbench/page-copy.js');
+      const analyzer = (await import('/src/workbench/page-copy-analyzers/hero.js')).default;
+      const ctx = { ...analyzerContext({ web: src }), mapAsset: () => mapping, mapLink: () => null };
+      const copy = structuredClone(control);
+      const img = copy.webPartData.properties.content[0].image;
+      img.imageUrl = 'https://nervedotnet.sharepoint.com/_api/v2.1/drives/x/items/612DDC56E8314E33A69F1E22F7463855/thumbnails/0/c400x99999/content';
+      analyzer.patch(copy, ctx);
+      return img.imageUrl === 'https://nervedotnet.sharepoint.com/_api/v2.1/drives/x/items/d15f00000000400080000000000000a1/thumbnails/0/c400x99999/content';
+    }, { control: heroConfigured, src: source, mapping: derivedMapping }));
 }

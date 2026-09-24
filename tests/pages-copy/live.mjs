@@ -434,6 +434,21 @@ export async function run({ browser, check, WB_URL }) {
         urlInput.dispatchEvent(new Event('input', { bubbles: true }));
         connectBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       },
+      // Starts a slow connect, then edits the URL WITHOUT connecting again:
+      // the slow answer arriving afterwards must not install /sites/slow as
+      // the destination while the field names another site.
+      slowConnectThenEdit(slowUrl, editedUrl) {
+        const other = document.querySelector('.wb-pc-dest-other');
+        other.checked = true;
+        other.dispatchEvent(new Event('change', { bubbles: true }));
+        const urlInput = document.querySelector('.wb-pc-url');
+        const connectBtn = document.querySelector('.wb-pc-connect');
+        urlInput.value = slowUrl;
+        urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+        connectBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        urlInput.value = editedUrl;
+        urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+      },
     };
   `;
 
@@ -484,6 +499,38 @@ export async function run({ browser, check, WB_URL }) {
 
     await check('live: the subsequent Check sends its probes only under /sites/ldst/_api/ (never re-touching /sites/slow or /sites/lsrc)', () =>
       probes.length > 0 && probes.every((r) => r.site === 'ldst'));
+
+    await page.close();
+  }
+
+  // ---- (6b) editing the destination abandons an in-flight connect (xo
+  // review): the late answer must not arm Check for a web the form no longer
+  // names ----------------------------------------------------------------------
+  {
+    const { page } = await newLivePage(browser);
+    await page.goto(WB_URL);
+    await page.waitForSelector('.wb-home-cards', { timeout: 60000 });
+    await page.addScriptTag({ type: 'module', content: STUB_HELPER });
+    await page.waitForFunction(() => typeof window.__pc === 'object');
+
+    await page.evaluate(() => window.__pc.open());
+    await page.waitForSelector('.wb-pc-version');
+
+    await page.evaluate(({ slowUrl, ldstUrl }) => window.__pc.slowConnectThenEdit(slowUrl, ldstUrl),
+      { slowUrl: `${origin}/sites/slow`, ldstUrl: `${origin}/sites/ldst` });
+    // Outlast the slow connect entirely: it reads the slow /_api/web twice
+    // (connectWeb, then webIdentity), 1500ms each, before it would land.
+    await page.waitForTimeout(5000);
+
+    const after = await page.evaluate(() => ({
+      checkDisabled: document.querySelector('.wb-pc-check')?.disabled,
+      connectDisabled: document.querySelector('.wb-pc-connect')?.disabled,
+      status: document.querySelector('.wb-pc-target-status')?.textContent || '',
+    }));
+
+    await check('live: editing the URL while a slow connect is in flight abandons it — its late answer leaves Check disabled, Connect enabled, and the status asking to connect', () =>
+      after.checkDisabled === true && after.connectDisabled === false
+        && /Connect to check this site/.test(after.status));
 
     await page.close();
   }

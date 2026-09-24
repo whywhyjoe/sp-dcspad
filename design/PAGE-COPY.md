@@ -384,6 +384,37 @@ keeps the page-copy mock webs out of the default fixtures.
   not implement resumable retry or automatic reconciliation (§7 v2 note). Decision 2 stays
   open with the visibility-transition test as the deciding criterion (§4.2), and
   `addTemplateFile` is added as path B for the spike (§3, §9).
+- **Implementation review (Codex, xo turns 3 and 4 in the `next-feature` ledger, 2026-09-24).**
+  Two reviews: turn 3 covered commit `794d0ca` (the derived-field analyzer fixes); turn 4 read
+  the whole branch as one chain (dialog → plan → runner → content → read-back → cleanup).
+  Accepted and fixed, each with a check:
+  - Dialog: switching to "Another site" or editing the URL now abandons a connect still in
+    flight (`connectSeq`). Before, the late answer could install the wrong web as the destination.
+  - Discard: a remembered page path is recycled only while it still names this run's item.
+    Otherwise the page is found again by its id, because the staging save renames the file and
+    the old name is free for another page.
+  - Discard: an asset folder this run created is recycled only when it is empty. Other
+    content is left and reported, because a folder is shared by same-named pages and may hold
+    an upload whose response was lost.
+  - Runner: a publish that fails with Promote ticked still marks the draft `PromotedState 1`
+    (a `promote` step).
+  - Hero: `resolvedUrl` follows only when it names the same file, and the `imageUrl` GUID swap
+    matches whole tokens only, in dashed and bare form. The test's expected URL is a literal,
+    no longer recomputed with the logic under test.
+  - File viewer: a server-relative `webAbsoluteUrl` keeps its form (target `webPath`).
+  - Quick links: a check that an `imagePicker` naming another file is left alone.
+
+  **Disputed, kept as is (both positions):**
+  - *File viewer `webAbsoluteUrl` naming a subweb of the source.* Codex: rewrite it only when it
+    names the source web itself. Orchestrator: once the document has been transferred, it lives
+    in the destination web whichever web it came from, so the target web is correct.
+    Codex was holding the code to the review request's own acceptance wording, which was
+    stricter than the behaviour needs to be.
+  - *Journal granularity on the assets step.* Codex: every write should be journaled before and
+    after. Orchestrator: each folder and file is recorded as confirmed the moment it is created
+    (`journal.assets`), and that list is what cleanup reads. A lost response anywhere in the step
+    still marks it `unknown` and stops, which is what §7 requires. Again the stricter
+    criterion came from the request wording, not the spec.
 
 ## 11. Spike results (dev tenant, 2026-09-23)
 
@@ -520,3 +551,7 @@ the session scratchpad `spike/captures/`. Everything created was named `zz-pagec
   pulls the destination hero.png through afdcache (200). Suites: workbench-pages-copy 149
   (analyzers 67) — 756 total. Tenant: every `zz-pagecopy-*` page, folder and asset on the
   three webs recycled; inventory empty; no `zz-pagecopy` field remains.
+- 2026-09-24 — **Codex implementation review** (§10): seven findings fixed, each with a check
+  that fails on the old code, apart from the Quick links one, which only adds coverage. Two
+  disputed and kept, both positions recorded in §10. Suite: workbench-pages-copy 158
+  (analyzers 72, runner 16, live 11), 765 in total. Not redeployed: dev still runs Build #245.
