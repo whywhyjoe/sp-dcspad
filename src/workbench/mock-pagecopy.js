@@ -246,14 +246,30 @@ export function resetPageCopyMock() {
   });
 
   src.pages.set(8, {
-    dto: { Id: 8, Title: 'Legacy-News', FileName: 'Legacy-News.aspx', FileRef: '/sites/pagesrc/SitePages/Legacy-News.aspx', FileLeafRef: 'Legacy-News.aspx', FileDirRef: '/sites/pagesrc/SitePages', UniqueId: 'd15d0000-0000-4000-8000-000000000002', CanvasContent1: '<div><div data-sp-canvascontrol></div></div>' },
-    item: { Id: 8, Title: 'Legacy-News', FileLeafRef: 'Legacy-News.aspx', FileRef: '/sites/pagesrc/SitePages/Legacy-News.aspx', UniqueId: 'd15d0000-0000-4000-8000-000000000002', _UIVersionString: '1.0' },
+    dto: { Id: 8, Title: 'Legacy-News', FileName: 'Legacy-News.aspx', FileRef: '/sites/pagesrc/SitePages/Legacy-News.aspx', FileLeafRef: 'Legacy-News.aspx', FileDirRef: '/sites/pagesrc/SitePages', UniqueId: 'd15d0000-0000-4000-8000-000000000002', PageLayoutType: 'Article', PromotedState: 0, CanvasContent1: '<div><div data-sp-canvascontrol></div></div>' },
+    item: { Id: 8, Title: 'Legacy-News', FileLeafRef: 'Legacy-News.aspx', FileRef: '/sites/pagesrc/SitePages/Legacy-News.aspx', FileDirRef: '/sites/pagesrc/SitePages', UniqueId: 'd15d0000-0000-4000-8000-000000000002', PromotedState: 0, _UIVersionString: '1.0' },
   });
 
   src.pages.set(9, {
     dto: { Id: 9, Title: 'Repost', FileName: 'Repost.aspx', FileRef: '/sites/pagesrc/SitePages/Repost.aspx', FileLeafRef: 'Repost.aspx', FileDirRef: '/sites/pagesrc/SitePages', UniqueId: 'd15d0000-0000-4000-8000-000000000003', PageLayoutType: 'RepostPage', CanvasContent1: '[]' },
     item: { Id: 9, Title: 'Repost', FileLeafRef: 'Repost.aspx', FileRef: '/sites/pagesrc/SitePages/Repost.aspx', UniqueId: 'd15d0000-0000-4000-8000-000000000003' },
   });
+
+  // Pages 8 and 9 are files too — a whole-file copy (the legacy-HTML path)
+  // finds its source through web.files.
+  for (const [name, uniqueId] of [['Legacy-News.aspx', 'd15d0000-0000-4000-8000-000000000002'], ['Repost.aspx', 'd15d0000-0000-4000-8000-000000000003']]) {
+    src.files.set(`/sites/pagesrc/sitepages/${name.toLowerCase()}`, {
+      Name: name,
+      ServerRelativeUrl: `/sites/pagesrc/SitePages/${name}`,
+      UniqueId: uniqueId,
+      ListId: PAGECOPY_IDS.srcSitePages,
+      WebId: PAGECOPY_IDS.srcWeb,
+      SiteId: PAGECOPY_IDS.srcSite,
+      Length: 0,
+      CheckOutType: 2,
+      contentType: 'text/html',
+    });
+  }
 
   // Destination page (collision with source)
   const dst = webState['/sites/pagedst'];
@@ -472,7 +488,9 @@ export function pageCopyResolver(url, path, webBase) {
     if (!file) return null;
 
     if (pathLower.includes('/listitemallfields')) {
-      return { Id: 999 }; // placeholder item id for a page file
+      // The page whose file this is; any other file's item is out of scope.
+      const page = [...web.pages.values()].find((pg) => String(pg.dto.FileRef || pg.item.FileRef || '').toLowerCase() === file.ServerRelativeUrl.toLowerCase());
+      return page ? { ...page.item, Id: page.dto.Id } : null;
     }
     if (pathLower.includes('/$value')) {
       return { mockBytes: file.Length, contentType: file.contentType };
@@ -846,22 +864,30 @@ export function pageCopyWriter(url, body, contentType, headers) {
           const sourcePage = [...web.pages.values()].find(p => p.dto.FileRef && p.dto.FileRef.toLowerCase() === srcFile.ServerRelativeUrl.toLowerCase());
           if (sourcePage) {
             const newPageId = dstWeb.nextPageId++;
+            const newName = dstPath.split('/').pop();
+            const newDir = dstPath.slice(0, dstPath.lastIndexOf('/'));
             const newDto = JSON.parse(JSON.stringify(sourcePage.dto));
             newDto.Id = newPageId;
-            newDto.FileName = srcFile.Name;
+            newDto.FileName = newName;
             newDto.FileRef = dstPath;
-            newDto.FileLeafRef = srcFile.Name;
+            newDto.FileLeafRef = newName;
+            newDto.FileDirRef = newDir;
             newDto.UniqueId = nextFileId();
-            newDto._UIVersionString = '1.0'; // published copy state
+            // Live SPO (spike §11 Q5): the copy lands as a 0.1 draft, not
+            // checked out, still carrying PromotedState — the §4.2 hazard.
+            newDto._UIVersionString = '0.1';
             newDto.IsPageCheckedOutToCurrentUser = false;
-            // Keep PromotedState as source for the hazard
             const newItem = JSON.parse(JSON.stringify(sourcePage.item));
             newItem.Id = newPageId;
-            newItem.FileLeafRef = srcFile.Name;
+            newItem.FileLeafRef = newName;
             newItem.FileRef = dstPath;
+            newItem.FileDirRef = newDir;
             newItem.UniqueId = newDto.UniqueId;
-            newItem._UIVersionString = '1.0';
+            newItem._UIVersionString = '0.1';
             dstWeb.pages.set(newPageId, { dto: newDto, item: newItem });
+            dstWeb.files.set(dstPath.toLowerCase(), {
+              ...srcFile, Name: newName, ServerRelativeUrl: dstPath, UniqueId: newDto.UniqueId, CheckOutType: 2,
+            });
           }
         }
       }

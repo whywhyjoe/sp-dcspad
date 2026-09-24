@@ -900,3 +900,24 @@ html.dcspad-suspended #wb-mount { display: none; }
 .wb-pc-drift ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--fg-dim); }
 .wb-pc-discard-note { margin: 4px 0 0; color: var(--fg-dim); font-size: 12px; }
 .wb-pc-open { text-decoration: none; align-self: center; margin-right: auto; }
+
+/* Per-part drop (design/PAGE-COPY.md §1 decision 4, §5.2 "dynamic"). */
+.wb-pc-recheck-note { margin: 4px 0 0; color: var(--warn); font-size: 12px; }
+.wb-pc-recheck-note[hidden] { display: none; }
+.wb-pc-drop-label, .wb-pc-drop-consumer-label {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--fg-dim);
+  white-space: nowrap;
+}
+/* A dropped part's label and verdict chips read as removed; its own Drop
+   cell stays plain so the checkbox that undoes it is never struck through. */
+.wb-pc-parts-table tr.wb-pc-dropped > td:not(:last-child) {
+  text-decoration: line-through; color: var(--fg-faint);
+}
+.wb-pc-consumer-row td { padding-top: 0; padding-bottom: 6px; }
+.wb-pc-consumers {
+  display: flex; flex-direction: column; gap: 4px; margin-left: 18px;
+  padding: 6px 10px; border-left: 2px solid var(--warn-soft-line); background: var(--warn-soft);
+  border-radius: var(--radius-m);
+}
+.wb-pc-consumer-note { margin: 0; font-size: 11.5px; color: var(--warn); }
+.wb-pc-drop-consumer-label { color: var(--warn); }

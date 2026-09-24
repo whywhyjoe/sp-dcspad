@@ -18,7 +18,7 @@
 import {
   snapshotFromReads, sourceEligibility, targetEligibility, defaultFileName, fileNameProblem,
   folderProblem, fileStem, analyzeParts, assetRequests, analyzeCopy, rewriteContent,
-  compareReadBack, shortRunId, stagingStem, normalizeGuid,
+  compareReadBack, shortRunId, stagingStem, normalizeGuid, dependentConsumers,
 } from './page-copy.js';
 import { createSpPages } from './sp-pages.js';
 import { createSpWriteClient } from './sp-write.js';
@@ -297,6 +297,13 @@ export function openPageCopyDialog({
       checkRow.append(checkBtn);
       panel.append(checkRow);
 
+      // A Drop toggle darkens Copy like any other edit, but — unlike a text
+      // edit — the report it was toggled inside stays on screen; this note is
+      // the only thing that changes next to it.
+      const dropNote = el('p', 'wb-pc-recheck-note', 'Check again to apply.');
+      dropNote.hidden = true;
+      panel.append(dropNote);
+
       // -- report ------------------------------------------------------------
       const report = el('div', 'wb-pc-report');
       report.hidden = true;
@@ -368,6 +375,13 @@ export function openPageCopyDialog({
       let lastKey = null;
       const requiredValues = {};
       const requiredEditors = new Map();
+      // Per-part drop (design/PAGE-COPY.md §1 decision 4, §5.2 "dynamic"):
+      // instance ids the operator chose to drop, and — for a dropped
+      // dynamic-data provider — the consumer instance ids the operator has
+      // confirmed will lose their data source. Both are lowercased instance
+      // ids, matching page-copy.js's own normalization.
+      const dropped = new Set();
+      const confirmedConsumers = new Set();
 
       // Any edit invalidates synchronously (§2.3): Copy goes dark and a Check
       // already in flight discards its answer.
@@ -396,8 +410,21 @@ export function openPageCopyDialog({
         inputEpoch += 1;
         lastPlan = null;
         lastKey = null;
+        confirmedConsumers.clear();
         report.hidden = true;
         report.textContent = '';
+        dropNote.hidden = true;
+      }
+
+      // A Drop toggle invalidates the preflight exactly like any other edit
+      // (Copy goes dark, Check again is required) but the report it was
+      // toggled inside is not blanked — only the gate and this note change.
+      function invalidatePreflightForDrop() {
+        inputEpoch += 1;
+        lastPlan = null;
+        lastKey = null;
+        confirmedConsumers.clear();
+        dropNote.hidden = false;
       }
 
       function computeKey() {
@@ -410,15 +437,31 @@ export function openPageCopyDialog({
           promote: promoteCb.checked,
           carry: carryCb.checked,
           rewrite: rewriteCb.checked,
+          dropped: [...dropped].sort(),
           required: Object.keys(requiredValues).sort().map((k) => [k, requiredValues[k]]),
           etag: snapshot.etag,
         });
       }
 
+      // Consumers of any dropped provider on the CURRENT plan, still waiting
+      // on their own confirm checkbox (§5.2 "dynamic": every consumer is
+      // listed and the drop is confirmed per consumer).
+      function pendingConsumerConfirmations() {
+        if (!lastPlan) return [];
+        return dependentConsumers(lastPlan.analysis, lastPlan.dropped || [])
+          .filter((c) => !confirmedConsumers.has(lower(c.instanceId)));
+      }
+
       function refreshGate() {
         checkBtn.disabled = !connected || !targetEligible || checking || running;
         const fresh = Boolean(lastPlan) && !lastPlan.blockers.length && computeKey() === lastKey;
-        goBtn.disabled = !fresh || running;
+        const pendingConsumers = fresh && pendingConsumerConfirmations().length > 0;
+        goBtn.disabled = !fresh || running || pendingConsumers;
+      }
+
+      function onDropChanged() {
+        invalidatePreflightForDrop();
+        refreshGate();
       }
 
       // ---- connect (list-schema-dialog.js's exact pattern) ------------------
@@ -639,6 +682,7 @@ export function openPageCopyDialog({
             carryMetadata: carryCb.checked,
             rewriteLinks: rewriteCb.checked,
             requiredValues: { ...requiredValues },
+            dropped: [...dropped],
             runId,
           };
           const plan = analyzeCopy({ snapshot, target, options, analyzers, assetInfo });
@@ -647,6 +691,7 @@ export function openPageCopyDialog({
           if (stale()) return;
           lastPlan = plan;
           lastKey = computeKey();
+          dropNote.hidden = true;
           renderReport(plan);
         } catch (err) {
           showError(err?.message || String(err));
@@ -709,8 +754,11 @@ export function openPageCopyDialog({
           report.append(el('h3', '', 'Page parts'));
           const table = el('table', 'wb-table wb-pc-parts-table');
           const body = el('tbody');
+          const droppedNow = new Set((plan.dropped || []).map(lower));
           for (const part of plan.analysis.parts) {
+            const isDropped = Boolean(part.instanceId) && droppedNow.has(lower(part.instanceId));
             const tr = el('tr');
+            if (isDropped) tr.classList.add('wb-pc-dropped');
             tr.append(el('td', '', part.label || part.kind));
             const chipCell = el('td');
             const counts = partVerdictCounts(part);
@@ -719,7 +767,63 @@ export function openPageCopyDialog({
               chipCell.append(chip);
             }
             tr.append(chipCell);
+
+            // Decision 4 (§1): every web part gets a Drop control — never
+            // text, never the title area — off by default, and named
+            // differently when the destination cannot render it at all.
+            const dropCell = el('td');
+            if (part.kind === 'webpart' && part.instanceId) {
+              const dropLabel = el('label', 'wb-pc-drop-label');
+              const dropCb = el('input', 'wb-pc-drop');
+              dropCb.type = 'checkbox';
+              dropCb.dataset.instance = part.instanceId;
+              dropCb.checked = dropped.has(lower(part.instanceId));
+              dropLabel.append(dropCb, document.createTextNode(
+                part.available === false ? 'Drop (not available on the destination)' : 'Drop',
+              ));
+              dropCb.addEventListener('change', () => {
+                const id = lower(part.instanceId);
+                if (dropCb.checked) dropped.add(id); else dropped.delete(id);
+                onDropChanged();
+              });
+              dropCell.append(dropLabel);
+            }
+            tr.append(dropCell);
             body.append(tr);
+
+            // A dropped dynamic-data provider (§5.2 "dynamic"): list every
+            // consumer under it with its own confirm checkbox. Consumers are
+            // read off the CURRENT plan, so this only appears once a Check
+            // has actually run with the part dropped.
+            if (isDropped) {
+              const consumers = dependentConsumers(plan.analysis, [part.instanceId]);
+              if (consumers.length) {
+                const consumerRow = el('tr', 'wb-pc-consumer-row');
+                const consumerCell = el('td');
+                consumerCell.colSpan = 3;
+                const wrap = el('div', 'wb-pc-consumers');
+                wrap.append(el('p', 'wb-pc-consumer-note', `Depends on ${part.label || part.kind}:`));
+                for (const consumer of consumers) {
+                  const consumerLabel = el('label', 'wb-pc-drop-consumer-label');
+                  const confirmCb = el('input', 'wb-pc-drop-consumer');
+                  confirmCb.type = 'checkbox';
+                  confirmCb.dataset.instance = consumer.instanceId;
+                  confirmCb.checked = confirmedConsumers.has(lower(consumer.instanceId));
+                  consumerLabel.append(confirmCb, document.createTextNode(
+                    `Confirm: ${consumer.label || consumer.kind} will lose its data source`,
+                  ));
+                  confirmCb.addEventListener('change', () => {
+                    const id = lower(consumer.instanceId);
+                    if (confirmCb.checked) confirmedConsumers.add(id); else confirmedConsumers.delete(id);
+                    refreshGate();
+                  });
+                  wrap.append(consumerLabel);
+                }
+                consumerCell.append(wrap);
+                consumerRow.append(consumerCell);
+                body.append(consumerRow);
+              }
+            }
           }
           table.append(body);
           report.append(table);

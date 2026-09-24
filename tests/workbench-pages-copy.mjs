@@ -20,6 +20,8 @@ const SECTIONS = [
   './pages-copy/runner.mjs',
   './pages-copy/dialog.mjs',
   './pages-copy/crosssite.mjs',
+  './pages-copy/drop.mjs',
+  './pages-copy/legacy.mjs',
   './pages-copy/live.mjs',
 ];
 
