@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "220" : "dev";
-var injectedRevision = true ? "e2825155" : "";
+var injectedBuild = true ? "240" : "dev";
+var injectedRevision = true ? "7ff0f57a" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -377,7 +377,7 @@ function createSpRestClient({
       return structuredClone(data);
     }
     return withSlot(async () => {
-      const attempt = async () => {
+      const attempt2 = async () => {
         let response2;
         try {
           response2 = await fetchImpl(url, {
@@ -392,11 +392,11 @@ function createSpRestClient({
         }
         return response2;
       };
-      let response = await attempt();
+      let response = await attempt2();
       if (RETRY_STATUSES.has(response.status)) {
         const after = Number(response.headers.get("Retry-After")) || 2;
         await new Promise((r) => setTimeout(r, Math.min(after, 30) * 1e3));
-        response = await attempt();
+        response = await attempt2();
       }
       await requireOk(response, "SharePoint request failed", "get");
       return response.json();
@@ -763,6 +763,33 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
+  async function readFileBytes2(serverRelativePath, { webUrl: targetWebUrl = "", maxBytes = 50 * 1024 * 1024 } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/$value`;
+    const response = await request(endpoint);
+    await requireOk(response, "Could not download the SharePoint file", "read");
+    const declaredLength = Number(response.headers.get("content-length")) || 0;
+    if (declaredLength > maxBytes) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the transfer limit.",
+        { code: "too-large" }
+      );
+    }
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > maxBytes) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the transfer limit.",
+        { code: "too-large" }
+      );
+    }
+    return {
+      bytes,
+      length: bytes.byteLength,
+      contentType: response.headers.get("content-type") || "",
+      serverRelativeUrl: path
+    };
+  }
   async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx: ctx2 }) {
     const state2 = {
       required: false,
@@ -815,15 +842,15 @@ function createSpFilesClient({
   }
   async function postFileMethod(webUrl, path, method, fallback, code) {
     const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/${method}`;
-    const attempt = async (forceDigest) => {
+    const attempt2 = async (forceDigest) => {
       const digest = await getDigest2({ force: forceDigest, webUrl });
       return request(endpoint, {
         method: "POST",
         headers: { Accept: ACCEPT_JSON, "X-RequestDigest": digest }
       });
     };
-    let response = await attempt(false);
-    if (response.status === 403) response = await attempt(true);
+    let response = await attempt2(false);
+    if (response.status === 403) response = await attempt2(true);
     await requireOk(response, fallback, code);
   }
   async function checkOutFile(serverRelativePath, { webUrl: targetWebUrl = "" } = {}) {
@@ -1069,6 +1096,7 @@ function createSpFilesClient({
     getDigest: getDigest2,
     listFolder,
     readTextFile,
+    readFileBytes: readFileBytes2,
     checkOutFile,
     checkInFile,
     undoCheckOutFile,
@@ -1079,6 +1107,7 @@ function createSpFilesClient({
 }
 var defaultClient = createSpFilesClient();
 var getDigest = (options) => defaultClient.getDigest(options);
+var readFileBytes = (path, options) => defaultClient.readFileBytes(path, options);
 
 // ../src/workbench/sp-write.js
 var MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -1087,8 +1116,8 @@ var mockEnsuredUserId = 9e3;
 function defaultMockWriter(url, body, contentType, headers) {
   const writes = globalThis.__DCSPAD_WB_WRITES__ ||= [];
   writes.push({ url, body, contentType, headers });
-  const lower3 = String(url).toLowerCase();
-  if (lower3.includes("addvalidateupdateitemusingpath")) {
+  const lower5 = String(url).toLowerCase();
+  if (lower5.includes("addvalidateupdateitemusingpath")) {
     let data = {};
     try {
       data = JSON.parse(body);
@@ -1108,7 +1137,7 @@ function defaultMockWriter(url, body, contentType, headers) {
       ]
     };
   }
-  if (lower3.includes("/ensureuser")) {
+  if (lower5.includes("/ensureuser")) {
     let data = {};
     try {
       data = JSON.parse(body);
@@ -1123,8 +1152,8 @@ function defaultMockWriter(url, body, contentType, headers) {
       Email: email
     };
   }
-  if (lower3.includes("attachmentfiles/add(")) {
-    const name = /attachmentfiles\/add\(filename='([^']*)'\)/.exec(lower3)?.[1] || "file";
+  if (lower5.includes("attachmentfiles/add(")) {
+    const name = /attachmentfiles\/add\(filename='([^']*)'\)/.exec(lower5)?.[1] || "file";
     let decoded = name;
     try {
       decoded = decodeURIComponent(name);
@@ -1132,7 +1161,7 @@ function defaultMockWriter(url, body, contentType, headers) {
     }
     return { FileName: decoded, ServerRelativeUrl: `/mock/attachments/${decoded}` };
   }
-  if (lower3.includes("validateupdatelistitem")) {
+  if (lower5.includes("validateupdatelistitem")) {
     let formValues = [];
     try {
       formValues = JSON.parse(body)?.formValues || [];
@@ -1146,9 +1175,9 @@ function defaultMockWriter(url, body, contentType, headers) {
       }))
     };
   }
-  if (lower3.includes("addusingpath")) {
-    const name = /addusingpath\(decodedurl='([^']*)'/.exec(lower3)?.[1] || "file";
-    const folder = /getfolderbyserverrelativepath\(decodedurl='([^']*)'/.exec(lower3)?.[1] || "";
+  if (lower5.includes("addusingpath")) {
+    const name = /addusingpath\(decodedurl='([^']*)'/.exec(lower5)?.[1] || "file";
+    const folder = /getfolderbyserverrelativepath\(decodedurl='([^']*)'/.exec(lower5)?.[1] || "";
     return { ServerRelativeUrl: `${decodeURIComponent(folder)}/${decodeURIComponent(name)}` };
   }
   return { ok: true };
@@ -1167,7 +1196,7 @@ function createSpWriteClient({
     if (isMock()) {
       return structuredClone((mockWriter2 || defaultMockWriter)(url, body, contentType, headers));
     }
-    const attempt = async (forceDigest) => {
+    const attempt2 = async (forceDigest) => {
       const digest = await getDigest({ force: forceDigest, webUrl: client2.webUrl() });
       try {
         return await fetchImpl(url, {
@@ -1188,12 +1217,12 @@ function createSpWriteClient({
         );
       }
     };
-    let response = await attempt(false);
-    if (response.status === 403) response = await attempt(true);
+    let response = await attempt2(false);
+    if (response.status === 403) response = await attempt2(true);
     if (response.status === 429 || response.status === 503) {
       const after = Number(response.headers.get("Retry-After")) || 2;
       await new Promise((r) => setTimeout(r, Math.min(after, 30) * 1e3));
-      response = await attempt(false);
+      response = await attempt2(false);
     }
     await requireOk(response, fallback, code);
     try {
@@ -1417,8 +1446,1009 @@ function createSpWriteClient({
   };
 }
 
+// ../src/workbench/mock-pagecopy.js
+var WEB_URL = typeof location !== "undefined" ? location.origin : "http://mock";
+var PAGECOPY_IDS = {
+  // Source web
+  srcSite: "d1510000-0000-4000-8000-000000000001",
+  srcWeb: "d1520000-0000-4000-8000-000000000001",
+  srcSitePages: "d1530000-0000-4000-8000-000000000001",
+  srcSiteAssets: "d1540000-0000-4000-8000-000000000001",
+  srcDocuments: "d1550000-0000-4000-8000-000000000001",
+  srcEvents: "d1560000-0000-4000-8000-000000000001",
+  // Team subweb (same site collection)
+  teamWeb: "d1520000-0000-4000-8000-000000000002",
+  teamSitePages: "d1530000-0000-4000-8000-000000000002",
+  teamSiteAssets: "d1540000-0000-4000-8000-000000000002",
+  // Destination web (different site collection)
+  dstSite: "d1510000-0000-4000-8000-000000000003",
+  dstWeb: "d1520000-0000-4000-8000-000000000003",
+  dstSitePages: "d1530000-0000-4000-8000-000000000003",
+  dstSiteAssets: "d1540000-0000-4000-8000-000000000003"
+};
+var webState = {};
+function initWebState(webPath, siteId, webId, sitePageListId, siteAssetsListId, documentsListId, eventsListId) {
+  webState[webPath] = {
+    path: webPath,
+    siteId,
+    webId,
+    lists: [
+      { Id: sitePageListId, Title: "Site Pages", BaseTemplate: 119, Hidden: false, RootFolder: { ServerRelativeUrl: `${webPath}/SitePages` } },
+      { Id: siteAssetsListId, Title: "Site Assets", BaseTemplate: 101, Hidden: false, RootFolder: { ServerRelativeUrl: `${webPath}/SiteAssets` } },
+      ...documentsListId ? [{ Id: documentsListId, Title: "Documents", BaseTemplate: 101, Hidden: false, RootFolder: { ServerRelativeUrl: `${webPath}/Shared Documents` } }] : [],
+      ...eventsListId ? [{ Id: eventsListId, Title: "Events", BaseTemplate: 106, Hidden: false, RootFolder: { ServerRelativeUrl: `${webPath}/Lists/Events` } }] : []
+    ],
+    files: /* @__PURE__ */ new Map(),
+    // lowercase path -> { Name, ServerRelativeUrl, UniqueId, ListId, WebId, SiteId, Length, CheckOutType, contentType }
+    folders: /* @__PURE__ */ new Set(),
+    // lowercase paths
+    pages: /* @__PURE__ */ new Map(),
+    // id -> { dto, item }
+    nextPageId: 100
+  };
+}
+initWebState(
+  "/sites/pagesrc",
+  PAGECOPY_IDS.srcSite,
+  PAGECOPY_IDS.srcWeb,
+  PAGECOPY_IDS.srcSitePages,
+  PAGECOPY_IDS.srcSiteAssets,
+  PAGECOPY_IDS.srcDocuments,
+  PAGECOPY_IDS.srcEvents
+);
+initWebState(
+  "/sites/pagesrc/team",
+  PAGECOPY_IDS.srcSite,
+  // same site collection
+  PAGECOPY_IDS.teamWeb,
+  PAGECOPY_IDS.teamSitePages,
+  PAGECOPY_IDS.teamSiteAssets,
+  void 0,
+  void 0
+);
+initWebState(
+  "/sites/pagedst",
+  PAGECOPY_IDS.dstSite,
+  PAGECOPY_IDS.dstWeb,
+  PAGECOPY_IDS.dstSitePages,
+  PAGECOPY_IDS.dstSiteAssets,
+  void 0,
+  void 0
+);
+function resetPageCopyMock() {
+  for (const path of Object.keys(webState)) {
+    webState[path].files.clear();
+    webState[path].folders.clear();
+    webState[path].pages.clear();
+    webState[path].nextPageId = 100;
+  }
+  globalThis.__DCSPAD_WB_WRITES__ = [];
+  const src = webState["/sites/pagesrc"];
+  const srcSitePages = src.lists.find((l) => l.Id === PAGECOPY_IDS.srcSitePages);
+  const sourceFiles = [
+    { name: "banner.jpg", path: "/sites/pagesrc/SiteAssets/SitePages/Quarterly-Update/banner.jpg", id: "d15f0000-0000-4000-8000-000000000001", length: 12e4, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "thumb.png", path: "/sites/pagesrc/SiteAssets/thumbs/thumb.png", id: "d15f0000-0000-4000-8000-000000000002", length: 3e4, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "chart.png", path: "/sites/pagesrc/SiteAssets/img/chart.png", id: "d15f0000-0000-4000-8000-000000000003", length: 45e3, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "hero1.jpg", path: "/sites/pagesrc/SiteAssets/hero/hero1.jpg", id: "d15f0000-0000-4000-8000-000000000004", length: 8e4, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "logo.png", path: "/sites/pagesrc/SiteAssets/icons/logo.png", id: "d15f0000-0000-4000-8000-000000000005", length: 5e3, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "logo-2.png", path: "/sites/pagesrc/SiteAssets/img/logo.png", id: "d15f0000-0000-4000-8000-000000000006", length: 6e3, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "huge.mp4", path: "/sites/pagesrc/SiteAssets/big/huge.mp4", id: "d15f0000-0000-4000-8000-000000000007", length: 60 * 1024 * 1024, listId: PAGECOPY_IDS.srcSiteAssets },
+    { name: "report.pdf", path: "/sites/pagesrc/Shared Documents/report.pdf", id: "d15f0000-0000-4000-8000-000000000008", length: 2e5, listId: PAGECOPY_IDS.srcDocuments }
+  ];
+  for (const f of sourceFiles) {
+    src.files.set(f.path.toLowerCase(), {
+      Name: f.name,
+      ServerRelativeUrl: f.path,
+      UniqueId: f.id,
+      ListId: f.listId,
+      WebId: PAGECOPY_IDS.srcWeb,
+      SiteId: PAGECOPY_IDS.srcSite,
+      Length: f.length,
+      CheckOutType: 2,
+      contentType: "application/octet-stream"
+    });
+  }
+  src.folders.add("/sites/pagesrc/siteassets/sitepages");
+  src.folders.add("/sites/pagesrc/siteassets/sitepages/quarterly-update");
+  src.folders.add("/sites/pagesrc/siteassets/thumbs");
+  src.folders.add("/sites/pagesrc/siteassets/img");
+  src.folders.add("/sites/pagesrc/siteassets/hero");
+  src.folders.add("/sites/pagesrc/siteassets/icons");
+  src.folders.add("/sites/pagesrc/siteassets/big");
+  const layoutJson = JSON.stringify([{
+    id: "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+    instanceId: "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+    title: "Title area",
+    serverProcessedContent: {
+      htmlStrings: {},
+      searchablePlainTexts: {},
+      imageSources: { imageSource: "/sites/pagesrc/SiteAssets/SitePages/Quarterly-Update/banner.jpg" },
+      links: {},
+      customMetadata: { imageSource: { siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, uniqueId: "d15f0000-0000-4000-8000-000000000001" } }
+    },
+    dataVersion: "1.4",
+    properties: {
+      title: "Quarterly Update",
+      imageSourceType: 2,
+      layoutType: "FullWidthImage",
+      textAlignment: "Left",
+      showTopicHeader: true,
+      showPublishDate: true,
+      topicHeader: "Finance",
+      authorByline: ["alex@contoso.com"],
+      webId: PAGECOPY_IDS.srcWeb,
+      siteId: PAGECOPY_IDS.srcSite,
+      listId: PAGECOPY_IDS.srcSiteAssets,
+      uniqueId: "d15f0000-0000-4000-8000-000000000001"
+    }
+  }]);
+  const canvasJson = JSON.stringify([
+    { controlType: 4, id: "d15e0000-0000-4000-8000-000000000001", position: { zoneIndex: 1, sectionIndex: 1, controlIndex: 1, sectionFactor: 12 }, innerHTML: '<p>See <a href="/sites/pagesrc/SitePages/Policies.aspx">policies</a>, <a href="/sites/pagesrc-other/SitePages/X.aspx">other</a> and <img src="/sites/pagesrc/SiteAssets/img/chart.png"></p>' },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000002", webPartId: "d1d91016-032f-456d-98a4-721247c305e8", webPartData: { id: "d1d91016-032f-456d-98a4-721247c305e8", title: "Image", properties: { imageSourceType: 2, siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, uniqueId: "d15f0000-0000-4000-8000-000000000003" }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: { imageSource: "/sites/pagesrc/SiteAssets/img/chart.png" }, links: {}, customMetadata: { imageSource: { siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, uniqueId: "d15f0000-0000-4000-8000-000000000003" } } } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000003", webPartId: "c4bd7b2f-7b6e-4599-8485-16504575f590", webPartData: { id: "c4bd7b2f-7b6e-4599-8485-16504575f590", title: "Hero", properties: { content: [{ type: "Image", image: { siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, id: "d15f0000-0000-4000-8000-000000000004" } }] }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: { "content[0].image.url": "/sites/pagesrc/SiteAssets/hero/hero1.jpg" }, links: { "content[0].link": "/sites/pagesrc/SitePages/Policies.aspx" } } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000004", webPartId: "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd", webPartData: { id: "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd", title: "Quick links", properties: { items: [{ siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, uniqueId: "d15f0000-0000-4000-8000-000000000005", thumbnailType: 3 }] }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: { "items[0].image.url": "/sites/pagesrc/SiteAssets/icons/logo.png" }, links: { "items[0].sourceItem.url": "/sites/pagesrc/SitePages/Policies.aspx" } } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000005", webPartId: "df8e44e7-edd5-46d5-90da-aca1539313b8", webPartData: { id: "df8e44e7-edd5-46d5-90da-aca1539313b8", title: "Call to action", properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: { imageSource: "/sites/pagesrc/SiteAssets/img/logo.png" }, links: { buttonLink: "/sites/pagesrc/SitePages/Join.aspx" }, customMetadata: { imageSource: { siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcSiteAssets, uniqueId: "d15f0000-0000-4000-8000-000000000006" } } } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000006", webPartId: "f92bf067-bc19-489e-a556-7fe95f508720", webPartData: { id: "f92bf067-bc19-489e-a556-7fe95f508720", title: "List", properties: { selectedListId: PAGECOPY_IDS.srcEvents, selectedListUrl: "/sites/pagesrc/Lists/Events", webRelativeListUrl: "/Lists/Events" }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000007", webPartId: "91a50c94-865f-4f5c-8b4e-e49659e69772", webPartData: { id: "91a50c94-865f-4f5c-8b4e-e49659e69772", title: "Quick chart", properties: { dataProviderType: "list", listId: PAGECOPY_IDS.srcEvents, siteUrl: "/sites/pagesrc" }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000008", webPartId: "7cba020c-5ccb-42e8-b6fc-75b3149aba7b", webPartData: { id: "7cba020c-5ccb-42e8-b6fc-75b3149aba7b", title: "Sites", properties: { sites: [{ Url: "/sites/pagesrc/team", Title: "Team" }] }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-000000000009", webPartId: "b7dd04e1-19ce-4b24-9132-b60a1c2b910d", webPartData: { id: "b7dd04e1-19ce-4b24-9132-b60a1c2b910d", title: "File viewer", properties: { file: "/sites/pagesrc/Shared Documents/report.pdf", uniqueId: "d15f0000-0000-4000-8000-000000000008", siteId: PAGECOPY_IDS.srcSite, webId: PAGECOPY_IDS.srcWeb, listId: PAGECOPY_IDS.srcDocuments }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} }, dynamicDataPaths: { fileUrl: "WebPart.d15e0000-0000-4000-8000-00000000000a.d15e0000-0000-4000-8000-00000000000a:selectedDocument" } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-00000000000a", webPartId: "f92bf067-bc19-489e-a556-7fe95f508720", webPartData: { id: "f92bf067-bc19-489e-a556-7fe95f508720", title: "Document library", properties: { isDocumentLibrary: true, selectedListId: PAGECOPY_IDS.srcDocuments, selectedListUrl: "/sites/pagesrc/Shared Documents" }, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-00000000000b", webPartId: "d15c0000-0000-4000-8000-000000000001", webPartData: { id: "d15c0000-0000-4000-8000-000000000001", title: "Site-scoped SPFx", properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-00000000000c", webPartId: "d15c0000-0000-4000-8000-0000000000ff", webPartData: { id: "d15c0000-0000-4000-8000-0000000000ff", title: "Unknown part", properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: {} } } },
+    { controlType: 3, id: "d15e0000-0000-4000-8000-00000000000d", webPartId: "275c0095-a77e-4f6d-a2a0-6a7626911518", webPartData: { id: "275c0095-a77e-4f6d-a2a0-6a7626911518", title: "Video", properties: {}, serverProcessedContent: { htmlStrings: {}, searchablePlainTexts: {}, imageSources: {}, links: { videoSource: "/sites/pagesrc/SiteAssets/big/huge.mp4" } } } },
+    { controlType: 0, pageSettingsSlice: { isDefaultDescription: false, isDefaultThumbnail: false } }
+  ]);
+  const quPage = {
+    Id: 7,
+    Title: "Quarterly Update",
+    FileName: "Quarterly-Update.aspx",
+    FileRef: "/sites/pagesrc/SitePages/Quarterly-Update.aspx",
+    FileLeafRef: "Quarterly-Update.aspx",
+    FileDirRef: "/sites/pagesrc/SitePages",
+    UniqueId: "d15d0000-0000-4000-8000-000000000001",
+    PageLayoutType: "Article",
+    PromotedState: 2,
+    Description: "Q3 numbers",
+    TopicHeader: "Finance",
+    AuthorByline: ["alex@contoso.com"],
+    CanvasContent1: canvasJson,
+    LayoutWebpartsContent: layoutJson,
+    // Live shape (spike §11): a custom-thumbnail page's DTO BannerImageUrl is
+    // the THUMBNAIL's plain URL, BannerThumbnailUrl a tokened afdcache CDN URL,
+    // and the banner itself only in the header part's imageSources.
+    BannerImageUrl: `${WEB_URL}/sites/pagesrc/SiteAssets/thumbs/thumb.png`,
+    BannerThumbnailUrl: `${WEB_URL}/_vti_bin/afdcache.ashx/authitem/sites/pagesrc/SiteAssets/thumbs/thumb.png?_oat_=mock&width=400`,
+    CommentsDisabled: true,
+    IsPageCheckedOutToCurrentUser: false,
+    _UIVersionString: "2.0",
+    PageCategory: "IT",
+    ReviewDate: "2026-10-01T07:00:00Z",
+    ShowInNav: true,
+    RelatedLink: { Url: "/sites/pagesrc/SitePages/Policies.aspx", Description: "Policies" },
+    Owner: { Id: 12, Title: "alex@contoso.com" }
+  };
+  src.files.set("/sites/pagesrc/sitepages/quarterly-update.aspx", {
+    Name: "Quarterly-Update.aspx",
+    ServerRelativeUrl: "/sites/pagesrc/SitePages/Quarterly-Update.aspx",
+    UniqueId: "d15d0000-0000-4000-8000-000000000001",
+    ListId: PAGECOPY_IDS.srcSitePages,
+    WebId: PAGECOPY_IDS.srcWeb,
+    SiteId: PAGECOPY_IDS.srcSite,
+    Length: 0,
+    CheckOutType: 2,
+    contentType: "text/html"
+  });
+  src.pages.set(7, {
+    dto: quPage,
+    item: {
+      Id: 7,
+      Title: "Quarterly Update",
+      FileLeafRef: "Quarterly-Update.aspx",
+      FileRef: "/sites/pagesrc/SitePages/Quarterly-Update.aspx",
+      FileDirRef: "/sites/pagesrc/SitePages",
+      UniqueId: "d15d0000-0000-4000-8000-000000000001",
+      PromotedState: 2,
+      _UIVersionString: "2.0",
+      CanvasContent1: canvasJson,
+      LayoutWebpartsContent: layoutJson,
+      BannerImageUrl: { Url: quPage.BannerImageUrl, Description: quPage.BannerImageUrl },
+      Description: "Q3 numbers",
+      CommentsDisabled: true,
+      PageCategory: "IT",
+      ReviewDate: "2026-10-01T07:00:00Z",
+      ShowInNav: true,
+      RelatedLink: quPage.RelatedLink,
+      Owner: { Id: 12 },
+      CheckoutUser: null,
+      HasUniqueRoleAssignments: false,
+      Modified: "2026-09-20T10:00:00Z",
+      Editor: { Title: "alex@contoso.com" }
+    }
+  });
+  src.pages.set(8, {
+    dto: { Id: 8, Title: "Legacy-News", FileName: "Legacy-News.aspx", FileRef: "/sites/pagesrc/SitePages/Legacy-News.aspx", FileLeafRef: "Legacy-News.aspx", FileDirRef: "/sites/pagesrc/SitePages", UniqueId: "d15d0000-0000-4000-8000-000000000002", PageLayoutType: "Article", PromotedState: 0, CanvasContent1: "<div><div data-sp-canvascontrol></div></div>" },
+    item: { Id: 8, Title: "Legacy-News", FileLeafRef: "Legacy-News.aspx", FileRef: "/sites/pagesrc/SitePages/Legacy-News.aspx", FileDirRef: "/sites/pagesrc/SitePages", UniqueId: "d15d0000-0000-4000-8000-000000000002", PromotedState: 0, _UIVersionString: "1.0" }
+  });
+  src.pages.set(9, {
+    dto: { Id: 9, Title: "Repost", FileName: "Repost.aspx", FileRef: "/sites/pagesrc/SitePages/Repost.aspx", FileLeafRef: "Repost.aspx", FileDirRef: "/sites/pagesrc/SitePages", UniqueId: "d15d0000-0000-4000-8000-000000000003", PageLayoutType: "RepostPage", CanvasContent1: "[]" },
+    item: { Id: 9, Title: "Repost", FileLeafRef: "Repost.aspx", FileRef: "/sites/pagesrc/SitePages/Repost.aspx", UniqueId: "d15d0000-0000-4000-8000-000000000003" }
+  });
+  for (const [name, uniqueId] of [["Legacy-News.aspx", "d15d0000-0000-4000-8000-000000000002"], ["Repost.aspx", "d15d0000-0000-4000-8000-000000000003"]]) {
+    src.files.set(`/sites/pagesrc/sitepages/${name.toLowerCase()}`, {
+      Name: name,
+      ServerRelativeUrl: `/sites/pagesrc/SitePages/${name}`,
+      UniqueId: uniqueId,
+      ListId: PAGECOPY_IDS.srcSitePages,
+      WebId: PAGECOPY_IDS.srcWeb,
+      SiteId: PAGECOPY_IDS.srcSite,
+      Length: 0,
+      CheckOutType: 2,
+      contentType: "text/html"
+    });
+  }
+  const dst = webState["/sites/pagedst"];
+  dst.folders.add("/sites/pagedst/siteassets/sitepages");
+  dst.pages.set(3, {
+    dto: { Id: 3, Title: "Quarterly-Update", FileName: "Quarterly-Update.aspx", FileRef: "/sites/pagedst/SitePages/Quarterly-Update.aspx", FileLeafRef: "Quarterly-Update.aspx", FileDirRef: "/sites/pagedst/SitePages", UniqueId: "d15d0000-0000-4000-8000-000000000010", PageLayoutType: "Article", CanvasContent1: "[]" },
+    item: { Id: 3, Title: "Quarterly-Update", FileLeafRef: "Quarterly-Update.aspx", FileRef: "/sites/pagedst/SitePages/Quarterly-Update.aspx", UniqueId: "d15d0000-0000-4000-8000-000000000010" }
+  });
+  dst.files.set("/sites/pagedst/sitepages/quarterly-update.aspx", {
+    Name: "Quarterly-Update.aspx",
+    ServerRelativeUrl: "/sites/pagedst/SitePages/Quarterly-Update.aspx",
+    UniqueId: "d15d0000-0000-4000-8000-000000000010",
+    ListId: PAGECOPY_IDS.dstSitePages,
+    WebId: PAGECOPY_IDS.dstWeb,
+    SiteId: PAGECOPY_IDS.dstSite,
+    Length: 0,
+    CheckOutType: 2,
+    contentType: "text/html"
+  });
+  src.nextPageId = 10;
+  dst.nextPageId = 4;
+}
+resetPageCopyMock();
+function getWebState(webBase) {
+  let path = webBase;
+  try {
+    const url = new URL(webBase);
+    path = url.pathname.replace(/\/+$/, "");
+  } catch {
+    path = webBase.replace(/\/+$/, "");
+  }
+  const pathLower = path.toLowerCase();
+  for (const [key2, state2] of Object.entries(webState)) {
+    if (key2.toLowerCase() === pathLower) return state2;
+  }
+  return null;
+}
+function nextFileId() {
+  let seq = globalThis.__PAGECOPY_MOCK_FILE_SEQ__ = (globalThis.__PAGECOPY_MOCK_FILE_SEQ__ || 0) + 1;
+  return `d15a0000-0000-4000-8000-${String(seq).padStart(12, "0")}`;
+}
+function sanitizeFileName(name) {
+  return name.replaceAll(/["*:<>?/\\|#%\s]+/g, "-");
+}
+function pageCopyResolver(url, path, webBase) {
+  const web = getWebState(webBase);
+  if (!web) return void 0;
+  const pathNoQuery = path.split("?")[0];
+  const pathLower = pathNoQuery.toLowerCase();
+  const origin = WEB_URL;
+  if (pathLower === "web" || pathLower.startsWith("web?")) {
+    return {
+      Id: web.webId,
+      Title: "Mock Web",
+      Url: `${origin}${web.path}`,
+      ServerRelativeUrl: web.path
+    };
+  }
+  if (pathLower === "site" || pathLower.startsWith("site?")) {
+    return {
+      Id: web.siteId,
+      Url: `${origin}${web.path.split("/").slice(0, -1).join("/")}`,
+      ServerRelativeUrl: web.path.split("/").slice(0, -1).join("/")
+    };
+  }
+  if (/^web\/lists($|\?)/.test(pathLower)) {
+    return { value: web.lists.map((l) => ({
+      Id: l.Id,
+      Title: l.Title,
+      BaseTemplate: l.BaseTemplate,
+      BaseType: l.BaseTemplate === 119 ? 1 : 1,
+      Hidden: l.Hidden,
+      ItemCount: l.BaseTemplate === 119 ? web.pages.size : web.files.size,
+      DefaultViewUrl: `${web.path}/${l.Title.replaceAll(" ", "")}/AllItems.aspx`,
+      RootFolder: l.RootFolder
+    })) };
+  }
+  const itemMatch = /^web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)$/i.exec(pathLower);
+  if (itemMatch) {
+    const listId = itemMatch[1].toLowerCase();
+    const itemId = Number(itemMatch[2]);
+    const list2 = web.lists.find((l) => l.Id.toLowerCase() === listId);
+    if (!list2) return null;
+    const page = web.pages.get(itemId);
+    if (page && url.toLowerCase().includes("fieldvaluesastext")) {
+      return {
+        ...page.item,
+        FieldValuesAsText: {
+          Title: page.item.Title || "",
+          FileLeafRef: page.item.FileLeafRef || "",
+          Editor: page.item.Editor?.Title || "",
+          // DateTime display text in the web's regional format — what the
+          // carry set sends to ValidateUpdateListItem (ISO is refused live).
+          ...page.item.ReviewDate ? { ReviewDate: "10/1/2026 12:00 AM" } : {}
+        }
+      };
+    }
+    return page?.item || null;
+  }
+  const itemsCollectionMatch = /^web\/lists\(guid'([0-9a-f-]+)'\)\/items$/i.exec(pathLower);
+  if (itemsCollectionMatch) {
+    const listId = itemsCollectionMatch[1].toLowerCase();
+    const list2 = web.lists.find((l) => l.Id.toLowerCase() === listId);
+    if (!list2) return null;
+    if (list2.BaseTemplate === 119) {
+      return { value: [...web.pages.values()].map((p) => p.item) };
+    }
+    return { value: [] };
+  }
+  const fieldsMatch = /^web\/lists\(guid'([0-9a-f-]+)'\)\/fields$/i.exec(pathLower);
+  if (fieldsMatch) {
+    const listId = fieldsMatch[1].toLowerCase();
+    const list2 = web.lists.find((l) => l.Id.toLowerCase() === listId);
+    if (!list2) return null;
+    const fields = [
+      { Id: "f1", Title: "Title", InternalName: "Title", TypeAsString: "Text", Required: true, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+      { Id: "f2", Title: "Description", InternalName: "Description", TypeAsString: "Note", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+      { Id: "f3", Title: "Banner Image URL", InternalName: "BannerImageUrl", TypeAsString: "URL", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+      { Id: "f4", Title: "Promoted State", InternalName: "PromotedState", TypeAsString: "Number", Required: false, Hidden: false, ReadOnlyField: true, Choices: void 0 },
+      { Id: "f5", Title: "Canvas Content", InternalName: "CanvasContent1", TypeAsString: "Note", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+      { Id: "f6", Title: "Layout Web Parts Content", InternalName: "LayoutWebpartsContent", TypeAsString: "Note", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+      { Id: "f7", Title: "File Leaf Ref", InternalName: "FileLeafRef", TypeAsString: "File", Required: false, Hidden: false, ReadOnlyField: true, Choices: void 0 },
+      { Id: "f8", Title: "Version", InternalName: "_UIVersionString", TypeAsString: "Text", Required: false, Hidden: false, ReadOnlyField: true, Choices: void 0 },
+      { Id: "f9", Title: "Comments Disabled", InternalName: "CommentsDisabled", TypeAsString: "Boolean", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 }
+    ];
+    if (list2.Id === PAGECOPY_IDS.srcSitePages || list2.Id === PAGECOPY_IDS.teamSitePages || list2.Id === PAGECOPY_IDS.dstSitePages) {
+      if (web.path === "/sites/pagedst") {
+        fields.push(
+          { Id: "f10", Title: "Page Category", InternalName: "PageCategory", TypeAsString: "Choice", Required: false, Hidden: false, ReadOnlyField: false, Choices: ["Finance", "HR"] },
+          { Id: "f11", Title: "Review Date", InternalName: "ReviewDate", TypeAsString: "DateTime", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f12", Title: "Show In Nav", InternalName: "ShowInNav", TypeAsString: "Boolean", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f13", Title: "Related Link", InternalName: "RelatedLink", TypeAsString: "URL", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f14", Title: "Audience", InternalName: "Audience", TypeAsString: "Text", Required: true, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f15", Title: "Owner", InternalName: "Owner", TypeAsString: "User", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 }
+        );
+      } else {
+        fields.push(
+          { Id: "f10", Title: "Page Category", InternalName: "PageCategory", TypeAsString: "Choice", Required: false, Hidden: false, ReadOnlyField: false, Choices: ["Finance", "HR", "IT"] },
+          { Id: "f11", Title: "Review Date", InternalName: "ReviewDate", TypeAsString: "DateTime", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f12", Title: "Show In Nav", InternalName: "ShowInNav", TypeAsString: "Boolean", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f13", Title: "Related Link", InternalName: "RelatedLink", TypeAsString: "URL", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 },
+          { Id: "f15", Title: "Owner", InternalName: "Owner", TypeAsString: "User", Required: false, Hidden: false, ReadOnlyField: false, Choices: void 0 }
+        );
+      }
+    }
+    return { value: fields };
+  }
+  const listMatch = /^web\/lists\(guid'([0-9a-f-]+)'\)$/i.exec(pathLower);
+  if (listMatch) {
+    const listId = listMatch[1].toLowerCase();
+    const list2 = web.lists.find((l) => l.Id.toLowerCase() === listId);
+    return list2 || null;
+  }
+  const pageMatch = /sitepages\/pages\((\d+)\)/i.exec(pathLower);
+  if (pageMatch) {
+    const pageId = Number(pageMatch[1]);
+    const page = web.pages.get(pageId);
+    return page ? page.dto : null;
+  }
+  const fileByPathMatch = /web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)/i.exec(url.toLowerCase());
+  if (fileByPathMatch) {
+    let decodedPath = fileByPathMatch[1];
+    try {
+      decodedPath = decodeURIComponent(decodedPath);
+    } catch {
+    }
+    const file = Array.from(web.files.entries()).find(([key2]) => key2.toLowerCase() === decodedPath.toLowerCase())?.[1];
+    if (!file) return null;
+    if (pathLower.includes("/listitemallfields")) {
+      const page = [...web.pages.values()].find((pg) => String(pg.dto.FileRef || pg.item.FileRef || "").toLowerCase() === file.ServerRelativeUrl.toLowerCase());
+      return page ? { ...page.item, Id: page.dto.Id } : null;
+    }
+    if (pathLower.includes("/$value")) {
+      return { mockBytes: file.Length, contentType: file.contentType };
+    }
+    return {
+      Name: file.Name,
+      ServerRelativeUrl: file.ServerRelativeUrl,
+      UniqueId: file.UniqueId,
+      ListId: file.ListId,
+      WebId: file.WebId,
+      SiteId: file.SiteId,
+      Length: file.Length,
+      CheckOutType: file.CheckOutType
+    };
+  }
+  const folderMatch = /^web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)$/i.exec(pathLower);
+  if (folderMatch) {
+    let folderPath = folderMatch[1];
+    try {
+      folderPath = decodeURIComponent(folderPath).replaceAll("''", "'");
+    } catch {
+    }
+    const lowerPath = folderPath.toLowerCase().replace(/\/+$/, "");
+    const exists = web.folders.has(lowerPath) || web.lists.some((l) => String(l.RootFolder?.ServerRelativeUrl || "").toLowerCase() === lowerPath) || [...web.files.keys()].some((k) => k.startsWith(`${lowerPath}/`));
+    return { Exists: exists, ServerRelativeUrl: folderPath };
+  }
+  const fileByIdMatch = /web\/getfilebyid\('([0-9a-f-]+)'\)/i.exec(pathLower);
+  if (fileByIdMatch) {
+    const uniqueId = fileByIdMatch[1].toLowerCase();
+    for (const file of web.files.values()) {
+      if (file.UniqueId.toLowerCase() === uniqueId) {
+        return {
+          Name: file.Name,
+          ServerRelativeUrl: file.ServerRelativeUrl,
+          UniqueId: file.UniqueId,
+          ListId: file.ListId,
+          WebId: file.WebId,
+          SiteId: file.SiteId,
+          Length: file.Length,
+          CheckOutType: file.CheckOutType
+        };
+      }
+    }
+    return null;
+  }
+  if (pathLower === "web/getclientsidewebparts") {
+    const ids = [
+      { Id: "d1d91016-032f-456d-98a4-721247c305e8", Name: "Image" },
+      { Id: "c4bd7b2f-7b6e-4599-8485-16504575f590", Name: "Hero" },
+      { Id: "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd", Name: "Quick links" },
+      { Id: "df8e44e7-edd5-46d5-90da-aca1539313b8", Name: "Call to action" },
+      { Id: "f92bf067-bc19-489e-a556-7fe95f508720", Name: "List" },
+      { Id: "b7dd04e1-19ce-4b24-9132-b60a1c2b910d", Name: "File viewer" },
+      { Id: "7cba020c-5ccb-42e8-b6fc-75b3149aba7b", Name: "Sites" },
+      { Id: "275c0095-a77e-4f6d-a2a0-6a7626911518", Name: "Video" }
+    ];
+    if (web.path === "/sites/pagesrc") {
+      ids.push({ Id: "91a50c94-865f-4f5c-8b4e-e49659e69772", Name: "Quick chart" });
+      ids.push({ Id: "d15c0000-0000-4000-8000-000000000001", Name: "Site-scoped SPFx" });
+    } else if (web.path === "/sites/pagesrc/team") {
+      ids.push({ Id: "91a50c94-865f-4f5c-8b4e-e49659e69772", Name: "Quick chart" });
+    }
+    return { value: ids };
+  }
+  if (/web\/features\/getbyid\('([0-9a-f-]+)'\)/i.test(pathLower)) {
+    const featureMatch = /web\/features\/getbyid\('([0-9a-f-]+)'\)/i.exec(pathLower);
+    if (featureMatch) {
+      const featureId = featureMatch[1].toLowerCase();
+      if (featureId === "b6917cb1-93a0-4b97-a84d-7cf49975d4ec") {
+        return { DefinitionId: "b6917cb1-93a0-4b97-a84d-7cf49975d4ec" };
+      }
+      return { "odata.null": true };
+    }
+  }
+  return null;
+}
+function pageCopyWriter(url, body, contentType, headers) {
+  const webBase = url.slice(0, url.indexOf("/_api/")).replace(/\/+$/, "");
+  const web = getWebState(webBase);
+  if (!web) return void 0;
+  const pathFull = url.slice(url.indexOf("/_api/") + 6);
+  const pathNoQuery = pathFull.split("?")[0];
+  const pathLower = pathNoQuery.toLowerCase();
+  const record = () => {
+    globalThis.__DCSPAD_WB_WRITES__ ||= [];
+    globalThis.__DCSPAD_WB_WRITES__.push({ url, body, contentType, headers });
+  };
+  let networkFailure = null;
+  if (globalThis.__PAGECOPY_MOCK_FAIL__) {
+    for (let i = 0; i < globalThis.__PAGECOPY_MOCK_FAIL__.length; i++) {
+      const fail = globalThis.__PAGECOPY_MOCK_FAIL__[i];
+      if (url.toLowerCase().includes(String(fail.match).toLowerCase())) {
+        const err = new SpFileError(fail.message || "mock failure", { code: fail.code || "write", status: fail.status || 500 });
+        if (fail.code === "network") {
+          networkFailure = err;
+        } else {
+          record();
+          if (fail.once) globalThis.__PAGECOPY_MOCK_FAIL__.splice(i, 1);
+          throw err;
+        }
+        if (fail.once) globalThis.__PAGECOPY_MOCK_FAIL__.splice(i, 1);
+        break;
+      }
+    }
+  }
+  let bodyData = {};
+  try {
+    bodyData = JSON.parse(body || "{}");
+  } catch {
+  }
+  const dispatched = dispatchWrite();
+  if (networkFailure) throw networkFailure;
+  return dispatched;
+  function dispatchWrite() {
+    if (pathLower === "sitepages/pages") {
+      record();
+      const pageId = web.nextPageId++;
+      const dto = {
+        Id: pageId,
+        Title: bodyData.Title || "",
+        FileName: `Untitled_${pageId}.aspx`,
+        FileRef: `${web.path}/SitePages/Untitled_${pageId}.aspx`,
+        FileLeafRef: `Untitled_${pageId}.aspx`,
+        FileDirRef: `${web.path}/SitePages`,
+        UniqueId: nextFileId(),
+        CanvasContent1: "[]",
+        LayoutWebpartsContent: "[]",
+        PromotedState: bodyData.PromotedState ?? 0,
+        PageLayoutType: bodyData.PageLayoutType || "Article",
+        IsPageCheckedOutToCurrentUser: true,
+        _UIVersionString: "0.1"
+      };
+      web.pages.set(pageId, {
+        dto,
+        item: {
+          Id: pageId,
+          Title: "",
+          FileLeafRef: `Untitled_${pageId}.aspx`,
+          FileRef: `${web.path}/SitePages/Untitled_${pageId}.aspx`,
+          UniqueId: dto.UniqueId,
+          _UIVersionString: "0.1",
+          CanvasContent1: "[]",
+          LayoutWebpartsContent: "[]"
+        }
+      });
+      return dto;
+    }
+    if (/sitepages\/pages\(\d+\)\/checkoutpage/i.test(pathLower)) {
+      record();
+      const match = /sitepages\/pages\((\d+)\)\/checkoutpage/i.exec(pathLower);
+      if (match) {
+        const pageId = Number(match[1]);
+        const page = web.pages.get(pageId);
+        if (page) {
+          page.dto.IsPageCheckedOutToCurrentUser = true;
+        }
+      }
+      return {};
+    }
+    if (/sitepages\/pages\(\d+\)\/savepage/i.test(pathLower)) {
+      record();
+      const match = /sitepages\/pages\((\d+)\)\/savepage/i.exec(pathLower);
+      if (match) {
+        const pageId = Number(match[1]);
+        const page = web.pages.get(pageId);
+        if (page) {
+          const dto = page.dto;
+          const item2 = page.item;
+          if (bodyData.Title && dto.FileName.startsWith("Untitled_")) {
+            const stem2 = sanitizeFileName(bodyData.Title);
+            let newName = `${stem2}.aspx`;
+            let counter = 1;
+            for (const existingPage of web.pages.values()) {
+              if (existingPage.dto.FileLeafRef && existingPage.dto.FileLeafRef.toLowerCase() === newName.toLowerCase() && existingPage.dto.Id !== pageId) {
+                newName = `${stem2}${counter++}.aspx`;
+              }
+            }
+            dto.FileName = newName;
+            dto.FileLeafRef = newName;
+            dto.FileRef = `${web.path}/SitePages/${newName}`;
+            item2.FileLeafRef = newName;
+            item2.FileRef = `${web.path}/SitePages/${newName}`;
+          }
+          const filePath = `${web.path}/SitePages/${dto.FileLeafRef}`.toLowerCase();
+          const sitePagesList = web.lists.find((l) => l.BaseTemplate === 119);
+          web.files.set(filePath, {
+            Name: dto.FileLeafRef,
+            ServerRelativeUrl: `${web.path}/SitePages/${dto.FileLeafRef}`,
+            UniqueId: dto.UniqueId,
+            ListId: sitePagesList?.Id,
+            WebId: web.webId,
+            SiteId: web.siteId,
+            Length: 0,
+            CheckOutType: 2,
+            contentType: "text/html"
+          });
+          if ("Title" in bodyData) {
+            dto.Title = bodyData.Title;
+            item2.Title = bodyData.Title;
+          }
+          if ("Description" in bodyData) {
+            dto.Description = bodyData.Description;
+            item2.Description = bodyData.Description;
+          }
+          if ("BannerImageUrl" in bodyData) {
+            dto.BannerImageUrl = bodyData.BannerImageUrl;
+            item2.BannerImageUrl = bodyData.BannerImageUrl;
+          }
+          if ("CanvasContent1" in bodyData) {
+            dto.CanvasContent1 = bodyData.CanvasContent1;
+            item2.CanvasContent1 = bodyData.CanvasContent1;
+          }
+          if ("LayoutWebpartsContent" in bodyData) {
+            dto.LayoutWebpartsContent = bodyData.LayoutWebpartsContent;
+            item2.LayoutWebpartsContent = bodyData.LayoutWebpartsContent;
+          }
+          if ("TopicHeader" in bodyData) dto.TopicHeader = bodyData.TopicHeader;
+          if ("AuthorByline" in bodyData) dto.AuthorByline = bodyData.AuthorByline;
+        }
+      }
+      return {};
+    }
+    if (/sitepages\/pages\(\d+\)\/publish/i.test(pathLower)) {
+      record();
+      const match = /sitepages\/pages\((\d+)\)\/publish/i.exec(pathLower);
+      if (match) {
+        const pageId = Number(match[1]);
+        const page = web.pages.get(pageId);
+        if (page) {
+          const label = page.dto._UIVersionString || "0.1";
+          const [major, minor] = label.split(".").map(Number);
+          const newMajor = (major || 0) + 1;
+          page.dto._UIVersionString = `${newMajor}.0`;
+          page.item._UIVersionString = `${newMajor}.0`;
+          page.dto.IsPageCheckedOutToCurrentUser = false;
+        }
+      }
+      return {};
+    }
+    if (/sitepages\/pages\(\d+\)\/promotetonews/i.test(pathLower)) {
+      record();
+      const match = /sitepages\/pages\((\d+)\)\/promotetonews/i.exec(pathLower);
+      if (match) {
+        const pageId = Number(match[1]);
+        const page = web.pages.get(pageId);
+        if (page) {
+          page.dto.PromotedState = 1;
+        }
+      }
+      return {};
+    }
+    if (/sitepages\/pages\(\d+\)\/discardpage/i.test(pathLower)) {
+      record();
+      const match = /sitepages\/pages\((\d+)\)\/discardpage/i.exec(pathLower);
+      if (match) {
+        const pageId = Number(match[1]);
+        const page = web.pages.get(pageId);
+        if (page) {
+          page.dto.IsPageCheckedOutToCurrentUser = false;
+        }
+      }
+      return {};
+    }
+    if (/web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)\/recycle/i.test(pathLower)) {
+      record();
+      const match = /web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)\/recycle/i.exec(pathLower);
+      if (match) {
+        let decodedPath = match[1];
+        try {
+          decodedPath = decodeURIComponent(decodedPath);
+        } catch {
+        }
+        const srLower = decodedPath.toLowerCase();
+        web.files.delete(srLower);
+        for (const [id, page] of web.pages) {
+          if (page.dto.FileRef && page.dto.FileRef.toLowerCase() === srLower) {
+            web.pages.delete(id);
+          }
+        }
+      }
+      return {};
+    }
+    if (/web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)\/recycle/i.test(pathLower)) {
+      record();
+      const match = /web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)\/recycle/i.exec(pathLower);
+      if (match) {
+        let decodedPath = match[1];
+        try {
+          decodedPath = decodeURIComponent(decodedPath);
+        } catch {
+        }
+        web.folders.delete(decodedPath.toLowerCase());
+      }
+      return {};
+    }
+    if (/sp\.movecopyutil\.(move|copy)filebypath/i.test(pathLower)) {
+      record();
+      const srcAbsUrl = bodyData.srcPath?.DecodedUrl;
+      const dstAbsUrl = bodyData.destPath?.DecodedUrl;
+      const overwriteMatch = /[?&]@a1=(true|false)/i.exec(url);
+      const overwrite = overwriteMatch ? overwriteMatch[1].toLowerCase() === "true" : false;
+      if (srcAbsUrl && dstAbsUrl) {
+        let srcPath = srcAbsUrl;
+        let dstPath = dstAbsUrl;
+        try {
+          srcPath = decodeURIComponent(new URL(srcAbsUrl).pathname);
+          dstPath = decodeURIComponent(new URL(dstAbsUrl).pathname);
+        } catch {
+        }
+        const srcFile = Array.from(web.files.entries()).find(([key2]) => key2.toLowerCase() === srcPath.toLowerCase())?.[1];
+        if (!srcFile) throw new SpFileError("Source file not found", { code: "not-found", status: 404 });
+        const isMove = /movefilebypath/i.test(pathLower);
+        const isCopy = /copyfilebypath/i.test(pathLower);
+        const dstExists = Array.from(web.files.entries()).some(([key2]) => key2.toLowerCase() === dstPath.toLowerCase());
+        if (dstExists && !overwrite) {
+          throw new SpFileError("Destination exists", { code: "conflict", status: 409 });
+        }
+        if (isCopy) {
+          const dstWeb = getWebState(url.substring(0, url.indexOf("/_api/")).replace(/\/+$/, ""));
+          if (dstWeb && srcFile.ServerRelativeUrl.includes("/SitePages/")) {
+            const sourcePage = [...web.pages.values()].find((p) => p.dto.FileRef && p.dto.FileRef.toLowerCase() === srcFile.ServerRelativeUrl.toLowerCase());
+            if (sourcePage) {
+              const newPageId = dstWeb.nextPageId++;
+              const newName = dstPath.split("/").pop();
+              const newDir = dstPath.slice(0, dstPath.lastIndexOf("/"));
+              const newDto = JSON.parse(JSON.stringify(sourcePage.dto));
+              newDto.Id = newPageId;
+              newDto.FileName = newName;
+              newDto.FileRef = dstPath;
+              newDto.FileLeafRef = newName;
+              newDto.FileDirRef = newDir;
+              newDto.UniqueId = nextFileId();
+              newDto._UIVersionString = "0.1";
+              newDto.IsPageCheckedOutToCurrentUser = false;
+              const newItem = JSON.parse(JSON.stringify(sourcePage.item));
+              newItem.Id = newPageId;
+              newItem.FileLeafRef = newName;
+              newItem.FileRef = dstPath;
+              newItem.FileDirRef = newDir;
+              newItem.UniqueId = newDto.UniqueId;
+              newItem._UIVersionString = "0.1";
+              dstWeb.pages.set(newPageId, { dto: newDto, item: newItem });
+              dstWeb.files.set(dstPath.toLowerCase(), {
+                ...srcFile,
+                Name: newName,
+                ServerRelativeUrl: dstPath,
+                UniqueId: newDto.UniqueId,
+                CheckOutType: 2
+              });
+            }
+          }
+        }
+        if (isMove) {
+          const oldServerRelativeUrl = srcFile.ServerRelativeUrl;
+          const newName = dstPath.split("/").pop();
+          web.files.delete(srcPath.toLowerCase());
+          srcFile.ServerRelativeUrl = dstPath;
+          srcFile.Name = newName;
+          web.files.set(dstPath.toLowerCase(), srcFile);
+          for (const page of web.pages.values()) {
+            if (page.dto.FileRef && page.dto.FileRef.toLowerCase() === oldServerRelativeUrl.toLowerCase()) {
+              page.dto.FileRef = dstPath;
+              page.dto.FileLeafRef = newName;
+              page.dto.FileName = newName;
+              page.item.FileRef = dstPath;
+              page.item.FileLeafRef = newName;
+            }
+          }
+        }
+      }
+      return {};
+    }
+    if (/web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)\/files\/addtemplatefile/i.test(pathLower)) {
+      record();
+      const match = /web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)\/files\/addtemplatefile\(urloffile='([^']*)'/i.exec(pathLower);
+      if (match) {
+        let folderPath = match[1];
+        let filePath = match[2];
+        try {
+          folderPath = decodeURIComponent(folderPath);
+          folderPath = folderPath.replaceAll("''", "'");
+        } catch {
+        }
+        try {
+          filePath = decodeURIComponent(filePath);
+          filePath = filePath.replaceAll("''", "'");
+        } catch {
+        }
+        const baseName = filePath.split("/").pop();
+        const fullPath = `${folderPath}/${baseName}`;
+        web.files.set(fullPath.toLowerCase(), {
+          Name: baseName,
+          ServerRelativeUrl: fullPath,
+          UniqueId: nextFileId(),
+          ListId: PAGECOPY_IDS.srcSitePages,
+          WebId: web.webId,
+          SiteId: web.siteId,
+          Length: 0,
+          CheckOutType: 2,
+          contentType: "text/html"
+        });
+        return {
+          Name: baseName,
+          ServerRelativeUrl: fullPath,
+          UniqueId: nextFileId()
+        };
+      }
+    }
+    if (/web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)\/files\/addusingpath/i.test(pathLower)) {
+      record();
+      const match = /web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)\/files\/addusingpath\(decodedurl='([^']*)'/i.exec(pathLower);
+      if (match) {
+        let folderPath = match[1];
+        let fileName = match[2];
+        try {
+          folderPath = decodeURIComponent(folderPath);
+          folderPath = folderPath.replaceAll("''", "'");
+        } catch {
+        }
+        try {
+          fileName = decodeURIComponent(fileName);
+          fileName = fileName.replaceAll("''", "'");
+        } catch {
+        }
+        const fullPath = `${folderPath}${folderPath.endsWith("/") ? "" : "/"}${fileName}`;
+        if (web.files.has(fullPath.toLowerCase())) {
+          throw new SpFileError("File exists", { code: "conflict", status: 409 });
+        }
+        const uniqueId = nextFileId();
+        web.files.set(fullPath.toLowerCase(), {
+          Name: fileName,
+          ServerRelativeUrl: fullPath,
+          UniqueId: uniqueId,
+          ListId: PAGECOPY_IDS.srcSiteAssets,
+          WebId: web.webId,
+          SiteId: web.siteId,
+          Length: bodyData?.length || body?.byteLength || 0,
+          CheckOutType: 2,
+          contentType: "application/octet-stream"
+        });
+        return {
+          ServerRelativeUrl: fullPath,
+          Name: fileName,
+          UniqueId: uniqueId,
+          CheckOutType: 2
+        };
+      }
+    }
+    if (/web\/folders\/addusingpath/i.test(pathLower)) {
+      record();
+      const match = /web\/folders\/addusingpath\(decodedurl='([^']*)'/i.exec(pathLower);
+      if (match) {
+        let folderPath = match[1];
+        try {
+          folderPath = decodeURIComponent(folderPath);
+          folderPath = folderPath.replaceAll("''", "'");
+        } catch {
+        }
+        if (web.folders.has(folderPath.toLowerCase())) {
+          throw new SpFileError(`A file or folder with the name ${folderPath.replace(/^\/+/, "")} already exists.`, { code: "write", status: 500 });
+        }
+        web.folders.add(folderPath.toLowerCase());
+        return { ServerRelativeUrl: folderPath };
+      }
+    }
+    if (/sitepages\/addimagefromexternalurl/i.test(pathLower)) {
+      record();
+      const pageNameMatch = /pagename='([^']*)'/.exec(pathLower);
+      const imageFileNameMatch = /imagefilename='([^']*)'/.exec(pathLower);
+      if (pageNameMatch && imageFileNameMatch) {
+        let pageName = pageNameMatch[1];
+        let imageFileName = imageFileNameMatch[1];
+        try {
+          pageName = decodeURIComponent(pageName);
+          imageFileName = decodeURIComponent(imageFileName);
+        } catch {
+        }
+        const imagePath = `${web.path}/SiteAssets/SitePages/${pageName}/${imageFileName}`;
+        web.files.set(imagePath.toLowerCase(), {
+          Name: imageFileName,
+          ServerRelativeUrl: imagePath,
+          UniqueId: nextFileId(),
+          ListId: PAGECOPY_IDS.srcSiteAssets,
+          WebId: web.webId,
+          SiteId: web.siteId,
+          Length: 0,
+          CheckOutType: 2,
+          contentType: "image/jpeg"
+        });
+        return { ServerRelativeUrl: imagePath };
+      }
+    }
+    if (/web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/validateupdatelistitem/i.test(pathLower)) {
+      record();
+      const match = /web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/validateupdatelistitem/i.exec(pathLower);
+      if (match) {
+        const listId = match[1].toLowerCase();
+        const itemId = Number(match[2]);
+        const result = { value: [] };
+        const formValues = bodyData.formValues || [];
+        const list2 = web.lists.find((l) => l.Id.toLowerCase() === listId);
+        const known = new Set((web.fields?.[list2?.Id] || web.fields?.[listId] || []).map((f) => f.InternalName));
+        const page = web.pages.get(itemId);
+        for (const fv of formValues) {
+          const row = { FieldName: fv.FieldName, FieldValue: fv.FieldValue, HasException: false, ErrorMessage: "" };
+          if (fv.FieldName === "Audience" && web.path === "/sites/pagedst" && !fv.FieldValue) {
+            row.HasException = true;
+            row.ErrorMessage = "Audience is required.";
+          } else if (known.size && !known.has(fv.FieldName) && fv.FieldName !== "PromotedState") {
+            row.HasException = true;
+            row.ErrorMessage = `Column '${fv.FieldName}' does not exist.`;
+          } else if (page) {
+            page.item[fv.FieldName] = fv.FieldValue;
+            if (fv.FieldName === "Description") page.dto.Description = fv.FieldValue;
+            if (fv.FieldName === "Title") page.dto.Title = fv.FieldValue;
+            if (fv.FieldName === "PromotedState") {
+              page.dto.PromotedState = Number(fv.FieldValue);
+              page.item.PromotedState = Number(fv.FieldValue);
+            }
+          }
+          result.value.push(row);
+        }
+        return result;
+      }
+    }
+    if (/web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/setcommentsdisabled/i.test(pathLower)) {
+      record();
+      const match = /web\/lists\(guid'([0-9a-f-]+)'\)\/items\((\d+)\)\/setcommentsdisabled/i.exec(pathLower);
+      if (match) {
+        const pageId = Number(match[2]);
+        const page = web.pages.get(pageId);
+        if (page) {
+          page.item.CommentsDisabled = bodyData.value === true;
+          page.dto.CommentsDisabled = bodyData.value === true;
+        }
+      }
+      return {};
+    }
+    if (/web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)\/checkout\(\)/i.test(pathLower)) {
+      record();
+      const match = /web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)\/checkout\(\)/i.exec(pathLower);
+      if (match) {
+        let decodedPath = match[1];
+        try {
+          decodedPath = decodeURIComponent(decodedPath);
+        } catch {
+        }
+        const srLower = decodedPath.toLowerCase();
+        const file = Array.from(web.files.entries()).find(([key2]) => key2 === srLower)?.[1];
+        if (!file) throw new SpFileError("File not found", { code: "not-found", status: 404 });
+        file.CheckOutType = 0;
+        for (const page of web.pages.values()) {
+          if (page.dto.FileRef && page.dto.FileRef.toLowerCase() === srLower) {
+            page.dto.IsPageCheckedOutToCurrentUser = true;
+          }
+        }
+      }
+      return {};
+    }
+    if (/web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)\/checkin\(/i.test(pathLower)) {
+      record();
+      const match = /web\/getfilebyserverrelativepath\(decodedurl='([^']*)'\)\/checkin\(/i.exec(pathLower);
+      if (match) {
+        let decodedPath = match[1];
+        try {
+          decodedPath = decodeURIComponent(decodedPath);
+        } catch {
+        }
+        const srLower = decodedPath.toLowerCase();
+        const file = Array.from(web.files.entries()).find(([key2]) => key2 === srLower)?.[1];
+        if (file) {
+          file.CheckOutType = 2;
+          for (const page of web.pages.values()) {
+            if (page.dto.FileRef && page.dto.FileRef.toLowerCase() === srLower) {
+              page.dto.IsPageCheckedOutToCurrentUser = false;
+              if (page.item) page.item.CheckoutUser = null;
+              const label = page.dto._UIVersionString || "0.1";
+              const [major, minor] = label.split(".").map(Number);
+              const newLabel = `${major || 0}.${(minor || 0) + 1}`;
+              page.dto._UIVersionString = newLabel;
+              if (page.item) page.item._UIVersionString = newLabel;
+            }
+          }
+        }
+      }
+      return {};
+    }
+    throw new SpFileError(`mock: no handler for ${url}`, { code: "not-found", status: 404 });
+  }
+}
+globalThis.__PAGECOPY_MOCK__ = { reset: resetPageCopyMock, state: webState };
+
 // ../src/workbench/mock-data.js
-var WEB_URL = location.origin;
+var WEB_URL2 = location.origin;
 var LISTS = [
   list("Documents", "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e01", 101, 1, 42, false, "/Shared Documents"),
   list("Site Pages", "5f8c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5e02", 119, 1, 17, false, "/SitePages"),
@@ -1955,6 +2985,8 @@ function mockWriter(url, body, contentType, headers = {}) {
   const record = () => {
     (globalThis.__DCSPAD_WB_WRITES__ ||= []).push({ url, body, contentType, headers });
   };
+  const pc = pageCopyWriter(url, body, contentType, headers);
+  if (pc !== void 0) return pc;
   if (/^web\/lists$/.test(path) && !method) {
     let data = {};
     try {
@@ -2429,7 +3461,7 @@ var WEB = {
   Id: "c0ffee00-1111-2222-3333-444455556666",
   Title: "Mock Web",
   Description: "Local workbench mock web.",
-  Url: WEB_URL,
+  Url: WEB_URL2,
   ServerRelativeUrl: "/",
   WebTemplate: "SITEPAGEPUBLISHING",
   Configuration: 0,
@@ -2442,7 +3474,7 @@ var WEB = {
 };
 var SITE = {
   Id: "deadbeef-7777-8888-9999-aaaabbbbcccc",
-  Url: WEB_URL,
+  Url: WEB_URL2,
   ServerRelativeUrl: "/",
   ReadOnly: false,
   ShareByEmailEnabled: false
@@ -2873,6 +3905,8 @@ function mockResolver(rawUrl) {
   const url = String(rawUrl);
   const path = url.slice(url.indexOf("/_api/") + 6).toLowerCase();
   const webBase = url.slice(0, url.indexOf("/_api/")).replace(/[/]+$/, "");
+  const pcAnswer = pageCopyResolver(url, path, webBase);
+  if (pcAnswer !== void 0) return pcAnswer;
   if (/[/]sites[/]eeeu([/]|$)/i.test(webBase)) {
     const answer = eeeuResolver(url, path, webBase);
     if (answer !== void 0) return answer;
@@ -12585,21 +13619,24 @@ var WEBPART_NAMES = {
   "2161a1c6-db61-4731-b97c-3cdb303f7cbb": "Divider",
   "8654b779-4886-46d4-8ffb-b5ed960ee986": "Spacer",
   "b19b3b9e-8d13-4fec-a93c-401a091c0707": "Microsoft Forms",
+  // Confirmed from a live GetClientSideWebParts manifest (2026-09-23): these
+  // three were mislabelled below the marker as Document library, Sites and
+  // Code snippet.
+  "7cba020c-5ccb-42e8-b6fc-75b3149aba7b": "Sites",
+  "e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b": "Organization chart",
+  "1ef5ed11-ce7b-44be-bc5e-4abd55101d16": "Markdown",
   // ---- verify on live tenant (lower confidence) ----
   "f6fdf4f8-4a24-437b-a127-32e66a5dd9b4": "Twitter",
   "868ac3c3-cad7-4bd6-9a1c-14dc5cc8e823": "Weather",
   "cf91cf5d-ac23-4a7a-9dbc-cd9ea1a095eb": "Saved for later",
-  "7cba020c-5ccb-42e8-b6fc-75b3149aba7b": "Document library",
   "0f087d7f-520e-42b7-89c0-496aaf979d58": "Button",
   "df8e44e7-edd5-46d5-90da-aca1539313b8": "Call to action",
   "62cac389-787f-495d-beca-e11786162ef4": "Countdown timer",
   "9d7e898c-f1bb-473a-9ace-8b415036578b": "Organization chart",
   "71c19a43-d08c-4178-8218-4df8554c0b0e": "Country/region web part",
-  "e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b": "Sites",
   "544dd15b-cf3c-441b-96da-004d5a8cea1d": "YouTube",
   "a8cd4347-f996-48c1-bcfb-75373fed2a27": "World clock",
-  "46698648-fcd5-41fc-9526-c7f7b2ace919": "Markdown",
-  "1ef5ed11-ce7b-44be-bc5e-4abd55101d16": "Code snippet"
+  "46698648-fcd5-41fc-9526-c7f7b2ace919": "Markdown"
 };
 function webPartName(webPartId) {
   const key2 = String(webPartId || "").toLowerCase().replace(/[{}]/g, "");
@@ -13776,6 +14813,2864 @@ function statusText(kind, status) {
   }
 }
 
+// ../src/workbench/page-copy.js
+var SITE_PAGES_TEMPLATE = 119;
+var COPYABLE_LAYOUTS = /* @__PURE__ */ new Set(["Article", "Home", "SingleWebPartAppPage"]);
+var MAX_ASSET_BYTES = 50 * 1024 * 1024;
+var PAGE_HEADER_ID = "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788";
+var DEFAULT_ENGINE = "api";
+var OPERATION_OWNED_FIELDS = /* @__PURE__ */ new Set([
+  "Title",
+  "Description",
+  "BannerImageUrl",
+  "BannerThumbnailUrl",
+  "PromotedState",
+  "FirstPublishedDate",
+  "PageLayoutType",
+  "CanvasContent1",
+  "LayoutWebpartsContent",
+  "_TopicHeader",
+  "_AuthorByline",
+  "_SPSitePageFlags",
+  "ContentTypeId",
+  "FileLeafRef",
+  "FileRef",
+  "Author",
+  "Editor",
+  "Created",
+  "Modified",
+  "CommentsDisabled",
+  // Not in the spec's list but equally operation-owned: the item's own
+  // bookkeeping, which VULI refuses or silently ignores.
+  "ContentType",
+  "ID",
+  "Id",
+  "_UIVersionString",
+  "CheckoutUser",
+  "_ModerationStatus",
+  "OData__ModerationStatus",
+  "_ModerationComments"
+]);
+var UNCARRIED_TYPES = /* @__PURE__ */ new Set([
+  "User",
+  "UserMulti",
+  "Lookup",
+  "LookupMulti",
+  "TaxonomyFieldType",
+  "TaxonomyFieldTypeMulti"
+]);
+var GUID = /[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}/i;
+var lower3 = (v) => String(v ?? "").toLowerCase();
+var trimSlash = (v) => String(v ?? "").replace(/\/+$/, "");
+var normalizeGuid = (v) => {
+  const m = GUID.exec(String(v ?? ""));
+  if (!m) return "";
+  const hex = m[0].replace(/-/g, "").toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+function parseJsonArray(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return { ok: true, value: [], empty: true };
+  if (text.startsWith("<")) return { ok: false, legacy: true };
+  try {
+    const value = JSON.parse(text);
+    return Array.isArray(value) ? { ok: true, value } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+function snapshotFromReads({ page = {}, item: item2 = {}, fields = [], status = null, library = {}, web = {} }) {
+  const canvasRaw = page.CanvasContent1 ?? item2.CanvasContent1 ?? "";
+  const layoutRaw = page.LayoutWebpartsContent ?? item2.LayoutWebpartsContent ?? "";
+  const canvas = parseJsonArray(canvasRaw);
+  const layout = parseJsonArray(layoutRaw);
+  const pageSettings = canvas.ok ? canvas.value.find((c) => c && typeof c === "object" && c.pageSettingsSlice)?.pageSettingsSlice || null : null;
+  const bannerThumb = String(page.BannerThumbnailUrl || "");
+  return {
+    web: { ...web },
+    library: { ...library },
+    pageId: page.Id ?? item2.Id,
+    // No OData etag under nometadata; the version label plus Modified
+    // changes on every save, which is all the binding needs.
+    etag: `${item2.OData__UIVersionString ?? item2._UIVersionString ?? ""}|${item2.Modified ?? page.Modified ?? ""}`,
+    dto: {
+      Title: page.Title ?? item2.Title ?? "",
+      Description: page.Description ?? item2.Description ?? "",
+      TopicHeader: page.TopicHeader ?? "",
+      AuthorByline: Array.isArray(page.AuthorByline) ? [...page.AuthorByline] : [],
+      PageLayoutType: page.PageLayoutType ?? item2.PageLayoutType ?? "",
+      PromotedState: Number(page.PromotedState ?? item2.PromotedState ?? 0),
+      BannerImageUrl: typeof page.BannerImageUrl === "string" ? page.BannerImageUrl : String(page.BannerImageUrl?.Url || item2.BannerImageUrl?.Url || ""),
+      BannerThumbnailUrl: bannerThumb,
+      FileName: page.FileName || item2.FileLeafRef || ""
+    },
+    canvasRaw: String(canvasRaw ?? ""),
+    canvasFormat: canvas.ok ? "json" : canvas.legacy ? "html" : "invalid",
+    canvas: canvas.ok ? canvas.value : null,
+    layoutRaw: String(layoutRaw ?? ""),
+    layout: layout.ok ? layout.value : null,
+    pageSettings,
+    customThumbnail: Boolean(pageSettings && pageSettings.isDefaultThumbnail === false),
+    item: item2,
+    itemAsText: item2.FieldValuesAsText || {},
+    fields: [...fields],
+    status,
+    fileRef: item2.FileRef || "",
+    fileDirRef: item2.FileDirRef || "",
+    fileName: item2.FileLeafRef || page.FileName || "",
+    // The DTO is authoritative: on SPO the list item's CommentsDisabled
+    // column kept reading false after SetCommentsDisabled took effect (§11).
+    commentsDisabled: typeof page.CommentsDisabled === "boolean" ? page.CommentsDisabled : typeof item2.CommentsDisabled === "boolean" ? item2.CommentsDisabled : null
+  };
+}
+function sourceEligibility(snapshot, { sameWeb = true } = {}) {
+  const lib = snapshot.library || {};
+  if (Number(lib.baseTemplate) !== SITE_PAGES_TEMPLATE) {
+    return { ok: false, reason: "Only pages in a modern Site Pages library can be copied." };
+  }
+  if (lib.hidden) {
+    return { ok: false, reason: "This Site Pages library is hidden, so its pages are not copied." };
+  }
+  if (snapshot.canvasFormat === "html") {
+    return sameWeb ? { ok: true, legacyHtml: true, reason: "" } : { ok: false, legacyHtml: true, reason: "This page uses the legacy HTML canvas format, which can only be duplicated within its own site." };
+  }
+  if (snapshot.canvasFormat !== "json") {
+    return { ok: false, reason: "This page\u2019s canvas content could not be read as JSON, so it cannot be copied safely." };
+  }
+  const layout = snapshot.dto.PageLayoutType;
+  if (!COPYABLE_LAYOUTS.has(layout)) {
+    return { ok: false, reason: `Pages with the ${layout || "unknown"} layout are not supported (Article, Home and single-part app pages only).` };
+  }
+  return { ok: true, legacyHtml: false, reason: "" };
+}
+function targetEligibility({ featureActive, library }) {
+  if (!featureActive) return { ok: false, reason: "The destination site does not have the modern Site Pages feature active." };
+  if (!library) return { ok: false, reason: "The destination site has no Site Pages library." };
+  return { ok: true, reason: "" };
+}
+var BAD_NAME = /["*:<>?/\\|#%]/;
+function fileStem3(fileName) {
+  return String(fileName || "").replace(/\.aspx$/i, "");
+}
+function fileNameProblem(fileName) {
+  const name = String(fileName || "").trim();
+  if (!/\.aspx$/i.test(name) || !fileStem3(name)) return "The file name must end in .aspx.";
+  if (BAD_NAME.test(name)) return 'File names cannot contain " * : < > ? / \\ | # %.';
+  if (name.startsWith(".") || /\.\.aspx$/i.test(name)) return "File names cannot start with a dot or end with one before .aspx.";
+  if (name.length > 128) return "The file name is too long (128 characters at most).";
+  return "";
+}
+function folderProblem(folder) {
+  const clean = String(folder || "").replace(/^\/+|\/+$/g, "");
+  if (!clean) return "";
+  for (const segment of clean.split("/")) {
+    if (!segment.trim() || /["*:<>?\\|]/.test(segment) || segment.startsWith(".") || segment.endsWith(".")) {
+      return `\u201C${segment}\u201D is not a valid folder name.`;
+    }
+  }
+  return "";
+}
+function defaultFileName(sourceFileName, taken = /* @__PURE__ */ new Set()) {
+  const stem2 = fileStem3(sourceFileName) || "Page";
+  const has2 = (n) => taken.has(lower3(n));
+  if (!has2(`${stem2}.aspx`)) return `${stem2}.aspx`;
+  if (!has2(`${stem2}-copy.aspx`)) return `${stem2}-copy.aspx`;
+  for (let i = 2; i < 1e3; i += 1) {
+    if (!has2(`${stem2}-copy-${i}.aspx`)) return `${stem2}-copy-${i}.aspx`;
+  }
+  return `${stem2}-copy-${Date.now()}.aspx`;
+}
+function stagingStem(stem2, shortId) {
+  return `${stem2}~copy-${shortId}`;
+}
+function shortRunId(random = Math.random) {
+  return Math.floor(random() * 4294967296).toString(16).padStart(8, "0").slice(0, 6);
+}
+var choicesOf2 = (field2) => {
+  const v = field2?.Choices;
+  const arr = Array.isArray(v) ? v : v?.results;
+  return Array.isArray(arr) ? arr : [];
+};
+function itemValueOf(item2, field2) {
+  for (const key2 of [field2.EntityPropertyName, field2.InternalName, `OData_${field2.InternalName}`]) {
+    if (key2 && Object.prototype.hasOwnProperty.call(item2 || {}, key2)) return item2[key2];
+  }
+  return void 0;
+}
+function textValueOf(itemAsText, field2) {
+  const name = String(field2.InternalName || "");
+  const encoded = name.replace(/_/g, "_x005f_");
+  for (const key2 of [field2.EntityPropertyName, name, encoded]) {
+    if (key2 && Object.prototype.hasOwnProperty.call(itemAsText || {}, key2)) return itemAsText[key2];
+  }
+  return void 0;
+}
+var isEmptyUi = (v) => v === "" || v === null || v === void 0 || Array.isArray(v) && !v.length || typeof v === "object" && !Array.isArray(v) && "url" in v && !v.url;
+function computeCarrySet({
+  sourceFields = [],
+  targetFields = [],
+  item: item2 = {},
+  itemAsText = {},
+  requiredValues = {},
+  dateText = null,
+  enabled = true
+} = {}) {
+  const carried = [];
+  const skipped = [];
+  const formValues = [];
+  const byName = new Map(targetFields.map((f) => [String(f.InternalName), f]));
+  const writable = (f) => f && !f.Hidden && !f.ReadOnlyField && !OPERATION_OWNED_FIELDS.has(String(f.InternalName));
+  const carriedNames = /* @__PURE__ */ new Set();
+  if (enabled) {
+    for (const src of sourceFields) {
+      const name = String(src.InternalName || "");
+      if (!writable(src)) continue;
+      const tgt = byName.get(name);
+      const label = src.Title || name;
+      if (!tgt) {
+        const had = itemValueOf(item2, src);
+        if (had !== null && had !== void 0 && had !== "" && !(Array.isArray(had) && !had.length)) {
+          skipped.push({ internalName: name, title: label, reason: "the destination has no such column" });
+        }
+        continue;
+      }
+      const type = String(src.TypeAsString || "");
+      if (!writable(tgt)) {
+        skipped.push({ internalName: name, title: label, reason: "read-only or hidden on the destination" });
+        continue;
+      }
+      if (String(tgt.TypeAsString || "") !== type) {
+        skipped.push({ internalName: name, title: label, reason: `type differs (${type} \u2192 ${tgt.TypeAsString})` });
+        continue;
+      }
+      const raw = itemValueOf(item2, src);
+      if (UNCARRIED_TYPES.has(type)) {
+        if (raw !== null && raw !== void 0 && raw !== "") {
+          skipped.push({ internalName: name, title: label, reason: "people, lookup and managed metadata columns are not copied" });
+        }
+        continue;
+      }
+      if (!EDITABLE_TYPES.has(type)) continue;
+      const ui = fromItemValue(src, raw);
+      if (isEmptyUi(ui)) continue;
+      if (type === "Choice" || type === "MultiChoice") {
+        const allowed = new Set(choicesOf2(tgt));
+        const values = Array.isArray(ui) ? ui : [ui];
+        const missing = values.filter((v) => !allowed.has(v));
+        if (missing.length && !tgt.FillInChoice) {
+          skipped.push({ internalName: name, title: label, reason: `choice ${missing.map((v) => `\u201C${v}\u201D`).join(", ")} does not exist on the destination` });
+          continue;
+        }
+      }
+      let value;
+      if (type === "DateTime") {
+        value = dateText ? dateText(src, item2, itemAsText) : textValueOf(itemAsText, src);
+        if (value === void 0 || value === null || value === "") {
+          skipped.push({ internalName: name, title: label, reason: "the date could not be read in the site\u2019s own format" });
+          continue;
+        }
+      } else {
+        value = toFormValue(tgt, ui);
+      }
+      if (value === "") continue;
+      formValues.push({ FieldName: name, FieldValue: String(value) });
+      carried.push({ internalName: name, title: label, value: String(value) });
+      carriedNames.add(name);
+    }
+  }
+  const requiredGaps = [];
+  for (const tgt of targetFields) {
+    const name = String(tgt.InternalName || "");
+    if (!tgt.Required || !writable(tgt) || carriedNames.has(name)) continue;
+    if (!EDITABLE_TYPES.has(String(tgt.TypeAsString || ""))) {
+      requiredGaps.push({ internalName: name, title: tgt.Title || name, type: tgt.TypeAsString, supportable: false });
+      continue;
+    }
+    const supplied = requiredValues[name];
+    if (!isEmptyUi(supplied) && supplied !== void 0) {
+      const value = toFormValue(tgt, supplied);
+      if (value !== "") {
+        formValues.push({ FieldName: name, FieldValue: value });
+        carried.push({ internalName: name, title: tgt.Title || name, value, supplied: true });
+        continue;
+      }
+    }
+    requiredGaps.push({ internalName: name, title: tgt.Title || name, type: tgt.TypeAsString, supportable: true });
+  }
+  return { formValues, carried, skipped, requiredGaps };
+}
+function underPath(path, base) {
+  const p = lower3(path);
+  const b = lower3(trimSlash(base));
+  if (!b) return p.startsWith("/");
+  if (!p.startsWith(b)) return false;
+  const next2 = p.charAt(b.length);
+  return next2 === "" || next2 === "/" || next2 === "?" || next2 === "#";
+}
+function rewriteLink(value, { fromPath, toPath, origin }) {
+  const raw = String(value ?? "");
+  if (!raw) return null;
+  if (raw.startsWith("/") && !raw.startsWith("//")) {
+    return underPath(raw, fromPath) ? `${trimSlash(toPath)}${raw.slice(trimSlash(fromPath).length)}` : null;
+  }
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (!origin || url.origin.toLowerCase() !== lower3(origin)) return null;
+  const path = decodeSafe(url.pathname);
+  if (!underPath(path, fromPath)) return null;
+  const rest = path.slice(trimSlash(fromPath).length);
+  return `${url.origin}${encodePath2(`${trimSlash(toPath)}${rest}`)}${url.search}${url.hash}`;
+}
+function decodeSafe(s) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+function encodePath2(p) {
+  return p.split("/").map((seg) => encodeURIComponent(seg)).join("/");
+}
+var ID_KEY = /^(site|web|list|unique|file|doc|library|item|term|group|view)(id|guid)$|^(siteid|webid|listid|uniqueid)$/i;
+function attrValues(html) {
+  const out = [];
+  if (!html || !/[<]/.test(html)) return out;
+  if (typeof DOMParser === "function") {
+    const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
+    for (const node of doc.body.querySelectorAll("*")) {
+      for (const attr of node.attributes) {
+        if (attr.name === "href" || attr.name === "src" || attr.name.startsWith("data-")) {
+          out.push({ attr: attr.name, tag: node.tagName.toLowerCase(), value: attr.value });
+        }
+      }
+    }
+    return out;
+  }
+  const re = /\s(href|src|data-[\w-]+)\s*=\s*("([^"]*)"|'([^']*)')/gi;
+  let m;
+  while (m = re.exec(html)) out.push({ attr: m[1].toLowerCase(), tag: "", value: m[3] ?? m[4] ?? "" });
+  return out;
+}
+function classifyString(value, key2, ctx2) {
+  const s = String(value);
+  const hits = [];
+  if (/getpreview\.ashx/i.test(s) && /guidFile=/i.test(s)) {
+    hits.push("preview");
+  } else if (s.startsWith("/") && !s.startsWith("//")) {
+    if (underPath(s, ctx2.webPath)) hits.push("path");
+  } else if (/^https?:\/\//i.test(s)) {
+    try {
+      const url = new URL(s);
+      if (url.origin.toLowerCase() === lower3(ctx2.origin)) {
+        hits.push(underPath(decodeSafe(url.pathname), ctx2.webPath) ? "url" : "host-url");
+      }
+    } catch {
+    }
+  }
+  if (GUID.test(s) && !hits.length) {
+    const g = normalizeGuid(s);
+    const known = ctx2.ids.has(g);
+    if (known || ID_KEY.test(String(key2 || "")) && s.length <= 40) hits.push("guid");
+  }
+  return hits;
+}
+function walk(value, path, visit) {
+  if (typeof value === "string") {
+    visit(value, path);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => walk(v, [...path, i], visit));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) walk(v, [...path, k], visit);
+  }
+}
+function describeControl(control, index) {
+  const webPartId = normalizeGuid(control?.webPartId || control?.webPartData?.id || "");
+  const instanceId = String(control?.id || control?.webPartData?.instanceId || control?.instanceId || "");
+  const kind = control?.pageSettingsSlice ? "pageSettings" : control?.controlType === 4 ? "text" : control?.controlType === 3 ? "webpart" : "other";
+  const label = kind === "text" ? "Text" : kind === "webpart" ? control?.webPartData?.title || webPartName(webPartId) || webPartId : kind;
+  return { index, instanceId, webPartId, kind, label };
+}
+function inventoryReferences(snapshot) {
+  const web = snapshot.web || {};
+  let origin = "";
+  try {
+    origin = new URL(web.webUrl).origin;
+  } catch {
+  }
+  const ids = new Set([web.siteId, web.webId, snapshot.library?.id].map(normalizeGuid).filter(Boolean));
+  const ctx2 = { origin, webPath: web.webServerRelativeUrl || "", ids };
+  const out = [];
+  const scan = (where, root2, control, basePath) => {
+    walk(root2, basePath, (value, path) => {
+      const key2 = path[path.length - 1];
+      for (const kind of classifyString(value, key2, ctx2)) out.push({ where, path, value, kind, control });
+      if (key2 === "innerHTML" || /</.test(value)) {
+        attrValues(value).forEach((a, i) => {
+          for (const kind of classifyString(a.value, a.attr, ctx2)) {
+            out.push({ where, path: [...path, `@${a.attr}[${i}]`], value: a.value, kind, attr: a.attr, control });
+          }
+        });
+      }
+    });
+  };
+  (snapshot.canvas || []).forEach((control, index) => {
+    scan("canvas", control, describeControl(control, index), [index]);
+  });
+  (snapshot.layout || []).forEach((part, index) => {
+    scan("layout", part, { index, instanceId: String(part?.instanceId || part?.id || ""), webPartId: normalizeGuid(part?.id), kind: "layout", label: part?.title || "Title area" }, [index]);
+  });
+  for (const key2 of ["BannerImageUrl"]) {
+    const value = snapshot.dto?.[key2];
+    if (!value) continue;
+    for (const kind of classifyString(value, key2, ctx2)) {
+      out.push({ where: "dto", path: [key2], value, kind, control: { index: -1, instanceId: "", webPartId: "", kind: "dto", label: key2 } });
+    }
+  }
+  return out;
+}
+function previewIds(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url), "https://placeholder.invalid");
+  } catch {
+    return null;
+  }
+  if (!/getpreview\.ashx$/i.test(parsed.pathname)) return null;
+  const q = (k) => normalizeGuid(parsed.searchParams.get(k) || parsed.searchParams.get(k.toLowerCase()) || "");
+  const ids = { siteId: q("guidSite"), webId: q("guidWeb"), uniqueId: q("guidFile") };
+  return ids.uniqueId ? ids : null;
+}
+function assetKey({ uniqueId, path }) {
+  return normalizeGuid(uniqueId) || lower3(path);
+}
+function assetRequests(snapshot, analysis) {
+  const byKey = /* @__PURE__ */ new Map();
+  const add = (identity, ref) => {
+    const key2 = assetKey({ uniqueId: identity.ids?.uniqueId, path: identity.path });
+    if (!key2) return;
+    if (!byKey.has(key2)) byKey.set(key2, { key: key2, path: identity.path || "", ids: { ...identity.ids || {} }, refs: [] });
+    const entry = byKey.get(key2);
+    if (!entry.path && identity.path) entry.path = identity.path;
+    entry.refs.push(ref);
+  };
+  for (const part of analysis.parts) {
+    for (const ref of part.refs) {
+      if (ref.class === "asset" && ref.asset) add(ref.asset, { where: part.where, index: part.index, path: ref.path });
+    }
+  }
+  const banner = snapshot.dto.BannerImageUrl;
+  if (banner) {
+    const ids = previewIds(banner);
+    let path = "";
+    if (!ids) {
+      try {
+        const url = new URL(banner, "https://placeholder.invalid");
+        const sameHost = url.origin === "https://placeholder.invalid" || url.origin.toLowerCase() === lower3(originOf2(snapshot.web.webUrl));
+        if (sameHost) path = decodeSafe(url.pathname);
+      } catch {
+      }
+    }
+    if (ids || path) add({ ids: ids || {}, path }, { where: "dto", index: -1, path: ["BannerImageUrl"] });
+  }
+  return [...byKey.values()];
+}
+function analyzeParts(snapshot, { analyzers = null, targetWebParts = null } = {}) {
+  const ctx2 = analyzerContext(snapshot);
+  const findings = inventoryReferences(snapshot);
+  const parts = [];
+  const consider = (where, instance, index) => {
+    const control = where === "layout" ? { index, instanceId: String(instance?.instanceId || instance?.id || ""), webPartId: normalizeGuid(instance?.id), kind: "layout", label: instance?.title || "Title area" } : describeControl(instance, index);
+    if (control.kind === "pageSettings" || control.kind === "other") return;
+    const analyzer = analyzers ? where === "layout" ? analyzers.header : control.kind === "text" ? analyzers.text : analyzers.forId(control.webPartId) : null;
+    const scanned = findings.filter((f) => f.where === where && f.control.index === index);
+    let refs;
+    if (analyzer) {
+      try {
+        refs = analyzer.refs(instance, ctx2) || [];
+      } catch (err) {
+        refs = [{ path: [], value: "", class: "unverified", note: `analyzer failed: ${err?.message || err}` }];
+      }
+    } else {
+      refs = scanned.map((f) => ({ path: f.path.slice(1), value: f.value, class: "unverified", note: f.kind }));
+    }
+    const available = control.kind !== "webpart" || !targetWebParts || targetWebParts.has(control.webPartId);
+    const dyn = instance?.webPartData?.dynamicDataPaths || instance?.dynamicDataPaths;
+    const providers = [];
+    if (dyn && typeof dyn === "object") {
+      for (const [k, v] of Object.entries(dyn)) {
+        const m = /WebPart\.([0-9a-f-]{36})/i.exec(String(v));
+        if (m) providers.push(m[1].toLowerCase());
+        refs.push({ path: ["webPartData", "dynamicDataPaths", k], value: String(v), class: "dynamic", note: "connected to another part on this page" });
+      }
+    }
+    parts.push({
+      where,
+      index,
+      ...control,
+      analyzer: analyzer?.id || "default",
+      refs,
+      available,
+      providers,
+      unverified: scanned.filter((f) => !refs.some((r) => sameRefPath(r.path, f.path.slice(1))))
+    });
+  };
+  (snapshot.canvas || []).forEach((c, i) => consider("canvas", c, i));
+  (snapshot.layout || []).forEach((p, i) => consider("layout", p, i));
+  return { parts, findings };
+}
+function sameRefPath(a, b) {
+  return a.length === b.length && a.every((v, i) => String(v) === String(b[i]));
+}
+function analyzerContext(snapshot) {
+  const web = snapshot.web || {};
+  let origin = "";
+  try {
+    origin = new URL(web.webUrl).origin;
+  } catch {
+  }
+  return {
+    origin,
+    sourceWebPath: web.webServerRelativeUrl || "",
+    sourceIds: { siteId: normalizeGuid(web.siteId), webId: normalizeGuid(web.webId) },
+    normalizeGuid,
+    underPath
+  };
+}
+function dependentConsumers(analysis, droppedIds) {
+  const dropped = new Set([...droppedIds].map(lower3));
+  return analysis.parts.filter((p) => p.providers.some((id) => dropped.has(id)) && !dropped.has(lower3(p.instanceId)));
+}
+function analyzeCopy({ snapshot, target, options = {}, analyzers = null, assetInfo = /* @__PURE__ */ new Map() }) {
+  const sameWeb = normalizeGuid(snapshot.web.webId) === normalizeGuid(target.webId) && Boolean(normalizeGuid(target.webId));
+  const sameSite = normalizeGuid(snapshot.web.siteId) === normalizeGuid(target.siteId) && Boolean(normalizeGuid(target.siteId));
+  const blockers = [];
+  const warnings = [];
+  const eligibility = sourceEligibility(snapshot, { sameWeb });
+  if (!eligibility.ok) blockers.push(eligibility.reason);
+  const legacy = Boolean(eligibility.legacyHtml);
+  const engine = legacy ? "copyFile" : options.engine || DEFAULT_ENGINE;
+  const createPath = engine === "api" ? "A" : null;
+  if (engine === "copyFile" && !sameWeb) blockers.push("Whole-file copy only runs within one site.");
+  const folder = String(options.folder || "").replace(/^\/+|\/+$/g, "");
+  const folderIssue = folderProblem(folder);
+  if (folderIssue) blockers.push(folderIssue);
+  const fileName = String(options.fileName || "").trim() || defaultFileName(snapshot.fileName, target.takenFinal || /* @__PURE__ */ new Set());
+  const nameIssue = fileNameProblem(fileName);
+  if (nameIssue) blockers.push(nameIssue);
+  if ((target.takenFinal || /* @__PURE__ */ new Set()).has(lower3(fileName))) {
+    blockers.push(`${fileName} already exists in the destination folder.`);
+  }
+  const stem2 = fileStem3(fileName);
+  const runId = options.runId || shortRunId();
+  const stage = stagingStem(stem2, runId);
+  if (createPath === "A" && (target.takenRoot || /* @__PURE__ */ new Set()).has(lower3(`${stage}.aspx`))) {
+    blockers.push("The staging name is taken in the library root \u2014 check again to pick another.");
+  }
+  const libraryRoot = trimSlash(target.library?.rootPath || "");
+  const finalDir = folder ? `${libraryRoot}/${folder}` : libraryRoot;
+  let origin = "";
+  try {
+    origin = new URL(target.webUrl).origin;
+  } catch {
+  }
+  const abs = (sr) => `${origin}${sr}`;
+  const title = String(options.title ?? snapshot.dto.Title ?? "").trim() || stem2;
+  const analysis = analyzeParts(snapshot, { analyzers: sameWeb ? null : analyzers, targetWebParts: sameWeb ? null : target.webParts });
+  if (sameWeb) {
+    for (const part of analysis.parts) {
+      part.refs = part.refs.filter((r) => r.class === "dynamic");
+      part.unverified = [];
+    }
+  }
+  const dropped = new Set([...options.dropped || []].map(lower3));
+  const assets = [];
+  const webSR = trimSlash(target.webServerRelativeUrl || "");
+  const siteAssetsRoot = trimSlash(target.siteAssetsRoot || `${webSR}/SiteAssets`);
+  const assetFolder = `${siteAssetsRoot}/SitePages/${stem2}`;
+  if (!sameWeb) {
+    const usedNames = /* @__PURE__ */ new Set();
+    for (const req of assetRequests(snapshot, analysis)) {
+      const info = assetInfo.get(req.key) ?? null;
+      const name = info?.Name || String(req.path || "").split("/").pop() || "file";
+      let retainReason = "";
+      if (!info) retainReason = "the file could not be found in the source site";
+      else if (Number(info.Length) > MAX_ASSET_BYTES) retainReason = "larger than the 50 MB copy limit";
+      const destName = retainReason ? "" : uniqueName(name, usedNames);
+      assets.push({
+        key: req.key,
+        name,
+        sourcePath: info?.ServerRelativeUrl || req.path || "",
+        sourceIds: {
+          siteId: normalizeGuid(info?.SiteId || req.ids.siteId),
+          webId: normalizeGuid(info?.WebId || req.ids.webId),
+          listId: normalizeGuid(info?.ListId || req.ids.listId),
+          uniqueId: normalizeGuid(info?.UniqueId || req.ids.uniqueId)
+        },
+        length: Number(info?.Length) || 0,
+        destName,
+        destPath: destName ? `${assetFolder}/${destName}` : "",
+        method: "bytes",
+        retainReason,
+        refs: req.refs
+      });
+      if (retainReason) warnings.push(`${name} stays linked to the source site (${retainReason}).`);
+    }
+    for (const part of analysis.parts) {
+      if (!part.available && !dropped.has(lower3(part.instanceId))) {
+        warnings.push(`${part.label} is not available on the destination site; it is copied but may not render.`);
+      }
+    }
+  }
+  for (const consumer of dependentConsumers(analysis, dropped)) {
+    warnings.push(`${consumer.label} is connected to a part you are dropping and will lose its data source.`);
+  }
+  const metadata = computeCarrySet({
+    sourceFields: snapshot.fields,
+    targetFields: target.fields || [],
+    item: snapshot.item,
+    itemAsText: snapshot.itemAsText,
+    requiredValues: options.requiredValues || {},
+    dateText: options.dateText || null,
+    enabled: options.carryMetadata !== false
+  });
+  const description = String(snapshot.dto.Description ?? "");
+  if (description) {
+    metadata.formValues.unshift({ FieldName: "Description", FieldValue: description });
+  }
+  for (const gap of metadata.requiredGaps) {
+    blockers.push(gap.supportable ? `${gap.title} is required on the destination \u2014 enter a value to copy.` : `${gap.title} is required on the destination and cannot be filled from here.`);
+  }
+  const plan = {
+    engine,
+    createPath,
+    sameWeb,
+    sameSite,
+    source: {
+      webUrl: snapshot.web.webUrl,
+      pageId: snapshot.pageId,
+      listId: snapshot.library.id,
+      fileRef: snapshot.fileRef,
+      absoluteUrl: snapshot.fileRef ? `${originOf2(snapshot.web.webUrl)}${snapshot.fileRef}` : "",
+      fileName: snapshot.fileName,
+      etag: snapshot.etag
+    },
+    target: {
+      webUrl: target.webUrl,
+      webServerRelativeUrl: webSR,
+      libraryId: target.library?.id || "",
+      libraryRoot,
+      folder,
+      fileName,
+      stem: stem2,
+      finalPath: `${finalDir}/${fileName}`,
+      finalAbsolute: abs(`${finalDir}/${fileName}`),
+      stagingStem: stage,
+      stagingPath: `${libraryRoot}/${stage}.aspx`,
+      stagingAbsolute: abs(`${libraryRoot}/${stage}.aspx`)
+    },
+    title,
+    description,
+    pageLayoutType: snapshot.dto.PageLayoutType || "Article",
+    publish: Boolean(options.publish),
+    promoteAsNews: Boolean(options.promoteAsNews) && snapshot.dto.PromotedState > 0,
+    checkInDraft: options.checkInDraft !== false,
+    assetFolder,
+    assetFolderChain: [
+      { path: `${siteAssetsRoot}/SitePages`, recyclable: false },
+      { path: assetFolder, recyclable: !target.assetFolderExists }
+    ],
+    assets,
+    metadata,
+    commentsDisabled: snapshot.commentsDisabled,
+    rewriteLinks: Boolean(options.rewriteLinks) && !sameWeb,
+    dropped: [...dropped],
+    analysis,
+    warnings,
+    blockers,
+    legacyHtml: legacy
+  };
+  return plan;
+}
+function originOf2(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+function uniqueName(name, used) {
+  const dot = name.lastIndexOf(".");
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  let candidate = name;
+  for (let i = 2; used.has(lower3(candidate)); i += 1) candidate = `${base}-${i}${ext}`;
+  used.add(lower3(candidate));
+  return candidate;
+}
+function rewriteContent(snapshot, plan, transferResults = /* @__PURE__ */ new Map(), analyzers = null) {
+  const dropped = new Set(plan.dropped || []);
+  const titleChanged = plan.title !== snapshot.dto.Title;
+  const sameWebVerbatim = plan.sameWeb && !dropped.size;
+  let canvasOut = snapshot.canvasRaw;
+  let layoutOut = snapshot.layoutRaw;
+  const bannerOut = { image: snapshot.dto.BannerImageUrl };
+  if (!sameWebVerbatim || titleChanged) {
+    const ctx2 = {
+      ...analyzerContext(snapshot),
+      target: {
+        webUrl: plan.target.webUrl,
+        webPath: plan.target.webServerRelativeUrl
+      },
+      rewriteLinks: plan.rewriteLinks,
+      mapAsset: (identity) => {
+        if (!identity) return null;
+        const key2 = assetKey({ uniqueId: identity.ids?.uniqueId ?? identity.uniqueId, path: identity.path });
+        return transferResults.get(key2) || null;
+      },
+      mapLink: (value) => plan.rewriteLinks ? rewriteLink(value, { fromPath: snapshot.web.webServerRelativeUrl, toPath: plan.target.webServerRelativeUrl, origin: originOf2(snapshot.web.webUrl) }) : null
+    };
+    if (snapshot.canvas) {
+      let changed = dropped.size > 0;
+      const controls = [];
+      snapshot.canvas.forEach((control, index) => {
+        const desc = describeControl(control, index);
+        if (desc.instanceId && dropped.has(lower3(desc.instanceId))) return;
+        if (plan.sameWeb || !analyzers || desc.kind === "pageSettings" || desc.kind === "other") {
+          controls.push(control);
+          return;
+        }
+        const analyzer = desc.kind === "text" ? analyzers.text : analyzers.forId(desc.webPartId);
+        if (!analyzer?.patch) {
+          controls.push(control);
+          return;
+        }
+        const copy = structuredClone(control);
+        const n = analyzer.patch(copy, ctx2) || 0;
+        if (n) changed = true;
+        controls.push(n ? copy : control);
+      });
+      if (changed) canvasOut = JSON.stringify(controls);
+    }
+    if (snapshot.layout) {
+      let changed = false;
+      const parts = snapshot.layout.map((part) => {
+        let copy = part;
+        if (!plan.sameWeb && analyzers?.header?.patch && normalizeGuid(part?.id) === PAGE_HEADER_ID) {
+          copy = structuredClone(part);
+          if (analyzers.header.patch(copy, ctx2)) changed = true;
+          else copy = part;
+        }
+        if (titleChanged && normalizeGuid(part?.id) === PAGE_HEADER_ID && copy?.properties && typeof copy.properties.title === "string") {
+          if (copy === part) copy = structuredClone(part);
+          copy.properties.title = plan.title;
+          changed = true;
+        }
+        return copy;
+      });
+      if (changed) layoutOut = JSON.stringify(parts);
+    }
+    if (!plan.sameWeb) bannerOut.image = mapBannerUrl(snapshot.dto.BannerImageUrl, ctx2, plan);
+  }
+  const bannerForSave = bannerOut.image;
+  const fields = {
+    Title: plan.title,
+    CanvasContent1: canvasOut,
+    LayoutWebpartsContent: layoutOut,
+    TopicHeader: snapshot.dto.TopicHeader,
+    AuthorByline: snapshot.dto.AuthorByline
+  };
+  if (bannerForSave) fields.BannerImageUrl = bannerForSave;
+  return fields;
+}
+function mapBannerUrl(url, ctx2, plan) {
+  if (!url) return url;
+  const ids = previewIds(url);
+  if (ids) {
+    const mapped2 = ctx2.mapAsset({ ids });
+    if (!mapped2?.ids?.uniqueId) return url;
+    const hex = (g) => normalizeGuid(g).replace(/-/g, "");
+    return `${trimSlash(plan.target.webUrl)}/_layouts/15/getpreview.ashx?guidSite=${hex(mapped2.ids.siteId)}&guidWeb=${hex(mapped2.ids.webId)}&guidFile=${hex(mapped2.ids.uniqueId)}`;
+  }
+  let path = "";
+  try {
+    path = decodeSafe(new URL(url, "https://placeholder.invalid").pathname);
+  } catch {
+    return url;
+  }
+  const mapped = ctx2.mapAsset({ path });
+  if (!mapped?.path) return url;
+  return /^https?:/i.test(url) ? `${originOf2(plan.target.webUrl)}${encodePath2(mapped.path)}` : mapped.path;
+}
+var webPartSequence = (raw) => {
+  const parsed = parseJsonArray(raw);
+  if (!parsed.ok) return null;
+  return parsed.value.filter((c) => c && typeof c === "object" && !c.pageSettingsSlice).map((c) => c.controlType === 4 ? "text" : normalizeGuid(c.webPartId || c.webPartData?.id) || "other");
+};
+function compareReadBack(plan, saved, dto = {}) {
+  const drift = [];
+  const same = (field2, expected, actual) => {
+    if (String(expected ?? "") !== String(actual ?? "")) drift.push({ field: field2, expected, actual });
+  };
+  same("Title", plan.title, dto.Title);
+  same("FileName", plan.target.fileName.toLowerCase(), String(dto.FileName || "").toLowerCase());
+  same("PageLayoutType", plan.pageLayoutType, dto.PageLayoutType);
+  if (plan.description !== void 0 && plan.engine !== "copyFile") same("Description", plan.description, dto.Description ?? "");
+  if (plan.commentsDisabled === true && dto.CommentsDisabled === false) {
+    drift.push({ field: "CommentsDisabled", expected: true, actual: false });
+  }
+  if (saved) {
+    same("TopicHeader", saved.TopicHeader, dto.TopicHeader);
+    const expectedParts = webPartSequence(saved.CanvasContent1);
+    const actualParts = webPartSequence(dto.CanvasContent1);
+    if (expectedParts && (!actualParts || expectedParts.join(",") !== actualParts.join(","))) {
+      drift.push({ field: "CanvasContent1", expected: `${expectedParts.length} parts`, actual: actualParts ? `${actualParts.length} parts (${actualParts.join(", ")})` : "unreadable" });
+    }
+    if (saved.BannerImageUrl && !dto.BannerImageUrl) {
+      drift.push({ field: "BannerImageUrl", expected: "a banner", actual: "(none)" });
+    }
+  }
+  const promoted = Number(dto.PromotedState ?? 0);
+  if (!plan.promoteAsNews && promoted > 0) drift.push({ field: "PromotedState", expected: 0, actual: promoted });
+  return drift;
+}
+
+// ../src/workbench/sp-pages.js
+var VERBOSE = "application/json;odata=verbose";
+var SITE_PAGE_META = Object.freeze({ __metadata: { type: "SP.Publishing.SitePage" } });
+var MAX_FILE_BYTES = 50 * 1024 * 1024;
+var FILE_INFO_SELECT = [
+  "ListId",
+  "WebId",
+  "UniqueId",
+  "SiteId",
+  "Name",
+  "ServerRelativeUrl",
+  "Length",
+  "CheckOutType"
+];
+function queryLiteral(value) {
+  return encodeURIComponent(String(value ?? "")).replaceAll("'", "''");
+}
+function isNotFound(err) {
+  return err?.status === 404 || err?.code === "not-found";
+}
+async function catchNotFound(promise) {
+  try {
+    return await promise;
+  } catch (err) {
+    if (isNotFound(err)) return null;
+    throw err;
+  }
+}
+function createSpPages({ client: client2, write }) {
+  async function getPage(id) {
+    return client2.get(`sitepages/pages(${Number(id)})`);
+  }
+  async function createPage({ pageLayoutType = "Article", promotedState = 0 } = {}) {
+    return write.postJson("sitepages/pages", {
+      ...SITE_PAGE_META,
+      PageLayoutType: pageLayoutType,
+      PromotedState: promotedState
+    }, { contentType: VERBOSE, fallback: "Could not create the page", code: "page-create" });
+  }
+  async function addTemplateFile(folderServerRelativeUrl, fileServerRelativeUrl) {
+    const path = `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(folderServerRelativeUrl)}')/Files/addTemplateFile(urloffile='${odataPathLiteral(fileServerRelativeUrl)}',templatefiletype=3)`;
+    return write.postJson(path, {}, {
+      fallback: "Could not create the page file",
+      code: "page-create"
+    });
+  }
+  async function checkoutPage(id) {
+    return write.postJson(`sitepages/pages(${Number(id)})/checkoutpage`, {}, {
+      fallback: "Could not check out the page",
+      code: "page-checkout"
+    });
+  }
+  async function savePage(id, fields = {}) {
+    return write.postJson(`sitepages/pages(${Number(id)})/savepage`, {
+      ...SITE_PAGE_META,
+      ...fields
+    }, {
+      contentType: VERBOSE,
+      headers: { "If-Match": "*" },
+      fallback: "Could not save the page",
+      code: "page-save"
+    });
+  }
+  async function publishPage(id) {
+    return write.postJson(`sitepages/pages(${Number(id)})/publish`, {}, {
+      fallback: "Could not publish the page",
+      code: "page-publish"
+    });
+  }
+  async function promoteToNews(id) {
+    return write.postJson(`sitepages/pages(${Number(id)})/promoteToNews`, {}, {
+      fallback: "Could not promote the page to news",
+      code: "page-publish"
+    });
+  }
+  async function discardPage(id) {
+    return write.postJson(`sitepages/pages(${Number(id)})/discardPage`, SITE_PAGE_META, {
+      contentType: VERBOSE,
+      fallback: "Could not discard the page checkout",
+      code: "page-checkout"
+    });
+  }
+  async function recycleFile(serverRelativeUrl2) {
+    const path = `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')/recycle`;
+    return write.postJson(path, {}, { fallback: "Could not recycle the file", code: "page-recycle" });
+  }
+  async function recycleFolder(serverRelativeUrl2) {
+    const path = `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')/recycle`;
+    return write.postJson(path, {}, { fallback: "Could not recycle the folder", code: "page-recycle" });
+  }
+  function moveCopyBody(srcAbsoluteUrl, destAbsoluteUrl, keepBoth, resetAuthorAndCreated) {
+    return {
+      srcPath: { __metadata: { type: "SP.ResourcePath" }, DecodedUrl: srcAbsoluteUrl },
+      destPath: { __metadata: { type: "SP.ResourcePath" }, DecodedUrl: destAbsoluteUrl },
+      options: {
+        __metadata: { type: "SP.MoveCopyOptions" },
+        KeepBoth: Boolean(keepBoth),
+        ResetAuthorAndCreatedOnCopy: resetAuthorAndCreated,
+        ShouldBypassSharedLocks: true
+      }
+    };
+  }
+  async function moveFileByPath(srcAbsoluteUrl, destAbsoluteUrl, { overwrite = false, keepBoth = false } = {}) {
+    const path = `SP.MoveCopyUtil.MoveFileByPath(overwrite=@a1)?@a1=${overwrite ? "true" : "false"}`;
+    return write.postJson(path, moveCopyBody(srcAbsoluteUrl, destAbsoluteUrl, keepBoth, false), {
+      contentType: VERBOSE,
+      fallback: "Could not move the page",
+      code: "page-move"
+    });
+  }
+  async function copyFileByPath(srcAbsoluteUrl, destAbsoluteUrl, { overwrite = false, keepBoth = false } = {}) {
+    const path = `SP.MoveCopyUtil.CopyFileByPath(overwrite=@a1)?@a1=${overwrite ? "true" : "false"}`;
+    return write.postJson(path, moveCopyBody(srcAbsoluteUrl, destAbsoluteUrl, keepBoth, true), {
+      contentType: VERBOSE,
+      fallback: "Could not copy the page",
+      code: "page-copy"
+    });
+  }
+  async function addImageFromExternalUrl({ imageFileName, pageName, externalUrl } = {}) {
+    const path = `sitepages/AddImageFromExternalUrl?imageFileName='${queryLiteral(imageFileName)}'&pageName='${queryLiteral(pageName)}'&externalUrl='${queryLiteral(externalUrl)}'&$select=ServerRelativeUrl`;
+    return write.postJson(path, {}, { fallback: "Could not import the image", code: "page-image" });
+  }
+  async function fileInfo(serverRelativeUrl2) {
+    return catchNotFound(client2.get(
+      `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')`,
+      { select: FILE_INFO_SELECT }
+    ));
+  }
+  async function fileInfoById(uniqueId) {
+    return catchNotFound(client2.get(
+      `web/GetFileById('${odataPathLiteral(uniqueId)}')`,
+      { select: FILE_INFO_SELECT }
+    ));
+  }
+  async function fileItemId(serverRelativeUrl2) {
+    const item2 = await catchNotFound(client2.get(
+      `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')/ListItemAllFields`,
+      { select: ["Id"] }
+    ));
+    return item2 ? Number(item2.Id) : null;
+  }
+  async function exists(serverRelativeUrl2) {
+    return await fileInfo(serverRelativeUrl2) !== null;
+  }
+  async function folderExists(serverRelativeUrl2) {
+    const folder = await catchNotFound(client2.get(
+      `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')`,
+      { select: ["Exists"] }
+    ));
+    return Boolean(folder?.Exists);
+  }
+  async function readFileBytes2(serverRelativeUrl2) {
+    if (client2.context().live) {
+      return readFileBytes(serverRelativeUrl2, { webUrl: client2.webUrl() });
+    }
+    const path = `web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')/$value`;
+    const { mockBytes, contentType } = await client2.get(path);
+    const length = Number(mockBytes) || 0;
+    if (length > MAX_FILE_BYTES) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the transfer limit.",
+        { code: "too-large" }
+      );
+    }
+    return {
+      bytes: new Uint8Array(length).buffer,
+      length,
+      contentType: contentType || "",
+      serverRelativeUrl: serverRelativeUrl2
+    };
+  }
+  async function clientSideWebParts() {
+    const { items } = await client2.getAll("web/GetClientSideWebParts");
+    return items;
+  }
+  async function setCommentsDisabled(listId, itemId, value) {
+    const path = `web/lists(guid'${listId}')/items(${Number(itemId)})/SetCommentsDisabled`;
+    return write.postJson(path, { value: Boolean(value) }, {
+      fallback: "Could not change the page comments setting",
+      code: "page-comments"
+    });
+  }
+  async function featureActive(featureId) {
+    const feature = await catchNotFound(client2.get(
+      `web/features/getbyid('${odataPathLiteral(featureId)}')`,
+      { select: ["DefinitionId"] }
+    ));
+    return Boolean(feature?.DefinitionId);
+  }
+  async function sitePagesLibrary() {
+    const { items } = await client2.getAll("web/lists", {
+      select: ["Id", "Title", "BaseTemplate", "Hidden", "RootFolder/ServerRelativeUrl"],
+      expand: "RootFolder"
+    });
+    const list2 = items.find((item2) => !item2.Hidden && Number(item2.BaseTemplate) === 119);
+    if (!list2) return null;
+    return {
+      id: list2.Id,
+      title: list2.Title,
+      rootPath: list2.RootFolder?.ServerRelativeUrl || ""
+    };
+  }
+  async function webIdentity() {
+    const [web, site] = await Promise.all([
+      client2.get("web", { select: ["Id", "Title", "Url", "ServerRelativeUrl"] }),
+      client2.get("site", { select: ["Id", "Url", "ServerRelativeUrl"] })
+    ]);
+    return {
+      webId: web.Id,
+      siteId: site.Id,
+      webUrl: web.Url,
+      webServerRelativeUrl: web.ServerRelativeUrl,
+      siteUrl: site.Url,
+      siteServerRelativeUrl: site.ServerRelativeUrl,
+      title: web.Title
+    };
+  }
+  return {
+    getPage,
+    createPage,
+    addTemplateFile,
+    checkoutPage,
+    savePage,
+    publishPage,
+    promoteToNews,
+    discardPage,
+    recycleFile,
+    recycleFolder,
+    moveFileByPath,
+    copyFileByPath,
+    addImageFromExternalUrl,
+    fileInfo,
+    fileInfoById,
+    fileItemId,
+    exists,
+    folderExists,
+    readFileBytes: readFileBytes2,
+    clientSideWebParts,
+    setCommentsDisabled,
+    featureActive,
+    sitePagesLibrary,
+    webIdentity
+  };
+}
+
+// ../src/workbench/page-copy-dialog.js
+var el15 = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== void 0) n.textContent = text;
+  return n;
+};
+var FIELD_SELECT4 = [
+  "Id",
+  "Title",
+  "InternalName",
+  "EntityPropertyName",
+  "TypeAsString",
+  "FieldTypeKind",
+  "Required",
+  "Hidden",
+  "ReadOnlyField",
+  "Choices",
+  "FillInChoice"
+];
+var trimSlash2 = (v) => String(v || "").replace(/\/+$/, "");
+var lower4 = (v) => String(v || "").toLowerCase();
+function fieldsPath(listId) {
+  return `web/lists(guid'${listId}')/fields`;
+}
+function nameCandidates(stem2) {
+  const out = [`${stem2}.aspx`, `${stem2}-copy.aspx`];
+  for (let i = 2; i < 1e3; i += 1) out.push(`${stem2}-copy-${i}.aspx`);
+  return out;
+}
+function bytesText(n) {
+  const num = Number(n) || 0;
+  if (num >= 1024 * 1024) return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+  if (num >= 1024) return `${Math.round(num / 1024)} KB`;
+  return `${num} B`;
+}
+var VERDICT_LABELS = {
+  asset: "asset",
+  data: "data",
+  config: "config",
+  link: "link",
+  dynamic: "dynamic",
+  unavailable: "unavailable",
+  unverified: "unverified"
+};
+function partVerdictCounts(part) {
+  const counts = /* @__PURE__ */ new Map();
+  const bump = (key2, n = 1) => counts.set(key2, (counts.get(key2) || 0) + n);
+  for (const ref of part.refs || []) bump(ref.class || "unverified");
+  if (!part.available) bump("unavailable");
+  if (part.unverified?.length) bump("unverified", part.unverified.length);
+  return counts;
+}
+function versionLine(item2, status) {
+  const ver = String(item2?.OData__UIVersionString ?? item2?._UIVersionString ?? "").trim();
+  const major = Number((ver.split(".")[0] || "").trim());
+  const isDraft = Number.isFinite(major) && major === 0;
+  if (!ver) return "Copies the current version of this page.";
+  if (isDraft) {
+    return status?.published === true ? `Copies the current version (${ver} \u2014 a draft newer than the last published version).` : `Copies the current draft version (${ver}); this page has never been published.`;
+  }
+  return status?.published === true ? `Copies the published version ${ver}.` : `Copies the current version (${ver}).`;
+}
+function openPageCopyDialog({
+  client: client2,
+  createClient,
+  mockWriter: mockWriter2,
+  library,
+  pageId,
+  pageName,
+  statusOf,
+  analyzers = null,
+  runCopy: runCopy2,
+  discardCopy: discardCopy2
+}) {
+  return new Promise((resolve) => {
+    const dialog = el15("dialog", "app-dialog sp-metadata-dialog wb-page-copy-dialog");
+    const panel = el15("div", "app-dialog__panel");
+    const head = el15("div", "app-dialog__head");
+    head.append(el15("h2", "", "Copy page"));
+    const closeIcon = el15("button", "btn btn-ghost btn-xs", "\u2715");
+    closeIcon.type = "button";
+    closeIcon.setAttribute("aria-label", "Close");
+    head.append(closeIcon);
+    const context = el15("p", "app-dialog__context", `Copy \u201C${pageName || library?.title || "this page"}\u201D to a new page.`);
+    panel.append(head, context);
+    dialog.append(panel);
+    document.body.append(dialog);
+    let settled = false;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      dialog.close();
+      dialog.remove();
+      resolve(outcome);
+    };
+    let running = false;
+    let runResult = null;
+    const dismiss = () => {
+      if (running) return;
+      finish(runResult || "cancelled");
+    };
+    closeIcon.addEventListener("click", dismiss);
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      dismiss();
+    });
+    dialog.showModal();
+    const loading = el15("p", "app-dialog__context", "Reading page\u2026");
+    panel.append(loading);
+    const sourceWrite = createSpWriteClient({ client: client2, mockWriter: mockWriter2 });
+    const sourcePages = createSpPages({ client: client2, write: sourceWrite });
+    (async () => {
+      let snapshot;
+      try {
+        const [page, item2, fieldsRes, status, web] = await Promise.all([
+          sourcePages.getPage(pageId),
+          client2.get(`web/lists(guid'${library.listId}')/items(${Number(pageId)})`, {
+            select: ["*"],
+            expand: "FieldValuesAsText"
+          }),
+          client2.getAll(fieldsPath(library.listId), { select: FIELD_SELECT4 }),
+          statusOf ? statusOf().catch(() => null) : Promise.resolve(null),
+          sourcePages.webIdentity()
+        ]);
+        snapshot = snapshotFromReads({
+          page,
+          item: item2,
+          fields: fieldsRes.items,
+          status,
+          library: {
+            id: library.listId,
+            title: library.title,
+            baseTemplate: library.baseTemplate,
+            hidden: Boolean(library.hidden),
+            rootPath: library.rootPath
+          },
+          web
+        });
+      } catch (err) {
+        loading.remove();
+        renderRefusal(err?.message || String(err));
+        return;
+      }
+      loading.remove();
+      const elig = sourceEligibility(snapshot, { sameWeb: true });
+      if (!elig.ok) {
+        renderRefusal(elig.reason);
+        return;
+      }
+      buildForm(snapshot);
+    })();
+    function renderRefusal(reason) {
+      const error = el15("div", "sp-files-error", reason);
+      error.setAttribute("role", "alert");
+      panel.append(error);
+      const actions = el15("div", "app-dialog__actions");
+      const closeBtn = el15("button", "btn btn-run wb-pc-close", "Close");
+      closeBtn.type = "button";
+      closeBtn.addEventListener("click", dismiss);
+      actions.append(closeBtn);
+      panel.append(actions);
+    }
+    function buildForm(snapshot) {
+      panel.append(el15("p", "wb-pc-version", versionLine(snapshot.item, snapshot.status)));
+      const destField = el15("div", "app-dialog__field");
+      destField.append(el15("label", "", "Destination"));
+      const destRow = el15("div", "wb-pc-dest-row");
+      const thisLabel = el15("label", "wb-pc-dest-opt");
+      const thisRadio = el15("input", "wb-pc-dest-this");
+      thisRadio.type = "radio";
+      thisRadio.name = "wb-pc-dest";
+      thisRadio.value = "this";
+      thisRadio.checked = true;
+      thisLabel.append(thisRadio, document.createTextNode("This site"));
+      const otherLabel = el15("label", "wb-pc-dest-opt");
+      const otherRadio = el15("input", "wb-pc-dest-other");
+      otherRadio.type = "radio";
+      otherRadio.name = "wb-pc-dest";
+      otherRadio.value = "other";
+      otherLabel.append(otherRadio, document.createTextNode("Another site"));
+      destRow.append(thisLabel, otherLabel);
+      destField.append(destRow);
+      const urlRow = el15("div", "wb-pc-url-row");
+      const urlInput = el15("input", "wb-pc-url");
+      urlInput.type = "text";
+      urlInput.autocomplete = "off";
+      urlInput.disabled = true;
+      urlInput.setAttribute("list", "wb-pc-url-list");
+      const datalist = el15("datalist");
+      datalist.id = "wb-pc-url-list";
+      for (const fav of getFavorites()) {
+        const opt = el15("option", "", fav.title || fav.url);
+        opt.value = fav.url;
+        datalist.append(opt);
+      }
+      for (const rec of getRecents()) {
+        const opt = el15("option", "", rec.title || rec.url);
+        opt.value = rec.url;
+        datalist.append(opt);
+      }
+      const connectBtn = el15("button", "btn btn-xs wb-pc-connect", "Connect");
+      connectBtn.type = "button";
+      urlRow.append(urlInput, datalist, connectBtn);
+      destField.append(urlRow);
+      const targetStatus = el15("div", "wb-pc-target-status");
+      targetStatus.hidden = true;
+      destField.append(targetStatus);
+      panel.append(destField);
+      const fieldsWrap = el15("div", "wb-pc-fields");
+      const nameField = el15("label", "app-dialog__field");
+      nameField.append(el15("span", "", "File name"));
+      const nameInput = el15("input", "wb-pc-filename");
+      nameInput.type = "text";
+      nameInput.autocomplete = "off";
+      nameField.append(nameInput);
+      fieldsWrap.append(nameField);
+      const titleField = el15("label", "app-dialog__field");
+      titleField.append(el15("span", "", "Title"));
+      const titleInput = el15("input", "wb-pc-title");
+      titleInput.type = "text";
+      titleInput.autocomplete = "off";
+      titleInput.value = snapshot.dto.Title || "";
+      titleField.append(titleInput);
+      fieldsWrap.append(titleField);
+      const folderField = el15("label", "app-dialog__field");
+      folderField.append(el15("span", "", "Folder"));
+      const folderInput = el15("input", "wb-pc-folder");
+      folderInput.type = "text";
+      folderInput.autocomplete = "off";
+      folderInput.placeholder = "(library root)";
+      folderField.append(folderInput);
+      fieldsWrap.append(folderField);
+      const checksRow = el15("div", "wb-pc-checks");
+      const publishLabel2 = el15("label", "");
+      const publishCb = el15("input", "wb-pc-publish");
+      publishCb.type = "checkbox";
+      publishLabel2.append(publishCb, document.createTextNode("Publish"));
+      checksRow.append(publishLabel2);
+      const promoteRow = el15("label", "");
+      promoteRow.hidden = snapshot.dto.PromotedState <= 0;
+      const promoteCb = el15("input", "wb-pc-promote");
+      promoteCb.type = "checkbox";
+      promoteRow.append(promoteCb, document.createTextNode("Promote as news"));
+      checksRow.append(promoteRow);
+      const carryLabel = el15("label", "");
+      const carryCb = el15("input", "wb-pc-carry");
+      carryCb.type = "checkbox";
+      carryCb.checked = true;
+      carryLabel.append(carryCb, document.createTextNode("Carry custom metadata"));
+      checksRow.append(carryLabel);
+      const rewriteLabel = el15("label", "");
+      rewriteLabel.hidden = true;
+      const rewriteCb = el15("input", "wb-pc-rewrite");
+      rewriteCb.type = "checkbox";
+      rewriteLabel.append(rewriteCb, document.createTextNode("Rewrite links into the source site"));
+      checksRow.append(rewriteLabel);
+      fieldsWrap.append(checksRow);
+      panel.append(fieldsWrap);
+      const checkRow = el15("div", "wb-pc-check-row");
+      const checkBtn = el15("button", "btn btn-xs wb-pc-check", "Check");
+      checkBtn.type = "button";
+      checkRow.append(checkBtn);
+      panel.append(checkRow);
+      const dropNote = el15("p", "wb-pc-recheck-note", "Check again to apply.");
+      dropNote.hidden = true;
+      panel.append(dropNote);
+      const report = el15("div", "wb-pc-report");
+      report.hidden = true;
+      panel.append(report);
+      const errorEl = el15("div", "sp-files-error");
+      errorEl.setAttribute("role", "alert");
+      errorEl.hidden = true;
+      panel.append(errorEl);
+      const runPanel = el15("div", "wb-pc-run");
+      runPanel.hidden = true;
+      const stepsList = el15("ol", "wb-pc-steps");
+      runPanel.append(stepsList);
+      const outcomeEl = el15("p", "wb-pc-outcome");
+      outcomeEl.hidden = true;
+      runPanel.append(outcomeEl);
+      const driftEl = el15("div", "wb-pc-drift");
+      driftEl.hidden = true;
+      runPanel.append(driftEl);
+      panel.append(runPanel);
+      const actions = el15("div", "app-dialog__actions");
+      const cancelBtn = el15("button", "btn btn-ghost wb-pc-cancel", "Cancel");
+      cancelBtn.type = "button";
+      const discardBtn = el15("button", "btn btn-ghost wb-pc-discard", "Discard copy");
+      discardBtn.type = "button";
+      discardBtn.hidden = true;
+      const openLink = el15("a", "wb-pc-open", "Open copy \u2197");
+      openLink.hidden = true;
+      openLink.target = "_blank";
+      openLink.rel = "noopener";
+      const closeBtn = el15("button", "btn btn-ghost wb-pc-close", "Close");
+      closeBtn.type = "button";
+      closeBtn.hidden = true;
+      const goBtn = el15("button", "btn btn-run wb-pc-go", "Copy");
+      goBtn.type = "button";
+      goBtn.disabled = true;
+      actions.append(cancelBtn, discardBtn, openLink, closeBtn, goBtn);
+      panel.append(actions);
+      let connectSeq = 0;
+      let targetClient = null;
+      let tp = null;
+      let spWrite = null;
+      let targetLib = null;
+      let targetFields = [];
+      let targetWebParts = null;
+      let targetWebIdentity = null;
+      const currentTp = () => tp;
+      const currentTargetLib = () => targetLib;
+      const currentTargetIdentity = () => targetWebIdentity;
+      const currentTargetClient = () => targetClient;
+      const currentTargetFields = () => targetFields;
+      const currentTargetWebParts = () => targetWebParts;
+      let connected = false;
+      let targetEligible = false;
+      let connectedUrl = null;
+      let fileNameTouched = false;
+      let checking = false;
+      let lastPlan = null;
+      let lastKey = null;
+      const requiredValues = {};
+      const requiredEditors = /* @__PURE__ */ new Map();
+      const dropped = /* @__PURE__ */ new Set();
+      const confirmedConsumers = /* @__PURE__ */ new Set();
+      const edited = () => {
+        invalidatePreflight();
+        refreshGate();
+      };
+      nameInput.addEventListener("input", () => {
+        fileNameTouched = true;
+        edited();
+      });
+      for (const input of [titleInput, folderInput, publishCb, promoteCb, carryCb, rewriteCb]) {
+        input.addEventListener("input", edited);
+        input.addEventListener("change", edited);
+      }
+      function showTargetStatus(text, isError) {
+        targetStatus.hidden = !text;
+        targetStatus.textContent = text || "";
+        targetStatus.classList.toggle("wb-pc-status-error", Boolean(isError));
+      }
+      function showError(text) {
+        errorEl.hidden = !text;
+        errorEl.textContent = text || "";
+      }
+      let inputEpoch = 0;
+      function invalidatePreflight() {
+        inputEpoch += 1;
+        lastPlan = null;
+        lastKey = null;
+        confirmedConsumers.clear();
+        report.hidden = true;
+        report.textContent = "";
+        dropNote.hidden = true;
+      }
+      function invalidatePreflightForDrop() {
+        inputEpoch += 1;
+        lastPlan = null;
+        lastKey = null;
+        confirmedConsumers.clear();
+        dropNote.hidden = false;
+      }
+      function computeKey() {
+        return JSON.stringify({
+          url: connectedUrl,
+          fileName: nameInput.value.trim(),
+          title: titleInput.value.trim(),
+          folder: folderInput.value.trim(),
+          publish: publishCb.checked,
+          promote: promoteCb.checked,
+          carry: carryCb.checked,
+          rewrite: rewriteCb.checked,
+          dropped: [...dropped].sort(),
+          required: Object.keys(requiredValues).sort().map((k) => [k, requiredValues[k]]),
+          etag: snapshot.etag
+        });
+      }
+      function pendingConsumerConfirmations() {
+        if (!lastPlan) return [];
+        return dependentConsumers(lastPlan.analysis, lastPlan.dropped || []).filter((c) => !confirmedConsumers.has(lower4(c.instanceId)));
+      }
+      function refreshGate() {
+        checkBtn.disabled = !connected || !targetEligible || checking || running;
+        const fresh = Boolean(lastPlan) && !lastPlan.blockers.length && computeKey() === lastKey;
+        const pendingConsumers = fresh && pendingConsumerConfirmations().length > 0;
+        goBtn.disabled = !fresh || running || pendingConsumers;
+      }
+      function onDropChanged() {
+        invalidatePreflightForDrop();
+        refreshGate();
+      }
+      async function connect(rawUrl) {
+        const seq = ++connectSeq;
+        const stale = () => seq !== connectSeq;
+        connected = false;
+        targetEligible = false;
+        connectedUrl = null;
+        invalidatePreflight();
+        showError("");
+        showTargetStatus("Connecting\u2026");
+        connectBtn.disabled = true;
+        refreshGate();
+        let candidate;
+        try {
+          candidate = createClient();
+          await candidate.connectWeb(rawUrl);
+        } catch (err) {
+          if (stale()) return;
+          connectBtn.disabled = false;
+          showTargetStatus(err?.message || String(err), true);
+          refreshGate();
+          return;
+        }
+        if (stale()) return;
+        const candidateWrite = createSpWriteClient({ client: candidate, mockWriter: mockWriter2 });
+        const candidateTp = createSpPages({ client: candidate, write: candidateWrite });
+        let identity, featureOk, lib, fields;
+        try {
+          identity = await candidateTp.webIdentity();
+          if (stale()) return;
+          featureOk = await candidateTp.featureActive(MODERN_SITE_PAGES_FEATURE_ID);
+          if (stale()) return;
+          lib = await candidateTp.sitePagesLibrary();
+          if (stale()) return;
+          fields = lib ? (await candidate.getAll(fieldsPath(lib.id), { select: FIELD_SELECT4 })).items : [];
+          if (stale()) return;
+        } catch (err) {
+          if (stale()) return;
+          connectBtn.disabled = false;
+          showTargetStatus(err?.message || String(err), true);
+          refreshGate();
+          return;
+        }
+        const sameWebNow = Boolean(identity.webId) && normalizeGuid(identity.webId) === normalizeGuid(snapshot.web.webId);
+        let webParts = null;
+        if (!sameWebNow) {
+          try {
+            const parts = await candidateTp.clientSideWebParts();
+            if (stale()) return;
+            webParts = new Set(parts.map((p) => normalizeGuid(p.Id)).filter(Boolean));
+          } catch (err) {
+            if (stale()) return;
+            connectBtn.disabled = false;
+            showTargetStatus(err?.message || String(err), true);
+            refreshGate();
+            return;
+          }
+        }
+        const tgtElig = targetEligibility({ featureActive: featureOk, library: lib });
+        const srcElig = sourceEligibility(snapshot, { sameWeb: sameWebNow });
+        connectBtn.disabled = false;
+        connected = true;
+        connectedUrl = rawUrl;
+        targetClient = candidate;
+        tp = candidateTp;
+        spWrite = candidateWrite;
+        targetLib = lib;
+        targetFields = fields;
+        targetWebParts = webParts;
+        targetWebIdentity = identity;
+        rewriteLabel.hidden = sameWebNow;
+        if (sameWebNow) rewriteCb.checked = false;
+        if (!srcElig.ok) {
+          targetEligible = false;
+          showTargetStatus(srcElig.reason, true);
+        } else if (!tgtElig.ok) {
+          targetEligible = false;
+          showTargetStatus(tgtElig.reason, true);
+        } else {
+          targetEligible = true;
+          showTargetStatus("");
+          if (!fileNameTouched) {
+            nameInput.value = defaultFileName(snapshot.fileName, /* @__PURE__ */ new Set());
+          }
+        }
+        refreshGate();
+      }
+      thisRadio.addEventListener("change", () => {
+        if (!thisRadio.checked) return;
+        urlInput.disabled = true;
+        urlInput.value = "";
+        connect(client2.webUrl());
+      });
+      otherRadio.addEventListener("change", () => {
+        if (!otherRadio.checked) return;
+        urlInput.disabled = false;
+        connected = false;
+        targetEligible = false;
+        connectedUrl = null;
+        invalidatePreflight();
+        showTargetStatus("Enter a site and Connect.");
+        refreshGate();
+      });
+      connectBtn.addEventListener("click", () => connect(urlInput.value.trim()));
+      urlInput.addEventListener("input", () => {
+        connected = false;
+        targetEligible = false;
+        connectedUrl = null;
+        invalidatePreflight();
+        showTargetStatus("Connect to check this site.");
+        refreshGate();
+      });
+      async function runPreflight() {
+        if (checking || !connected || !targetEligible) return;
+        const epoch = inputEpoch;
+        const seq = connectSeq;
+        const stale = () => epoch !== inputEpoch || seq !== connectSeq;
+        const tp2 = currentTp();
+        const targetLib2 = currentTargetLib();
+        const targetWebIdentity2 = currentTargetIdentity();
+        const targetClient2 = currentTargetClient();
+        const targetFields2 = currentTargetFields();
+        const targetWebParts2 = currentTargetWebParts();
+        checking = true;
+        showError("");
+        checkBtn.disabled = true;
+        goBtn.disabled = true;
+        checkBtn.textContent = "Checking\u2026";
+        try {
+          const folder = folderInput.value.trim().replace(/^\/+|\/+$/g, "");
+          const folderIssue = folderProblem(folder);
+          const libraryRoot = trimSlash2(targetLib2.rootPath);
+          const finalDir = folder ? `${libraryRoot}/${folder}` : libraryRoot;
+          const extraBlockers = [];
+          if (folderIssue) extraBlockers.push(folderIssue);
+          let fileName;
+          const takenFinal = /* @__PURE__ */ new Set();
+          if (!fileNameTouched) {
+            const stem3 = fileStem3(snapshot.fileName) || "Page";
+            let free = null;
+            for (const candidate of nameCandidates(stem3)) {
+              const exists = await tp2.exists(`${finalDir}/${candidate}`);
+              if (exists) takenFinal.add(lower4(candidate));
+              else {
+                free = candidate;
+                break;
+              }
+            }
+            fileName = free || `${stem3}-copy-${Date.now()}.aspx`;
+            nameInput.value = fileName;
+          } else {
+            fileName = nameInput.value.trim();
+            const nameIssue = fileNameProblem(fileName);
+            if (!nameIssue && fileName && !folderIssue) {
+              if (await tp2.exists(`${finalDir}/${fileName}`)) takenFinal.add(lower4(fileName));
+            }
+          }
+          const runId = shortRunId();
+          const stem2 = fileStem3(fileName) || "Page";
+          const stageName = `${stagingStem(stem2, runId)}.aspx`;
+          const takenRoot = /* @__PURE__ */ new Set();
+          if (await tp2.exists(`${libraryRoot}/${stageName}`)) takenRoot.add(lower4(stageName));
+          if (folder && !folderIssue) {
+            const exists = await tp2.folderExists(finalDir);
+            if (!exists) extraBlockers.push(`Folder \u201C${folder}\u201D does not exist.`);
+          }
+          const webSR = trimSlash2(targetWebIdentity2.webServerRelativeUrl);
+          const siteAssetsRoot = `${webSR}/SiteAssets`;
+          const assetFolder = `${siteAssetsRoot}/SitePages/${stem2}`;
+          const assetFolderExists = await tp2.folderExists(assetFolder);
+          const sameWebNow = Boolean(targetWebIdentity2.webId) && normalizeGuid(targetWebIdentity2.webId) === normalizeGuid(snapshot.web.webId);
+          const assetInfo = /* @__PURE__ */ new Map();
+          if (!sameWebNow) {
+            const analysis = analyzeParts(snapshot, { analyzers, targetWebParts: targetWebParts2 });
+            for (const req of assetRequests(snapshot, analysis)) {
+              let info = req.ids?.uniqueId ? await sourcePages.fileInfoById(req.ids.uniqueId) : null;
+              if (!info && req.path) info = await sourcePages.fileInfo(req.path);
+              assetInfo.set(req.key, info);
+            }
+          }
+          const target = {
+            webUrl: targetClient2.webUrl(),
+            webServerRelativeUrl: webSR,
+            siteId: targetWebIdentity2.siteId,
+            webId: targetWebIdentity2.webId,
+            library: { id: targetLib2.id, rootPath: targetLib2.rootPath },
+            siteAssetsRoot,
+            fields: targetFields2,
+            webParts: targetWebParts2,
+            takenFinal,
+            takenRoot,
+            assetFolderExists
+          };
+          const options = {
+            fileName,
+            title: titleInput.value.trim(),
+            folder,
+            publish: publishCb.checked,
+            promoteAsNews: promoteCb.checked,
+            carryMetadata: carryCb.checked,
+            rewriteLinks: rewriteCb.checked,
+            requiredValues: { ...requiredValues },
+            dropped: [...dropped],
+            runId
+          };
+          const plan = analyzeCopy({ snapshot, target, options, analyzers, assetInfo });
+          plan.blockers = [...extraBlockers, ...plan.blockers];
+          if (stale()) return;
+          lastPlan = plan;
+          lastKey = computeKey();
+          dropNote.hidden = true;
+          renderReport(plan);
+        } catch (err) {
+          showError(err?.message || String(err));
+          lastPlan = null;
+          lastKey = null;
+        } finally {
+          checking = false;
+          checkBtn.textContent = "Check";
+          refreshGate();
+        }
+      }
+      checkBtn.addEventListener("click", runPreflight);
+      function renderReport(plan) {
+        report.hidden = false;
+        report.textContent = "";
+        requiredEditors.clear();
+        if (plan.metadata.carried.length) {
+          report.append(el15("h3", "", "Carried metadata"));
+          const list2 = el15("ul", "");
+          for (const c of plan.metadata.carried) list2.append(el15("li", "", `${c.title} = ${c.value}`));
+          report.append(list2);
+        }
+        if (plan.metadata.skipped.length) {
+          report.append(el15("h3", "", "Not carried"));
+          const list2 = el15("ul", "");
+          for (const s of plan.metadata.skipped) list2.append(el15("li", "", `${s.title} \u2014 ${s.reason}`));
+          report.append(list2);
+        }
+        if (plan.metadata.requiredGaps.length) {
+          report.append(el15("h3", "", "Required on the destination"));
+          const wrap = el15("div", "wb-pc-gaps");
+          for (const gap of plan.metadata.requiredGaps) {
+            const row = el15("div", "wb-pc-gap-row");
+            row.append(el15("span", "", gap.title));
+            if (gap.supportable) {
+              const field2 = targetFields.find((f) => f.InternalName === gap.internalName);
+              if (field2) {
+                const editor = createFieldEditor(field2, "");
+                editor.el.addEventListener("input", () => {
+                  requiredValues[gap.internalName] = editor.getValue();
+                  refreshGate();
+                });
+                editor.el.addEventListener("change", () => {
+                  requiredValues[gap.internalName] = editor.getValue();
+                  refreshGate();
+                });
+                requiredEditors.set(gap.internalName, editor);
+                row.append(editor.el);
+              }
+            } else {
+              row.append(el15("span", "wb-pc-gap-unsupported", "cannot be filled from here"));
+            }
+            wrap.append(row);
+          }
+          report.append(wrap);
+        }
+        if (plan.analysis?.parts?.length) {
+          report.append(el15("h3", "", "Page parts"));
+          const table2 = el15("table", "wb-table wb-pc-parts-table");
+          const body = el15("tbody");
+          const droppedNow = new Set((plan.dropped || []).map(lower4));
+          for (const part of plan.analysis.parts) {
+            const isDropped = Boolean(part.instanceId) && droppedNow.has(lower4(part.instanceId));
+            const tr = el15("tr");
+            if (isDropped) tr.classList.add("wb-pc-dropped");
+            tr.append(el15("td", "", part.label || part.kind));
+            const chipCell = el15("td");
+            const counts = partVerdictCounts(part);
+            for (const [cls, n] of counts) {
+              const chip = el15("span", "wb-info-chip", n > 1 ? `${VERDICT_LABELS[cls] || cls} (${n})` : VERDICT_LABELS[cls] || cls);
+              chipCell.append(chip);
+            }
+            tr.append(chipCell);
+            const dropCell = el15("td");
+            if (part.kind === "webpart" && part.instanceId) {
+              const dropLabel = el15("label", "wb-pc-drop-label");
+              const dropCb = el15("input", "wb-pc-drop");
+              dropCb.type = "checkbox";
+              dropCb.dataset.instance = part.instanceId;
+              dropCb.checked = dropped.has(lower4(part.instanceId));
+              dropLabel.append(dropCb, document.createTextNode(
+                part.available === false ? "Drop (not available on the destination)" : "Drop"
+              ));
+              dropCb.addEventListener("change", () => {
+                const id = lower4(part.instanceId);
+                if (dropCb.checked) dropped.add(id);
+                else dropped.delete(id);
+                onDropChanged();
+              });
+              dropCell.append(dropLabel);
+            }
+            tr.append(dropCell);
+            body.append(tr);
+            if (isDropped) {
+              const consumers = dependentConsumers(plan.analysis, [part.instanceId]);
+              if (consumers.length) {
+                const consumerRow = el15("tr", "wb-pc-consumer-row");
+                const consumerCell = el15("td");
+                consumerCell.colSpan = 3;
+                const wrap = el15("div", "wb-pc-consumers");
+                wrap.append(el15("p", "wb-pc-consumer-note", `Depends on ${part.label || part.kind}:`));
+                for (const consumer of consumers) {
+                  const consumerLabel = el15("label", "wb-pc-drop-consumer-label");
+                  const confirmCb = el15("input", "wb-pc-drop-consumer");
+                  confirmCb.type = "checkbox";
+                  confirmCb.dataset.instance = consumer.instanceId;
+                  confirmCb.checked = confirmedConsumers.has(lower4(consumer.instanceId));
+                  consumerLabel.append(confirmCb, document.createTextNode(
+                    `Confirm: ${consumer.label || consumer.kind} will lose its data source`
+                  ));
+                  confirmCb.addEventListener("change", () => {
+                    const id = lower4(consumer.instanceId);
+                    if (confirmCb.checked) confirmedConsumers.add(id);
+                    else confirmedConsumers.delete(id);
+                    refreshGate();
+                  });
+                  wrap.append(consumerLabel);
+                }
+                consumerCell.append(wrap);
+                consumerRow.append(consumerCell);
+                body.append(consumerRow);
+              }
+            }
+          }
+          table2.append(body);
+          report.append(table2);
+        }
+        if (plan.assets.length) {
+          report.append(el15("h3", "", "Assets"));
+          const list2 = el15("ul", "");
+          for (const a of plan.assets) {
+            list2.append(el15("li", "", a.retainReason ? `${a.name} \u2014 retained (${a.retainReason})` : `${a.name} \u2014 ${bytesText(a.length)} \u2192 ${a.destName}`));
+          }
+          report.append(list2);
+        }
+        if (plan.warnings.length) {
+          report.append(el15("h3", "", "Warnings"));
+          const list2 = el15("ul", "");
+          for (const w of plan.warnings) list2.append(el15("li", "", w));
+          report.append(list2);
+        }
+        if (plan.analysis?.parts?.some((p) => p.unverified?.length)) {
+          report.append(el15("h3", "", "Suspicious references"));
+          const list2 = el15("ul", "");
+          for (const part of plan.analysis.parts) {
+            for (const f of part.unverified || []) {
+              list2.append(el15("li", "", `${part.label}: ${f.value}`));
+            }
+          }
+          report.append(list2);
+        }
+        report.append(el15("p", "wb-schema-note", "People, lookup and managed-metadata columns are not copied."));
+        showError(plan.blockers.join(" "));
+      }
+      async function runTheCopy() {
+        if (running) return;
+        const fresh = Boolean(lastPlan) && !lastPlan.blockers.length && computeKey() === lastKey;
+        if (!fresh) return;
+        running = true;
+        goBtn.disabled = true;
+        checkBtn.disabled = true;
+        cancelBtn.disabled = true;
+        showError("");
+        report.hidden = true;
+        runPanel.hidden = false;
+        stepsList.textContent = "";
+        outcomeEl.hidden = true;
+        const stepRows = /* @__PURE__ */ new Map();
+        const frozenPlan = lastPlan;
+        const frozenTp = tp;
+        const frozenWrite = spWrite;
+        function onStep(step2) {
+          let row = stepRows.get(step2.name);
+          if (!row) {
+            row = el15("li", "wb-pc-step");
+            row.dataset.step = step2.name;
+            stepsList.append(row);
+            stepRows.set(step2.name, row);
+          }
+          row.dataset.status = step2.status;
+          row.textContent = step2.detail ? `${step2.name} \u2014 ${step2.detail}` : step2.name;
+        }
+        let result;
+        try {
+          result = await runCopy2({ plan: frozenPlan }, {
+            source: { pages: sourcePages },
+            target: { pages: frozenTp, write: frozenWrite },
+            rewrite: (transferResults) => rewriteContent(snapshot, frozenPlan, transferResults, analyzers),
+            verify: (dto, saved) => compareReadBack(frozenPlan, saved, dto)
+          }, { onStep });
+        } catch (err) {
+          result = {
+            outcome: "failed",
+            journal: { pageId: null, currentPath: "", createdBy: "unknown", assets: [], steps: [], retries: [], drift: [] },
+            pageUrl: "",
+            error: err?.message || String(err)
+          };
+        }
+        running = false;
+        runResult = {
+          outcome: result.outcome,
+          journal: result.journal,
+          pageUrl: result.pageUrl,
+          sameWeb: Boolean(frozenPlan.sameWeb)
+        };
+        renderOutcome(result, frozenTp);
+      }
+      goBtn.addEventListener("click", runTheCopy);
+      function renderOutcome(result, frozenTp) {
+        const { outcome, journal, pageUrl } = result;
+        cancelBtn.hidden = true;
+        goBtn.hidden = true;
+        checkBtn.hidden = true;
+        closeBtn.hidden = false;
+        outcomeEl.hidden = false;
+        outcomeEl.dataset.outcome = outcome;
+        outcomeEl.textContent = outcomeText(outcome, journal);
+        if (result.error) showError(result.error);
+        if (pageUrl) {
+          openLink.href = pageUrl;
+          openLink.hidden = false;
+        }
+        if ((outcome === "failed" || outcome === "unknown") && journal?.createdBy === "this run") {
+          discardBtn.hidden = false;
+        }
+        if (journal?.drift?.length) {
+          driftEl.hidden = false;
+          driftEl.textContent = "";
+          driftEl.append(el15("h3", "", "Differs from the plan"));
+          const list2 = el15("ul", "");
+          for (const d of journal.drift) {
+            list2.append(el15("li", "", `${d.field}: expected ${d.expected}, got ${d.actual}`));
+          }
+          driftEl.append(list2);
+        }
+        discardBtn.addEventListener("click", async () => {
+          if (discardBusy) return;
+          discardBusy = true;
+          discardBtn.disabled = true;
+          discardBtn.textContent = "Discarding\u2026";
+          try {
+            const outcome2 = await discardCopy2(journal, { target: { pages: frozenTp } });
+            discardBtn.hidden = true;
+            const note = el15(
+              "p",
+              "wb-pc-discard-note",
+              `Recycled ${outcome2.recycled.length} item${outcome2.recycled.length === 1 ? "" : "s"}.` + (outcome2.leftovers.length ? ` ${outcome2.leftovers.length} left behind \u2014 see the target folder.` : "")
+            );
+            runPanel.append(note);
+          } catch (err) {
+            showError(err?.message || String(err));
+            discardBtn.disabled = false;
+            discardBtn.textContent = "Discard copy";
+          } finally {
+            discardBusy = false;
+          }
+        }, { once: true });
+        closeBtn.addEventListener("click", () => finish(runResult), { once: true });
+      }
+      let discardBusy = false;
+      function outcomeText(outcome, journal) {
+        const doneSteps = (journal?.steps || []).filter((s) => s.status === "done").map((s) => s.name);
+        switch (outcome) {
+          case "done":
+            return "The page was copied.";
+          case "done-with-warnings":
+            return "The page was copied, with warnings \u2014 see below.";
+          case "failed":
+            return "The copy failed \u2014 see below.";
+          case "unknown": {
+            const uncertain = (journal?.steps || []).find((s) => s.status === "unknown");
+            const stage = lastPlan?.target?.finalAbsolute || "";
+            const staging = lastPlan?.target?.stagingPath || "";
+            return `The result of this copy is unknown \u2014 the response to the ${uncertain?.name || "last"} step was lost. Confirmed so far: ${doneSteps.length ? doneSteps.join(", ") : "nothing"}. Check the target folder${stage ? ` (${stage})` : ""} and the staging name${staging ? ` (${staging})` : ""} by hand.`;
+          }
+          default:
+            return "";
+        }
+      }
+      cancelBtn.addEventListener("click", dismiss);
+      connect(client2.webUrl());
+      refreshGate();
+    }
+  });
+}
+
+// ../src/workbench/page-copy-run.js
+function originOf3(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+function parentOf(path) {
+  const s = String(path || "");
+  const i = s.lastIndexOf("/");
+  return i === -1 ? "" : s.slice(0, i);
+}
+function basename(path) {
+  const s = String(path || "");
+  const i = s.lastIndexOf("/");
+  return i === -1 ? s : s.slice(i + 1);
+}
+function isNotFound2(err) {
+  return err?.status === 404 || err?.code === "not-found";
+}
+function pushStep(journal, onStep, name, status, detail = "") {
+  const record = { name, status, detail: String(detail || "") };
+  journal.steps.push(record);
+  if (onStep) {
+    try {
+      onStep(record, journal);
+    } catch {
+    }
+  }
+  return record;
+}
+async function attempt(journal, onStep, name, work) {
+  try {
+    const detail = await work();
+    return { record: pushStep(journal, onStep, name, "done", detail || ""), err: null, network: false };
+  } catch (err) {
+    const network = err?.code === "network";
+    const record = pushStep(journal, onStep, name, network ? "unknown" : "failed", err?.message || String(err));
+    return { record, err, network };
+  }
+}
+function pageUrlOf(journal, plan) {
+  if (!journal.currentPath) return "";
+  return `${originOf3(plan.target.webUrl)}${journal.currentPath}`;
+}
+function newJournal() {
+  return {
+    pageId: null,
+    currentPath: "",
+    createdBy: "unknown",
+    assets: [],
+    steps: [],
+    drift: [],
+    fieldErrors: {},
+    notes: ["A 403 on a write is retried once with a fresh digest before any success; nothing else is retried."]
+  };
+}
+async function runCopy(frozen, deps, { onStep } = {}) {
+  const { plan } = frozen;
+  const { source, target } = deps;
+  const { pages, write } = target;
+  const journal = newJournal(plan);
+  const transferResults = /* @__PURE__ */ new Map();
+  let dto = null;
+  let saved = null;
+  let warnings = false;
+  const finish = (outcome) => ({ outcome, journal, pageUrl: pageUrlOf(journal, plan) });
+  if (plan.engine === "copyFile") {
+    const r = await attempt(journal, onStep, "create", async () => {
+      await pages.copyFileByPath(plan.source.absoluteUrl, plan.target.finalAbsolute, { overwrite: false });
+      journal.currentPath = plan.target.finalPath;
+      journal.createdBy = "this run";
+      journal.pageId = await pages.fileItemId(plan.target.finalPath);
+      return plan.target.finalPath;
+    });
+    if (r.err) return finish(r.network ? "unknown" : "failed");
+  } else {
+    const r = await attempt(journal, onStep, "create", async () => {
+      const created = await pages.createPage({ pageLayoutType: plan.pageLayoutType, promotedState: 0 });
+      journal.pageId = created.Id;
+      journal.createdBy = "this run";
+      const url = String(created.Url || "").replace(/^\/+/, "");
+      journal.currentPath = url ? `${plan.target.webServerRelativeUrl}/${url}` : "";
+      dto = created;
+      return `page ${created.Id} created`;
+    });
+    if (r.err) return finish(r.network ? "unknown" : "failed");
+  }
+  if (plan.engine === "copyFile") {
+    const r = await attempt(journal, onStep, "reset", async () => {
+      const copied = await pages.getPage(journal.pageId);
+      const promoted = Number(copied.PromotedState || 0) > 0;
+      if (promoted) {
+        await write.validateUpdateListItem(
+          { listId: plan.target.libraryId, itemId: journal.pageId },
+          [{ FieldName: "PromotedState", FieldValue: "0" }]
+        );
+      }
+      if (!copied.IsPageCheckedOutToCurrentUser) await pages.checkoutPage(journal.pageId);
+      await pages.savePage(journal.pageId, { Title: plan.title });
+      saved = null;
+      return promoted ? "promoted state cleared; title reset" : "title reset";
+    });
+    if (r.err) return finish(r.network ? "unknown" : "failed");
+    pushStep(journal, onStep, "metadata", "skipped", "carried by the file copy");
+    pushStep(journal, onStep, "comments", "skipped", "carried by the file copy");
+  } else {
+    {
+      const r = await attempt(journal, onStep, "name", async () => {
+        if (!dto.IsPageCheckedOutToCurrentUser) await pages.checkoutPage(journal.pageId);
+        await pages.savePage(journal.pageId, { Title: plan.target.stagingStem });
+        dto = await pages.getPage(journal.pageId);
+        journal.currentPath = `${plan.target.libraryRoot}/${dto.FileName}`;
+        const expected = `${plan.target.stagingStem}.aspx`;
+        return String(dto.FileName || "").toLowerCase() === expected.toLowerCase() ? dto.FileName : `named ${dto.FileName} (expected ${expected})`;
+      });
+      if (r.err) return finish(r.network ? "unknown" : "failed");
+    }
+    const toTransfer = plan.assets.filter((a) => a.destName);
+    if (!toTransfer.length) {
+      pushStep(journal, onStep, "assets", "skipped", "nothing to transfer");
+    } else {
+      const r = await attempt(journal, onStep, "assets", async () => {
+        for (const entry of plan.assetFolderChain) {
+          if (await pages.folderExists(entry.path)) continue;
+          const folder = await write.createFolder(parentOf(entry.path), basename(entry.path));
+          journal.assets.push({
+            path: folder.serverRelativeUrl || entry.path,
+            kind: "folder",
+            confirmed: true,
+            recyclable: entry.recyclable
+          });
+        }
+        for (const asset of toTransfer) {
+          const bytes = await source.pages.readFileBytes(asset.sourcePath);
+          const uploaded = await write.uploadFile(plan.assetFolder, asset.destName, bytes.bytes, { overwrite: false });
+          journal.assets.push({ path: uploaded.serverRelativeUrl, kind: "file", confirmed: true, recyclable: true });
+          if (uploaded.checkOutType !== void 0 && uploaded.checkOutType !== 2) {
+            await write.checkInFile(uploaded.serverRelativeUrl);
+          }
+          const info = await pages.fileInfo(uploaded.serverRelativeUrl);
+          transferResults.set(asset.key, {
+            path: uploaded.serverRelativeUrl,
+            ids: {
+              siteId: info?.SiteId,
+              webId: info?.WebId,
+              listId: info?.ListId,
+              uniqueId: info?.UniqueId
+            },
+            url: `${originOf3(plan.target.webUrl)}${uploaded.serverRelativeUrl}`
+          });
+        }
+        return `${toTransfer.length} asset(s) transferred`;
+      });
+      if (r.err) return finish(r.network ? "unknown" : "failed");
+    }
+    {
+      const r = await attempt(journal, onStep, "content", async () => {
+        dto = await pages.getPage(journal.pageId);
+        if (!dto.IsPageCheckedOutToCurrentUser) await pages.checkoutPage(journal.pageId);
+        saved = await deps.rewrite(transferResults);
+        await pages.savePage(journal.pageId, saved);
+        return "content saved";
+      });
+      if (r.err) return finish(r.network ? "unknown" : "failed");
+    }
+    {
+      const r = await attempt(journal, onStep, "move", async () => {
+        const srcAbsolute = `${originOf3(plan.target.webUrl)}${journal.currentPath}`;
+        try {
+          await pages.moveFileByPath(srcAbsolute, plan.target.finalAbsolute, { overwrite: false });
+        } catch (err) {
+          const decorated = new Error(`${err?.message || err} (staged at ${plan.target.stagingPath})`);
+          decorated.code = err?.code;
+          decorated.status = err?.status;
+          throw decorated;
+        }
+        journal.currentPath = plan.target.finalPath;
+        try {
+          dto = await pages.getPage(journal.pageId);
+        } catch (err) {
+          if (!isNotFound2(err)) throw err;
+          journal.pageId = await pages.fileItemId(plan.target.finalPath);
+          dto = null;
+        }
+        return plan.target.finalPath;
+      });
+      if (r.err) return finish(r.network ? "unknown" : "failed");
+    }
+    if (!plan.metadata.formValues || !plan.metadata.formValues.length) {
+      pushStep(journal, onStep, "metadata", "skipped", "no metadata to carry");
+    } else {
+      const r = await attempt(journal, onStep, "metadata", async () => {
+        await write.validateUpdateListItem(
+          { listId: plan.target.libraryId, itemId: journal.pageId },
+          plan.metadata.formValues
+        );
+        return `${plan.metadata.formValues.length} field(s) written`;
+      });
+      if (r.err) {
+        if (r.network) return finish("unknown");
+        if (r.err.fieldErrors) Object.assign(journal.fieldErrors, r.err.fieldErrors);
+        warnings = true;
+      }
+    }
+    if (plan.commentsDisabled === true) {
+      const r = await attempt(journal, onStep, "comments", async () => {
+        await pages.setCommentsDisabled(plan.target.libraryId, journal.pageId, true);
+        return "comments disabled";
+      });
+      if (r.err) {
+        if (r.network) return finish("unknown");
+        warnings = true;
+      }
+    } else {
+      pushStep(journal, onStep, "comments", "skipped", "source allows comments");
+    }
+  }
+  let published = false;
+  if (plan.publish) {
+    const r = await attempt(journal, onStep, "publish", async () => {
+      await pages.publishPage(journal.pageId);
+      published = true;
+      if (plan.promoteAsNews) await pages.promoteToNews(journal.pageId);
+      return plan.promoteAsNews ? "published; promoted to news" : "published";
+    });
+    if (r.err) {
+      if (r.network) return finish("unknown");
+      warnings = true;
+    }
+  } else if (plan.promoteAsNews) {
+    const r = await attempt(journal, onStep, "publish", async () => {
+      await write.validateUpdateListItem(
+        { listId: plan.target.libraryId, itemId: journal.pageId },
+        [{ FieldName: "PromotedState", FieldValue: "1" }]
+      );
+      return "promoted on publish";
+    });
+    if (r.err) {
+      if (r.network) return finish("unknown");
+      warnings = true;
+    }
+  } else {
+    pushStep(journal, onStep, "publish", "skipped", "not publishing");
+  }
+  if (!published && plan.checkInDraft) {
+    const r = await attempt(journal, onStep, "checkin", async () => {
+      await write.checkInFile(journal.currentPath, { comment: "Copied with DCSPad" });
+      return "checked in";
+    });
+    if (r.err) {
+      if (r.network) return finish("unknown");
+      warnings = true;
+    }
+  } else {
+    pushStep(journal, onStep, "checkin", "skipped", published ? "published" : "left checked out");
+  }
+  {
+    const r = await attempt(journal, onStep, "verify", async () => {
+      const finalDto = await pages.getPage(journal.pageId);
+      journal.drift = deps.verify(finalDto, saved) || [];
+      return journal.drift.length ? `${journal.drift.length} field(s) drifted` : "matches";
+    });
+    if (r.err) {
+      if (r.network) return finish("unknown");
+      warnings = true;
+    } else if (journal.drift.length) {
+      warnings = true;
+    }
+  }
+  return finish(warnings ? "done-with-warnings" : "done");
+}
+async function discardCopy(journal, { target } = {}) {
+  const { pages } = target;
+  const recycled = [];
+  const leftovers = [];
+  if (!journal || journal.createdBy !== "this run") return { recycled, leftovers };
+  let currentPath = journal.currentPath;
+  if (!currentPath && journal.pageId) {
+    try {
+      const [dto, library] = await Promise.all([pages.getPage(journal.pageId), pages.sitePagesLibrary()]);
+      const root2 = String(library?.rootPath || "").replace(/\/+$/, "");
+      const name = dto?.FileName || "";
+      if (root2 && name) currentPath = `${root2}/${name}`;
+    } catch (err) {
+      leftovers.push({ path: `(page id ${journal.pageId})`, error: err?.message || String(err) });
+    }
+  }
+  if (currentPath) {
+    try {
+      await pages.recycleFile(currentPath);
+      recycled.push(currentPath);
+    } catch (err) {
+      leftovers.push({ path: currentPath, error: err?.message || String(err) });
+    }
+  }
+  const fileAssets = (journal.assets || []).filter((a) => a.kind === "file" && a.confirmed);
+  for (const asset of fileAssets) {
+    try {
+      await pages.recycleFile(asset.path);
+      recycled.push(asset.path);
+    } catch (err) {
+      leftovers.push({ path: asset.path, error: err?.message || String(err) });
+    }
+  }
+  const folderAssets = (journal.assets || []).filter((a) => a.kind === "folder" && a.confirmed && a.recyclable).sort((a, b) => b.path.split("/").length - a.path.split("/").length);
+  for (const folder of folderAssets) {
+    try {
+      await pages.recycleFolder(folder.path);
+      recycled.push(folder.path);
+    } catch (err) {
+      leftovers.push({ path: folder.path, error: err?.message || String(err) });
+    }
+  }
+  return { recycled, leftovers };
+}
+
+// ../src/workbench/page-copy-analyzers/header.js
+function decodePath(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function splitPath(raw) {
+  const m = /^([^?#]*)/.exec(raw);
+  return m ? m[1] : raw;
+}
+function underSource(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(decodePath(raw), ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath(url.pathname), ctx2.sourceWebPath);
+}
+function sourceRelativePath(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath(splitPath(raw));
+  try {
+    return decodePath(splitPath(new URL(raw).pathname));
+  } catch {
+    return raw;
+  }
+}
+function bannerIds(spc, props) {
+  const custom = spc?.customMetadata?.imageSource;
+  if (custom && typeof custom === "object") {
+    return { siteId: custom.siteId, webId: custom.webId, listId: custom.listId, uniqueId: custom.uniqueId };
+  }
+  return { siteId: props?.siteId, webId: props?.webId, listId: props?.listId, uniqueId: props?.uniqueId };
+}
+var header_default = {
+  id: "cbe7b0a9-3504-44dd-a3a3-0e5cacd07788",
+  header: true,
+  label: "Title area",
+  refs(part, ctx2) {
+    const props = part?.properties || {};
+    const spc = part?.serverProcessedContent || {};
+    const imageSources = spc.imageSources || {};
+    const refs = [];
+    const bannerValue = imageSources.imageSource;
+    if (bannerValue && underSource(bannerValue, ctx2)) {
+      refs.push({
+        path: ["serverProcessedContent", "imageSources", "imageSource"],
+        value: bannerValue,
+        class: "asset",
+        asset: { path: sourceRelativePath(bannerValue), ids: bannerIds(spc, props) }
+      });
+    }
+    if (Array.isArray(props.authorByline) && props.authorByline.length) {
+      refs.push({
+        path: ["properties", "authorByline"],
+        value: props.authorByline,
+        class: "config",
+        note: "authors resolve per tenant"
+      });
+    }
+    if (Array.isArray(props.authors) && props.authors.length) {
+      refs.push({
+        path: ["properties", "authors"],
+        value: props.authors,
+        class: "config",
+        note: "authors resolve per tenant"
+      });
+    }
+    return refs;
+  },
+  patch(part, ctx2) {
+    const props = part?.properties;
+    const spc = part?.serverProcessedContent;
+    const imageSources = spc?.imageSources;
+    if (!props || !spc || !imageSources) return 0;
+    const bannerValue = imageSources.imageSource;
+    if (!bannerValue || !underSource(bannerValue, ctx2)) return 0;
+    const mapping = ctx2.mapAsset({ path: sourceRelativePath(bannerValue), ids: bannerIds(spc, props) });
+    if (!mapping || mapping.path === void 0 || !mapping.ids) return 0;
+    let count = 0;
+    if (mapping.path !== void 0 && imageSources.imageSource !== mapping.path) {
+      imageSources.imageSource = mapping.path;
+      count += 1;
+    }
+    if (mapping.ids) {
+      const customImageSource = spc.customMetadata?.imageSource;
+      if (customImageSource && typeof customImageSource === "object") {
+        for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+          if (!(idKey in customImageSource)) continue;
+          const nextId = mapping.ids[idKey];
+          if (nextId !== void 0 && customImageSource[idKey] !== nextId) {
+            customImageSource[idKey] = nextId;
+            count += 1;
+          }
+        }
+      }
+      for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+        if (!(idKey in props)) continue;
+        const nextId = mapping.ids[idKey];
+        if (nextId !== void 0 && props[idKey] !== nextId) {
+          props[idKey] = nextId;
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/text.js
+function parseHtml(html) {
+  if (typeof DOMParser !== "function") return null;
+  try {
+    return new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
+  } catch {
+    return null;
+  }
+}
+function splitPath2(raw) {
+  const m = /^([^?#]*)/.exec(raw);
+  return m ? m[1] : raw;
+}
+function decodePath2(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function matchSourcePath(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return null;
+  if (raw.startsWith("/") && !raw.startsWith("//")) {
+    return ctx2.underPath(raw, ctx2.sourceWebPath) ? decodePath2(splitPath2(raw)) : null;
+  }
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return null;
+  const path = decodePath2(url.pathname);
+  return ctx2.underPath(path, ctx2.sourceWebPath) ? path : null;
+}
+function collectAttrs(doc) {
+  const out = [];
+  for (const node of doc.body.querySelectorAll("*")) {
+    const tag = node.tagName.toLowerCase();
+    for (const attr of [...node.attributes]) {
+      const name = attr.name;
+      const isHref = name === "href" && tag === "a";
+      const isSrc = name === "src" && tag === "img";
+      const isData = name.startsWith("data-");
+      if (!isHref && !isSrc && !isData) continue;
+      out.push({ node, tag, name, isHref, isSrc, isData });
+    }
+  }
+  return out;
+}
+var text_default = {
+  id: "text",
+  text: true,
+  label: "Text",
+  refs(instance, ctx2) {
+    const html = String(instance?.innerHTML || "");
+    if (!html) return [];
+    const doc = parseHtml(html);
+    if (!doc) return [];
+    const out = [];
+    collectAttrs(doc).forEach(({ node, name, isSrc, isData }, index) => {
+      const value = node.getAttribute(name);
+      const path = matchSourcePath(value, ctx2);
+      if (path == null) return;
+      if (isSrc) {
+        out.push({
+          path: ["innerHTML", `@${name}[${index}]`],
+          value,
+          class: "asset",
+          asset: { path, ids: {} },
+          note: "image into the source web"
+        });
+      } else {
+        out.push({
+          path: ["innerHTML", `@${name}[${index}]`],
+          value,
+          class: "link",
+          note: isData ? "data attribute into the source web" : "link into the source web"
+        });
+      }
+    });
+    return out;
+  },
+  patch(instance, ctx2) {
+    const html = String(instance?.innerHTML || "");
+    if (!html) return 0;
+    const doc = parseHtml(html);
+    if (!doc) return 0;
+    let changed = 0;
+    for (const node of doc.body.querySelectorAll("img[src]")) {
+      const src = node.getAttribute("src");
+      const path = matchSourcePath(src, ctx2);
+      if (path == null) continue;
+      const mapped = ctx2.mapAsset ? ctx2.mapAsset({ path }) : null;
+      if (!mapped) continue;
+      const wasAbsolute = /^https?:\/\//i.test(src);
+      const next2 = wasAbsolute ? mapped.url : mapped.path;
+      if (!next2) continue;
+      node.setAttribute("src", next2);
+      changed += 1;
+    }
+    for (const node of doc.body.querySelectorAll("a[href]")) {
+      const href = node.getAttribute("href");
+      const path = matchSourcePath(href, ctx2);
+      if (path == null) continue;
+      const next2 = ctx2.mapLink ? ctx2.mapLink(href) : null;
+      if (typeof next2 !== "string" || !next2) continue;
+      node.setAttribute("href", next2);
+      changed += 1;
+    }
+    if (changed) instance.innerHTML = doc.body.innerHTML;
+    return changed;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/quick-links.js
+var ITEM_LINK_KEY = /^items\[(\d+)\]\.sourceItem\.url$/;
+function underSource2(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(raw, ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  return ctx2.underPath(decodePath3(url.pathname), ctx2.sourceWebPath);
+}
+function decodePath3(p) {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+function sourceRelativePath2(value) {
+  const raw = String(value ?? "");
+  if (raw.startsWith("/") && !raw.startsWith("//")) return decodePath3(raw.split(/[?#]/)[0]);
+  try {
+    return decodeURIComponent(new URL(raw).pathname);
+  } catch {
+    return raw;
+  }
+}
+function itemIndex(key2) {
+  const m = /^items\[(\d+)\]/.exec(String(key2 || ""));
+  return m ? Number(m[1]) : null;
+}
+function itemIds(item2) {
+  return {
+    siteId: item2?.siteId,
+    webId: item2?.webId,
+    listId: item2?.listId,
+    uniqueId: item2?.uniqueId
+  };
+}
+var quick_links_default = {
+  id: "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd",
+  label: "Quick links",
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties || {};
+    const spc = instance?.webPartData?.serverProcessedContent || {};
+    const items = Array.isArray(props.items) ? props.items : [];
+    const imageSources = spc.imageSources || {};
+    const links = spc.links || {};
+    const refs = [];
+    for (const [key2, value] of Object.entries(imageSources)) {
+      if (!underSource2(value, ctx2)) continue;
+      const idx = itemIndex(key2);
+      const item2 = idx != null ? items[idx] : void 0;
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "imageSources", key2],
+        value,
+        class: "asset",
+        asset: { path: sourceRelativePath2(value), ids: itemIds(item2) }
+      });
+    }
+    if (links.baseUrl && underSource2(links.baseUrl, ctx2)) {
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "links", "baseUrl"],
+        value: links.baseUrl,
+        class: "config",
+        note: "names the source web; the tiles' relative links resolve against it"
+      });
+    }
+    for (const [key2, value] of Object.entries(links)) {
+      if (key2 === "baseUrl" || !ITEM_LINK_KEY.test(key2)) continue;
+      if (!underSource2(value, ctx2)) continue;
+      refs.push({
+        path: ["webPartData", "serverProcessedContent", "links", key2],
+        value,
+        class: "link"
+      });
+    }
+    for (const idKey of ["siteId", "webId"]) {
+      const value = props[idKey];
+      if (value && ctx2.normalizeGuid(value) === ctx2.sourceIds[idKey]) {
+        refs.push({
+          path: ["webPartData", "properties", idKey],
+          value,
+          class: "config",
+          note: "names the source site/web this control was authored in"
+        });
+      }
+    }
+    return refs;
+  },
+  patch(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    const spc = instance?.webPartData?.serverProcessedContent;
+    if (!props || !spc) return 0;
+    const items = Array.isArray(props.items) ? props.items : [];
+    const imageSources = spc.imageSources;
+    const links = spc.links;
+    let count = 0;
+    if (imageSources) {
+      for (const key2 of Object.keys(imageSources)) {
+        const value = imageSources[key2];
+        if (!underSource2(value, ctx2)) continue;
+        const idx = itemIndex(key2);
+        const item2 = idx != null ? items[idx] : void 0;
+        const mapping = ctx2.mapAsset({ path: sourceRelativePath2(value), ids: itemIds(item2) });
+        if (!mapping) continue;
+        const isAbsolute = /^https?:\/\//i.test(String(value));
+        const next2 = isAbsolute && mapping.url ? mapping.url : mapping.path;
+        if (next2 !== void 0 && next2 !== value) {
+          imageSources[key2] = next2;
+          count += 1;
+        }
+        if (item2 && mapping.ids) {
+          for (const idKey of ["siteId", "webId", "listId", "uniqueId"]) {
+            const nextId = mapping.ids[idKey];
+            if (nextId !== void 0 && ctx2.normalizeGuid(item2[idKey]) !== ctx2.normalizeGuid(nextId)) {
+              item2[idKey] = nextId;
+              count += 1;
+            }
+          }
+        }
+      }
+    }
+    if (links) {
+      for (const key2 of Object.keys(links)) {
+        if (key2 === "baseUrl" || !ITEM_LINK_KEY.test(key2)) continue;
+        const value = links[key2];
+        if (!underSource2(value, ctx2)) continue;
+        const mapped = ctx2.mapLink(value);
+        if (mapped != null && mapped !== value) {
+          links[key2] = mapped;
+          count += 1;
+        }
+      }
+      if (ctx2.rewriteLinks && links.baseUrl && underSource2(links.baseUrl, ctx2)) {
+        const nextBase = ctx2.target?.webPath;
+        if (nextBase !== void 0 && links.baseUrl !== nextBase) {
+          links.baseUrl = nextBase;
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/news.js
+var NEWS_SOURCE = {
+  0: { label: "all sites", contextRelative: false },
+  1: { label: "this site", contextRelative: true },
+  2: { label: "selected sites", contextRelative: false },
+  3: { label: "recommended sites", contextRelative: false }
+};
+function sourceNote(mode) {
+  const known = NEWS_SOURCE[mode];
+  const label = known ? known.label : `source mode ${JSON.stringify(mode)}`;
+  return known && known.contextRelative ? `News source: ${label} \u2014 context-relative; may re-resolve against the destination web instead of the source` : `News source: ${label} \u2014 keeps pointing at the source web/site`;
+}
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+function underSourceWeb(value, ctx2) {
+  const raw = String(value ?? "");
+  if (!raw) return false;
+  if (raw.startsWith("/") && !raw.startsWith("//")) return ctx2.underPath(raw, ctx2.sourceWebPath);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (!ctx2.origin || url.origin.toLowerCase() !== String(ctx2.origin).toLowerCase()) return false;
+  let path = url.pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+  }
+  return ctx2.underPath(path, ctx2.sourceWebPath);
+}
+function computeRefs(instance, ctx2) {
+  const props = instance?.webPartData?.properties;
+  const out = [];
+  if (isPlainObject(props)) {
+    const note = sourceNote(props.newsDataSourceProp);
+    if (typeof props.siteId === "string" && props.siteId) {
+      out.push({ path: ["webPartData", "properties", "siteId"], value: props.siteId, class: "data", note });
+    }
+    if (typeof props.webId === "string" && props.webId) {
+      out.push({ path: ["webPartData", "properties", "webId"], value: props.webId, class: "data", note });
+    }
+    if (Array.isArray(props.newsSiteList)) {
+      props.newsSiteList.forEach((id, i) => {
+        if (typeof id !== "string" || !id) return;
+        out.push({
+          path: ["webPartData", "properties", "newsSiteList", i],
+          value: id,
+          class: "data",
+          note: "News source: selected sites \u2014 keeps pointing at the source web/site"
+        });
+      });
+    }
+  }
+  const links = instance?.webPartData?.serverProcessedContent?.links;
+  if (isPlainObject(links)) {
+    for (const [key2, value] of Object.entries(links)) {
+      if (key2 === "baseUrl") continue;
+      if (typeof value !== "string" || !underSourceWeb(value, ctx2)) continue;
+      out.push({
+        path: ["webPartData", "serverProcessedContent", "links", key2],
+        value,
+        class: "link",
+        note: "link into the source web"
+      });
+    }
+  }
+  return out;
+}
+function setAtPath(root2, path, value) {
+  let node = root2;
+  for (let i = 0; i < path.length - 1; i += 1) node = node[path[i]];
+  node[path[path.length - 1]] = value;
+}
+var news_default = {
+  id: ["8c88f208-6c77-4bdb-86a0-0c47b4316588", "a5df8fdf-b508-4b66-98a6-d83bc2597f63"],
+  label: "News",
+  refs(instance, ctx2) {
+    return computeRefs(instance, ctx2);
+  },
+  // §5.2 "data → warn": the site/web/list data refs are never patched —
+  // kept as-is with the warning refs() already produced. Only 'link' refs
+  // are ever authorized to change, and only via ctx.mapLink.
+  patch(instance, ctx2) {
+    let changed = 0;
+    for (const ref of computeRefs(instance, ctx2)) {
+      if (ref.class !== "link") continue;
+      const mapped = ctx2.mapLink ? ctx2.mapLink(ref.value) : null;
+      if (typeof mapped !== "string" || !mapped || mapped === ref.value) continue;
+      setAtPath(instance, ref.path, mapped);
+      changed += 1;
+    }
+    return changed;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers/list-library.js
+var GUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isPlainObject2(v) {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+function kindLabel(instance) {
+  const props = instance?.webPartData?.properties;
+  if (isPlainObject2(props)) {
+    if (props.isDocumentLibrary === true) return "Document library";
+    if (props.isDocumentLibrary === false) return "List";
+  }
+  return "List / Document library";
+}
+function listName(instance) {
+  const props = instance?.webPartData?.properties || {};
+  const spc = instance?.webPartData?.serverProcessedContent;
+  const fromSpc = isPlainObject2(spc) ? spc.searchablePlainTexts?.listTitle : void 0;
+  if (typeof fromSpc === "string" && fromSpc.trim()) return fromSpc.trim();
+  const url = props.selectedListUrl || props.webRelativeListUrl || "";
+  const seg = String(url).replace(/\/+$/, "").split("/").filter(Boolean).pop();
+  return seg || kindLabel(instance);
+}
+function isIdentityIdKey(key2) {
+  return /[a-z]id$/i.test(key2) && !/^instanceid$/i.test(key2);
+}
+function isListUrlKey(key2) {
+  return /listurl$/i.test(key2) || /^siteurl$/i.test(key2);
+}
+function collectRefs(container, path, name, out) {
+  if (!isPlainObject2(container)) return;
+  for (const [key2, value] of Object.entries(container)) {
+    if (value == null) continue;
+    if (typeof value === "string" && isIdentityIdKey(key2)) {
+      if (!GUID_RE2.test(value)) continue;
+      out.push({
+        path: [...path, key2],
+        value,
+        class: "data",
+        note: `${name} \u2014 identity id (${key2}); always names this exact source list/view, wherever the copy lands`
+      });
+      continue;
+    }
+    if (typeof value === "string" && value !== "" && isListUrlKey(key2)) {
+      const relative = /webrelative/i.test(key2);
+      out.push({
+        path: [...path, key2],
+        value,
+        class: "data",
+        note: relative ? `${name} \u2014 web-relative (${key2}); may re-resolve to a same-named list on the destination web, or break if there is none` : `${name} \u2014 absolute (${key2}); keeps pointing at the source list`
+      });
+      continue;
+    }
+    if (isPlainObject2(value)) collectRefs(value, [...path, key2], name, out);
+  }
+}
+var list_library_default = {
+  id: "f92bf067-bc19-489e-a556-7fe95f508720",
+  label: "List / Document library",
+  // eslint-disable-next-line no-unused-vars -- ctx is part of the analyzer contract
+  refs(instance, ctx2) {
+    const props = instance?.webPartData?.properties;
+    if (!isPlainObject2(props)) return [];
+    const name = listName(instance);
+    const out = [];
+    collectRefs(props, ["webPartData", "properties"], name, out);
+    const spc = instance?.webPartData?.serverProcessedContent;
+    if (isPlainObject2(spc) && isPlainObject2(spc.customMetadata)) {
+      collectRefs(spc.customMetadata, ["webPartData", "serverProcessedContent", "customMetadata"], name, out);
+    }
+    return out;
+  },
+  // §5.2 "data → warn": the list/library data source is never patched —
+  // kept as-is with the warning `refs()` already produced.
+  // eslint-disable-next-line no-unused-vars -- (instance, ctx) is part of the analyzer contract
+  patch(instance, ctx2) {
+    return 0;
+  }
+};
+
+// ../src/workbench/page-copy-analyzers.js
+function createAnalyzers(list2 = []) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const analyzer of list2) {
+    if (analyzer.header || analyzer.text) continue;
+    for (const id of [].concat(analyzer.id)) byId.set(String(id).toLowerCase(), analyzer);
+  }
+  return {
+    header: list2.find((a) => a.header) || null,
+    text: list2.find((a) => a.text) || null,
+    forId: (webPartId) => byId.get(String(webPartId || "").toLowerCase()) || null,
+    ids: () => [...byId.keys()]
+  };
+}
+var ANALYZERS = createAnalyzers([header_default, text_default, quick_links_default, news_default, list_library_default]);
+
 // ../src/workbench/views/pages.js?v=2
 var PAGE_SELECT_BASE = [
   "Id",
@@ -13830,14 +17725,14 @@ function pageQueryPlan(fieldInternalNames, kind) {
     ]
   };
 }
-async function queryLadder(shapes, attempt, startAt = 0) {
+async function queryLadder(shapes, attempt2, startAt = 0) {
   let firstError;
   const from = Math.min(Math.max(startAt, 0), shapes.length - 1);
   for (let index = from; index < shapes.length; index += 1) {
     const shape = shapes[index];
     try {
       return {
-        value: await attempt(shape.options),
+        value: await attempt2(shape.options),
         lost: shape.lost || "",
         index,
         reason: firstError?.message || ""
@@ -13867,7 +17762,7 @@ var DETAIL_SELECT = [
   "LayoutWebpartsContent"
 ];
 var CLASSIC_DETAIL_SELECT = ["*", "Author/Title", "Editor/Title"];
-var FIELD_SELECT4 = [
+var FIELD_SELECT5 = [
   "Id",
   "Title",
   "InternalName",
@@ -13905,7 +17800,7 @@ function pagesLibraryCandidates(items) {
 }
 var promotedLabel = (v) => ({ 0: "", 1: "News (pending)", 2: "News" })[v] ?? String(v ?? "");
 var fmtDate4 = (v) => v ? String(v).slice(0, 10) : "";
-var el15 = (tag, cls, text) => {
+var el16 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -13920,29 +17815,35 @@ var encodedServerPath = (path) => String(path || "").split("/").map((segment) =>
 }).join("/");
 var guidPath6 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 function reducedChip(lost, where, because = "") {
-  const chip = el15("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
+  const chip = el16("span", "wb-info-chip wb-reduced-chip", "some fields unavailable");
   chip.title = `SharePoint rejected part of this query${where ? ` for ${where}` : ""}, so ${lost} could not be read.` + (because ? `
 
 SharePoint said: ${because}` : "");
   return chip;
 }
 function statusChip(text, on, title = "") {
-  const chip = el15("span", `wb-role-chip wb-page-status ${on ? "wb-status-on" : "wb-status-off"}`, text);
+  const chip = el16("span", `wb-role-chip wb-page-status ${on ? "wb-status-on" : "wb-status-off"}`, text);
   if (title) chip.title = title;
   return chip;
 }
 var roleNames2 = (row) => (row.RoleDefinitionBindings?.results || row.RoleDefinitionBindings || []).map((r) => r.Name).filter(Boolean).join(", ");
 var supportsStatus = (sitePages) => sitePages?.kind === "modern" || sitePages?.kind === "publishing";
-function createPagesView({ client: client2, navigate, updateRoute }) {
-  const root2 = el15("section", "wb-view wb-view-pages");
+function createPagesView({
+  client: client2,
+  navigate,
+  updateRoute,
+  createClient,
+  mockWriter: mockWriter2
+}) {
+  const root2 = el16("section", "wb-view wb-view-pages");
   const spWrite = createSpWriteClient({ client: client2 });
-  const gridPane = el15("div", "wb-pane");
-  const head = el15("div", "wb-view-head");
+  const gridPane = el16("div", "wb-pane");
+  const head = el16("div", "wb-view-head");
   head.innerHTML = '<h2>Pages</h2><p class="wb-view-hint">Every page in this web\u2019s pages library, subfolders included. Click a row to inspect content, metadata, and structure.</p>';
-  const strip = el15("div", "wb-lib-strip");
-  strip.append(el15("span", "wb-lib-wait", "locating library\u2026"));
+  const strip = el16("div", "wb-lib-strip");
+  strip.append(el16("span", "wb-lib-wait", "locating library\u2026"));
   head.append(strip);
-  const libraryLink = el15("a", "btn btn-xs wb-head-link", "Open \u2197");
+  const libraryLink = el16("a", "btn btn-xs wb-head-link", "Open \u2197");
   bindNewTab(libraryLink);
   libraryLink.hidden = true;
   strip.append(libraryLink);
@@ -13954,11 +17855,11 @@ function createPagesView({ client: client2, navigate, updateRoute }) {
     strip.hidden = false;
     strip.textContent = "";
     if (libraries.length > 1) {
-      const select = el15("select", "wb-lib-select wb-lib-picker");
+      const select = el16("select", "wb-lib-select wb-lib-picker");
       select.setAttribute("aria-label", "Pages library to inspect");
       select.title = `This web has ${libraries.length} pages libraries \u2014 pick which one to inspect.`;
       for (const lib of libraries) {
-        const opt = el15("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
+        const opt = el16("option", "", `${lib.title} \xB7 ${lib.baseTemplate}${lib.hidden ? " \xB7 hidden" : ""}`);
         opt.value = lib.listId;
         if (lib.listId === current.listId) opt.selected = true;
         select.append(opt);
@@ -13968,7 +17869,7 @@ function createPagesView({ client: client2, navigate, updateRoute }) {
       });
       strip.append(select);
     } else {
-      const name = el15("span", "wb-lib-name sp-copy", current.title);
+      const name = el16("span", "wb-lib-name sp-copy", current.title);
       if (current.rootPath) {
         name.title = `Click to copy the library path
 ${current.rootPath}`;
@@ -13976,7 +17877,7 @@ ${current.rootPath}`;
       }
       strip.append(name);
     }
-    const kind = el15(
+    const kind = el16(
       "span",
       `wb-info-chip wb-lib-kind wb-lib-${current.kind}`,
       libraryKindLabel(current.kind)
@@ -13993,10 +17894,10 @@ ${current.rootPath}` : "");
     }
     strip.append(libraryLink);
   }
-  const masterStatus = el15("div", "wb-grid-status");
+  const masterStatus = el16("div", "wb-grid-status");
   masterStatus.hidden = true;
   gridPane.append(head, masterStatus);
-  const detailPane = el15("div", "wb-pane");
+  const detailPane = el16("div", "wb-pane");
   detailPane.hidden = true;
   root2.append(gridPane, detailPane);
   let librariesPromise = null;
@@ -14214,7 +18115,7 @@ ${current.rootPath}` : "");
       }
     ];
   }
-  const scanBtn = el15("button", "btn btn-xs wb-scan-status", "Scan Page Status");
+  const scanBtn = el16("button", "btn btn-xs wb-scan-status", "Scan Page Status");
   scanBtn.type = "button";
   scanBtn.title = "Add Published, Checked out and Inheritance columns for every page \u2014 one extra query";
   scanBtn.addEventListener("click", () => scanStatus());
@@ -14359,12 +18260,12 @@ ${current.rootPath}` : "");
     }
   }
   function rowExportCell(row) {
-    const span = el15("span", "wb-page-row-actions");
+    const span = el16("span", "wb-page-row-actions");
     for (const [label, format, title] of [
       ["MD", "markdown", "Export this page as .md with its content converted to markdown"],
       ["HTML", "html", "Export this page as .md with each content block left as its original HTML"]
     ]) {
-      const btn = el15("button", "wb-cell-link wb-cell-export", label);
+      const btn = el16("button", "wb-cell-link wb-cell-export", label);
       btn.type = "button";
       btn.title = title;
       btn.setAttribute("aria-label", `${title} (${row.FileLeafRef || row.Title || `page ${row.Id}`})`);
@@ -14496,7 +18397,7 @@ ${current.rootPath}` : "");
   }
   function listFields(listId) {
     if (!fieldsPromise) {
-      fieldsPromise = client2.getAll(guidPath6(listId, "/fields"), { select: FIELD_SELECT4 }).then(({ items }) => items).catch((err) => {
+      fieldsPromise = client2.getAll(guidPath6(listId, "/fields"), { select: FIELD_SELECT5 }).then(({ items }) => items).catch((err) => {
         fieldsPromise = null;
         throw err;
       });
@@ -14504,26 +18405,26 @@ ${current.rootPath}` : "");
     return fieldsPromise;
   }
   function structurePane(parsed) {
-    const wrap = el15("div", "wb-tab-pane");
-    const tree = el15("div", "wb-canvas-tree");
+    const wrap = el16("div", "wb-tab-pane");
+    const tree = el16("div", "wb-canvas-tree");
     const { sections, unplaced } = buildSectionTree(parsed.controls);
     if (!sections.length && !unplaced.length) {
-      tree.append(el15("div", "wb-grid-status", "No canvas sections on this page."));
+      tree.append(el16("div", "wb-grid-status", "No canvas sections on this page."));
     }
     sections.forEach((section, i) => {
       const bits = [`${section.columns.length} column${section.columns.length === 1 ? "" : "s"}`];
       if (section.emphasis) bits.push(`emphasis ${section.emphasis}`);
       if (section.vertical) bits.push("vertical");
       if (section.collapsible) bits.push("collapsible");
-      tree.append(el15("div", "wb-canvas-section", `Section ${i + 1} \u2014 ${bits.join(", ")}`));
+      tree.append(el16("div", "wb-canvas-section", `Section ${i + 1} \u2014 ${bits.join(", ")}`));
       for (const column of section.columns) {
-        const row = el15("div", "wb-canvas-column");
+        const row = el16("div", "wb-canvas-column");
         const width = typeof column.sectionFactor === "number" ? `${column.sectionFactor}/12` : "auto";
-        row.append(el15("span", "wb-canvas-width", width));
-        if (!column.controls.length) row.append(el15("span", "wb-canvas-chip wb-canvas-empty", "empty"));
+        row.append(el16("span", "wb-canvas-width", width));
+        if (!column.controls.length) row.append(el16("span", "wb-canvas-chip wb-canvas-empty", "empty"));
         for (const control of column.controls) {
           const chipLabel = control.kind === "text" ? "Text" : control.kind === "webpart" ? control.webPartData.title || webPartName(control.webPartId) : control.kind;
-          const chip = el15("span", "wb-canvas-chip", chipLabel);
+          const chip = el16("span", "wb-canvas-chip", chipLabel);
           chip.title = control.kind === "webpart" ? `${webPartName(control.webPartId)} \xB7 ${control.webPartId}` : textOfControl(control).slice(0, 200);
           row.append(chip);
         }
@@ -14531,10 +18432,10 @@ ${current.rootPath}` : "");
       }
     });
     if (unplaced.length) {
-      tree.append(el15("div", "wb-canvas-section", `Unplaced entries (${unplaced.length})`));
+      tree.append(el16("div", "wb-canvas-section", `Unplaced entries (${unplaced.length})`));
       for (const control of unplaced) {
-        const row = el15("div", "wb-canvas-column");
-        row.append(el15("span", "wb-canvas-chip", control.kind));
+        const row = el16("div", "wb-canvas-column");
+        row.append(el16("span", "wb-canvas-chip", control.kind));
         tree.append(row);
       }
     }
@@ -14542,7 +18443,7 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function webPartsPane(parsed) {
-    const wrap = el15("div", "wb-tab-pane");
+    const wrap = el16("div", "wb-tab-pane");
     const rows = parsed.controls.filter((c) => c.kind === "webpart").map((c, i) => ({
       Id: c.id || String(i),
       Title: c.webPartData.title,
@@ -14568,9 +18469,9 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function classicWebPartsPane(webParts, error) {
-    const wrap = el15("div", "wb-tab-pane");
+    const wrap = el16("div", "wb-tab-pane");
     if (error) {
-      const notice = el15(
+      const notice = el16(
         "div",
         "wb-grid-notice",
         "\u26A0 The page\u2019s web parts could not be read \u2014 " + (error.message || String(error))
@@ -14605,24 +18506,24 @@ ${current.rootPath}` : "");
     return wrap;
   }
   function textPane(parts, notice) {
-    const wrap = el15("div", "wb-tab-pane wb-text-pane");
+    const wrap = el16("div", "wb-tab-pane wb-text-pane");
     if (notice) wrap.append(notice);
     if (!parts.length) {
-      wrap.append(el15("div", "wb-grid-status", "No readable content on this page."));
+      wrap.append(el16("div", "wb-grid-status", "No readable content on this page."));
       return wrap;
     }
-    const contentBlock = el15("div", "wb-text-block");
-    contentBlock.append(el15("div", "wb-subpanel-title", "Content"));
-    const rendered = el15("div", "wb-text-rendered");
+    const contentBlock = el16("div", "wb-text-block");
+    contentBlock.append(el16("div", "wb-subpanel-title", "Content"));
+    const rendered = el16("div", "wb-text-rendered");
     for (const part of parts) {
-      rendered.append(el15("h3", "wb-text-part", part.label));
+      rendered.append(el16("h3", "wb-text-part", part.label));
       if (part.kind === "text") {
-        const body = el15("div", "wb-text-body");
+        const body = el16("div", "wb-text-body");
         body.innerHTML = sanitizeHtml(part.html);
         rendered.append(body);
       } else {
-        const list2 = el15("ul", "wb-text-lines");
-        for (const line of part.lines) list2.append(el15("li", "", line));
+        const list2 = el16("ul", "wb-text-lines");
+        for (const line of part.lines) list2.append(el16("li", "", line));
         rendered.append(list2);
       }
     }
@@ -14630,9 +18531,9 @@ ${current.rootPath}` : "");
     wrap.append(contentBlock);
     const withHtml = parts.filter((p) => p.kind === "text");
     if (withHtml.length) {
-      const htmlBlock = el15("div", "wb-text-block");
-      htmlBlock.append(el15("div", "wb-subpanel-title", "HTML"));
-      htmlBlock.append(el15(
+      const htmlBlock = el16("div", "wb-text-block");
+      htmlBlock.append(el16("div", "wb-subpanel-title", "HTML"));
+      htmlBlock.append(el16(
         "pre",
         "wb-text-raw",
         withHtml.map((p) => `<!-- ${p.label} -->
@@ -14644,8 +18545,8 @@ ${p.html}`).join("\n\n")
   }
   function metadataPane(sitePages, pageId) {
     const listId = sitePages.listId;
-    const wrap = el15("div", "wb-tab-pane");
-    const status = el15("div", "wb-grid-status", "Loading metadata\u2026");
+    const wrap = el16("div", "wb-tab-pane");
+    const status = el16("div", "wb-grid-status", "Loading metadata\u2026");
     wrap.append(status);
     (async () => {
       const fields = await listFields(listId);
@@ -14679,7 +18580,7 @@ ${p.html}`).join("\n\n")
       });
       if (statusFailure) {
         wrap.append(showFailure(
-          el15("div", "wb-grid-status wb-page-status-failed"),
+          el16("div", "wb-grid-status wb-page-status-failed"),
           statusFailure,
           "this page\u2019s publish and permission status"
         ));
@@ -14691,9 +18592,9 @@ ${p.html}`).join("\n\n")
     return wrap;
   }
   function permissionsPane(sitePages, pageId) {
-    const wrap = el15("div", "wb-tab-pane");
-    const bar = el15("div", "wb-scan-bar wb-page-perm-bar");
-    const hint = el15("span", "wb-view-hint", "");
+    const wrap = el16("div", "wb-tab-pane");
+    const bar = el16("div", "wb-scan-bar wb-page-perm-bar");
+    const hint = el16("span", "wb-view-hint", "");
     bar.append(hint);
     const path = guidPath6(sitePages.listId, `/items(${pageId})/roleassignments`);
     const options = {
@@ -14739,11 +18640,11 @@ ${p.html}`).join("\n\n")
     return wrap;
   }
   function rawPane(item2, parsed, webParts = []) {
-    const wrap = el15("div", "wb-tab-pane");
+    const wrap = el16("div", "wb-tab-pane");
     const payload = { item: item2, parsedCanvas: parsed.controls };
     if (webParts.length) payload.webParts = webParts;
     const node = toNode(payload, 0, { maxDepth: 10, maxItems: 400 });
-    const inspector = el15("div", "wb-raw");
+    const inspector = el16("div", "wb-raw");
     inspector.append(enhance(node) ?? renderValue(node));
     wrap.append(inspector);
     return wrap;
@@ -14753,14 +18654,14 @@ ${p.html}`).join("\n\n")
     gridPane.hidden = true;
     detailPane.hidden = false;
     detailPane.textContent = "";
-    const back = el15("button", "btn btn-xs wb-back", "\u2190 All pages");
+    const back = el16("button", "btn btn-xs wb-back", "\u2190 All pages");
     back.type = "button";
     back.addEventListener("click", () => navigate({ view: "pages", libId: current?.listId }));
-    const title = el15("h2", "", route.pageName || `Page ${route.pageId}`);
-    const headRow = el15("div", "wb-detail-head");
+    const title = el16("h2", "", route.pageName || `Page ${route.pageId}`);
+    const headRow = el16("div", "wb-detail-head");
     headRow.append(back, title);
     detailPane.append(headRow);
-    const status = el15("div", "wb-grid-status", "Loading page\u2026");
+    const status = el16("div", "wb-grid-status", "Loading page\u2026");
     detailPane.append(status);
     let sitePages;
     let item2;
@@ -14792,7 +18693,7 @@ ${p.html}`).join("\n\n")
         }
       })();
       const fullUrl = `${origin}${encodedServerPath(item2.FileRef)}`;
-      const frag = el15("span", "wb-detail-id sp-copy", item2.FileRef);
+      const frag = el16("span", "wb-detail-id sp-copy", item2.FileRef);
       frag.title = `Click to copy the full URL
 ${fullUrl}`;
       frag.addEventListener("click", () => copyText(fullUrl, frag));
@@ -14813,12 +18714,12 @@ ${fullUrl}`;
     }
     const readingParts = isCanvas ? contentParts(parsed.controls).parts : classicParts;
     const displayKind = !isCanvas && contentKind === "empty" && readingParts.length ? "webparts" : contentKind;
-    const kindChip = el15("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
+    const kindChip = el16("span", "wb-info-chip wb-detail-kind", pageContentKindLabel(displayKind));
     kindChip.title = isCanvas ? "Modern canvas page \u2014 Structure shows its sections and columns." : `${pageContentKindLabel(displayKind)} \u2014 no canvas sections or columns, so the Structure tab does not apply. Content Editor and Script Editor web-part content is merged into Extract.`;
     headRow.append(kindChip);
     if (lostFields) headRow.append(reducedChip(lostFields, "this page", lostReason));
     if (supportsStatus(sitePages)) {
-      const chips = el15("span", "wb-page-status-chips");
+      const chips = el16("span", "wb-page-status-chips");
       headRow.append(chips);
       pageStatus(sitePages, route.pageId).then(({ status: status2, lost, reason }) => {
         if (run !== detailRun) return;
@@ -14846,22 +18747,51 @@ ${fullUrl}`;
         if (lost) chips.append(reducedChip(lost, "this page\u2019s status", reason));
       }).catch((err) => {
         if (run !== detailRun) return;
-        chips.append(showFailure(el15("span", "wb-page-status-failed"), err, "this page\u2019s status"));
+        chips.append(showFailure(el16("span", "wb-page-status-failed"), err, "this page\u2019s status"));
       });
     }
-    const actions = el15("span", "wb-detail-actions");
-    const exportContent = el15("button", "btn btn-xs", "Export MD");
+    const actions = el16("span", "wb-detail-actions");
+    const exportContent = el16("button", "btn btn-xs", "Export MD");
     exportContent.type = "button";
     exportContent.title = "One human-readable .md: metadata plus the merged web-part content converted to markdown";
-    const exportContentHtml = el15("button", "btn btn-xs", "Export HTML");
+    const exportContentHtml = el16("button", "btn btn-xs", "Export HTML");
     exportContentHtml.type = "button";
     exportContentHtml.title = "The same .md, but each content block keeps its original HTML \u2014 for a page the markdown conversion got wrong";
-    const exportRaw = el15("button", "btn btn-xs", "Export raw");
+    const exportRaw = el16("button", "btn btn-xs", "Export raw");
     exportRaw.type = "button";
     exportRaw.title = "Item + parsed canvas controls as JSON, for scripts";
     actions.append(exportContent, exportContentHtml, exportRaw);
+    const copyable = contentKind === "canvas" || contentKind === "empty";
+    if (copyable && Number(sitePages.baseTemplate) === SITE_PAGES_TEMPLATE && createClient) {
+      const copyBtn = el16("button", "btn btn-xs wb-page-copy-btn", "Copy\u2026");
+      copyBtn.type = "button";
+      copyBtn.title = "Duplicate this page here, or copy it to another site";
+      copyBtn.addEventListener("click", async () => {
+        copyBtn.disabled = true;
+        try {
+          const result = await openPageCopyDialog({
+            client: client2,
+            createClient,
+            mockWriter: mockWriter2,
+            library: sitePages,
+            pageId: route.pageId,
+            pageName: item2.FileLeafRef || route.pageName || "",
+            statusOf: () => pageStatus(sitePages, route.pageId).then((r) => r.status).catch(() => null),
+            analyzers: ANALYZERS,
+            runCopy,
+            discardCopy
+          });
+          if (result && result !== "cancelled" && result.sameWeb && result.journal?.createdBy === "this run") {
+            invalidateGrid();
+          }
+        } finally {
+          copyBtn.disabled = false;
+        }
+      });
+      actions.append(copyBtn);
+    }
     if (item2.FileRef) {
-      const open = el15("a", "btn btn-xs", "Open page \u2197");
+      const open = el16("a", "btn btn-xs", "Open page \u2197");
       open.href = item2.FileRef;
       bindNewTab(open);
       actions.append(open);
@@ -14883,7 +18813,7 @@ ${fullUrl}`;
       );
     });
     if (isCanvas && parsed.errors.length) {
-      const notice = el15(
+      const notice = el16(
         "div",
         "wb-grid-notice",
         `\u26A0 ${parsed.errors.length} canvas entr${parsed.errors.length === 1 ? "y" : "ies"} could not be fully parsed \u2014 shown raw where possible.`
@@ -14891,17 +18821,17 @@ ${fullUrl}`;
       notice.title = parsed.errors.join("\n");
       detailPane.append(notice);
     }
-    const tabsRow = el15("div", "wb-tabs wb-tabs-with-actions");
-    const tabsBar = el15("div", "wb-tab-list");
+    const tabsRow = el16("div", "wb-tabs wb-tabs-with-actions");
+    const tabsBar = el16("div", "wb-tab-list");
     tabsBar.setAttribute("role", "tablist");
     tabsRow.append(tabsBar, actions);
-    const body = el15("div", "wb-tab-body");
+    const body = el16("div", "wb-tab-body");
     const panes = /* @__PURE__ */ new Map();
     const TABS = [
       {
         id: "text",
         label: "Extract",
-        build: () => textPane(readingParts, webPartError ? el15(
+        build: () => textPane(readingParts, webPartError ? el16(
           "div",
           "wb-grid-notice",
           `\u26A0 This page\u2019s web parts could not be read, so embedded content may be missing \u2014 ${webPartError.message || String(webPartError)}`
@@ -14927,7 +18857,7 @@ ${fullUrl}`;
       body.append(panes.get(tab.id));
     }
     for (const tab of TABS) {
-      const btn = el15("button", "wb-tab", tab.label);
+      const btn = el16("button", "wb-tab", tab.label);
       btn.type = "button";
       btn.dataset.tab = tab.id;
       btn.setAttribute("role", "tab");
@@ -14948,6 +18878,15 @@ ${fullUrl}`;
   }
   function rememberLibrary() {
     if (current && libraries.length > 1) updateRoute?.({ libId: current.listId });
+  }
+  function invalidateGrid() {
+    if (grid) {
+      grid.el.remove();
+      grid = null;
+    }
+    pagesLoaded = false;
+    gridRows = [];
+    scanned = false;
   }
   function showMissingLibrary() {
     detailPane.hidden = true;
@@ -15018,7 +18957,7 @@ function metadataFieldStates(libraryFields) {
   return states;
 }
 var anyMetadataAvailable = (states) => Object.values(states || {}).some((s) => s.available);
-var el16 = (tag, cls, text) => {
+var el17 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -15033,30 +18972,30 @@ function openUploadMetadataDialog({
   doMetadata
 }) {
   return new Promise((resolve, reject) => {
-    const dialog = el16("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
-    const panel = el16("div", "app-dialog__panel");
-    const head = el16("div", "app-dialog__head");
-    head.append(el16("h2", "", "File metadata"));
-    const closeBtn = el16("button", "btn btn-ghost btn-xs", "\u2715");
+    const dialog = el17("dialog", "app-dialog sp-metadata-dialog wb-upload-metadata");
+    const panel = el17("div", "app-dialog__panel");
+    const head = el17("div", "app-dialog__head");
+    head.append(el17("h2", "", "File metadata"));
+    const closeBtn = el17("button", "btn btn-ghost btn-xs", "\u2715");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close");
     head.append(closeBtn);
-    const context = el16("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
+    const context = el17("p", "app-dialog__context", overwrite ? `Review metadata before replacing ${fileName}.` : `Add metadata before uploading ${fileName}.`);
     panel.append(head, context);
     const inputs = {};
     for (const state2 of Object.values(states)) {
-      const label = el16(
+      const label = el17(
         "label",
         `app-dialog__field sp-metadata-field ${state2.available ? "available" : "unavailable"}`
       );
-      const headRow = el16("span", "sp-metadata-field__head");
-      headRow.append(el16("span", "", state2.label));
-      headRow.append(el16(
+      const headRow = el17("span", "sp-metadata-field__head");
+      headRow.append(el17("span", "", state2.label));
+      headRow.append(el17(
         "span",
         "sp-metadata-field__state",
         state2.available ? "Available" : "Unavailable"
       ));
-      const input = state2.key === "description" ? el16("textarea") : el16("input");
+      const input = state2.key === "description" ? el17("textarea") : el17("input");
       if (state2.key === "description") input.rows = 4;
       else {
         input.type = "text";
@@ -15066,21 +19005,21 @@ function openUploadMetadataDialog({
       input.className = `wb-upload-meta-${state2.key}`;
       input.disabled = !state2.available;
       input.value = state2.available ? String(values[state2.key] ?? "") : "";
-      const hint = el16("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
+      const hint = el17("span", "sp-metadata-field__hint", state2.available ? `Writes to the ${state2.internalName} field.` : state2.reason);
       label.append(headRow, input, hint);
       panel.append(label);
       inputs[state2.key] = input;
     }
-    const error = el16("div", "sp-files-error");
+    const error = el17("div", "sp-files-error");
     error.setAttribute("role", "alert");
     error.hidden = true;
-    const actions = el16("div", "app-dialog__actions sp-metadata-actions");
-    const cancel = el16("button", "btn btn-ghost", "Cancel");
+    const actions = el17("div", "app-dialog__actions sp-metadata-actions");
+    const cancel = el17("button", "btn btn-ghost", "Cancel");
     cancel.type = "button";
-    const keep = el16("button", "btn wb-upload-meta-keep", "Keep file without metadata");
+    const keep = el17("button", "btn wb-upload-meta-keep", "Keep file without metadata");
     keep.type = "button";
     keep.hidden = true;
-    const primary = el16("button", "btn btn-run wb-upload-meta-go", "Upload file");
+    const primary = el17("button", "btn btn-run wb-upload-meta-go", "Upload file");
     primary.type = "button";
     actions.append(cancel, keep, primary);
     panel.append(error, actions);
@@ -15156,7 +19095,7 @@ function openUploadMetadataDialog({
 }
 
 // ../src/workbench/views/browser.js?v=4
-var FIELD_SELECT5 = [
+var FIELD_SELECT6 = [
   "Id",
   "Title",
   "InternalName",
@@ -15174,7 +19113,7 @@ var FIELD_SELECT5 = [
 ];
 var DOCUMENT_LIBRARY_BASE_TYPE = 1;
 var CHECK_IN_COMMENT2 = "Uploaded from SP Workbench";
-var GUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+var GUID2 = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 var FOLDER_SELECT = ["Name", "ServerRelativeUrl", "ItemCount", "TimeLastModified"];
 var FILE_SELECT = [
   "Name",
@@ -15184,7 +19123,7 @@ var FILE_SELECT = [
   "UIVersionLabel",
   "CheckOutType"
 ];
-var el17 = (tag, cls, text) => {
+var el18 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text !== void 0) n.textContent = text;
@@ -15260,19 +19199,19 @@ function normalizedPath2(value) {
   return path;
 }
 function createBrowserView({ client: client2, navigate }) {
-  const root2 = el17("section", "wb-view wb-view-files");
+  const root2 = el18("section", "wb-view wb-view-files");
   const spWrite = createSpWriteClient({ client: client2 });
-  const head = el17("div", "wb-view-head");
+  const head = el18("div", "wb-view-head");
   head.innerHTML = '<h2>Files</h2><p class="wb-view-hint">Browse any library or folder of this web \u2014 every file type, with download, binary upload, folder creation, and full metadata editing.</p>';
-  const bar = el17("div", "wb-crumbs-bar");
-  const librarySelect = el17("select", "wb-lib-select");
+  const bar = el18("div", "wb-crumbs-bar");
+  const librarySelect = el18("select", "wb-lib-select");
   librarySelect.setAttribute("aria-label", "Jump to a document library");
-  const crumbs = el17("div", "wb-crumbs");
+  const crumbs = el18("div", "wb-crumbs");
   bar.append(librarySelect, crumbs);
-  const consent = el17("div", "wb-consent");
+  const consent = el18("div", "wb-consent");
   consent.hidden = true;
-  const gridWrap = el17("div", "wb-files-grid");
-  const metaPanel = el17("div", "wb-subpanel wb-file-meta");
+  const gridWrap = el18("div", "wb-files-grid");
+  const metaPanel = el18("div", "wb-subpanel wb-file-meta");
   metaPanel.hidden = true;
   root2.append(head, bar, consent, gridWrap, metaPanel);
   let libraries = [];
@@ -15309,7 +19248,7 @@ function createBrowserView({ client: client2, navigate }) {
     const rootPath = webRootPath();
     const segments = currentPath === "/" ? [] : currentPath.slice(1).split("/");
     let acc = "";
-    const rootBtn = el17("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
+    const rootBtn = el18("button", "wb-crumb", rootPath === "/" ? "/" : rootPath);
     rootBtn.type = "button";
     rootBtn.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
     let started = rootPath === "/";
@@ -15319,16 +19258,16 @@ function createBrowserView({ client: client2, navigate }) {
       if (!started) {
         if (normalizedPath2(acc) === rootPath) {
           started = true;
-          const btn2 = el17("button", "wb-crumb", rootPath);
+          const btn2 = el18("button", "wb-crumb", rootPath);
           btn2.type = "button";
           btn2.addEventListener("click", () => navigate({ view: "files", path: rootPath }));
           crumbs.append(btn2);
         }
         continue;
       }
-      crumbs.append(el17("span", "wb-crumb-sep", "/"));
+      crumbs.append(el18("span", "wb-crumb-sep", "/"));
       const target = acc;
-      const btn = el17("button", "wb-crumb", segment);
+      const btn = el18("button", "wb-crumb", segment);
       btn.type = "button";
       btn.addEventListener("click", () => navigate({ view: "files", path: target }));
       crumbs.append(btn);
@@ -15356,13 +19295,13 @@ function createBrowserView({ client: client2, navigate }) {
       libraries = [];
     }
     librarySelect.textContent = "";
-    const blank = el17("option", "", "Libraries\u2026");
+    const blank = el18("option", "", "Libraries\u2026");
     blank.value = "";
     librarySelect.append(blank);
     for (const lib of libraries) {
       const url = lib.RootFolder?.ServerRelativeUrl;
       if (!url) continue;
-      const opt = el17("option", "", lib.Title);
+      const opt = el18("option", "", lib.Title);
       opt.value = url;
       librarySelect.append(opt);
     }
@@ -15378,10 +19317,10 @@ function createBrowserView({ client: client2, navigate }) {
           label: "Name",
           value: (row) => row.Name,
           render: (name, row) => {
-            const wrap = el17("span", `wb-file-name wb-node-${fileRole(row)}`);
+            const wrap = el18("span", `wb-file-name wb-node-${fileRole(row)}`);
             const glyph = icon(row.kind === "folder" ? "folder" : "file");
             glyph.classList.add("wb-node");
-            wrap.append(glyph, el17("span", "wb-file-name-text", name));
+            wrap.append(glyph, el18("span", "wb-file-name-text", name));
             return wrap;
           }
         },
@@ -15434,9 +19373,9 @@ function createBrowserView({ client: client2, navigate }) {
       exportName: "sp-files",
       toolbarExtras: bar
     });
-    const uploadBtn = el17("button", "btn btn-xs wb-primary", "Upload\u2026");
+    const uploadBtn = el18("button", "btn btn-xs wb-primary", "Upload\u2026");
     uploadBtn.type = "button";
-    const fileInput = el17("input");
+    const fileInput = el18("input");
     fileInput.type = "file";
     fileInput.hidden = true;
     fileInput.setAttribute("aria-label", "Choose a file to upload");
@@ -15445,10 +19384,10 @@ function createBrowserView({ client: client2, navigate }) {
       if (fileInput.files?.length) startUpload(fileInput.files[0]);
       fileInput.value = "";
     });
-    const newFolderBtn = el17("button", "btn btn-xs wb-newfolder", "New folder\u2026");
+    const newFolderBtn = el18("button", "btn btn-xs wb-newfolder", "New folder\u2026");
     newFolderBtn.type = "button";
     newFolderBtn.addEventListener("click", promptNewFolder);
-    const refreshBtn = el17("button", "btn btn-xs", "Refresh");
+    const refreshBtn = el18("button", "btn btn-xs", "Refresh");
     refreshBtn.type = "button";
     refreshBtn.addEventListener("click", () => listFolder(currentPath, { force: true }));
     grid.actionsEl.prepend(uploadBtn, fileInput, newFolderBtn, refreshBtn);
@@ -15487,28 +19426,28 @@ function createBrowserView({ client: client2, navigate }) {
   function showConsent(message, onConfirm, { gate = "" } = {}) {
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el17("span", "wb-consent-text", message));
-    const replace = el17("button", "btn btn-xs", "Replace");
+    consent.append(el18("span", "wb-consent-text", message));
+    const replace = el18("button", "btn btn-xs", "Replace");
     replace.type = "button";
     replace.addEventListener("click", () => {
       consent.hidden = true;
       onConfirm();
     });
-    const cancel = el17("button", "btn btn-xs", "Cancel");
+    const cancel = el18("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
     });
     if (gate) {
       replace.disabled = true;
-      const row = el17("label", "sp-metadata-consent__row wb-consent-gate");
-      const box = el17("input");
+      const row = el18("label", "sp-metadata-consent__row wb-consent-gate");
+      const box = el18("input");
       box.type = "checkbox";
       box.className = "wb-consent-checkout";
       box.addEventListener("change", () => {
         replace.disabled = !box.checked;
       });
-      row.append(box, el17("span", "sp-metadata-consent__label", gate));
+      row.append(box, el18("span", "sp-metadata-consent__label", gate));
       consent.append(row);
     }
     consent.append(replace, cancel);
@@ -15517,8 +19456,8 @@ function createBrowserView({ client: client2, navigate }) {
     consent.textContent = "";
     consent.hidden = false;
     consent.classList.toggle("wb-consent-error", isError);
-    consent.append(el17("span", "wb-consent-text", message));
-    const dismiss = el17("button", "btn btn-xs", "Dismiss");
+    consent.append(el18("span", "wb-consent-text", message));
+    const dismiss = el18("button", "btn btn-xs", "Dismiss");
     dismiss.type = "button";
     dismiss.addEventListener("click", () => {
       consent.hidden = true;
@@ -15734,14 +19673,14 @@ function createBrowserView({ client: client2, navigate }) {
     consent.classList.remove("wb-consent-error");
     consent.textContent = "";
     consent.hidden = false;
-    consent.append(el17("span", "wb-consent-text", `New folder in ${folderPath}:`));
-    const nameIn = el17("input", "wb-folder-name");
+    consent.append(el18("span", "wb-consent-text", `New folder in ${folderPath}:`));
+    const nameIn = el18("input", "wb-folder-name");
     nameIn.type = "text";
     nameIn.placeholder = "Folder name";
     nameIn.setAttribute("aria-label", "New folder name");
-    const create = el17("button", "btn btn-xs wb-primary", "Create");
+    const create = el18("button", "btn btn-xs wb-primary", "Create");
     create.type = "button";
-    const cancel = el17("button", "btn btn-xs", "Cancel");
+    const cancel = el18("button", "btn btn-xs", "Cancel");
     cancel.type = "button";
     cancel.addEventListener("click", () => {
       consent.hidden = true;
@@ -15778,12 +19717,12 @@ function createBrowserView({ client: client2, navigate }) {
         let id = String(
           data?.ListItemAllFields?.ParentList?.Id || data?.ListItemAllFields?.ParentList?.ID || ""
         ).replace(/[{}]/g, "").trim();
-        if (!GUID.test(id)) {
+        if (!GUID2.test(id)) {
           const aliasPath = `web/GetList(@listUrl)?@listUrl='${odataPathLiteral(folderPath)}'&$select=Id`;
           const viaUrl = await client2.get(aliasPath);
           id = String(viaUrl?.Id || viaUrl?.ID || "").replace(/[{}]/g, "").trim();
         }
-        if (!GUID.test(id)) {
+        if (!GUID2.test(id)) {
           throw new Error("SharePoint did not identify this folder\u2019s document library.");
         }
         return id;
@@ -15797,7 +19736,7 @@ function createBrowserView({ client: client2, navigate }) {
   function listFields(listId) {
     if (!fieldsCache.has(listId)) {
       fieldsCache.set(listId, client2.getAll(`web/lists(guid'${listId}')/fields`, {
-        select: FIELD_SELECT5
+        select: FIELD_SELECT6
       }).then(({ items }) => items).catch((err) => {
         fieldsCache.delete(listId);
         throw err;
@@ -15808,18 +19747,18 @@ function createBrowserView({ client: client2, navigate }) {
   async function openMetadata(row) {
     metaPanel.hidden = false;
     metaPanel.textContent = "";
-    const titleRow = el17("div", "wb-file-meta-head");
-    titleRow.append(el17("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
-    const close = el17("button", "btn btn-xs", "Close");
+    const titleRow = el18("div", "wb-file-meta-head");
+    titleRow.append(el18("h3", "wb-subpanel-title", `Metadata for ${row.Name}`));
+    const close = el18("button", "btn btn-xs", "Close");
     close.type = "button";
     close.addEventListener("click", () => {
       metaPanel.hidden = true;
     });
     titleRow.append(close);
     metaPanel.append(titleRow);
-    const body = el17("div", "wb-subpanel-body");
+    const body = el18("div", "wb-subpanel-body");
     metaPanel.append(body);
-    const status = el17("div", "wb-grid-status", "Loading metadata\u2026");
+    const status = el18("div", "wb-grid-status", "Loading metadata\u2026");
     body.append(status);
     try {
       const listId = await parentListId(currentPath);

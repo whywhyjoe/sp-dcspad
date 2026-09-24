@@ -4788,6 +4788,33 @@ function createSpFilesClient({
       serverRelativeUrl: path
     };
   }
+  async function readFileBytes(serverRelativePath, { webUrl: targetWebUrl = "", maxBytes = 50 * 1024 * 1024 } = {}) {
+    const { webUrl, rootPath } = webInfo(targetWebUrl);
+    const path = checkedPath(serverRelativePath, rootPath);
+    const endpoint = `${webUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='${odataPathLiteral(path)}')/$value`;
+    const response = await request(endpoint);
+    await requireOk(response, "Could not download the SharePoint file", "read");
+    const declaredLength = Number(response.headers.get("content-length")) || 0;
+    if (declaredLength > maxBytes) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the transfer limit.",
+        { code: "too-large" }
+      );
+    }
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > maxBytes) {
+      throw new SpFileError(
+        "The selected SharePoint file is larger than the transfer limit.",
+        { code: "too-large" }
+      );
+    }
+    return {
+      bytes,
+      length: bytes.byteLength,
+      contentType: response.headers.get("content-type") || "",
+      serverRelativeUrl: path
+    };
+  }
   async function checkOutState({ webUrl, hostWebUrl, rootPath, libraryId, filePath, ctx }) {
     const state3 = {
       required: false,
@@ -5094,6 +5121,7 @@ function createSpFilesClient({
     getDigest,
     listFolder: listFolder2,
     readTextFile: readTextFile2,
+    readFileBytes,
     checkOutFile: checkOutFile2,
     checkInFile: checkInFile2,
     undoCheckOutFile: undoCheckOutFile2,
@@ -6182,8 +6210,8 @@ function initSpChromeToggle(initialContext) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "220" : "dev";
-var injectedRevision = true ? "e2825155" : "";
+var injectedBuild = true ? "240" : "dev";
+var injectedRevision = true ? "7ff0f57a" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
