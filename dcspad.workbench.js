@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "246" : "dev";
-var injectedRevision = true ? "f23891f7" : "";
+var injectedBuild = true ? "248" : "dev";
+var injectedRevision = true ? "0e19e27a" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -1879,7 +1879,9 @@ function pageCopyResolver(url, path, webBase) {
     }
     const lowerPath = folderPath.toLowerCase().replace(/\/+$/, "");
     const exists = web.folders.has(lowerPath) || web.lists.some((l) => String(l.RootFolder?.ServerRelativeUrl || "").toLowerCase() === lowerPath) || [...web.files.keys()].some((k) => k.startsWith(`${lowerPath}/`));
-    return { Exists: exists, ServerRelativeUrl: folderPath };
+    const directChild = (k) => k.startsWith(`${lowerPath}/`) && !k.slice(lowerPath.length + 1).includes("/");
+    const itemCount = [...web.files.keys()].filter(directChild).length + [...web.folders].filter(directChild).length;
+    return { Exists: exists, ServerRelativeUrl: folderPath, ItemCount: exists ? itemCount : 0 };
   }
   const fileByIdMatch = /web\/getfilebyid\('([0-9a-f-]+)'\)/i.exec(pathLower);
   if (fileByIdMatch) {
@@ -15793,6 +15795,14 @@ function createSpPages({ client: client2, write }) {
     ));
     return Boolean(folder?.Exists);
   }
+  async function folderItemCount(serverRelativeUrl2) {
+    const folder = await catchNotFound(client2.get(
+      `web/GetFolderByServerRelativePath(decodedUrl='${odataPathLiteral(serverRelativeUrl2)}')`,
+      { select: ["Exists", "ItemCount"] }
+    ));
+    if (!folder?.Exists) return null;
+    return Number(folder.ItemCount || 0);
+  }
   async function readFileBytes2(serverRelativeUrl2) {
     if (client2.context().live) {
       return readFileBytes(serverRelativeUrl2, { webUrl: client2.webUrl() });
@@ -15878,6 +15888,7 @@ function createSpPages({ client: client2, write }) {
     fileItemId,
     exists,
     folderExists,
+    folderItemCount,
     readFileBytes: readFileBytes2,
     clientSideWebParts,
     setCommentsDisabled,
@@ -16374,25 +16385,23 @@ function openPageCopyDialog({
         urlInput.value = "";
         connect(client2.webUrl());
       });
+      function abandonDestination(status) {
+        connectSeq += 1;
+        connectBtn.disabled = false;
+        connected = false;
+        targetEligible = false;
+        connectedUrl = null;
+        invalidatePreflight();
+        showTargetStatus(status);
+        refreshGate();
+      }
       otherRadio.addEventListener("change", () => {
         if (!otherRadio.checked) return;
         urlInput.disabled = false;
-        connected = false;
-        targetEligible = false;
-        connectedUrl = null;
-        invalidatePreflight();
-        showTargetStatus("Enter a site and Connect.");
-        refreshGate();
+        abandonDestination("Enter a site and Connect.");
       });
       connectBtn.addEventListener("click", () => connect(urlInput.value.trim()));
-      urlInput.addEventListener("input", () => {
-        connected = false;
-        targetEligible = false;
-        connectedUrl = null;
-        invalidatePreflight();
-        showTargetStatus("Connect to check this site.");
-        refreshGate();
-      });
+      urlInput.addEventListener("input", () => abandonDestination("Connect to check this site."));
       async function runPreflight() {
         if (checking || !connected || !targetEligible) return;
         const epoch = inputEpoch;
@@ -17008,6 +17017,16 @@ async function runCopy(frozen, deps, { onStep } = {}) {
     if (r.err) {
       if (r.network) return finish("unknown");
       warnings = true;
+      if (!published && plan.promoteAsNews) {
+        const p = await attempt(journal, onStep, "promote", async () => {
+          await write.validateUpdateListItem(
+            { listId: plan.target.libraryId, itemId: journal.pageId },
+            [{ FieldName: "PromotedState", FieldValue: "1" }]
+          );
+          return "publish failed; promoted on publish";
+        });
+        if (p.err && p.network) return finish("unknown");
+      }
     }
   } else if (plan.promoteAsNews) {
     const r = await attempt(journal, onStep, "publish", async () => {
@@ -17056,15 +17075,31 @@ async function discardCopy(journal, { target } = {}) {
   const recycled = [];
   const leftovers = [];
   if (!journal || journal.createdBy !== "this run") return { recycled, leftovers };
-  let currentPath = journal.currentPath;
-  if (!currentPath && journal.pageId) {
+  async function pathFromId() {
     try {
       const [dto, library] = await Promise.all([pages.getPage(journal.pageId), pages.sitePagesLibrary()]);
       const root2 = String(library?.rootPath || "").replace(/\/+$/, "");
       const name = dto?.FileName || "";
-      if (root2 && name) currentPath = `${root2}/${name}`;
+      if (root2 && name) return `${root2}/${name}`;
+      leftovers.push({ path: `(page id ${journal.pageId})`, error: "its current file name could not be read" });
     } catch (err) {
       leftovers.push({ path: `(page id ${journal.pageId})`, error: err?.message || String(err) });
+    }
+    return "";
+  }
+  let currentPath = journal.currentPath;
+  if (journal.pageId) {
+    if (!currentPath) {
+      currentPath = await pathFromId();
+    } else {
+      let idAtPath = null;
+      try {
+        idAtPath = await pages.fileItemId(currentPath);
+      } catch (err) {
+        leftovers.push({ path: currentPath, error: err?.message || String(err) });
+        currentPath = "";
+      }
+      if (currentPath && Number(idAtPath) !== Number(journal.pageId)) currentPath = await pathFromId();
     }
   }
   if (currentPath) {
@@ -17087,6 +17122,12 @@ async function discardCopy(journal, { target } = {}) {
   const folderAssets = (journal.assets || []).filter((a) => a.kind === "folder" && a.confirmed && a.recyclable).sort((a, b) => b.path.split("/").length - a.path.split("/").length);
   for (const folder of folderAssets) {
     try {
+      const remaining = await pages.folderItemCount(folder.path);
+      if (remaining === null) continue;
+      if (remaining > 0) {
+        leftovers.push({ path: folder.path, error: `not recycled: it still holds ${remaining} item(s) this run did not confirm creating` });
+        continue;
+      }
       await pages.recycleFolder(folder.path);
       recycled.push(folder.path);
     } catch (err) {
@@ -18055,29 +18096,36 @@ function patchIdBag(bag, mapping, ctx2, aliasMap) {
   }
   return count;
 }
+function guidToken(guid) {
+  return new RegExp(`(?<![0-9a-f])${guid}(?![0-9a-f])`, "gi");
+}
+function guidForms(guid) {
+  return [guid, guid.replace(/-/g, "")];
+}
 function swapGuids(value, pairs, ctx2) {
   let out = String(value);
   for (const [from, to] of pairs) {
     const f = ctx2.normalizeGuid(from);
     const t = ctx2.normalizeGuid(to);
     if (!f || !t || f === t) continue;
-    for (const [a, b] of [[f, t], [f.replace(/-/g, ""), t.replace(/-/g, "")]]) {
-      out = out.replace(new RegExp(a, "gi"), b);
-    }
+    const [fDashed, fBare] = guidForms(f);
+    const [tDashed, tBare] = guidForms(t);
+    out = out.replace(guidToken(fDashed), tDashed).replace(guidToken(fBare), tBare);
   }
   return out;
 }
-function patchDerivedUrls(image, sourceIds, mapping, ctx2) {
+function patchDerivedUrls(image, sourcePath, sourceIds, mapping, ctx2) {
   if (!image || typeof image !== "object") return 0;
   let n = 0;
-  if (typeof image.resolvedUrl === "string" && underSource5(image.resolvedUrl, ctx2)) {
+  if (typeof image.resolvedUrl === "string" && underSource5(image.resolvedUrl, ctx2) && sourceRelativePath5(image.resolvedUrl).toLowerCase() === String(sourcePath).toLowerCase()) {
     const next2 = /^https?:\/\//i.test(image.resolvedUrl) && mapping.url ? mapping.url : mapping.path;
     if (next2 && next2 !== image.resolvedUrl) {
       image.resolvedUrl = next2;
       n += 1;
     }
   }
-  if (typeof image.imageUrl === "string" && sourceIds?.uniqueId && image.imageUrl.toLowerCase().includes(ctx2.normalizeGuid(sourceIds.uniqueId))) {
+  const itemId = sourceIds?.uniqueId ? ctx2.normalizeGuid(sourceIds.uniqueId) : "";
+  if (typeof image.imageUrl === "string" && itemId && guidForms(itemId).some((form) => guidToken(form).test(image.imageUrl))) {
     const pairs = ["siteId", "webId", "listId", "uniqueId"].map((k) => [sourceIds[k], mapping.ids[k]]);
     const next2 = swapGuids(image.imageUrl, pairs, ctx2);
     if (next2 !== image.imageUrl) {
@@ -18158,7 +18206,7 @@ var hero_default = {
         const sourceIds = { ...ids };
         count += patchIdBag(meta, mapping, ctx2, CUSTOM_ID_ALIASES);
         count += patchIdBag(item2?.image, mapping, ctx2, IMAGE_PROP_ALIASES);
-        count += patchDerivedUrls(item2?.image, sourceIds, mapping, ctx2);
+        count += patchDerivedUrls(item2?.image, sourceRelativePath5(value), sourceIds, mapping, ctx2);
       }
     }
     if (links) {
@@ -18497,8 +18545,9 @@ var file_viewer_default = {
       }
     }
     if (typeof props.webAbsoluteUrl === "string" && ctx2.target?.webUrl && underSource8(props.webAbsoluteUrl, ctx2)) {
-      const nextWeb = String(ctx2.target.webUrl).replace(/\/+$/, "");
-      if (props.webAbsoluteUrl.replace(/\/+$/, "") !== nextWeb) {
+      const relative = props.webAbsoluteUrl.startsWith("/") && !props.webAbsoluteUrl.startsWith("//");
+      const nextWeb = String(relative ? ctx2.target.webPath ?? "" : ctx2.target.webUrl).replace(/\/+$/, "");
+      if (nextWeb && props.webAbsoluteUrl.replace(/\/+$/, "") !== nextWeb) {
         props.webAbsoluteUrl = nextWeb;
         count += 1;
       }
