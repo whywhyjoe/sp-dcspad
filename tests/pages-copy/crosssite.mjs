@@ -394,7 +394,10 @@ export async function run({ browser, check, WB_URL }) {
     const sharedParent = folderAssets.find((a) => a.path.toLowerCase().endsWith('/siteassets/sitepages'));
     const leaf = folderAssets.find((a) => a.path.toLowerCase().includes('/siteassets/sitepages/') && a !== sharedParent);
     const recycled = failed.discard?.recycled || [];
-    return Boolean(sharedParent) && sharedParent.recyclable === false && !recycled.includes(sharedParent.path)
+    // An existing shared parent is never journaled (spike §11: the run probes
+    // and skips it); if it were, it would be non-recyclable. Never recycled.
+    return (!sharedParent || sharedParent.recyclable === false)
+      && !recycled.some((r) => /\/siteassets\/sitepages$/i.test(r))
       && Boolean(leaf) && leaf.recyclable === true && recycled.includes(leaf.path);
   });
 

@@ -180,7 +180,11 @@ export async function runCopy(frozen, deps, { onStep } = {}) {
       pushStep(journal, onStep, 'assets', 'skipped', 'nothing to transfer');
     } else {
       const r = await attempt(journal, onStep, 'assets', async () => {
+        // Folders/AddUsingPath refuses a folder that exists (spike §11), so
+        // each level is probed first; only a folder THIS run created is
+        // journaled, and only it can ever be recycled.
         for (const entry of plan.assetFolderChain) {
+          if (await pages.folderExists(entry.path)) continue;
           const folder = await write.createFolder(parentOf(entry.path), basename(entry.path));
           journal.assets.push({
             path: folder.serverRelativeUrl || entry.path, kind: 'folder', confirmed: true, recyclable: entry.recyclable,

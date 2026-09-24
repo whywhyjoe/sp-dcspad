@@ -385,12 +385,16 @@ export async function run({ browser, check, WB_URL }) {
     const files = assets.filter((a) => a.kind === 'file');
     const recycled = cross.discard.recycled || [];
     const everyWriteUrl = cross.writes.map((u) => u.toLowerCase());
-    return Boolean(sharedParent) && sharedParent.recyclable === false
+    // The shared parent already exists on pagedst (as on live SPO), so the
+    // run never creates it and never journals it — or, if it did, only as
+    // non-recyclable. Either way it is never recycled.
+    const parentPath = '/sites/pagedst/SiteAssets/SitePages';
+    return (!sharedParent || sharedParent.recyclable === false)
       && Boolean(leaf) && leaf.recyclable === true
       // One file until the header analyzer lands: the custom thumbnail (the
       // DTO's BannerImageUrl). The banner itself is only in the header part.
       && files.length === 1 && files[0].path.endsWith('/thumb.png')
-      && !recycled.includes(sharedParent.path)
+      && !recycled.some((r) => r.toLowerCase() === parentPath.toLowerCase())
       && recycled.includes(leaf.path)
       && files.every((f) => recycled.includes(f.path))
       && recycled.includes(cross.result.journal.currentPath)

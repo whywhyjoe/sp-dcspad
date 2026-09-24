@@ -121,6 +121,7 @@ export function resetPageCopyMock() {
   }
 
   // Folders for source files
+  src.folders.add('/sites/pagesrc/siteassets/sitepages');
   src.folders.add('/sites/pagesrc/siteassets/sitepages/quarterly-update');
   src.folders.add('/sites/pagesrc/siteassets/thumbs');
   src.folders.add('/sites/pagesrc/siteassets/img');
@@ -256,6 +257,9 @@ export function resetPageCopyMock() {
 
   // Destination page (collision with source)
   const dst = webState['/sites/pagedst'];
+  // Live SPO (spike §11): a site that ever had a page image carries
+  // SiteAssets/SitePages already, and Folders/AddUsingPath on it FAILS.
+  dst.folders.add('/sites/pagedst/siteassets/sitepages');
   dst.pages.set(3, {
     dto: { Id: 3, Title: 'Quarterly-Update', FileName: 'Quarterly-Update.aspx', FileRef: '/sites/pagedst/SitePages/Quarterly-Update.aspx', FileLeafRef: 'Quarterly-Update.aspx', FileDirRef: '/sites/pagedst/SitePages', UniqueId: 'd15d0000-0000-4000-8000-000000000010', PageLayoutType: 'Article', CanvasContent1: '[]' },
     item: { Id: 3, Title: 'Quarterly-Update', FileLeafRef: 'Quarterly-Update.aspx', FileRef: '/sites/pagedst/SitePages/Quarterly-Update.aspx', UniqueId: 'd15d0000-0000-4000-8000-000000000010' },
@@ -483,6 +487,20 @@ export function pageCopyResolver(url, path, webBase) {
       Length: file.Length,
       CheckOutType: file.CheckOutType,
     };
+  }
+
+  // web/getfolderbyserverrelativepath(decodedurl='…') — the folder probe
+  // (sp-pages folderExists). Exists for a registered folder, a list root, or
+  // any path that holds a file; SPO answers Exists:false rather than 404.
+  const folderMatch = /^web\/getfolderbyserverrelativepath\(decodedurl='([^']*)'\)$/i.exec(pathLower);
+  if (folderMatch) {
+    let folderPath = folderMatch[1];
+    try { folderPath = decodeURIComponent(folderPath).replaceAll("''", "'"); } catch { /* keep raw */ }
+    const lowerPath = folderPath.toLowerCase().replace(/\/+$/, '');
+    const exists = web.folders.has(lowerPath)
+      || web.lists.some((l) => String(l.RootFolder?.ServerRelativeUrl || '').toLowerCase() === lowerPath)
+      || [...web.files.keys()].some((k) => k.startsWith(`${lowerPath}/`));
+    return { Exists: exists, ServerRelativeUrl: folderPath };
   }
 
   // web/getfilebyid('guid')
@@ -954,6 +972,10 @@ export function pageCopyWriter(url, body, contentType, headers) {
     if (match) {
       let folderPath = match[1];
       try { folderPath = decodeURIComponent(folderPath); folderPath = folderPath.replaceAll("''", "'"); } catch { /* keep raw */ }
+      // Not idempotent on SPO: an existing folder is an error (spike §11).
+      if (web.folders.has(folderPath.toLowerCase())) {
+        throw new SpFileError(`A file or folder with the name ${folderPath.replace(/^\/+/, '')} already exists.`, { code: 'write', status: 500 });
+      }
       web.folders.add(folderPath.toLowerCase());
       return { ServerRelativeUrl: folderPath };
     }
