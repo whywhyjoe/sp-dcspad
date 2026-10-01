@@ -1,0 +1,1529 @@
+{
+ "_about": "Editor-authored instances captured from the dev tenant on 2026-09-24 — /sites/NewNerve/SitePages/zz-pagecopy-shapes.aspx, every part configured through the SharePoint page editor (headless Playwright) and published, then read via GET sitepages/pages(19). The first Hero (no content) is the manifest-default instance the page was seeded with; heroConfigured is the one added from the Toolbox. See design/PAGE-COPY.md §11 Q7.",
+ "source": {
+  "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+  "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+  "webUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve",
+  "webServerRelativeUrl": "/sites/NewNerve",
+  "siteAssetsListId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45"
+ },
+ "hero": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 1,
+   "zoneId": "b2659f66-bccb-4990-b051-03c9b82bad6d",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "8e5a2e0e-1f06-4e90-ba75-e8f85ba59bf4",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "c4bd7b2f-7b6e-4599-8485-16504575f590",
+  "reservedHeight": 149,
+  "reservedWidth": 1188,
+  "webPartData": {
+   "id": "c4bd7b2f-7b6e-4599-8485-16504575f590",
+   "instanceId": "8e5a2e0e-1f06-4e90-ba75-e8f85ba59bf4",
+   "title": "Hero",
+   "description": "Showcase featured content with images in a large layout.",
+   "dataVersion": "1.0.0",
+   "properties": {
+    "heroLayoutThreshold": "640",
+    "carouselLayoutMaxWidth": "639",
+    "carouselLayoutComponentId": "8ac0c53c-e8d0-4e3e-87d0-7449eb0d4027",
+    "heroLayoutComponentId": "9586b262-54de-4b27-9eb9-34c671400c33",
+    "minimumLayoutWidth": 22
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {}
+   }
+  }
+ },
+ "heroConfigured": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 2,
+   "zoneId": "981b85b9-a611-49c3-9d7b-2c2b7123b0f2",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "ab4e6d6e-69c6-4a2d-91d5-2a2a5414bade",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "c4bd7b2f-7b6e-4599-8485-16504575f590",
+  "reservedHeight": 562,
+  "reservedWidth": 1188,
+  "webPartData": {
+   "id": "c4bd7b2f-7b6e-4599-8485-16504575f590",
+   "instanceId": "ab4e6d6e-69c6-4a2d-91d5-2a2a5414bade",
+   "title": "Hero",
+   "description": "Showcase featured content with images in a large layout.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "content[0].title": "TestContentPage",
+     "content[0].callToActionText": "Learn more"
+    },
+    "imageSources": {
+     "content[0].image.url": "/sites/NewNerve/SiteAssets/zz-pagecopy-assets/hero.png",
+     "content[0].previewImage.url": "/sites/NewNerve/SitePages/Test.aspx"
+    },
+    "links": {
+     "content[0].link": "/sites/NewNerve/SitePages/Test.aspx"
+    },
+    "componentDependencies": {
+     "heroLayoutComponentId": "9586b262-54de-4b27-9eb9-34c671400c33",
+     "carouselLayoutComponentId": "8ac0c53c-e8d0-4e3e-87d0-7449eb0d4027"
+    },
+    "customMetadata": {
+     "content[0].image.url": {
+      "siteid": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webid": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listid": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "uniqueid": "612ddc56-e831-4e33-a69f-1e22f7463855",
+      "renderwidthratio": "1",
+      "renderwidthratiothreshold": "640",
+      "mincanvaswidth": "1"
+     },
+     "content[0].previewImage.url": {
+      "siteid": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webid": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listid": "7e858239-fef4-4b4b-83b2-c37760702991",
+      "uniqueid": "9e2e7b22-890b-4ed2-962e-702113c09d9a",
+      "renderwidthratio": "1",
+      "renderwidthratiothreshold": "640",
+      "mincanvaswidth": "32767"
+     }
+    }
+   },
+   "dataVersion": "1.7",
+   "properties": {
+    "heroLayoutThreshold": 640,
+    "carouselLayoutMaxWidth": 639,
+    "minimumLayoutWidth": 22,
+    "layoutCategory": 3,
+    "layout": 1,
+    "content": [
+     {
+      "id": "b9dc1992-b90b-45ad-9f04-ab0fe456d17c",
+      "type": "Web Page",
+      "color": 4,
+      "image": {
+       "zoomRatio": 1,
+       "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+       "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+       "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+       "id": "612ddc56-e831-4e33-a69f-1e22f7463855",
+       "fileName": "hero.png",
+       "resolvedUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/zz-pagecopy-assets/hero.png",
+       "imageUrl": "https://nervedotnet.sharepoint.com/_api/v2.1/sites/nervedotnet.sharepoint.com,93de26bf-15a3-4fac-8f3e-2b8007d813a9,773960b7-b16d-4f81-957a-02de394949b8/lists/8af0bba1-d6fb-4db3-9ec3-e71be6a23a45/items/612ddc56-e831-4e33-a69f-1e22f7463855/driveItem/thumbnails/0/c400x99999/content?prefer=noRedirect,extendCacheMaxAge&clientType=modernWebPart&format=webp",
+       "widthFactor": 1,
+       "minCanvasWidth": 1,
+       "imageSize": {
+        "width": 1,
+        "height": 1
+       }
+      },
+      "description": "",
+      "showDescription": true,
+      "showTitle": true,
+      "alternateText": "",
+      "imageDisplayOption": 3,
+      "isDefaultImage": false,
+      "showCallToAction": true,
+      "isDefaultImageLoaded": true,
+      "isCustomImageLoaded": true,
+      "showFeatureText": true,
+      "previewImage": {
+       "zoomRatio": 1,
+       "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+       "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+       "listId": "7e858239-fef4-4b4b-83b2-c37760702991",
+       "id": "9e2e7b22-890b-4ed2-962e-702113c09d9a",
+       "fileName": "Test.aspx",
+       "resolvedUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve/SitePages/Test.aspx",
+       "imageUrl": "https://nervedotnet.sharepoint.com/_api/v2.1/sites/nervedotnet.sharepoint.com,93de26bf-15a3-4fac-8f3e-2b8007d813a9,773960b7-b16d-4f81-957a-02de394949b8/lists/7e858239-fef4-4b4b-83b2-c37760702991/items/9e2e7b22-890b-4ed2-962e-702113c09d9a/driveItem/thumbnails/0/c1600x99999/content?prefer=noRedirect,extendCacheMaxAge&clientType=modernWebPart",
+       "widthFactor": 1,
+       "minCanvasWidth": 32767,
+       "imageSize": {
+        "width": 1414,
+        "height": 1414
+       }
+      }
+     }
+    ]
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "image": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 3,
+   "zoneId": "e12bcc14-7d31-4e1c-ac56-f04793e5f758",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "3850ad03-cd87-4856-87b8-4fa50ed512cb",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "d1d91016-032f-456d-98a4-721247c305e8",
+  "reservedWidth": 1188,
+  "reservedHeight": 1,
+  "webPartData": {
+   "id": "d1d91016-032f-456d-98a4-721247c305e8",
+   "instanceId": "3850ad03-cd87-4856-87b8-4fa50ed512cb",
+   "title": "Image",
+   "description": "Add an image to the page.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {
+     "imageSource": "/sites/NewNerve/SiteAssets/zz-pagecopy-assets/logo.png"
+    },
+    "links": {},
+    "customMetadata": {
+     "imageSource": {
+      "siteid": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webid": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listid": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "uniqueid": "efab1d13-d80d-4f4f-b22c-9a4ec4640c11",
+      "width": "1",
+      "height": "1"
+     }
+    }
+   },
+   "dataVersion": "1.13",
+   "properties": {
+    "imageSourceType": 2,
+    "captionText": "",
+    "altText": "",
+    "linkUrl": "",
+    "overlayText": "",
+    "fileName": "logo.png",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+    "uniqueId": "efab1d13-d80d-4f4f-b22c-9a4ec4640c11",
+    "overlayTextStyles": {
+     "textColor": "light",
+     "isBold": false,
+     "isItalic": false,
+     "textBoxColor": "dark",
+     "textBoxOpacity": 0.54,
+     "overlayColor": "light",
+     "overlayTransparency": 0
+    },
+    "minimumLayoutWidth": 1,
+    "isStretchEnabled": false,
+    "alignment": "Center",
+    "isCaptionEnabled": false,
+    "customContentDropSupport": "externallink",
+    "isOverlayTextVisible": false,
+    "imgHeight": 1,
+    "imgWidth": 1,
+    "advancedImageEditorData": {
+     "isAdvancedEdited": false
+    },
+    "fixAspectRatio": false
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "imageGallery": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 4,
+   "zoneId": "c29634eb-6f3f-41b3-bb5f-4f8503fbf4e6",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "262d4bd7-7944-455c-98f6-0ad8fea5e1db",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "af8be689-990e-492a-81f7-ba3e4cd3ed9c",
+  "reservedWidth": 1188,
+  "reservedHeight": 294,
+  "webPartData": {
+   "id": "af8be689-990e-492a-81f7-ba3e4cd3ed9c",
+   "instanceId": "262d4bd7-7944-455c-98f6-0ad8fea5e1db",
+   "title": "Image gallery",
+   "description": "Display multiple images in a gallery layout.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "images[0].title": "copy-(1)-gallery2-425624.png",
+     "images[1].title": "copy-(1)-gallery1-977682.png"
+    },
+    "imageSources": {
+     "images[0].url": "/sites/NewNerve/SiteAssets/SitePages/zz-pagecopy-shapes/copy-(1)-gallery2-425624.png",
+     "images[1].url": "/sites/NewNerve/SiteAssets/SitePages/zz-pagecopy-shapes/copy-(1)-gallery1-977682.png"
+    },
+    "links": {},
+    "customMetadata": {
+     "images[0].url": {
+      "siteid": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webid": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listid": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "uniqueid": "c9825d1a-d155-4f4c-91ab-af3dd3bac447",
+      "fixedwidth": "300"
+     },
+     "images[1].url": {
+      "siteid": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webid": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listid": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "uniqueid": "dcd30560-ccdd-45da-8aa0-6ec359d83dcc",
+      "fixedwidth": "300"
+     }
+    }
+   },
+   "dataVersion": "1.12",
+   "properties": {
+    "layout": 2,
+    "carouselSettings": {
+     "autoplay": false,
+     "autoplaySpeed": 5,
+     "dots": false,
+     "lazyLoad": true,
+     "metadata": true,
+     "swipe": true
+    },
+    "gridSettings": {
+     "imageSize": 2,
+     "imageCropping": 1,
+     "imageAspectRatio": 1,
+     "lightbox": false
+    },
+    "imageSourceType": 1,
+    "isRecursive": false,
+    "isCdnEnabledForList": false,
+    "hasDynamicModeEnabled": false,
+    "maxImagesCount": 10,
+    "images": [
+     {
+      "description": "",
+      "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "id": "c9825d1a-d155-4f4c-91ab-af3dd3bac447",
+      "isInList": true,
+      "altText": "",
+      "imageTileWidth": 300
+     },
+     {
+      "description": "",
+      "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "id": "dcd30560-ccdd-45da-8aa0-6ec359d83dcc",
+      "isInList": true,
+      "altText": "",
+      "imageTileWidth": 300
+     }
+    ],
+    "canAlwaysSelectDocLibAsSource": false,
+    "isTitleEnabled": true,
+    "layoutComponentId": ""
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "quickLinksCustomThumb": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 5,
+   "zoneId": "4a03a97f-9950-4dbc-b2e0-859dda231d19",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "c0c2abdb-2a32-4c86-8326-3dbda8aa5cc4",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd",
+  "reservedWidth": 1188,
+  "reservedHeight": 122,
+  "webPartData": {
+   "id": "c70391ea-0b10-4ee9-b2b4-006d3fcad0cd",
+   "instanceId": "c0c2abdb-2a32-4c86-8326-3dbda8aa5cc4",
+   "title": "Quick links",
+   "description": "Organize key links to documents and pages.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "items[0].title": "TestContentPage"
+    },
+    "imageSources": {
+     "items[0].image.url": "/sites/NewNerve/SiteAssets/zz-pagecopy-assets/alt/logo.png"
+    },
+    "links": {
+     "baseUrl": "/sites/NewNerve",
+     "items[0].sourceItem.url": "/sites/NewNerve/SitePages/Test.aspx"
+    },
+    "componentDependencies": {
+     "layoutComponentId": "706e33c8-af37-4e7b-9d22-6e5694d92a6f"
+    },
+    "customMetadata": {
+     "items[0].image.url": {
+      "siteid": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+      "webid": "773960b7-b16d-4f81-957a-02de394949b8",
+      "listid": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "uniqueid": "ac23dc47-8a82-465d-a39e-607850406295",
+      "mincanvaswidth": "1",
+      "fixedwidth": "100"
+     }
+    }
+   },
+   "dataVersion": "2.4",
+   "properties": {
+    "items": [
+     {
+      "sourceItem": {
+       "guids": {
+        "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+        "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+        "listId": "7e858239-fef4-4b4b-83b2-c37760702991",
+        "uniqueId": "9e2e7b22-890b-4ed2-962e-702113c09d9a"
+       },
+       "itemType": 0,
+       "fileExtension": ".ASPX",
+       "progId": null
+      },
+      "thumbnailType": 1,
+      "id": 1,
+      "description": "",
+      "image": {
+       "guids": {
+        "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+        "uniqueId": "ac23dc47-8a82-465d-a39e-607850406295",
+        "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+        "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9"
+       },
+       "imageFit": 2,
+       "minCanvasWidth": 1
+      },
+      "altText": "",
+      "rawPreviewImageMinCanvasWidth": 32767
+     }
+    ],
+    "isMigrated": true,
+    "layoutId": "CompactCard",
+    "shouldShowThumbnail": true,
+    "hideWebPartWhenEmpty": true,
+    "isTitleEnabled": true,
+    "imageWidth": 100,
+    "buttonLayoutOptions": {
+     "showDescription": false,
+     "buttonTreatment": 2,
+     "iconPositionType": 2,
+     "textAlignmentVertical": 2,
+     "textAlignmentHorizontal": 2,
+     "linesOfText": 2
+    },
+    "listLayoutOptions": {
+     "showDescription": false,
+     "showIcon": true
+    },
+    "waffleLayoutOptions": {
+     "iconSize": 1,
+     "onlyShowThumbnail": false
+    },
+    "dataProviderId": "QuickLinks",
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+    "imagePicker": "https://nervedotnet.sharepoint.com/sites/NewNerve/SiteAssets/zz-pagecopy-assets/alt/logo.png"
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "callToAction": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 6,
+   "zoneId": "5b0e3e45-0140-4c20-b7c7-efc2b46be4c9",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "4de682ba-16d5-4f8b-a4f4-14ac4421b4e3",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "df8e44e7-edd5-46d5-90da-aca1539313b8",
+  "reservedWidth": 1188,
+  "reservedHeight": 145,
+  "webPartData": {
+   "id": "df8e44e7-edd5-46d5-90da-aca1539313b8",
+   "instanceId": "4de682ba-16d5-4f8b-a4f4-14ac4421b4e3",
+   "title": "Call to action",
+   "description": "Display a button with a call to action for users.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "button.label": "Join"
+    },
+    "imageSources": {
+     "image.url": "/sites/NewNerve/SiteAssets/zz-pagecopy-assets/banner.png"
+    },
+    "links": {
+     "button.linkUrl": "/sites/NewNerve/SitePages/Test.aspx"
+    }
+   },
+   "dataVersion": "1.2",
+   "properties": {
+    "image": {
+     "itemInfo": {
+      "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+      "uniqueId": "51d45a56-d7b3-4781-99f5-74a41dae0840",
+      "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+      "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9"
+     },
+     "zoomRatio": 1
+    },
+    "button": {},
+    "overlayText": {},
+    "alignment": "Left",
+    "minimumLayoutWidth": 10
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "countdown": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 7,
+   "zoneId": "1b8ea23d-d93e-4e7d-97cb-11d64d050e78",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "704bdfef-97d9-4d08-9ae0-83ae04f14519",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "62cac389-787f-495d-beca-e11786162ef4",
+  "reservedWidth": 1188,
+  "reservedHeight": 423,
+  "webPartData": {
+   "id": "62cac389-787f-495d-beca-e11786162ef4",
+   "instanceId": "704bdfef-97d9-4d08-9ae0-83ae04f14519",
+   "title": "Countdown timer",
+   "description": "Display a countdown or count up to an event.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {
+     "backgroundImage.url": "/sites/NewNerve/SiteAssets/zz-pagecopy-assets/thumb.png"
+    },
+    "links": {}
+   },
+   "dataVersion": "2.2",
+   "properties": {
+    "showButton": false,
+    "countDate": "Thu Sep 24 2026 21:00:00 GMT-0400 (Eastern Daylight Time)",
+    "title": "",
+    "description": "",
+    "countDirection": "COUNT_DOWN",
+    "dateDisplay": "DAY_HOUR_MINUTE_SECOND",
+    "buttonText": "",
+    "buttonURL": "",
+    "backgroundImage": {
+     "focalPosition": {
+      "x": 50,
+      "y": 50
+     },
+     "id": "aac449be-9142-4fc3-9e89-f8c2db917287",
+     "listId": "8af0bba1-d6fb-4db3-9ec3-e71be6a23a45",
+     "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+     "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+     "zoomRatio": 1,
+     "widthFactor": 1
+    },
+    "backgroundOverlay": {
+     "color": "#000000",
+     "opacity": 60,
+     "useLightText": true
+    }
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "fileViewer": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 8,
+   "zoneId": "798b7192-fdad-46fe-a3cb-287472889df7",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "8218856c-f307-4c05-8719-c3e8caa8869e",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "b7dd04e1-19ce-4b24-9132-b60a1c2b910d",
+  "reservedWidth": 1188,
+  "reservedHeight": 694,
+  "webPartData": {
+   "id": "b7dd04e1-19ce-4b24-9132-b60a1c2b910d",
+   "instanceId": "8218856c-f307-4c05-8719-c3e8caa8869e",
+   "title": "File and media",
+   "description": "Insert a file on your page.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "title": "zz-pagecopy-report"
+    },
+    "imageSources": {},
+    "links": {
+     "serverRelativeUrl": "/sites/NewNerve/Shared%20Documents/zz-pagecopy-docs/zz-pagecopy-report.pdf",
+     "wopiurl": "/sites/NewNerve/Shared%20Documents/zz-pagecopy-docs/zz-pagecopy-report.pdf"
+    }
+   },
+   "dataVersion": "1.4",
+   "properties": {
+    "annotation": "",
+    "authorName": "Joe Zapert (NERVE.digital)",
+    "chartitem": "",
+    "endrange": "",
+    "excelSettingsType": "",
+    "file": "https://nervedotnet.sharepoint.com/sites/NewNerve/Shared%20Documents/zz-pagecopy-docs/zz-pagecopy-report.pdf",
+    "listId": "acea6a08-5afa-4db6-bda8-c3dbb165760e",
+    "modifiedAt": "2026-09-23T20:47:14Z",
+    "photoUrl": "https://nervedotnet.sharepoint.com/_vti_bin/afdcache.ashx/_userprofile/userphoto.jpg?_oat_=1790269955_c0cd9d5767c985b7cf9b13e84b6e99d69b6e767569d24d5dc465c472513c5565&P1=1790218662&P2=-301103328&P3=1&P4=C6Yj9IhRvcqvIAgcQVKHl13WXk2ZQOqBMMpQ9cGsZuHl8lyeFNn%2FcLn2Ji2odyX5FiPIxaUkZM9YaPzUWHN6pOnryoKbVWgTHi8Szxs6qjXIYFixT5Vs%2B6mUFKvcRWHkg1EoAT5UuunTYGtfgYnkfBIDElSpOCIkXQ1gKX%2FJZh54qt5g4ii64zkQgiUXXH6J%2FoCkJQCtnQN3L5cew22XtQmO%2FDvrraTOUK1lm%2BV0rgvnB1i1O%2BZRNqaFkupTSGLK0YslrmPTCXkB%2FUcDwZVFnOrC8It0pQCXlL7Ud12Nr0yMNQEej9l7Tt8XOpXUnMKUecQfAvSHHMlJChssSeaK8Q%3D%3D&size=S&accountname=joe%40nerve.digital",
+    "rangeitem": "",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+    "startPage": 1,
+    "startrange": "",
+    "tableitem": "",
+    "uniqueId": "de981877-5316-45f1-949e-b2fb7a6eca59",
+    "wdallowinteractivity": true,
+    "wdhidegridlines": true,
+    "wdhideheaders": true,
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "webAbsoluteUrl": "https://nervedotnet.sharepoint.com/sites/NewNerve",
+    "archived": false
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "list": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 9,
+   "zoneId": "ac8f4a5f-6ce5-4217-b7c9-9e5dee29ebcd",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "8fd62d89-a03c-4bc4-bf21-2db5f59c4eaf",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "f92bf067-bc19-489e-a556-7fe95f508720",
+  "reservedWidth": 1188,
+  "reservedHeight": 456,
+  "webPartData": {
+   "id": "f92bf067-bc19-489e-a556-7fe95f508720",
+   "instanceId": "8fd62d89-a03c-4bc4-bf21-2db5f59c4eaf",
+   "title": "List",
+   "description": "Display a list from this site.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "listTitle": "Intake Test"
+    },
+    "imageSources": {},
+    "links": {}
+   },
+   "dynamicDataPaths": {},
+   "dynamicDataValues": {
+    "filterBy": {}
+   },
+   "dataVersion": "1.0",
+   "properties": {
+    "isDocumentLibrary": false,
+    "selectedListId": "1349b259-fce6-45e3-b761-08dea5b07ab8",
+    "selectedListUrl": "/sites/NewNerve/Lists/Intake Test",
+    "webRelativeListUrl": "/Lists/Intake Test",
+    "webpartHeightKey": 4
+   },
+   "containsDynamicDataSource": true
+  }
+ },
+ "events": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 10,
+   "zoneId": "1dc95f4f-fcb9-44fc-b137-c50cc2453f3e",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "e425b72d-84c3-4c67-8cb8-1f01c0dcf49a",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "20745d7d-8581-4a6c-bf26-68279bc123fc",
+  "reservedWidth": 1188,
+  "reservedHeight": 445,
+  "webPartData": {
+   "id": "20745d7d-8581-4a6c-bf26-68279bc123fc",
+   "instanceId": "e425b72d-84c3-4c67-8cb8-1f01c0dcf49a",
+   "title": "Events",
+   "description": "Add and display upcoming events on the page.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {
+     "baseUrl": "/sites/NewNerve"
+    },
+    "componentDependencies": {
+     "layoutComponentId": "8ac0c53c-e8d0-4e3e-87d0-7449eb0d4027"
+    }
+   },
+   "dataVersion": "1.7",
+   "properties": {
+    "selectedListId": "cb676da6-e1d2-478b-9d10-3ffd7c603d8a",
+    "selectedCategory": "",
+    "dateRangeOption": 0,
+    "startDate": "",
+    "endDate": "",
+    "isOnSeeAllPage": false,
+    "audienceTarget": false,
+    "showImage": true,
+    "dataSource": 7,
+    "layout": "Filmstrip",
+    "maxItemsPerPage": 20,
+    "sites": [],
+    "isTitleEnabled": true,
+    "layoutId": "FilmStrip",
+    "showCardMotion": true,
+    "dataProviderId": "Event",
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9"
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "highlightedContent": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 11,
+   "zoneId": "d58757ed-bf73-4cbf-a088-f37b62ef3066",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "6d4d34a5-ed22-42d3-8466-5f74026f7f1e",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "daf0b71c-6de8-4ef7-b511-faae7c388708",
+  "reservedWidth": 1188,
+  "reservedHeight": 687,
+  "webPartData": {
+   "id": "daf0b71c-6de8-4ef7-b511-faae7c388708",
+   "instanceId": "6d4d34a5-ed22-42d3-8466-5f74026f7f1e",
+   "title": "Highlighted content",
+   "description": "Display content dynamically based on content type, filter, or search.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {
+     "baseUrl": "/sites/NewNerve"
+    },
+    "componentDependencies": {
+     "layoutComponentId": "62680648-d047-46ec-81e0-475ee78e482d"
+    }
+   },
+   "dataVersion": "2.8",
+   "properties": {
+    "isTitleEnabled": true,
+    "displayMaps": {
+     "1": {
+      "headingText": {
+       "sources": [
+        "SiteTitle"
+       ]
+      },
+      "headingUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "title": {
+       "sources": [
+        "UserName",
+        "Title"
+       ]
+      },
+      "personImageUrl": {
+       "sources": [
+        "ProfileImageSrc"
+       ]
+      },
+      "name": {
+       "sources": [
+        "Name"
+       ]
+      },
+      "initials": {
+       "sources": [
+        "Initials"
+       ]
+      },
+      "itemUrl": {
+       "sources": [
+        "WebPath"
+       ]
+      },
+      "activity": {
+       "sources": [
+        "ModifiedDate"
+       ]
+      },
+      "previewUrl": {
+       "sources": [
+        "PreviewUrl",
+        "PictureThumbnailURL"
+       ]
+      },
+      "iconUrl": {
+       "sources": [
+        "IconUrl"
+       ]
+      },
+      "accentColor": {
+       "sources": [
+        "AccentColor"
+       ]
+      },
+      "cardType": {
+       "sources": [
+        "CardType"
+       ]
+      },
+      "tipActionLabel": {
+       "sources": [
+        "TipActionLabel"
+       ]
+      },
+      "tipActionButtonIcon": {
+       "sources": [
+        "TipActionButtonIcon"
+       ]
+      },
+      "className": {
+       "sources": [
+        "ClassName"
+       ]
+      },
+      "telemetryProperties": {
+       "sources": [
+        "TelemetryProperties"
+       ]
+      },
+      "imageOverlapText": {
+       "sources": [
+        "ImageOverlapText"
+       ]
+      },
+      "imageOverlapTextAriaLabel": {
+       "sources": [
+        "ImageOverlapTextAriaLabel"
+       ]
+      },
+      "spWebUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "fileType": {
+       "sources": [
+        "FileType"
+       ]
+      },
+      "UniqueID": {
+       "sources": [
+        "UniqueID"
+       ]
+      },
+      "iframeUrl": {
+       "sources": [
+        "iframeUrl"
+       ]
+      },
+      "isVideoItem": {
+       "sources": [
+        "isVideoItem"
+       ]
+      }
+     },
+     "2": {
+      "column1": {
+       "heading": "Filetype",
+       "sources": [
+        "FileType"
+       ],
+       "width": 34
+      },
+      "column2": {
+       "heading": "Title",
+       "sources": [
+        "Title"
+       ],
+       "linkUrls": [
+        "WebPath"
+       ],
+       "width": 250
+      },
+      "column3": {
+       "heading": "Modified",
+       "sources": [
+        "ModifiedDate"
+       ],
+       "width": 100
+      },
+      "column4": {
+       "heading": "Modified By",
+       "sources": [
+        "Name"
+       ],
+       "width": 150
+      }
+     },
+     "3": {
+      "id": {
+       "sources": [
+        "UniqueID"
+       ]
+      },
+      "edit": {
+       "sources": [
+        "edit"
+       ]
+      },
+      "DefaultEncodingURL": {
+       "sources": [
+        "DefaultEncodingURL"
+       ]
+      },
+      "FileExtension": {
+       "sources": [
+        "FileExtension"
+       ]
+      },
+      "FileType": {
+       "sources": [
+        "FileType"
+       ]
+      },
+      "imageOverlapText": {
+       "sources": [
+        "ImageOverlapText"
+       ]
+      },
+      "imageOverlapTextAriaLabel": {
+       "sources": [
+        "ImageOverlapTextAriaLabel"
+       ]
+      },
+      "Path": {
+       "sources": [
+        "Path"
+       ]
+      },
+      "PictureThumbnailURL": {
+       "sources": [
+        "PictureThumbnailURL"
+       ]
+      },
+      "PreviewUrl": {
+       "sources": [
+        "PreviewUrl"
+       ]
+      },
+      "SiteID": {
+       "sources": [
+        "SiteID"
+       ]
+      },
+      "SiteTitle": {
+       "sources": [
+        "SiteTitle"
+       ]
+      },
+      "Title": {
+       "sources": [
+        "Title"
+       ]
+      },
+      "UniqueID": {
+       "sources": [
+        "UniqueID"
+       ]
+      },
+      "WebId": {
+       "sources": [
+        "WebId"
+       ]
+      },
+      "WebPath": {
+       "sources": [
+        "WebPath"
+       ]
+      },
+      "spWebUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "fileType": {
+       "sources": [
+        "FileType"
+       ]
+      },
+      "iframeUrl": {
+       "sources": [
+        "iframeUrl"
+       ]
+      },
+      "isVideoItem": {
+       "sources": [
+        "isVideoItem"
+       ]
+      }
+     },
+     "4": {
+      "headingText": {
+       "sources": [
+        "SiteTitle"
+       ]
+      },
+      "headingUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "title": {
+       "sources": [
+        "UserName",
+        "Title"
+       ]
+      },
+      "personImageUrl": {
+       "sources": [
+        "ProfileImageSrc"
+       ]
+      },
+      "name": {
+       "sources": [
+        "Name"
+       ]
+      },
+      "initials": {
+       "sources": [
+        "Initials"
+       ]
+      },
+      "itemUrl": {
+       "sources": [
+        "WebPath"
+       ]
+      },
+      "activity": {
+       "sources": [
+        "ModifiedDate"
+       ]
+      },
+      "previewUrl": {
+       "sources": [
+        "PreviewUrl",
+        "PictureThumbnailURL"
+       ]
+      },
+      "iconUrl": {
+       "sources": [
+        "IconUrl"
+       ]
+      },
+      "accentColor": {
+       "sources": [
+        "AccentColor"
+       ]
+      },
+      "cardType": {
+       "sources": [
+        "CardType"
+       ]
+      },
+      "tipActionLabel": {
+       "sources": [
+        "TipActionLabel"
+       ]
+      },
+      "tipActionButtonIcon": {
+       "sources": [
+        "TipActionButtonIcon"
+       ]
+      },
+      "className": {
+       "sources": [
+        "ClassName"
+       ]
+      },
+      "telemetryProperties": {
+       "sources": [
+        "TelemetryProperties"
+       ]
+      },
+      "imageOverlapText": {
+       "sources": [
+        "ImageOverlapText"
+       ]
+      },
+      "imageOverlapTextAriaLabel": {
+       "sources": [
+        "ImageOverlapTextAriaLabel"
+       ]
+      },
+      "spWebUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "fileType": {
+       "sources": [
+        "FileType"
+       ]
+      },
+      "UniqueID": {
+       "sources": [
+        "UniqueID"
+       ]
+      },
+      "iframeUrl": {
+       "sources": [
+        "iframeUrl"
+       ]
+      },
+      "isVideoItem": {
+       "sources": [
+        "isVideoItem"
+       ]
+      }
+     },
+     "6": {
+      "headingText": {
+       "sources": [
+        "SiteTitle"
+       ]
+      },
+      "headingUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "title": {
+       "sources": [
+        "UserName",
+        "Title"
+       ]
+      },
+      "personImageUrl": {
+       "sources": [
+        "ProfileImageSrc"
+       ]
+      },
+      "name": {
+       "sources": [
+        "Name"
+       ]
+      },
+      "initials": {
+       "sources": [
+        "Initials"
+       ]
+      },
+      "itemUrl": {
+       "sources": [
+        "WebPath"
+       ]
+      },
+      "activity": {
+       "sources": [
+        "ModifiedDate"
+       ]
+      },
+      "previewUrl": {
+       "sources": [
+        "PreviewUrl",
+        "PictureThumbnailURL"
+       ]
+      },
+      "iconUrl": {
+       "sources": [
+        "IconUrl"
+       ]
+      },
+      "accentColor": {
+       "sources": [
+        "AccentColor"
+       ]
+      },
+      "cardType": {
+       "sources": [
+        "CardType"
+       ]
+      },
+      "tipActionLabel": {
+       "sources": [
+        "TipActionLabel"
+       ]
+      },
+      "tipActionButtonIcon": {
+       "sources": [
+        "TipActionButtonIcon"
+       ]
+      },
+      "className": {
+       "sources": [
+        "ClassName"
+       ]
+      },
+      "telemetryProperties": {
+       "sources": [
+        "TelemetryProperties"
+       ]
+      },
+      "imageOverlapText": {
+       "sources": [
+        "ImageOverlapText"
+       ]
+      },
+      "imageOverlapTextAriaLabel": {
+       "sources": [
+        "ImageOverlapTextAriaLabel"
+       ]
+      },
+      "spWebUrl": {
+       "sources": [
+        "SPWebUrl"
+       ]
+      },
+      "fileType": {
+       "sources": [
+        "FileType"
+       ]
+      },
+      "UniqueID": {
+       "sources": [
+        "UniqueID"
+       ]
+      },
+      "iframeUrl": {
+       "sources": [
+        "iframeUrl"
+       ]
+      },
+      "isVideoItem": {
+       "sources": [
+        "isVideoItem"
+       ]
+      }
+     }
+    },
+    "showCardMotion": true,
+    "query": {
+     "contentLocation": 1,
+     "contentTypes": [
+      1
+     ],
+     "sortType": 1,
+     "filters": [
+      {
+       "filterType": 1,
+       "value": ""
+      }
+     ]
+    },
+    "templateId": 1,
+    "maxItemsPerPage": 8,
+    "hideWebPartWhenEmpty": false,
+    "sites": [],
+    "queryMode": "Basic",
+    "layoutId": "Card",
+    "dataProviderId": "Search",
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9"
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "newsThisSite": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 12,
+   "zoneId": "00cae173-05cf-484e-80e5-aa18ebcb1bc8",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "f8f4e010-e26e-4708-99b9-3bdeb082700a",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "8c88f208-6c77-4bdb-86a0-0c47b4316588",
+  "reservedWidth": 1188,
+  "reservedHeight": 526,
+  "webPartData": {
+   "id": "8c88f208-6c77-4bdb-86a0-0c47b4316588",
+   "instanceId": "f8f4e010-e26e-4708-99b9-3bdeb082700a",
+   "title": "News",
+   "description": "Display news posts with filtering and targeting options.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {
+     "baseUrl": "/sites/NewNerve"
+    }
+   },
+   "dataVersion": "1.18",
+   "properties": {
+    "carouselSettings": {
+     "autoplay": false,
+     "autoplaySpeed": 5,
+     "dots": true,
+     "lazyLoad": true,
+     "metadata": true,
+     "swipe": true,
+     "useStockItems": false
+    },
+    "showChrome": true,
+    "showNewsMetadata": {
+     "showSocialActions": false,
+     "showAuthor": true,
+     "showDate": true,
+     "showSiteTitle": true
+    },
+    "isTitleEnabled": true,
+    "minimumLayoutWidth": 22,
+    "renderItemsSliderValue": 4,
+    "isChromeModified": true,
+    "layoutId": "FeaturedNews",
+    "newsDataSourceProp": 1,
+    "carouselHeroWrapperComponentId": "",
+    "prefetchCount": 4,
+    "filters": [
+     {
+      "filterType": 1,
+      "value": "",
+      "values": []
+     }
+    ],
+    "dataProviderId": "news",
+    "newsSiteList": [],
+    "layoutComponentId": "",
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+    "filterKQLQuery": ""
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "quickChart": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 13,
+   "zoneId": "b2b9b665-b516-439b-a97f-0bf0787a6704",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "a587ce57-1a89-4c51-9178-b7c56a692f76",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "91a50c94-865f-4f5c-8b4e-e49659e69772",
+  "reservedWidth": 1188,
+  "reservedHeight": 451,
+  "webPartData": {
+   "id": "91a50c94-865f-4f5c-8b4e-e49659e69772",
+   "instanceId": "a587ce57-1a89-4c51-9178-b7c56a692f76",
+   "title": "Quick chart",
+   "description": "Display data in a bar or pie chart.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {},
+    "imageSources": {},
+    "links": {}
+   },
+   "dataVersion": "1.0",
+   "properties": {
+    "data": [
+     {
+      "id": "7CFFD4B0-436E-430D-94C5-A4F9D22DB3FE",
+      "label": "",
+      "value": "",
+      "valueNumber": 0
+     }
+    ],
+    "type": 0,
+    "isInitialState": false,
+    "dataSourceType": 1,
+    "listItemOrderBy": 0,
+    "selectedListId": "b7e26353-1a44-4f35-a6f6-791d0ad633f9",
+    "selectedLabelFieldName": "Title",
+    "selectedValueFieldName": "Budget",
+    "xAxisLabel": "",
+    "yAxisLabel": ""
+   },
+   "containsDynamicDataSource": false
+  }
+ },
+ "sites": {
+  "position": {
+   "layoutIndex": 1,
+   "zoneIndex": 14,
+   "zoneId": "bdded086-0f57-480c-820b-4c640cb7aeb7",
+   "sectionIndex": 1,
+   "sectionFactor": 12,
+   "controlIndex": 1
+  },
+  "id": "e8fbaef4-5a31-48c2-b6db-5b03632792b2",
+  "controlType": 3,
+  "isFromSectionTemplate": false,
+  "addedFromPersistedData": true,
+  "webPartId": "7cba020c-5ccb-42e8-b6fc-75b3149aba7b",
+  "reservedWidth": 1188,
+  "reservedHeight": 444,
+  "webPartData": {
+   "id": "7cba020c-5ccb-42e8-b6fc-75b3149aba7b",
+   "instanceId": "e8fbaef4-5a31-48c2-b6db-5b03632792b2",
+   "title": "Sites",
+   "description": "Show related sites to help people navigate your organization.",
+   "audiences": [],
+   "hideOn": {
+    "mobile": false
+   },
+   "serverProcessedContent": {
+    "htmlStrings": {},
+    "searchablePlainTexts": {
+     "sites[0].Title": "SPUtils Test",
+     "sites[1].Title": "TestSiteCollection"
+    },
+    "imageSources": {
+     "sites[0].BannerImageUrl": "/sites/newnerve/_api/groupservice/getgroupimage?id=%27558fb2d0-1fcf-4800-b9fd-964d56d835c0%27"
+    },
+    "links": {
+     "baseUrl": "/sites/NewNerve",
+     "sites[0].Url": "/sites/NewNerve/sputils-test",
+     "sites[1].Url": "/sites/TestSiteCollection"
+    },
+    "componentDependencies": {
+     "layoutComponentId": "8ac0c53c-e8d0-4e3e-87d0-7449eb0d4027"
+    }
+   },
+   "dataVersion": "1.0",
+   "properties": {
+    "sites": [
+     {
+      "Acronym": "ST",
+      "BannerColor": "#038387",
+      "Type": "Group",
+      "ItemReference": {
+       "GroupId": "4cbf1daa-b61a-4477-8a81-78e97645e795",
+       "WebId": "5e85de54-ba41-46d2-acf8-359505cea58a",
+       "IndexId": 1141257203455279200,
+       "SiteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9",
+       "Type": "GroupReference"
+      }
+     },
+     {
+      "Acronym": "T",
+      "BannerColor": "#986f0b",
+      "Type": "Site",
+      "ItemReference": {
+       "WebId": "fd305283-3af1-4bff-886b-ea3b79a637e8",
+       "IndexId": 998823799640506600,
+       "SiteId": "85141083-b822-44ec-bde7-49c698ae5540",
+       "Type": "SiteReference"
+      }
+     }
+    ],
+    "sourceType": 2,
+    "itemCount": 8,
+    "hideWebPartWhenEmpty": false,
+    "layoutId": "FilmStrip",
+    "dataProviderId": "SitesDataProvider",
+    "webId": "773960b7-b16d-4f81-957a-02de394949b8",
+    "siteId": "93de26bf-15a3-4fac-8f3e-2b8007d813a9"
+   },
+   "containsDynamicDataSource": false
+  }
+ }
+}

@@ -53,21 +53,24 @@ export const WEBPART_NAMES = {
   '2161a1c6-db61-4731-b97c-3cdb303f7cbb': 'Divider',
   '8654b779-4886-46d4-8ffb-b5ed960ee986': 'Spacer',
   'b19b3b9e-8d13-4fec-a93c-401a091c0707': 'Microsoft Forms',
+  // Confirmed from a live GetClientSideWebParts manifest (2026-09-23): these
+  // three were mislabelled below the marker as Document library, Sites and
+  // Code snippet.
+  '7cba020c-5ccb-42e8-b6fc-75b3149aba7b': 'Sites',
+  'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b': 'Organization chart',
+  '1ef5ed11-ce7b-44be-bc5e-4abd55101d16': 'Markdown',
   // ---- verify on live tenant (lower confidence) ----
   'f6fdf4f8-4a24-437b-a127-32e66a5dd9b4': 'Twitter',
   '868ac3c3-cad7-4bd6-9a1c-14dc5cc8e823': 'Weather',
   'cf91cf5d-ac23-4a7a-9dbc-cd9ea1a095eb': 'Saved for later',
-  '7cba020c-5ccb-42e8-b6fc-75b3149aba7b': 'Document library',
   '0f087d7f-520e-42b7-89c0-496aaf979d58': 'Button',
   'df8e44e7-edd5-46d5-90da-aca1539313b8': 'Call to action',
   '62cac389-787f-495d-beca-e11786162ef4': 'Countdown timer',
   '9d7e898c-f1bb-473a-9ace-8b415036578b': 'Organization chart',
   '71c19a43-d08c-4178-8218-4df8554c0b0e': 'Country/region web part',
-  'e84a8ca2-f63c-4fb9-bc0b-d8eef5ccb22b': 'Sites',
   '544dd15b-cf3c-441b-96da-004d5a8cea1d': 'YouTube',
   'a8cd4347-f996-48c1-bcfb-75373fed2a27': 'World clock',
   '46698648-fcd5-41fc-9526-c7f7b2ace919': 'Markdown',
-  '1ef5ed11-ce7b-44be-bc5e-4abd55101d16': 'Code snippet',
 };
 
 export function webPartName(webPartId) {
