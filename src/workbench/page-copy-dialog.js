@@ -24,6 +24,7 @@ import { createSpPages } from './sp-pages.js';
 import { createSpWriteClient } from './sp-write.js';
 import { createFieldEditor } from './field-editor.js';
 import { getFavorites, getRecents } from './favorites.js';
+import { bindNewTab } from './grid.js';
 import { MODERN_SITE_PAGES_FEATURE_ID } from '../bridge/sp-context.js';
 
 const el = (tag, cls, text) => {
@@ -336,8 +337,9 @@ export function openPageCopyDialog({
       discardBtn.hidden = true;
       const openLink = el('a', 'wb-pc-open', 'Open copy ↗');
       openLink.hidden = true;
-      openLink.target = '_blank';
-      openLink.rel = 'noopener';
+      // Through bindNewTab: hosted, SharePoint's link interceptor would
+      // otherwise open the copy in place, over the Workbench.
+      bindNewTab(openLink);
       const closeBtn = el('button', 'btn btn-ghost wb-pc-close', 'Close');
       closeBtn.type = 'button';
       closeBtn.hidden = true;
