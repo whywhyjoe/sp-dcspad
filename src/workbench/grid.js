@@ -26,13 +26,20 @@ export { copyText };
 export const encodeSpPath = (path) =>
   String(path).split('/').map(encodeURIComponent).join('/');
 
-// New-tab anchors: modern SharePoint pages intercept link clicks at the
-// document level for SPA routing and can swallow same-origin
-// target="_blank" navigations. Opening explicitly from our own handler is
-// deterministic; the target/rel attributes stay as semantics + fallback.
+// New-tab anchors. Modern SharePoint pages route link clicks themselves:
+// sp-pages-assembly's LinkInterceptor (_interceptAnchorClick) listens on
+// <body> in the CAPTURE phase, calls preventDefault() + stopPropagation()
+// and pushState()s to the href — so the click never reaches a handler on the
+// anchor, target="_blank" is ignored, and the link opens in place. Its one
+// opt-out is data-interception="off" ON THE ANCHOR ITSELF together with
+// target="_blank" (an ancestor's attribute does not count for "off"); that
+// is how SharePoint marks its own new-tab links. Proven on the live tenant
+// 2026-10-01 — without the attribute nothing below ever runs. The click
+// handler stays for hosts without the interceptor (standalone).
 export function bindNewTab(a) {
   a.target = '_blank';
   a.rel = 'noopener';
+  a.dataset.interception = 'off';
   a.addEventListener('click', (e) => {
     // Hiding the click from the host's router is enough for modified
     // clicks — let the browser keep its native ctrl/cmd/shift semantics
@@ -97,8 +104,9 @@ function displayValue(row, col) {
 // view's own controls share the grid's single toolbar row (Items tab).
 // exportExtras: [[label, run]] entries prepended to the Export menu.
 // selectable: adds a leading checkbox column; clicking a row (when the grid
-// has no onOpen) toggles it, and every export/copy operates on the selected
-// rows when any are selected, the visible rows otherwise.
+// has no onOpen) toggles it, shift-click selects/clears a range, and every
+// export/copy operates on the selected rows when any are selected, the
+// visible rows otherwise.
 // subject: what this grid lists ('subwebs', 'the groups on this web') — used
 // to say what a denied read could not show. See setError and denied.js.
 export function createGrid({
@@ -121,6 +129,29 @@ export function createGrid({
   let filterText = '';
   const selectedKeys = new Set();
   const keyOf = (row) => String(row?.[rowKey] ?? '');
+  // The last row toggled by a click — the fixed end of a shift-click range.
+  let anchorKey = null;
+
+  // A plain click toggles one row. A shift-click sets every visible row
+  // between the anchor and the clicked row (inclusive, current view order)
+  // to the state the clicked row is toggling to — the file-manager /
+  // Gmail convention. No usable anchor (none yet, or filtered out of view)
+  // degrades to a plain toggle.
+  function toggleRow(key, extend) {
+    const next = !selectedKeys.has(key);
+    const keys = visible.map(keyOf);
+    const from = extend && anchorKey !== null ? keys.indexOf(anchorKey) : -1;
+    const to = keys.indexOf(key);
+    const range = from >= 0 && to >= 0
+      ? keys.slice(Math.min(from, to), Math.max(from, to) + 1)
+      : [key];
+    for (const k of range) {
+      if (next) selectedKeys.add(k);
+      else selectedKeys.delete(k);
+    }
+    anchorKey = key;
+    render();
+  }
 
   // Selected rows (in current view order) when a selection exists, else the
   // visible rows — every export/copy path funnels through this.
@@ -353,26 +384,27 @@ export function createGrid({
       if (selectable) {
         const key = keyOf(row);
         tr.classList.toggle('wb-row-selected', selectedKeys.has(key));
-        const toggle = () => {
-          if (selectedKeys.has(key)) selectedKeys.delete(key);
-          else selectedKeys.add(key);
-          render();
-        };
         const td = el('td', 'wb-select-cell');
         const box = el('input');
         box.type = 'checkbox';
         box.className = 'wb-row-check';
         box.checked = selectedKeys.has(key);
-        box.setAttribute('aria-label', 'Select row');
-        box.addEventListener('click', (e) => e.stopPropagation());
-        box.addEventListener('change', toggle);
+        box.setAttribute('aria-label', 'Select row (shift-click to select a range)');
+        // `change` carries no modifier state, so the click (which fires
+        // first) records whether shift was held.
+        let extend = false;
+        box.addEventListener('click', (e) => { e.stopPropagation(); extend = e.shiftKey; });
+        box.addEventListener('change', () => toggleRow(key, extend));
+        // A shift-click would otherwise also drag a text selection across
+        // the rows it spans.
+        td.addEventListener('mousedown', (e) => { if (e.shiftKey) e.preventDefault(); });
         // On a grid that also drills down, the whole checkbox cell is a
         // selection target — a click a few pixels off the box must not open
         // the row instead of ticking it.
         if (onOpen) {
           td.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (e.target !== box) toggle();
+            if (e.target !== box) toggleRow(key, e.shiftKey);
           });
         }
         td.append(box);
@@ -381,9 +413,10 @@ export function createGrid({
           // No drill-down on this grid — the whole row is a selection
           // target, except its interactive bits (links, copy glyphs…).
           tr.classList.add('wb-row-selectable');
+          tr.addEventListener('mousedown', (e) => { if (e.shiftKey) e.preventDefault(); });
           tr.addEventListener('click', (e) => {
             if (e.target.closest('a, button, input, .sp-copy')) return;
-            toggle();
+            toggleRow(key, e.shiftKey);
           });
         }
       }
@@ -433,6 +466,7 @@ export function createGrid({
     setRows(next, { partial = false } = {}) {
       rows = Array.isArray(next) ? next : [];
       selectedKeys.clear();   // new data — a stale selection must not scope exports
+      anchorKey = null;
       status.hidden = true;
       notice.hidden = !partial;
       if (partial) {
