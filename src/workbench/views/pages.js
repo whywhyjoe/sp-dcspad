@@ -1193,6 +1193,12 @@ export function createPagesView({
       if (part.kind === 'text') {
         const body = el('div', 'wb-text-body');
         body.innerHTML = sanitizeHtml(part.html);
+        // A link in the page's own content must not navigate the Workbench
+        // away (SharePoint's interceptor would pushState it in place).
+        // In-page fragment links have nowhere useful to go in a new tab.
+        for (const a of body.querySelectorAll('a[href]')) {
+          if (!a.getAttribute('href').startsWith('#')) bindNewTab(a);
+        }
         rendered.append(body);
       } else {
         const list = el('ul', 'wb-text-lines');
@@ -1500,8 +1506,11 @@ export function createPagesView({
       actions.append(copyBtn);
     }
     if (item.FileRef) {
-      const open = el('a', 'btn btn-xs', 'Open page ↗');
-      open.href = item.FileRef;
+      const open = el('a', 'btn btn-xs wb-open-page', 'Open page ↗');
+      // Encoded per segment: a raw FileRef with '#' or '%' in the name
+      // would open the wrong URL.
+      open.href = encodedServerPath(item.FileRef);
+      open.title = 'Open this page in a new tab';
       bindNewTab(open);
       actions.append(open);
     }

@@ -1004,6 +1004,75 @@ await check('pages: selected pages download as one zip of content markdown', asy
     && !names.includes('_export-report.md');
 });
 
+// Shift-click extends from the last clicked row to the clicked one, setting
+// the whole span to the clicked row's new state — select a range, then clear
+// part of it — and a plain click still toggles just one row.
+await check('grid: shift-click selects and clears a range of rows', async () => {
+  const rows = page.locator('.wb-view-pages .wb-table tbody tr');
+  const names = await rows.locator('td:nth-child(2)').allTextContents();
+  const box = (i) => rows.nth(i).locator('.wb-row-check');
+  const count = () => page.locator('.wb-view-pages .wb-grid-count').textContent();
+  const ticked = async () => {
+    const out = [];
+    for (let i = 0; i < names.length; i += 1) if (await box(i).isChecked()) out.push(i);
+    return out.join(',');
+  };
+  await box(0).click();
+  await box(3).click({ modifiers: ['Shift'] });
+  const afterRange = await ticked();
+  const rangeCount = await count();
+  await box(1).click({ modifiers: ['Shift'] });   // anchor 3 → 1, all ticked → clear
+  const afterClear = await ticked();
+  await box(4).click();                           // plain click: one row only
+  const afterPlain = await ticked();
+  await box(0).click();
+  await box(4).click();
+  const stillOnGrid = await rows.first().isVisible();
+  return names.length >= 5
+    && afterRange === '0,1,2,3' && rangeCount.includes('4 selected')
+    && afterClear === '0'
+    && afterPlain === '0,4'
+    && (await ticked()) === ''
+    && stillOnGrid;   // a shift-click in the box never drills in
+});
+
+// Hosted, SharePoint's LinkInterceptor (sp-pages-assembly) listens on <body>
+// in the capture phase and pushState()s every anchor click in place —
+// preventDefault + stopPropagation, so no handler on the anchor ever runs —
+// unless the anchor itself carries data-interception="off" with
+// target="_blank". Emulate exactly that rule, then require a real new tab
+// with the Workbench left where it was.
+await check('pages: the detail pane opens the page in a new tab past SharePoint’s link interceptor', async () => {
+  await page.locator('.wb-view-pages .wb-table tbody tr', { hasText: 'Home.aspx' })
+    .locator('td', { hasText: 'Home' }).first().click();
+  const link = page.locator('.wb-view-pages .wb-detail-actions .wb-open-page');
+  await link.waitFor();
+  await page.evaluate(() => {
+    window.__spIntercept = (e) => {
+      const a = e.target.closest?.('a[href]');
+      if (!a || e.ctrlKey || e.metaKey) return;
+      if (a.getAttribute('data-interception') === 'off' && a.getAttribute('target') === '_blank') return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.__spIntercepted = a.getAttribute('href');
+    };
+    window.__spIntercepted = null;
+    document.body.addEventListener('click', window.__spIntercept, true);
+  });
+  const before = page.url();
+  const [popup] = await Promise.all([page.waitForEvent('popup', { timeout: 5000 }), link.click()]);
+  const url = popup.url();
+  await popup.close();
+  const intercepted = await page.evaluate(() => {
+    document.body.removeEventListener('click', window.__spIntercept, true);
+    return window.__spIntercepted;
+  });
+  const stayed = page.url() === before;
+  await page.locator('.wb-view-pages .wb-back').click();
+  await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
+  return url.endsWith('/SitePages/Home.aspx') && intercepted === null && stayed;
+});
+
 await check('pages: the bulk zip honours the chosen content format', async () => {
   await page.locator('.wb-rail-btn', { hasText: 'Pages' }).click();
   await page.waitForSelector('.wb-view-pages .wb-table tbody tr');
