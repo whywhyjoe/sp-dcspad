@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "220" : "dev";
-var injectedRevision = true ? "e2825155" : "";
+var injectedBuild = true ? "224" : "dev";
+var injectedRevision = true ? "b77e07e9" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -3351,6 +3351,7 @@ var encodeSpPath = (path) => String(path).split("/").map(encodeURIComponent).joi
 function bindNewTab(a) {
   a.target = "_blank";
   a.rel = "noopener";
+  a.dataset.interception = "off";
   a.addEventListener("click", (e) => {
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) return;
@@ -3413,6 +3414,20 @@ function createGrid({
   let filterText = "";
   const selectedKeys = /* @__PURE__ */ new Set();
   const keyOf = (row) => String(row?.[rowKey] ?? "");
+  let anchorKey = null;
+  function toggleRow(key2, extend2) {
+    const next2 = !selectedKeys.has(key2);
+    const keys = visible.map(keyOf);
+    const from = extend2 && anchorKey !== null ? keys.indexOf(anchorKey) : -1;
+    const to = keys.indexOf(key2);
+    const range = from >= 0 && to >= 0 ? keys.slice(Math.min(from, to), Math.max(from, to) + 1) : [key2];
+    for (const k of range) {
+      if (next2) selectedKeys.add(k);
+      else selectedKeys.delete(k);
+    }
+    anchorKey = key2;
+    render();
+  }
   const exportRows = () => {
     const chosen = visible.filter((row) => selectedKeys.has(keyOf(row)));
     return chosen.length ? chosen : visible;
@@ -3617,32 +3632,37 @@ function createGrid({
       if (selectable) {
         const key2 = keyOf(row);
         tr.classList.toggle("wb-row-selected", selectedKeys.has(key2));
-        const toggle = () => {
-          if (selectedKeys.has(key2)) selectedKeys.delete(key2);
-          else selectedKeys.add(key2);
-          render();
-        };
         const td = el2("td", "wb-select-cell");
         const box = el2("input");
         box.type = "checkbox";
         box.className = "wb-row-check";
         box.checked = selectedKeys.has(key2);
-        box.setAttribute("aria-label", "Select row");
-        box.addEventListener("click", (e) => e.stopPropagation());
-        box.addEventListener("change", toggle);
+        box.setAttribute("aria-label", "Select row (shift-click to select a range)");
+        let extend2 = false;
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          extend2 = e.shiftKey;
+        });
+        box.addEventListener("change", () => toggleRow(key2, extend2));
+        td.addEventListener("mousedown", (e) => {
+          if (e.shiftKey) e.preventDefault();
+        });
         if (onOpen) {
           td.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (e.target !== box) toggle();
+            if (e.target !== box) toggleRow(key2, e.shiftKey);
           });
         }
         td.append(box);
         tr.append(td);
         if (!onOpen) {
           tr.classList.add("wb-row-selectable");
+          tr.addEventListener("mousedown", (e) => {
+            if (e.shiftKey) e.preventDefault();
+          });
           tr.addEventListener("click", (e) => {
             if (e.target.closest("a, button, input, .sp-copy")) return;
-            toggle();
+            toggleRow(key2, e.shiftKey);
           });
         }
       }
@@ -3693,6 +3713,7 @@ function createGrid({
     setRows(next2, { partial = false } = {}) {
       rows = Array.isArray(next2) ? next2 : [];
       selectedKeys.clear();
+      anchorKey = null;
       status.hidden = true;
       notice.hidden = !partial;
       if (partial) {
@@ -8051,6 +8072,7 @@ var el4 = (tag, cls, text) => {
 function bindNewTab2(a) {
   a.target = "_blank";
   a.rel = "noopener";
+  a.dataset.interception = "off";
   a.addEventListener("click", (e) => {
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) return;
@@ -14619,6 +14641,9 @@ ${current.rootPath}` : "");
       if (part.kind === "text") {
         const body = el15("div", "wb-text-body");
         body.innerHTML = sanitizeHtml(part.html);
+        for (const a of body.querySelectorAll("a[href]")) {
+          if (!a.getAttribute("href").startsWith("#")) bindNewTab(a);
+        }
         rendered.append(body);
       } else {
         const list2 = el15("ul", "wb-text-lines");
@@ -14861,8 +14886,9 @@ ${fullUrl}`;
     exportRaw.title = "Item + parsed canvas controls as JSON, for scripts";
     actions.append(exportContent, exportContentHtml, exportRaw);
     if (item2.FileRef) {
-      const open = el15("a", "btn btn-xs", "Open page \u2197");
-      open.href = item2.FileRef;
+      const open = el15("a", "btn btn-xs wb-open-page", "Open page \u2197");
+      open.href = encodedServerPath(item2.FileRef);
+      open.title = "Open this page in a new tab";
       bindNewTab(open);
       actions.append(open);
     }
