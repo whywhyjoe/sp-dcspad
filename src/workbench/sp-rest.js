@@ -189,6 +189,21 @@ export function createSpRestClient({
     return entityOf(await rawGet(apiUrl(path, opts)));
   }
 
+  // ONE request that never follows a paging link: { items, nextLink }. Use it
+  // for a `top: 1` style lookup (newest row, oldest row, "is there any row?").
+  // getAll treats `top` as the PAGE size, not a total, so
+  // getAll(path, { orderby, top: 1 }) on a large list walks one-row pages up
+  // to the 5000 cap. Measured live at 5,011 requests (sp-traffic-analytics,
+  // dev tenant, 2026-10). Passing getAll a `cap` also stops it, but a lookup
+  // should not be one forgotten option away from five thousand requests.
+  async function getPage(path, opts) {
+    const data = await rawGet(apiUrl(path, opts));
+    const page = collectionOf(data);
+    return page
+      ? { items: page, nextLink: nextLinkOf(data) }
+      : { items: [entityOf(data)], nextLink: '' };
+  }
+
   // Full collection: follows paging links up to `cap` items (default and
   // ceiling PAGE_CAP — callers can only lower it, e.g. a max-items export).
   // `allowLargeCap` is an explicit, opt-in escape hatch for one caller (the
@@ -203,6 +218,20 @@ export function createSpRestClient({
   // what was read so far with partial=true and stopped=true instead of
   // waiting out the whole collection (the EEEU item scan of a 34k-item
   // library otherwise held Cancel for ~2.5 minutes on live SPO).
+  //
+  // `opts.top` is the page size requested from SharePoint, NOT a total. The
+  // large-cap readers (the EEEU item scan, the list-data capture) pass
+  // top: 5000 and rely on every later page being followed. For a fixed
+  // number of rows, use getPage (one request) or pass `cap`.
+  //
+  // Large lists: SharePoint Online refuses ANY query whose LEADING indexed
+  // filter condition matches more than 5,000 rows (the list view threshold).
+  // $top doesn't help, and neither do later clauses or an Id window that
+  // narrow the result. Verified live on a 6,201-item list, 2026-10. A narrow
+  // indexed range placed FIRST in $filter is served. Unfiltered paging works
+  // at any size; a filtered read of a busy list must lead with a bounded
+  // indexed range and read it in slices (sp-traffic-analytics
+  // src/aggregate.js getRowsInRange: DateTime slices that halve on refusal).
   async function getAll(path, opts, { cap, allowLargeCap = false, shouldStop = null } = {}) {
     const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
     const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
@@ -234,5 +263,5 @@ export function createSpRestClient({
     return { items, partial, stopped };
   }
 
-  return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
+  return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getPage, getAll };
 }

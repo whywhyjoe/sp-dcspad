@@ -11,6 +11,7 @@ import { copyText } from '../export.js';
 import { odataPathLiteral } from '../../sp-odata.js';
 import { createSpWriteClient, MAX_UPLOAD_BYTES } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
+import { createWebDateResolver } from '../web-dates.js';
 // One rule for "checked out", and for "checked out to me", shared with the
 // pad's SharePoint export so the two cannot drift.
 import { isCheckedOut, isCheckedOutByCurrentUser } from '../../sp-files.js';
@@ -21,7 +22,7 @@ import {
 const FIELD_SELECT = [
   'Id', 'Title', 'InternalName', 'EntityPropertyName', 'TypeAsString',
   'FieldTypeKind', 'Required', 'Hidden', 'ReadOnlyField', 'Group',
-  'DefaultValue', 'Choices', 'Description', 'FillInChoice',
+  'DefaultValue', 'Choices', 'Description', 'FillInChoice', 'DisplayFormat',
 ];
 
 const DOCUMENT_LIBRARY_BASE_TYPE = 1;
@@ -791,6 +792,7 @@ export function createBrowserView({ client, navigate }) {
         fields,
         item,
         itemAsText,
+        webDateFor: createWebDateResolver(client),
         onSave: (formValues) => spWrite.validateUpdateListItem(
           { fileServerRelativeUrl: row.ServerRelativeUrl },
           formValues,

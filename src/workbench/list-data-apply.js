@@ -26,6 +26,7 @@ import {
 import { fetchAttachmentBytes } from './list-data-capture.js';
 import { SpFileError } from '../sp-odata.js';
 import { isExpiredSession } from './denied.js';
+import { webLocalOffsetMinutes } from './web-dates.js';
 
 const guidPath = (listId, sub = '') => `web/lists(guid'${listId}')${sub}`;
 const FAILED_CAP = 50;
@@ -138,35 +139,8 @@ async function calibrateDateFormat(client, spWrite, listId, rootFolder, probeFie
   return fallback;
 }
 
-async function utcOffsetAtMs(client, isoInstant) {
-  const data = await client.get(`web/RegionalSettings/TimeZone/utcToLocalTime(@d)?@d='${isoInstant}'`);
-  const local = data?.value;
-  if (!local) {
-    throw new SpFileError('Web time zone could not be read; date not written.', { code: 'write' });
-  }
-  return new Date(`${local}Z`).getTime() - new Date(isoInstant).getTime();
-}
-
-// Per-UTC-day offset, cached — mirrors SPUtils' tzOffsetByDay/tzOffsetExact:
-// a day whose noon offset disagrees with its neighbours is a DST transition,
-// so that one day gets an exact per-instant lookup instead of the cached noon
-// value.
-async function webLocalOffsetMinutes(cache, client, utc) {
-  const dayOf = (d) => d.toISOString().slice(0, 10);
-  const offsetForDay = async (day) => {
-    if (!cache.has(day)) cache.set(day, await utcOffsetAtMs(client, `${day}T12:00:00Z`));
-    return cache.get(day);
-  };
-  const day = dayOf(utc);
-  const here = await offsetForDay(day);
-  const prev = await offsetForDay(dayOf(new Date(utc.getTime() - 86400000)));
-  const next = await offsetForDay(dayOf(new Date(utc.getTime() + 86400000)));
-  let offsetMs = here;
-  if (here !== prev || here !== next) {
-    offsetMs = await utcOffsetAtMs(client, utc.toISOString());
-  }
-  return offsetMs / 60000;
-}
+// The per-instant web offset (webLocalOffsetMinutes) lives in web-dates.js,
+// shared with the metadata editors' DateTime writes.
 
 // ---- users (SPUtils loginFor/ensureUser) --------------------------------
 

@@ -8,8 +8,17 @@
 //        MultiChoice    ';#A;#B;#' — ;#-delimited with leading AND trailing ;#
 //        Boolean        '1' / '0'
 //        Number/Currency  invariant numeric string, '.' decimal separator
-//        DateTime       ISO 8601 (site-locale strings also accepted by SPO;
-//                       server errors surface verbatim so users can hand-fix)
+//        DateTime       the WEB's locale format in the WEB's time zone, e.g.
+//                       '10/6/2026 9:00 AM' (LocaleId 1033). NEVER ISO 8601:
+//                       SharePoint Online refuses every ISO form ('…T16:00:00Z',
+//                       with milliseconds, without the Z) with "You must
+//                       specify a valid date within the range of 1/1/1900 and
+//                       12/31/8900" (verified live, 2026-10-06). toFormValue
+//                       therefore needs `webDate` (the web's RegionalSettings
+//                       format plus its UTC offset at that instant, from
+//                       web-dates.js) and throws without it. A date-only field
+//                       (DisplayFormat 0) writes the picked calendar date, with
+//                       no zone shift.
 //        URL            'https://…, description' (comma-space separator)
 //      Not editable in v1 (display-only via FieldValuesAsText), formats
 //      documented for a later tier:
@@ -56,8 +65,40 @@ const choicesOf = (field) => {
 
 // ---- pure conversions ------------------------------------------------------
 
+const pad2 = (n) => String(n).padStart(2, '0');
+
+export const isDateOnly = (field) =>
+  field?.DisplayFormat === 0 || field?.DisplayFormat === 'DateOnly';
+
+// Wall-clock parts ({ y, m, d, h, min }, m 1-based) → the web's own date
+// string, shaped like SharePoint's own display: '10/6/2026 9:00 AM',
+// '06.10.2026 16:00' and so on. `webDate`: { order: 'mdy'|'dmy'|'ymd', sep,
+// timeSep, time24, am, pm } (web-dates.js webDateFormatOf).
+export function formatWebDate(parts, webDate, { dateOnly = false } = {}) {
+  const f = webDate || {};
+  const byKey = { y: String(parts.y), m: String(parts.m), d: String(parts.d) };
+  const date = String(f.order || 'mdy').split('').map((k) => byKey[k]).join(f.sep ?? '/');
+  if (dateOnly) return date;
+  const timeSep = f.timeSep ?? ':';
+  if (f.time24) return `${date} ${pad2(parts.h)}${timeSep}${pad2(parts.min)}`;
+  const h12 = parts.h % 12 || 12;
+  return `${date} ${h12}${timeSep}${pad2(parts.min)} ${parts.h < 12 ? (f.am || 'AM') : (f.pm || 'PM')}`;
+}
+
+// The DateTime editor's value ('YYYY-MM-DDTHH:mm', browser-local) as an
+// instant, or null when it is blank or not a date at all.
+export function dateTimeInstantOf(uiValue) {
+  const s = String(uiValue ?? '').trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 // UI value -> the FieldValue string for ValidateUpdateListItem.
-export function toFormValue(field, uiValue) {
+// opts.webDate (DateTime only): { order, sep, timeSep, time24, am, pm,
+// offsetMinutes }, where offsetMinutes is the web's UTC offset at THIS value's
+// instant (createWebDateResolver in web-dates.js builds one per instant).
+export function toFormValue(field, uiValue, { webDate = null } = {}) {
   switch (String(field?.TypeAsString || '')) {
     case 'MultiChoice': {
       const arr = Array.isArray(uiValue) ? uiValue.filter(Boolean) : [];
@@ -73,8 +114,27 @@ export function toFormValue(field, uiValue) {
     case 'DateTime': {
       const s = String(uiValue ?? '').trim();
       if (!s) return '';
-      const d = new Date(s);
-      return Number.isNaN(d.getTime()) ? s : d.toISOString();
+      const d = dateTimeInstantOf(s);
+      // Not a date: send it verbatim and let SharePoint's own error surface.
+      if (!d) return s;
+      if (!webDate) {
+        throw new Error('A date can only be written in the site’s own regional format, '
+          + 'and that format was not available. SharePoint Online refuses ISO 8601 dates.');
+      }
+      if (isDateOnly(field)) {
+        // The calendar date as picked: no zone shift for a date-only field.
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+        const parts = m
+          ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) }
+          : { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+        return formatWebDate(parts, webDate, { dateOnly: true });
+      }
+      // The instant, moved onto the web's wall clock.
+      const wall = new Date(d.getTime() + (Number(webDate.offsetMinutes) || 0) * 60000);
+      return formatWebDate({
+        y: wall.getUTCFullYear(), m: wall.getUTCMonth() + 1, d: wall.getUTCDate(),
+        h: wall.getUTCHours(), min: wall.getUTCMinutes(),
+      }, webDate);
     }
     case 'URL': {
       const url = String(uiValue?.url ?? '').trim();
@@ -107,9 +167,8 @@ export function fromItemValue(field, itemValue) {
       const d = new Date(s);
       if (Number.isNaN(d.getTime())) return s;
       // datetime-local wants local 'YYYY-MM-DDTHH:mm'.
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-        + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+        + `T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     }
     case 'URL':
       return {
@@ -233,13 +292,16 @@ export function createFieldEditor(field, initialValue) {
     }
   }
 
-  let baselineForm = toFormValue(field, getValue());
+  // Dirty tracking compares the editor's own value for a DateTime: its wire
+  // form needs the web's regional settings, which only the save resolves.
+  const keyOf = (v) => (type === 'DateTime' ? String(v ?? '').trim() : toFormValue(field, v));
+  let baseline = keyOf(getValue());
   return {
     el: row,
     field,
     getValue,
-    isDirty: () => toFormValue(field, getValue()) !== baselineForm,
-    markClean() { baselineForm = toFormValue(field, getValue()); },
+    isDirty: () => keyOf(getValue()) !== baseline,
+    markClean() { baseline = keyOf(getValue()); },
     setError(message) {
       error.textContent = message || '';
       error.hidden = !message;
@@ -273,7 +335,14 @@ function readOnlyRow(field, displayText, hint = '') {
 //                                text (read-only rows only)
 //   { internal, label, text }    a synthesized read-only row
 // A layout field is still edited only when isEditable() allows it.
-export function createFieldEditorForm({ fields, item = {}, itemAsText = {}, onSave, layout = null }) {
+//
+// webDateFor (async (instant: Date) => webDate) supplies the web's regional
+// date format and UTC offset for a DateTime value. Pass
+// createWebDateResolver(client) from web-dates.js. Without it, saving a
+// changed date fails on that field instead of sending ISO, which SPO refuses.
+export function createFieldEditorForm({
+  fields, item = {}, itemAsText = {}, onSave, layout = null, webDateFor = null,
+}) {
   const root = el('div', 'wb-editor-form');
   const rows = el('div', 'wb-editor-rows');
   const editors = [];
@@ -313,19 +382,30 @@ export function createFieldEditorForm({ fields, item = {}, itemAsText = {}, onSa
   bar.append(save, status);
   root.append(rows, bar);
 
-  function dirtyFormValues() {
-    return editors
-      .filter((e) => e.isDirty())
-      .map((e) => ({
-        FieldName: e.field.InternalName,
-        FieldValue: toFormValue(e.field, e.getValue()),
-      }));
+  // Async because a DateTime value's wire form needs the web's offset at
+  // that instant. A value that cannot be converted carries fieldErrors, so
+  // the message lands on its own row.
+  async function dirtyFormValues() {
+    const formValues = [];
+    for (const e of editors.filter((x) => x.isDirty())) {
+      const ui = e.getValue();
+      try {
+        const instant = e.field.TypeAsString === 'DateTime' ? dateTimeInstantOf(ui) : null;
+        const webDate = instant && webDateFor ? await webDateFor(instant) : null;
+        formValues.push({ FieldName: e.field.InternalName, FieldValue: toFormValue(e.field, ui, { webDate }) });
+      } catch (err) {
+        if (err?.code === 'auth') throw err;
+        throw Object.assign(new Error(err?.message || String(err)), {
+          fieldErrors: { [e.field.InternalName]: err?.message || String(err) },
+        });
+      }
+    }
+    return formValues;
   }
 
   save.addEventListener('click', async () => {
     for (const editor of editors) editor.setError('');
-    const formValues = dirtyFormValues();
-    if (!formValues.length) {
+    if (!editors.some((e) => e.isDirty())) {
       status.textContent = 'No changes to save.';
       status.className = 'wb-editor-status';
       return;
@@ -333,7 +413,9 @@ export function createFieldEditorForm({ fields, item = {}, itemAsText = {}, onSa
     save.disabled = true;
     status.textContent = 'Saving…';
     status.className = 'wb-editor-status';
+    let formValues = [];
     try {
+      formValues = await dirtyFormValues();
       await onSave(formValues);
       for (const editor of editors) editor.markClean();
       status.textContent = `Saved ${formValues.length} field${formValues.length === 1 ? '' : 's'}.`;

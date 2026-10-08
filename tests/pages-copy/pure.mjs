@@ -183,6 +183,17 @@ export async function run({ browser, check, WB_URL }) {
         && Boolean(carried) && carried.value === 'All' && carried.supplied === true;
     }));
 
+  await check('pure: a required DateTime gap is not fillable from the plan (it would need the destination’s regional format), and never sends ISO', () =>
+    page.evaluate(async () => {
+      const { computeCarrySet } = await import('/src/workbench/page-copy.js');
+      const targetFields = [{ InternalName: 'Due', Title: 'Due', TypeAsString: 'DateTime', Required: true }];
+      const r = computeCarrySet({
+        sourceFields: [], targetFields, item: {}, itemAsText: {}, requiredValues: { Due: '2026-10-06T09:00' },
+      });
+      const gap = r.requiredGaps.find((g) => g.internalName === 'Due');
+      return Boolean(gap) && gap.supportable === false && r.formValues.length === 0;
+    }));
+
   await check('pure: underPath matches a path and its children but never a similarly-prefixed sibling, case-insensitively', () =>
     page.evaluate(async () => {
       const { underPath } = await import('/src/workbench/page-copy.js');
