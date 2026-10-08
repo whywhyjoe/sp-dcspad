@@ -19,6 +19,7 @@ import {
 } from '../canvas.js';
 import { createSpWriteClient } from '../sp-write.js';
 import { createFieldEditorForm } from '../field-editor.js';
+import { createWebDateResolver } from '../web-dates.js';
 import {
   buildContentExport, buildRawExport, exportFileStem, contentFileName, contentParts,
   bundleEntryName, dedupeEntryNames, buildExportReport,
@@ -202,7 +203,7 @@ const CLASSIC_DETAIL_SELECT = ['*', 'Author/Title', 'Editor/Title'];
 const FIELD_SELECT = [
   'Id', 'Title', 'InternalName', 'TypeAsString', 'FieldTypeKind', 'Required',
   'Hidden', 'ReadOnlyField', 'Group', 'DefaultValue', 'Choices', 'Description',
-  'FillInChoice',
+  'FillInChoice', 'DisplayFormat',
 ];
 
 const SITE_PAGES_BASE_TEMPLATE = 119;
@@ -1262,6 +1263,7 @@ export function createPagesView({
         item,
         itemAsText,
         layout,
+        webDateFor: createWebDateResolver(client),
         onSave: (formValues) =>
           spWrite.validateUpdateListItem({ listId, itemId: pageId }, formValues),
       });

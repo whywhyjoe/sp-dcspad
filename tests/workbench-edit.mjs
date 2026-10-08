@@ -127,6 +127,31 @@ await check('mock: metadata save posts the file-path ValidateUpdateListItem', as
     && body.formValues[0].FieldName === 'Title';
 });
 
+// Live SPO refuses ISO 8601 in ValidateUpdateListItem (2026-10-06). The value
+// must be the web's locale string on the WEB's clock: the mock web is Eastern
+// (via its utcToLocalTime), whatever zone the test browser runs in.
+await check('mock: a DateTime save sends the web’s locale string on the web’s clock, never ISO', async () => {
+  await page.fill('.wb-file-meta .wb-editor-row[data-internal="PublishedDate"] input', '2026-07-01T09:30');
+  await page.locator('.wb-file-meta .wb-editor-bar .btn').click();
+  await page.waitForSelector('.wb-file-meta .wb-editor-status.wb-editor-saved');
+  const { body, expected } = await page.evaluate(() => {
+    const writes = globalThis.__DCSPAD_WB_WRITES__ || [];
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hourCycle: 'h23',
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).formatToParts(new Date('2026-07-01T09:30')).map((x) => [x.type, x.value]));
+    const h = Number(p.hour);
+    return {
+      body: JSON.parse(writes[writes.length - 1].body),
+      expected: `${p.month}/${p.day}/${p.year} ${h % 12 || 12}:${p.minute} ${h < 12 ? 'AM' : 'PM'}`,
+    };
+  });
+  return body.formValues.length === 1
+    && body.formValues[0].FieldName === 'PublishedDate'
+    && body.formValues[0].FieldValue === expected
+    && !/T|Z/.test(body.formValues[0].FieldValue);
+});
+
 await check('mock: upload shows the pad-style dialog, greys the unavailable field', async () => {
   await page.setInputFiles('.wb-view-files input[type=file]', {
     name: 'hello.txt', mimeType: 'text/plain', buffer: Buffer.from('hello'),

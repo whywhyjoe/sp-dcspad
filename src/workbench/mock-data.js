@@ -1105,6 +1105,19 @@ const REGIONAL_SETTINGS = {
   TimeZone: { Id: 10, Description: '(UTC-05:00) Eastern Time (US and Canada)' },
 };
 
+// RegionalSettings/TimeZone/utcToLocalTime for the mock web's zone (Eastern,
+// DST included), answered the way SPO does: a zone-less local timestamp.
+function mockUtcToLocalTime(isoInstant) {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(instant).map((p) => [p.type, p.value]));
+  return { value: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}` };
+}
+
 const CURRENT_USER = user(11, 'Mock Developer', 'dev@mock.local', true);
 
 
@@ -1704,6 +1717,8 @@ export function mockResolver(rawUrl) {
   }
 
   if (path.startsWith('web/allproperties')) return ALL_PROPERTIES;
+  const utcToLocal = /^web\/regionalsettings\/timezone\/utctolocaltime\(@d\)\?@d='([^']+)'/.exec(path);
+  if (utcToLocal) return mockUtcToLocalTime(utcToLocal[1].toUpperCase());
   if (path.startsWith('web/regionalsettings')) return REGIONAL_SETTINGS;
   if (path.startsWith('web/currentuser')) return CURRENT_USER;
   if (path.startsWith('web/webs')) return { value: SUBWEBS };

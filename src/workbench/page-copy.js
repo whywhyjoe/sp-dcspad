@@ -299,7 +299,8 @@ export function computeCarrySet({
       let value;
       if (type === 'DateTime') {
         value = dateText ? dateText(src, item, itemAsText) : textValueOf(itemAsText, src);
-        // Never fall back to toFormValue's ISO string — live SPO refuses it.
+        // Never ISO: live SPO refuses it. (toFormValue now needs the web's
+        // regional format and offset, which this pure planner doesn't have.)
         if (value === undefined || value === null || value === '') {
           skipped.push({ internalName: name, title: label, reason: 'the date could not be read in the site’s own format' });
           continue;
@@ -320,7 +321,11 @@ export function computeCarrySet({
   for (const tgt of targetFields) {
     const name = String(tgt.InternalName || '');
     if (!tgt.Required || !writable(tgt) || carriedNames.has(name)) continue;
-    if (!EDITABLE_TYPES.has(String(tgt.TypeAsString || ''))) {
+    // A required DATE can't be filled from here either. Its FieldValue must
+    // be in the destination web's regional format and time zone, and this
+    // pure planner has neither (toFormValue throws without them). It used to
+    // send ISO, which live SPO refuses at save time.
+    if (!EDITABLE_TYPES.has(String(tgt.TypeAsString || '')) || tgt.TypeAsString === 'DateTime') {
       requiredGaps.push({ internalName: name, title: tgt.Title || name, type: tgt.TypeAsString, supportable: false });
       continue;
     }

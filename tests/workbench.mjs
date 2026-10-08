@@ -2062,7 +2062,7 @@ await check('field-editor: FieldValue conventions match ValidateUpdateListItem',
       && toFormValue({ TypeAsString: 'URL' }, { url: 'https://x', description: 'desc' }) === 'https://x, desc'
       && toFormValue({ TypeAsString: 'URL' }, { url: '', description: 'desc' }) === ''
       && toFormValue({ TypeAsString: 'Number' }, '3,5') === '3.5'
-      && toFormValue({ TypeAsString: 'DateTime' }, '2026-07-30T14:00').includes('2026-07-30')
+      && toFormValue({ TypeAsString: 'DateTime' }, '') === ''
       && fromItemValue({ TypeAsString: 'MultiChoice' }, ';#A;#B;#').join(',') === 'A,B'
       && fromItemValue({ TypeAsString: 'Boolean' }, 'Yes') === true
       && fromItemValue({ TypeAsString: 'URL' }, { Url: 'https://x', Description: 'd' }).url === 'https://x'
@@ -2070,6 +2070,99 @@ await check('field-editor: FieldValue conventions match ValidateUpdateListItem',
       && isEditable({ TypeAsString: 'Note', InternalName: 'CanvasContent1' }) === false
       && isEditable({ TypeAsString: 'Text', InternalName: 'T', ReadOnlyField: true }) === false
       && isEditable({ TypeAsString: 'User', InternalName: 'U' }) === false;
+  }));
+
+// Live SPO's ValidateUpdateListItem refuses every ISO 8601 form ("You must
+// specify a valid date within the range of 1/1/1900 and 12/31/8900") and
+// accepts only the web's locale format, read on the web's clock: on a
+// Pacific web (LocaleId 1033), '10/6/2026 9:00 AM' was stored as 16:00 UTC.
+await check('field-editor: DateTime is the web’s locale string on the web’s clock — never ISO, and refused without the web’s format', async () =>
+  page.evaluate(async () => {
+    const { toFormValue } = await import('/src/workbench/field-editor.js');
+    const dt = { TypeAsString: 'DateTime' };
+    const us = { order: 'mdy', sep: '/', timeSep: ':', time24: false, am: 'AM', pm: 'PM' };
+    const de = { order: 'dmy', sep: '.', timeSep: ':', time24: true };
+    const jp = { order: 'ymd', sep: '/', timeSep: ':', time24: false, am: '午前', pm: '午後' };
+    let refused = false;
+    try { toFormValue(dt, '2026-10-06T16:00:00Z'); } catch { refused = true; }
+    return toFormValue(dt, '2026-10-06T16:00:00Z', { webDate: { ...us, offsetMinutes: -420 } }) === '10/6/2026 9:00 AM'
+      && toFormValue(dt, '2026-10-06T16:00:00Z', { webDate: { ...de, offsetMinutes: 120 } }) === '6.10.2026 18:00'
+      && toFormValue(dt, '2026-10-06T20:05:00Z', { webDate: { ...jp, offsetMinutes: 0 } }) === '2026/10/6 8:05 午後'
+      // Midnight and noon on a 12-hour clock.
+      && toFormValue(dt, '2026-01-02T05:00:00Z', { webDate: { ...us, offsetMinutes: -300 } }) === '1/2/2026 12:00 AM'
+      && toFormValue(dt, '2026-01-02T17:00:00Z', { webDate: { ...us, offsetMinutes: -300 } }) === '1/2/2026 12:00 PM'
+      // A date-only field keeps the picked calendar date: no zone shift.
+      && toFormValue({ ...dt, DisplayFormat: 0 }, '2026-07-30T00:00', { webDate: { ...us, offsetMinutes: -720 } }) === '7/30/2026'
+      // Hand-typed text passes through for SharePoint to judge.
+      && toFormValue(dt, 'next tuesday') === 'next tuesday'
+      && refused;
+  }));
+
+await check('web-dates: the resolver reads the web’s format once and its offset per instant, DST included', async () =>
+  page.evaluate(async () => {
+    const { createWebDateResolver } = await import('/src/workbench/web-dates.js');
+    // A Pacific web: -420 in October (PDT), -480 in January (PST), and the
+    // transition day itself looked up per instant.
+    const pacific = (iso) => {
+      const t = new Date(iso);
+      const dst = t >= new Date('2026-03-08T10:00:00Z') && t < new Date('2026-11-01T09:00:00Z');
+      return new Date(t.getTime() + (dst ? -7 : -8) * 3600000).toISOString().slice(0, 19);
+    };
+    const calls = [];
+    const client = {
+      async get(path) {
+        calls.push(path);
+        if (path === 'web/RegionalSettings') {
+          return { DateFormat: 0, DateSeparator: '/', TimeSeparator: ':', Time24: false, AM: 'AM', PM: 'PM' };
+        }
+        const m = /utcToLocalTime\(@d\)\?@d='([^']+)'/.exec(path);
+        return m ? { value: pacific(m[1]) } : null;
+      },
+    };
+    const webDateFor = createWebDateResolver(client);
+    const oct = await webDateFor(new Date('2026-10-06T16:00:00Z'));
+    const jan = await webDateFor(new Date('2026-01-15T16:00:00Z'));
+    const beforeSwitch = await webDateFor(new Date('2026-11-01T08:30:00Z'));
+    const afterSwitch = await webDateFor(new Date('2026-11-01T09:30:00Z'));
+    return oct.offsetMinutes === -420 && oct.order === 'mdy' && oct.am === 'AM'
+      && jan.offsetMinutes === -480
+      && beforeSwitch.offsetMinutes === -420 && afterSwitch.offsetMinutes === -480
+      && calls.filter((c) => c === 'web/RegionalSettings').length === 1;
+  }));
+
+// getAll treats `top` as the PAGE size — the EEEU scan and the list-data
+// capture rely on top: 5000 walking every later page — so a top: 1 lookup
+// through getAll walked ~5,000 one-row pages on a large live list (5,011
+// requests). getPage is the one-request call; `cap` also stops getAll.
+await check('sp-rest: getPage makes one request; getAll follows nextLinks past `top` unless capped', async () =>
+  page.evaluate(async () => {
+    const { createSpRestClient } = await import('/src/workbench/sp-rest.js');
+    let requests = 0;
+    const fetchImpl = async (url) => {
+      requests++;
+      const n = requests;
+      return new Response(JSON.stringify({
+        value: [{ Id: n }],
+        'odata.nextLink': `${url.split('&$skiptoken')[0]}&$skiptoken=Paged%3dTRUE%26p_ID%3d${n}`,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    const client = createSpRestClient({
+      getContext: () => ({ live: true, pageContext: { webAbsoluteUrl: 'https://t.example/sites/big' } }),
+      fetchImpl,
+    });
+    const opts = { select: ['Id', 'Created'], orderby: 'Created asc', top: 1 };
+    const one = await client.getPage("web/lists(guid'x')/items", opts);
+    const afterPage = requests;
+    requests = 0;
+    const capped = await client.getAll("web/lists(guid'x')/items", opts, { cap: 1 });
+    const afterCapped = requests;
+    requests = 0;
+    const walked = await client.getAll("web/lists(guid'x')/items", { ...opts, top: 1000 }, { cap: 3 });
+    return afterPage === 1 && one.items.length === 1 && one.items[0].Id === 1
+      && one.nextLink.includes('skiptoken')
+      && afterCapped === 1 && capped.items.length === 1 && capped.partial === true
+      // `top` alone is a page size: pages keep being followed up to the cap.
+      && requests === 3 && walked.items.length === 3;
   }));
 
 await page.close();
