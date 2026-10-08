@@ -168,8 +168,8 @@ function getSpContext({ refresh = false } = {}) {
 
 // ../src/build-info.js
 var APP_VERSION = "1.0.0";
-var injectedBuild = true ? "256" : "dev";
-var injectedRevision = true ? "60a61e79" : "";
+var injectedBuild = true ? "264" : "dev";
+var injectedRevision = true ? "37737c59" : "";
 var APP_BUILD_INFO = Object.freeze({
   version: APP_VERSION,
   build: injectedBuild,
@@ -405,6 +405,11 @@ function createSpRestClient({
   async function get(path, opts) {
     return entityOf(await rawGet(apiUrl(path, opts)));
   }
+  async function getPage(path, opts) {
+    const data = await rawGet(apiUrl(path, opts));
+    const page = collectionOf(data);
+    return page ? { items: page, nextLink: nextLinkOf(data) } : { items: [entityOf(data)], nextLink: "" };
+  }
   async function getAll(path, opts, { cap, allowLargeCap = false, shouldStop = null } = {}) {
     const ceiling = allowLargeCap ? LARGE_PAGE_CAP : PAGE_CAP;
     const limit = Math.min(Math.max(1, Number(cap) || ceiling), ceiling);
@@ -441,7 +446,7 @@ function createSpRestClient({
     }
     return { items, partial, stopped };
   }
-  return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getAll };
+  return { context, webUrl, hostWebUrl, connectWeb, apiUrl, get, getPage, getAll };
 }
 
 // ../src/io.js?v=2
@@ -3512,11 +3517,32 @@ var ALL_PROPERTIES = {
 var REGIONAL_SETTINGS = {
   LocaleId: 1033,
   Time24: false,
+  DateFormat: 0,
+  DateSeparator: "/",
+  TimeSeparator: ":",
+  AM: "AM",
+  PM: "PM",
+  TimeMarkerPosition: 0,
   FirstDayOfWeek: 0,
   WorkDays: 62,
   AdjustHijriDays: 0,
   TimeZone: { Id: 10, Description: "(UTC-05:00) Eastern Time (US and Canada)" }
 };
+function mockUtcToLocalTime(isoInstant) {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).formatToParts(instant).map((p) => [p.type, p.value]));
+  return { value: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}` };
+}
 var CURRENT_USER = user(11, "Mock Developer", "dev@mock.local", true);
 var CLASSIC_LISTS = [
   list("Documents", "7a1c6b7e-0d4a-4b6e-9f2e-1a2b3c4d5f01", 101, 1, 8, false, "/sites/classic/Documents"),
@@ -4075,6 +4101,8 @@ function mockResolver(rawUrl) {
     return null;
   }
   if (path.startsWith("web/allproperties")) return ALL_PROPERTIES;
+  const utcToLocal = /^web\/regionalsettings\/timezone\/utctolocaltime\(@d\)\?@d='([^']+)'/.exec(path);
+  if (utcToLocal) return mockUtcToLocalTime(utcToLocal[1].toUpperCase());
   if (path.startsWith("web/regionalsettings")) return REGIONAL_SETTINGS;
   if (path.startsWith("web/currentuser")) return CURRENT_USER;
   if (path.startsWith("web/webs")) return { value: SUBWEBS };
@@ -8444,6 +8472,76 @@ async function captureListData(client2, listId, { schemaDoc = null, maxItems = n
   return { doc, raw: { items: rawRows } };
 }
 
+// ../src/workbench/web-dates.js
+var ORDERS = { 0: "mdy", 1: "dmy", 2: "ymd" };
+var notWritten = (what) => new SpFileError(
+  `The site\u2019s ${what} could not be read, so the date was not written.`,
+  { code: "write" }
+);
+function webDateFormatOf(settings) {
+  const s = settings || {};
+  const order = ORDERS[s.DateFormat];
+  const time24 = s.Time24;
+  const ok = order && typeof s.DateSeparator === "string" && s.DateSeparator && typeof s.TimeSeparator === "string" && s.TimeSeparator && typeof time24 === "boolean" && (time24 || typeof s.AM === "string" && s.AM && typeof s.PM === "string" && s.PM && (s.TimeMarkerPosition === 0 || s.TimeMarkerPosition === 1));
+  if (!ok) throw notWritten("regional date format");
+  return {
+    order,
+    sep: s.DateSeparator,
+    timeSep: s.TimeSeparator,
+    time24,
+    am: s.AM || "",
+    pm: s.PM || "",
+    markerFirst: s.TimeMarkerPosition === 1
+  };
+}
+async function utcOffsetAtMs(client2, isoInstant) {
+  const data = await client2.get(`web/RegionalSettings/TimeZone/utcToLocalTime(@d)?@d='${isoInstant}'`);
+  const local = data?.value;
+  const offsetMs = local ? (/* @__PURE__ */ new Date(`${local}Z`)).getTime() - new Date(isoInstant).getTime() : NaN;
+  if (!Number.isFinite(offsetMs) || offsetMs % 6e4 !== 0 || Math.abs(offsetMs) > 14 * 36e5) {
+    throw notWritten("time zone");
+  }
+  return offsetMs;
+}
+async function webLocalOffsetMinutes(cache, client2, utc) {
+  const dayOf = (d) => d.toISOString().slice(0, 10);
+  const offsetForDay = async (day2) => {
+    if (!cache.has(day2)) cache.set(day2, await utcOffsetAtMs(client2, `${day2}T12:00:00Z`));
+    return cache.get(day2);
+  };
+  const day = dayOf(utc);
+  const here = await offsetForDay(day);
+  const prev = await offsetForDay(dayOf(new Date(utc.getTime() - 864e5)));
+  const next2 = await offsetForDay(dayOf(new Date(utc.getTime() + 864e5)));
+  let offsetMs = here;
+  if (here !== prev || here !== next2) {
+    offsetMs = await utcOffsetAtMs(client2, utc.toISOString());
+  }
+  return offsetMs / 6e4;
+}
+function createWebDateResolver(client2) {
+  let formatRead = null;
+  const offsets = /* @__PURE__ */ new Map();
+  const offsetAt = (ms) => webLocalOffsetMinutes(offsets, client2, new Date(ms));
+  return async function webDateFor(instant) {
+    formatRead ??= client2.get("web/RegionalSettings").then(webDateFormatOf).catch((err) => {
+      formatRead = null;
+      throw err;
+    });
+    const format = await formatRead;
+    const t = instant.getTime();
+    const offsetMinutes = await offsetAt(t);
+    let ambiguous = false;
+    for (const around of [t - 3 * 36e5, t + 3 * 36e5]) {
+      const other = await offsetAt(around);
+      if (other === offsetMinutes) continue;
+      const twin = t + (offsetMinutes - other) * 6e4;
+      if (twin !== t && await offsetAt(twin) === other) ambiguous = true;
+    }
+    return { ...format, offsetMinutes, ambiguous };
+  };
+}
+
 // ../src/workbench/list-data-apply.js
 var guidPath3 = (listId, sub = "") => `web/lists(guid'${listId}')${sub}`;
 var FAILED_CAP = 50;
@@ -8530,30 +8628,6 @@ async function calibrateDateFormat(client2, spWrite, listId, rootFolder, probeFi
     }
   }
   return fallback;
-}
-async function utcOffsetAtMs(client2, isoInstant) {
-  const data = await client2.get(`web/RegionalSettings/TimeZone/utcToLocalTime(@d)?@d='${isoInstant}'`);
-  const local = data?.value;
-  if (!local) {
-    throw new SpFileError("Web time zone could not be read; date not written.", { code: "write" });
-  }
-  return (/* @__PURE__ */ new Date(`${local}Z`)).getTime() - new Date(isoInstant).getTime();
-}
-async function webLocalOffsetMinutes(cache, client2, utc) {
-  const dayOf = (d) => d.toISOString().slice(0, 10);
-  const offsetForDay = async (day2) => {
-    if (!cache.has(day2)) cache.set(day2, await utcOffsetAtMs(client2, `${day2}T12:00:00Z`));
-    return cache.get(day2);
-  };
-  const day = dayOf(utc);
-  const here = await offsetForDay(day);
-  const prev = await offsetForDay(dayOf(new Date(utc.getTime() - 864e5)));
-  const next2 = await offsetForDay(dayOf(new Date(utc.getTime() + 864e5)));
-  let offsetMs = here;
-  if (here !== prev || here !== next2) {
-    offsetMs = await utcOffsetAtMs(client2, utc.toISOString());
-  }
-  return offsetMs / 6e4;
 }
 async function buildUserIds(spWrite, users, report) {
   const userIds = /* @__PURE__ */ new Map();
@@ -13918,7 +13992,33 @@ var choicesOf = (field2) => {
   const arr = Array.isArray(v) ? v : v?.results;
   return Array.isArray(arr) ? arr : [];
 };
-function toFormValue(field2, uiValue) {
+var pad22 = (n) => String(n).padStart(2, "0");
+var isDateOnly = (field2) => field2?.DisplayFormat === 0 || field2?.DisplayFormat === "DateOnly";
+var DATE_ORDERS = /* @__PURE__ */ new Set(["mdy", "dmy", "ymd"]);
+function formatWebDate(parts, webDate, { dateOnly = false } = {}) {
+  const f = webDate;
+  const byKey = { y: String(parts.y), m: String(parts.m), d: String(parts.d) };
+  const date = f.order.split("").map((k) => byKey[k]).join(f.sep);
+  if (dateOnly) return date;
+  if (f.time24) return `${date} ${pad22(parts.h)}${f.timeSep}${pad22(parts.min)}`;
+  const time = `${parts.h % 12 || 12}${f.timeSep}${pad22(parts.min)}`;
+  const marker = parts.h < 12 ? f.am : f.pm;
+  return f.markerFirst ? `${date} ${marker} ${time}` : `${date} ${time} ${marker}`;
+}
+function dateTimeInstantOf(uiValue) {
+  const s = String(uiValue ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function checkWebDate(webDate, { needsOffset }) {
+  const f = webDate || {};
+  const ok = DATE_ORDERS.has(f.order) && f.sep && f.timeSep && typeof f.time24 === "boolean" && (f.time24 || f.am && f.pm && typeof f.markerFirst === "boolean") && (!needsOffset || Number.isFinite(f.offsetMinutes));
+  if (!ok) {
+    throw new Error("A date can only be written in the site\u2019s own regional format and time zone, and those were not available. SharePoint Online refuses ISO 8601 dates.");
+  }
+}
+function toFormValue(field2, uiValue, { webDate = null } = {}) {
   switch (String(field2?.TypeAsString || "")) {
     case "MultiChoice": {
       const arr = Array.isArray(uiValue) ? uiValue.filter(Boolean) : [];
@@ -13934,8 +14034,26 @@ function toFormValue(field2, uiValue) {
     case "DateTime": {
       const s = String(uiValue ?? "").trim();
       if (!s) return "";
-      const d = new Date(s);
-      return Number.isNaN(d.getTime()) ? s : d.toISOString();
+      const d = dateTimeInstantOf(s);
+      if (!d) return s;
+      const dateOnly = isDateOnly(field2);
+      checkWebDate(webDate, { needsOffset: !dateOnly });
+      if (dateOnly) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+        const parts = m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+        return formatWebDate(parts, webDate, { dateOnly: true });
+      }
+      if (webDate.ambiguous) {
+        throw new Error("This time happens twice on the site\u2019s clock (daylight saving ends then), so it can\u2019t be saved exactly. Choose a time outside that hour.");
+      }
+      const wall = new Date(d.getTime() + webDate.offsetMinutes * 6e4);
+      return formatWebDate({
+        y: wall.getUTCFullYear(),
+        m: wall.getUTCMonth() + 1,
+        d: wall.getUTCDate(),
+        h: wall.getUTCHours(),
+        min: wall.getUTCMinutes()
+      }, webDate);
     }
     case "URL": {
       const url = String(uiValue?.url ?? "").trim();
@@ -13947,7 +14065,7 @@ function toFormValue(field2, uiValue) {
       return String(uiValue ?? "");
   }
 }
-function fromItemValue(field2, itemValue) {
+function fromItemValue(field2, itemValue, { webOffsetMinutes = null } = {}) {
   switch (String(field2?.TypeAsString || "")) {
     case "MultiChoice": {
       if (Array.isArray(itemValue)) return itemValue;
@@ -13964,8 +14082,11 @@ function fromItemValue(field2, itemValue) {
       if (!s) return "";
       const d = new Date(s);
       if (Number.isNaN(d.getTime())) return s;
-      const pad = (n) => String(n).padStart(2, "0");
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      if (isDateOnly(field2) && Number.isFinite(webOffsetMinutes)) {
+        const wall = new Date(d.getTime() + webOffsetMinutes * 6e4);
+        return `${wall.getUTCFullYear()}-${pad22(wall.getUTCMonth() + 1)}-${pad22(wall.getUTCDate())}T00:00`;
+      }
+      return `${d.getFullYear()}-${pad22(d.getMonth() + 1)}-${pad22(d.getDate())}T${pad22(d.getHours())}:${pad22(d.getMinutes())}`;
     }
     case "URL":
       return {
@@ -13989,6 +14110,7 @@ function createFieldEditor(field2, initialValue) {
   error.hidden = true;
   row.append(label, control, error);
   let getValue = () => "";
+  let dateInput = null;
   const textInput = (tag, value) => {
     const input = el14(tag === "textarea" ? "textarea" : "input");
     if (tag !== "textarea") input.type = tag;
@@ -14065,6 +14187,7 @@ function createFieldEditor(field2, initialValue) {
     case "DateTime": {
       const input = textInput("datetime-local", initial);
       getValue = () => input.value;
+      dateInput = input;
       break;
     }
     case "URL": {
@@ -14080,14 +14203,24 @@ function createFieldEditor(field2, initialValue) {
       getValue = () => input.value;
     }
   }
-  let baselineForm = toFormValue(field2, getValue());
+  const keyOf = (v) => type === "DateTime" ? String(v ?? "").trim() : toFormValue(field2, v);
+  let baseline = keyOf(getValue());
   return {
     el: row,
     field: field2,
     getValue,
-    isDirty: () => toFormValue(field2, getValue()) !== baselineForm,
+    isDirty: () => keyOf(getValue()) !== baseline,
     markClean() {
-      baselineForm = toFormValue(field2, getValue());
+      baseline = keyOf(getValue());
+    },
+    // The DateTime input, for a form that corrects the shown value once the
+    // web's clock is known (date-only fields). Null for every other type.
+    dateInput,
+    // Replace the shown value AND the clean baseline: a correction of how a
+    // stored value is displayed is not an edit.
+    rebase(uiValue) {
+      if (dateInput) dateInput.value = uiValue ?? "";
+      baseline = keyOf(getValue());
     },
     setError(message) {
       error.textContent = message || "";
@@ -14106,10 +14239,33 @@ function readOnlyRow(field2, displayText, hint = "") {
   row.append(label, value);
   return row;
 }
-function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSave, layout = null }) {
+function createFieldEditorForm({
+  fields,
+  item: item2 = {},
+  itemAsText = {},
+  onSave,
+  layout = null,
+  webDateFor = null
+}) {
   const root2 = el14("div", "wb-editor-form");
   const rows = el14("div", "wb-editor-rows");
   const editors = [];
+  const settling = [];
+  const standing = /* @__PURE__ */ new Map();
+  function showOnWebCalendar(editor, stored) {
+    const instant = dateTimeInstantOf(stored);
+    if (!instant) return;
+    editor.dateInput.disabled = true;
+    settling.push(webDateFor(instant).then((webDate) => {
+      if (!Number.isFinite(webDate?.offsetMinutes)) throw new Error("the site\u2019s time zone could not be read");
+      editor.rebase(fromItemValue(editor.field, stored, { webOffsetMinutes: webDate.offsetMinutes }));
+      editor.dateInput.disabled = false;
+    }).catch((err) => {
+      const message = `Not editable here: this date could not be shown on the site\u2019s calendar (${err?.message || err}). Reopen the item to try again.`;
+      standing.set(editor, message);
+      editor.setError(message);
+    }));
+  }
   const entries = Array.isArray(layout) ? layout : (fields || []).filter((f) => !f.Hidden).map((field2) => ({ field: field2 }));
   for (const entry of entries) {
     if (!entry.field) {
@@ -14126,6 +14282,7 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
       const editor = createFieldEditor(field2, item2[internal]);
       editors.push(editor);
       rows.append(editor.el);
+      if (editor.dateInput && isDateOnly(field2) && webDateFor) showOnWebCalendar(editor, item2[internal]);
     } else {
       const text = itemAsText?.[internal];
       const raw = item2[internal];
@@ -14140,16 +14297,26 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
   const status = el14("span", "wb-editor-status");
   bar.append(save, status);
   root2.append(rows, bar);
-  function dirtyFormValues() {
-    return editors.filter((e) => e.isDirty()).map((e) => ({
-      FieldName: e.field.InternalName,
-      FieldValue: toFormValue(e.field, e.getValue())
-    }));
+  async function dirtyFormValues() {
+    const formValues = [];
+    for (const e of editors.filter((x) => x.isDirty())) {
+      const ui = e.getValue();
+      try {
+        const instant = e.field.TypeAsString === "DateTime" ? dateTimeInstantOf(ui) : null;
+        const webDate = instant && webDateFor ? await webDateFor(instant) : null;
+        formValues.push({ FieldName: e.field.InternalName, FieldValue: toFormValue(e.field, ui, { webDate }) });
+      } catch (err) {
+        if (err?.code === "auth") throw err;
+        throw Object.assign(new Error(err?.message || String(err)), {
+          fieldErrors: { [e.field.InternalName]: err?.message || String(err) }
+        });
+      }
+    }
+    return formValues;
   }
   save.addEventListener("click", async () => {
-    for (const editor of editors) editor.setError("");
-    const formValues = dirtyFormValues();
-    if (!formValues.length) {
+    for (const editor of editors) editor.setError(standing.get(editor) || "");
+    if (!editors.some((e) => e.isDirty())) {
       status.textContent = "No changes to save.";
       status.className = "wb-editor-status";
       return;
@@ -14157,7 +14324,9 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
     save.disabled = true;
     status.textContent = "Saving\u2026";
     status.className = "wb-editor-status";
+    let formValues = [];
     try {
+      formValues = await dirtyFormValues();
       await onSave(formValues);
       for (const editor of editors) editor.markClean();
       status.textContent = `Saved ${formValues.length} field${formValues.length === 1 ? "" : "s"}.`;
@@ -14178,7 +14347,7 @@ function createFieldEditorForm({ fields, item: item2 = {}, itemAsText = {}, onSa
       save.disabled = false;
     }
   });
-  return { el: root2, getDirtyFormValues: dirtyFormValues, editors };
+  return { el: root2, getDirtyFormValues: dirtyFormValues, editors, ready: Promise.all(settling) };
 }
 
 // ../src/workbench/page-export.js
@@ -15115,7 +15284,7 @@ function computeCarrySet({
   for (const tgt of targetFields) {
     const name = String(tgt.InternalName || "");
     if (!tgt.Required || !writable(tgt) || carriedNames.has(name)) continue;
-    if (!EDITABLE_TYPES.has(String(tgt.TypeAsString || ""))) {
+    if (!EDITABLE_TYPES.has(String(tgt.TypeAsString || "")) || tgt.TypeAsString === "DateTime") {
       requiredGaps.push({ internalName: name, title: tgt.Title || name, type: tgt.TypeAsString, supportable: false });
       continue;
     }
@@ -19039,7 +19208,8 @@ var FIELD_SELECT5 = [
   "DefaultValue",
   "Choices",
   "Description",
-  "FillInChoice"
+  "FillInChoice",
+  "DisplayFormat"
 ];
 var SITE_PAGES_BASE_TEMPLATE2 = 119;
 var PUBLISHING_PAGES_BASE_TEMPLATE2 = 850;
@@ -19843,6 +20013,7 @@ ${p.html}`).join("\n\n")
         item: item2,
         itemAsText,
         layout,
+        webDateFor: createWebDateResolver(client2),
         onSave: (formValues) => spWrite.validateUpdateListItem({ listId, itemId: pageId }, formValues)
       });
       if (statusFailure) {
@@ -20377,7 +20548,8 @@ var FIELD_SELECT6 = [
   "DefaultValue",
   "Choices",
   "Description",
-  "FillInChoice"
+  "FillInChoice",
+  "DisplayFormat"
 ];
 var DOCUMENT_LIBRARY_BASE_TYPE = 1;
 var CHECK_IN_COMMENT2 = "Uploaded from SP Workbench";
@@ -21050,6 +21222,7 @@ function createBrowserView({ client: client2, navigate }) {
         fields,
         item: item2,
         itemAsText,
+        webDateFor: createWebDateResolver(client2),
         onSave: (formValues) => spWrite.validateUpdateListItem(
           { fileServerRelativeUrl: row.ServerRelativeUrl },
           formValues,
