@@ -264,7 +264,7 @@
     },
     {
       "name": "--ds-version",
-      "value": "\"1.0.0\"",
+      "value": "\"1.1.0\"",
       "category": "Design token",
       "description": "0 · VERSION — stamped by tools/Set-Version.ps1 from the VERSION file. Not a design token; it exists so a deployed copy can identify itself with no git and no build. Probe the live page from devtools: getComputedStyle(document.documentElement).getPropertyValue('--ds-version')",
       "source": {
@@ -2052,7 +2052,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 345
+        "line": 347
       }
     },
     {
@@ -2585,7 +2585,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 378
+        "line": 380
       }
     },
     {
@@ -2621,7 +2621,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 565
+        "line": 567
       }
     },
     {
@@ -2725,7 +2725,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 739
+        "line": 834
       }
     },
     {
@@ -2741,7 +2741,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 747
+        "line": 842
       }
     },
     {
@@ -2757,7 +2757,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 746
+        "line": 841
       }
     },
     {
@@ -2772,7 +2772,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 519
+        "line": 521
       }
     },
     {
@@ -2791,7 +2791,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 527
+        "line": 529
       }
     },
     {
@@ -2813,7 +2813,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 353
+        "line": 355
       }
     },
     {
@@ -2836,7 +2836,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 350
+        "line": 352
       }
     },
     {
@@ -3112,7 +3112,6 @@
         "hero__lede",
         "hero__title",
         "is-in",
-        "l-grid",
         "l-section",
         "l-wrap",
         "reveal",
@@ -3194,7 +3193,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 367
+        "line": 369
       }
     },
     {
@@ -3213,7 +3212,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 377
+        "line": 379
       }
     },
     {
@@ -3318,7 +3317,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 408
+        "line": 410
       }
     },
     {
@@ -3340,7 +3339,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 423
+        "line": 425
       }
     },
     {
@@ -3359,7 +3358,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 422
+        "line": 424
       }
     },
     {
@@ -3378,7 +3377,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 420
+        "line": 422
       }
     },
     {
@@ -3397,7 +3396,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 421
+        "line": 423
       }
     },
     {
@@ -3627,7 +3626,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 938
+        "line": 1033
       }
     },
     {
@@ -3643,7 +3642,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 960
+        "line": 1055
       }
     },
     {
@@ -3659,7 +3658,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 961
+        "line": 1056
       }
     },
     {
@@ -3675,7 +3674,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 962
+        "line": 1057
       }
     },
     {
@@ -3714,7 +3713,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 979
+        "line": 1074
       }
     },
     {
@@ -3730,7 +3729,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 966
+        "line": 1061
       }
     },
     {
@@ -3749,7 +3748,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 992
+        "line": 1087
       }
     },
     {
@@ -3765,7 +3764,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 981
+        "line": 1076
       }
     },
     {
@@ -3874,7 +3873,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 748
+        "line": 843
       }
     },
     {
@@ -3895,7 +3894,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 333
+        "line": 335
       }
     },
     {
@@ -3926,7 +3925,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 224
+        "line": 226
       }
     },
     {
@@ -3946,7 +3945,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 230
+        "line": 232
       }
     },
     {
@@ -3962,7 +3961,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 758
+        "line": 853
       }
     },
     {
@@ -3982,7 +3981,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 335
+        "line": 337
       }
     },
     {
@@ -4005,7 +4004,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 755
+        "line": 850
       }
     },
     {
@@ -4030,7 +4029,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 757
+        "line": 852
       }
     },
     {
@@ -4056,7 +4055,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 759
+        "line": 854
       }
     },
     {
@@ -4081,7 +4080,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 756
+        "line": 851
       }
     },
     {
@@ -4106,7 +4105,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 305
+        "line": 307
       }
     },
     {
@@ -4126,7 +4125,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 327
+        "line": 329
       }
     },
     {
@@ -4153,7 +4152,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 750
+        "line": 752
       }
     },
     {
@@ -4175,7 +4174,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 225
+        "line": 227
       }
     },
     {
@@ -4202,7 +4201,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 206
+        "line": 208
       }
     },
     {
@@ -4224,7 +4223,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 228
+        "line": 230
       }
     },
     {
@@ -4246,7 +4245,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 276
+        "line": 278
       }
     },
     {
@@ -4266,7 +4265,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 299
+        "line": 301
       }
     },
     {
@@ -4286,7 +4285,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 301
+        "line": 303
       }
     },
     {
@@ -4306,7 +4305,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 302
+        "line": 304
       }
     },
     {
@@ -4326,7 +4325,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 303
+        "line": 305
       }
     },
     {
@@ -4346,7 +4345,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 304
+        "line": 306
       }
     },
     {
@@ -4368,7 +4367,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 225
+        "line": 227
       }
     },
     {
@@ -4390,7 +4389,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 329
+        "line": 331
       }
     },
     {
@@ -4411,7 +4410,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 763
+        "line": 765
       }
     },
     {
@@ -4434,7 +4433,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 779
+        "line": 781
       }
     },
     {
@@ -4455,7 +4454,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 799
+        "line": 801
       }
     },
     {
@@ -4657,7 +4656,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 549
+        "line": 551
       }
     },
     {
@@ -4810,7 +4809,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 920
+        "line": 1015
       }
     },
     {
@@ -4828,7 +4827,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 920
+        "line": 1015
       }
     },
     {
@@ -4846,7 +4845,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 934
+        "line": 1029
       }
     },
     {
@@ -4897,7 +4896,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 492
+        "line": 494
       }
     },
     {
@@ -4920,7 +4919,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 739
+        "line": 741
       }
     },
     {
@@ -4939,7 +4938,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 506
+        "line": 508
       }
     },
     {
@@ -4959,7 +4958,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 508
+        "line": 510
       }
     },
     {
@@ -4981,7 +4980,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 511
+        "line": 513
       }
     },
     {
@@ -5002,7 +5001,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 510
+        "line": 512
       }
     },
     {
@@ -5021,7 +5020,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 725
+        "line": 727
       }
     },
     {
@@ -5043,7 +5042,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 731
+        "line": 733
       }
     },
     {
@@ -5063,7 +5062,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 504
+        "line": 506
       }
     },
     {
@@ -5084,7 +5083,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 737
+        "line": 739
       }
     },
     {
@@ -5103,7 +5102,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 507
+        "line": 509
       }
     },
     {
@@ -5122,7 +5121,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 730
+        "line": 732
       }
     },
     {
@@ -5141,7 +5140,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 729
+        "line": 731
       }
     },
     {
@@ -5160,33 +5159,227 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 716
+        "line": 718
+      }
+    },
+    {
+      "name": "l-app",
+      "kind": "base",
+      "description": "LAYOUT PRIMITIVES — container-aware layout for app parts. A web part's width comes from the SharePoint column it sits in, not the browser window, so nothing here uses a viewport media query. Every primitive adapts to the space it actually has: the grids fit as many columns as there is room for, the sidebar and switcher stack when they get narrow. They nest freely. Knobs (custom properties — set them in page CSS or…",
+      "selectors": [
+        "It must be a full-width block (a <div>/<main> that fills its column): its width can't come from its content, so as an inline-block, a float, an absolutely positioned box or a flex item that doesn't grow, it collapses.…"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 725
+      }
+    },
+    {
+      "name": "l-cluster",
+      "kind": "base",
+      "description": "Stack — vertical flow with one consistent gap. It clears the default margins of plain, unclassed content elements (headings, paragraphs, lists…) that are its direct children, so the gap is the only space between them. Anything with a class keeps its own margins — a .section-head's bottom margin adds to the gap, a .card__footer still sinks to the bottom, a .section-head__title keeps its spacing.",
+      "selectors": [
+        ".l-cluster",
+        ".l-cluster > *"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 740
+      }
+    },
+    {
+      "name": "l-cluster--between",
+      "kind": "modifier",
+      "base": "l-cluster",
+      "description": "An item can't be wider than the row, so a long unbroken label wraps inside it rather than pushing the cluster past its column.",
+      "appliesTo": [
+        "l-cluster"
+      ],
+      "selectors": [
+        ".l-cluster--between"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 747
+      }
+    },
+    {
+      "name": "l-cluster--end",
+      "kind": "modifier",
+      "base": "l-cluster",
+      "description": "An item can't be wider than the row, so a long unbroken label wraps inside it rather than pushing the cluster past its column.",
+      "appliesTo": [
+        "l-cluster"
+      ],
+      "selectors": [
+        ".l-cluster--end"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 746
+      }
+    },
+    {
+      "name": "l-gap--0",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Scroll — a box for content that can't shrink to the column: a wide data grid, a <pre>, a long code line. It scrolls sideways inside its own box instead of pushing the whole part past its column. <div class=\"l-scroll\"><table class=\"grid\">…</table></div>",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--0"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 797
+      }
+    },
+    {
+      "name": "l-gap--120",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--120"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 803
+      }
+    },
+    {
+      "name": "l-gap--160",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--160"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 804
+      }
+    },
+    {
+      "name": "l-gap--200",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--200"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 805
+      }
+    },
+    {
+      "name": "l-gap--240",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--240"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 806
+      }
+    },
+    {
+      "name": "l-gap--320",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--320"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 807
+      }
+    },
+    {
+      "name": "l-gap--40",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--40"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 801
+      }
+    },
+    {
+      "name": "l-gap--480",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--480"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 808
+      }
+    },
+    {
+      "name": "l-gap--80",
+      "kind": "modifier",
+      "base": "l-gap",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
+      "appliesTo": [
+        "l-gap"
+      ],
+      "selectors": [
+        ".l-gap--80"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 802
       }
     },
     {
       "name": "l-grid",
       "kind": "base",
-      "description": "Section rhythm — vertical padding for a content section inside a band.",
-      "appliesTo": [
-        "editorial"
-      ],
+      "description": "Switcher — side-by-side panels that all stack at once when the container is narrower than --l-break. Equal widths by default; add .l-switcher__wide to a child to give it twice the share of the row (roughly ⅔ + ⅓ — padding on the children dilutes the ratio a little). Set --l-break at least as wide as the children's combined minimum widths (padding, buttons, long words) plus gaps; otherwise just above the break they…",
       "selectors": [
-        ".l-grid",
-        ".editorial .l-grid"
-      ],
-      "scopes": [
-        "editorial"
+        ".l-grid"
       ],
       "source": {
         "file": "components.css",
-        "line": 701
+        "line": 770
       }
     },
     {
       "name": "l-grid--2",
       "kind": "modifier",
       "base": "l-grid",
-      "description": "Simple responsive column grids for card rows. Collapse to fewer columns on narrow viewports. Gap is the 16/20px engagement rhythm.",
+      "description": "Grid — card and tile rows. .l-grid--auto fits as many columns as there is room for, each at least --l-min wide. .l-grid--2/--3/--4 do the same but never exceed that many columns. Both drop columns as their container narrows — in a one-third SharePoint column as much as on a phone. Column slots stay put when a row has fewer items than fit (one card in a wide grid keeps its column width rather than stretching), so e…",
       "appliesTo": [
         "l-grid",
         "l-grid--3",
@@ -5198,14 +5391,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 705
+        "line": 784
       }
     },
     {
       "name": "l-grid--3",
       "kind": "modifier",
       "base": "l-grid",
-      "description": "Simple responsive column grids for card rows. Collapse to fewer columns on narrow viewports. Gap is the 16/20px engagement rhythm.",
+      "description": "Grid — card and tile rows. .l-grid--auto fits as many columns as there is room for, each at least --l-min wide. .l-grid--2/--3/--4 do the same but never exceed that many columns. Both drop columns as their container narrows — in a one-third SharePoint column as much as on a phone. Column slots stay put when a row has fewer items than fit (one card in a wide grid keeps its column width rather than stretching), so e…",
       "appliesTo": [
         "l-grid",
         "l-grid--2",
@@ -5217,14 +5410,14 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 706
+        "line": 785
       }
     },
     {
       "name": "l-grid--4",
       "kind": "modifier",
       "base": "l-grid",
-      "description": "Simple responsive column grids for card rows. Collapse to fewer columns on narrow viewports. Gap is the 16/20px engagement rhythm.",
+      "description": "Grid — card and tile rows. .l-grid--auto fits as many columns as there is room for, each at least --l-min wide. .l-grid--2/--3/--4 do the same but never exceed that many columns. Both drop columns as their container narrows — in a one-third SharePoint column as much as on a phone. Column slots stay put when a row has fewer items than fit (one card in a wide grid keeps its column width rather than stretching), so e…",
       "appliesTo": [
         "l-grid",
         "l-grid--2",
@@ -5236,13 +5429,41 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 707
+        "line": 786
+      }
+    },
+    {
+      "name": "l-grid--auto",
+      "kind": "modifier",
+      "base": "l-grid",
+      "description": "Grid — card and tile rows. .l-grid--auto fits as many columns as there is room for, each at least --l-min wide. .l-grid--2/--3/--4 do the same but never exceed that many columns. Both drop columns as their container narrows — in a one-third SharePoint column as much as on a phone. Column slots stay put when a row has fewer items than fit (one card in a wide grid keeps its column width rather than stretching), so e…",
+      "appliesTo": [
+        "l-grid"
+      ],
+      "selectors": [
+        ".l-grid--auto"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 781
+      }
+    },
+    {
+      "name": "l-scroll",
+      "kind": "base",
+      "description": "Grid — card and tile rows. .l-grid--auto fits as many columns as there is room for, each at least --l-min wide. .l-grid--2/--3/--4 do the same but never exceed that many columns. Both drop columns as their container narrows — in a one-third SharePoint column as much as on a phone. Column slots stay put when a row has fewer items than fit (one card in a wide grid keeps its column width rather than stretching), so e…",
+      "selectors": [
+        ".l-scroll"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 791
       }
     },
     {
       "name": "l-section",
       "kind": "base",
-      "description": "Centered content shell — the max-width column every section aligns to. Use it directly, or use .band__inner inside a full-bleed .band.",
+      "description": "Centered content shell — the max-width column every section aligns to. Use it directly, or use .band__inner inside a full-bleed .band. FULL PAGES ONLY: inside a SharePoint web part the host column already sets the width and padding — use .l-app there instead.",
       "appliesTo": [
         "editorial"
       ],
@@ -5255,7 +5476,97 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 698
+        "line": 700
+      }
+    },
+    {
+      "name": "l-sidebar",
+      "kind": "base",
+      "description": "An item can't be wider than the row, so a long unbroken label wraps inside it rather than pushing the cluster past its column.",
+      "selectors": [
+        ".l-sidebar"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 748
+      }
+    },
+    {
+      "name": "l-sidebar__main",
+      "kind": "element",
+      "base": "l-sidebar",
+      "description": "Sidebar — a side panel beside a flexible main area. Stacks by itself when the main area would drop below half the width. Source order sets the side: put __side first for a left panel, last for a right one. <div class=\"l-sidebar\"> <aside class=\"l-sidebar__side\">…</aside> <div class=\"l-sidebar__main\">…</div> </div>",
+      "appliesTo": [
+        "l-sidebar"
+      ],
+      "selectors": [
+        ".l-sidebar__main"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 758
+      }
+    },
+    {
+      "name": "l-sidebar__side",
+      "kind": "element",
+      "base": "l-sidebar",
+      "description": "Sidebar — a side panel beside a flexible main area. Stacks by itself when the main area would drop below half the width. Source order sets the side: put __side first for a left panel, last for a right one. <div class=\"l-sidebar\"> <aside class=\"l-sidebar__side\">…</aside> <div class=\"l-sidebar__main\">…</div> </div>",
+      "appliesTo": [
+        "l-sidebar"
+      ],
+      "selectors": [
+        ".l-sidebar__side"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 757
+      }
+    },
+    {
+      "name": "l-stack",
+      "kind": "base",
+      "description": "App root — put it on the outermost element of a web part / app part (usually the same element as x-data). Makes its own width the thing @container rules respond to: @container app (max-width: 480px) { … } It must be a full-width block (a <div>/<main> that fills its column): its width can't come from its content, so as an inline-block, a float, an absolutely positioned box or a flex item that doesn't grow, it colla…",
+      "selectors": [
+        ".l-stack",
+        ".l-stack > :is(h1, h2, h3, h4, h5, h6, p, ul, ol, dl, blockquote, figure, pre, hr):not([class])"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 731
+      }
+    },
+    {
+      "name": "l-switcher",
+      "kind": "base",
+      "description": "Sidebar — a side panel beside a flexible main area. Stacks by itself when the main area would drop below half the width. Source order sets the side: put __side first for a left panel, last for a right one. <div class=\"l-sidebar\"> <aside class=\"l-sidebar__side\">…</aside> <div class=\"l-sidebar__main\">…</div> </div>",
+      "appliesTo": [
+        "l-switcher__wide"
+      ],
+      "selectors": [
+        ".l-switcher",
+        ".l-switcher > *",
+        ".l-switcher > .l-switcher__wide"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 759
+      }
+    },
+    {
+      "name": "l-switcher__wide",
+      "kind": "element",
+      "base": "l-switcher",
+      "description": "Switcher — side-by-side panels that all stack at once when the container is narrower than --l-break. Equal widths by default; add .l-switcher__wide to a child to give it twice the share of the row (roughly ⅔ + ⅓ — padding on the children dilutes the ratio a little). Set --l-break at least as wide as the children's combined minimum widths (padding, buttons, long words) plus gaps; otherwise just above the break they…",
+      "appliesTo": [
+        "l-switcher"
+      ],
+      "selectors": [
+        ".l-switcher > .l-switcher__wide"
+      ],
+      "source": {
+        "file": "components.css",
+        "line": 769
       }
     },
     {
@@ -5322,7 +5633,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 383
+        "line": 385
       }
     },
     {
@@ -5341,7 +5652,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 389
+        "line": 391
       }
     },
     {
@@ -5362,7 +5673,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 406
+        "line": 408
       }
     },
     {
@@ -5381,7 +5692,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 404
+        "line": 406
       }
     },
     {
@@ -5402,7 +5713,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 395
+        "line": 397
       }
     },
     {
@@ -5421,7 +5732,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 401
+        "line": 403
       }
     },
     {
@@ -5440,7 +5751,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 405
+        "line": 407
       }
     },
     {
@@ -5460,7 +5771,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 402
+        "line": 404
       }
     },
     {
@@ -5478,7 +5789,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 484
+        "line": 486
       }
     },
     {
@@ -5497,7 +5808,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 487
+        "line": 489
       }
     },
     {
@@ -5520,7 +5831,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 476
+        "line": 478
       }
     },
     {
@@ -5540,7 +5851,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 470
+        "line": 472
       }
     },
     {
@@ -5710,7 +6021,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 835
+        "line": 837
       }
     },
     {
@@ -5729,7 +6040,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 851
+        "line": 853
       }
     },
     {
@@ -5750,7 +6061,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 836
+        "line": 838
       }
     },
     {
@@ -5769,7 +6080,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 848
+        "line": 850
       }
     },
     {
@@ -5788,7 +6099,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 852
+        "line": 854
       }
     },
     {
@@ -5808,7 +6119,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 843
+        "line": 845
       }
     },
     {
@@ -5828,7 +6139,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 849
+        "line": 851
       }
     },
     {
@@ -5843,7 +6154,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 813
+        "line": 815
       }
     },
     {
@@ -5862,7 +6173,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 595
+        "line": 597
       }
     },
     {
@@ -5881,7 +6192,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 609
+        "line": 611
       }
     },
     {
@@ -5900,7 +6211,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 606
+        "line": 608
       }
     },
     {
@@ -5919,7 +6230,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 610
+        "line": 612
       }
     },
     {
@@ -5939,7 +6250,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 601
+        "line": 603
       }
     },
     {
@@ -5959,7 +6270,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 607
+        "line": 609
       }
     },
     {
@@ -5978,7 +6289,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 821
+        "line": 823
       }
     },
     {
@@ -5997,7 +6308,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 833
+        "line": 835
       }
     },
     {
@@ -6017,7 +6328,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 822
+        "line": 824
       }
     },
     {
@@ -6036,7 +6347,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 834
+        "line": 836
       }
     },
     {
@@ -6056,7 +6367,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 828
+        "line": 830
       }
     },
     {
@@ -6075,7 +6386,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 591
+        "line": 593
       }
     },
     {
@@ -6105,7 +6416,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 462
+        "line": 464
       }
     },
     {
@@ -6218,7 +6529,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 644
+        "line": 646
       }
     },
     {
@@ -6237,7 +6548,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 687
+        "line": 689
       }
     },
     {
@@ -6260,7 +6571,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 693
+        "line": 695
       }
     },
     {
@@ -6283,7 +6594,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 676
+        "line": 678
       }
     },
     {
@@ -6302,7 +6613,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 702
+        "line": 704
       }
     },
     {
@@ -6322,7 +6633,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 706
+        "line": 708
       }
     },
     {
@@ -6343,7 +6654,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 659
+        "line": 661
       }
     },
     {
@@ -6362,7 +6673,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 715
+        "line": 717
       }
     },
     {
@@ -6381,7 +6692,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 671
+        "line": 673
       }
     },
     {
@@ -6400,7 +6711,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 658
+        "line": 660
       }
     },
     {
@@ -6412,7 +6723,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 825
+        "line": 920
       }
     },
     {
@@ -6436,7 +6747,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 849
+        "line": 944
       }
     },
     {
@@ -6458,7 +6769,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 841
+        "line": 936
       }
     },
     {
@@ -6474,7 +6785,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 840
+        "line": 935
       }
     },
     {
@@ -6497,7 +6808,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 844
+        "line": 939
       }
     },
     {
@@ -6515,7 +6826,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 843
+        "line": 938
       }
     },
     {
@@ -6540,7 +6851,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 857
+        "line": 952
       }
     },
     {
@@ -6557,7 +6868,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 887
+        "line": 982
       }
     },
     {
@@ -6574,7 +6885,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 871
+        "line": 966
       }
     },
     {
@@ -6597,7 +6908,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 860
+        "line": 955
       }
     },
     {
@@ -6621,7 +6932,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 855
+        "line": 950
       }
     },
     {
@@ -6638,7 +6949,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 869
+        "line": 964
       }
     },
     {
@@ -6703,7 +7014,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 615
+        "line": 617
       }
     },
     {
@@ -6722,7 +7033,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 627
+        "line": 629
       }
     },
     {
@@ -6737,7 +7048,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 612
+        "line": 614
       }
     },
     {
@@ -6768,7 +7079,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 630
+        "line": 632
       }
     },
     {
@@ -6792,7 +7103,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 634
+        "line": 636
       }
     },
     {
@@ -6814,7 +7125,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 641
+        "line": 643
       }
     },
     {
@@ -6851,7 +7162,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 429
+        "line": 431
       }
     },
     {
@@ -6870,7 +7181,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 457
+        "line": 459
       }
     },
     {
@@ -6891,7 +7202,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 453
+        "line": 455
       }
     },
     {
@@ -6910,7 +7221,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 456
+        "line": 458
       }
     },
     {
@@ -6929,7 +7240,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 447
+        "line": 449
       }
     },
     {
@@ -6948,7 +7259,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 458
+        "line": 460
       }
     },
     {
@@ -6967,7 +7278,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 455
+        "line": 457
       }
     },
     {
@@ -6988,7 +7299,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 445
+        "line": 447
       }
     },
     {
@@ -7009,7 +7320,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 446
+        "line": 448
       }
     },
     {
@@ -7040,7 +7351,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 771
+        "line": 866
       }
     },
     {
@@ -7063,7 +7374,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 779
+        "line": 874
       }
     },
     {
@@ -7087,7 +7398,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 781
+        "line": 876
       }
     },
     {
@@ -7112,7 +7423,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 780
+        "line": 875
       }
     },
     {
@@ -7128,7 +7439,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 778
+        "line": 873
       }
     },
     {
@@ -7504,7 +7815,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 782
+        "line": 877
       }
     },
     {
@@ -7520,7 +7831,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 808
+        "line": 903
       }
     },
     {
@@ -7536,7 +7847,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 809
+        "line": 904
       }
     },
     {
@@ -7552,7 +7863,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 810
+        "line": 905
       }
     },
     {
@@ -7568,7 +7879,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 811
+        "line": 906
       }
     },
     {
@@ -7580,7 +7891,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 816
+        "line": 911
       }
     },
     {
@@ -7600,7 +7911,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 528
+        "line": 530
       }
     },
     {
@@ -7619,7 +7930,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 541
+        "line": 543
       }
     },
     {
@@ -7638,7 +7949,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 540
+        "line": 542
       }
     },
     {
@@ -7657,7 +7968,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 539
+        "line": 541
       }
     },
     {
@@ -7676,7 +7987,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 538
+        "line": 540
       }
     },
     {
@@ -7695,7 +8006,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 546
+        "line": 548
       }
     },
     {
@@ -7827,7 +8138,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1020
+        "line": 1115
       }
     },
     {
@@ -7843,7 +8154,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1021
+        "line": 1116
       }
     },
     {
@@ -7897,7 +8208,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1017
+        "line": 1112
       }
     },
     {
@@ -7909,7 +8220,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 1001
+        "line": 1096
       }
     },
     {
@@ -7921,7 +8232,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 895
+        "line": 990
       }
     },
     {
@@ -7944,7 +8255,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 923
+        "line": 1018
       }
     },
     {
@@ -7965,7 +8276,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 935
+        "line": 1030
       }
     },
     {
@@ -7989,19 +8300,19 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 909
+        "line": 1004
       }
     },
     {
       "name": "suite",
       "kind": "base",
-      "description": "Simple responsive column grids for card rows. Collapse to fewer columns on narrow viewports. Gap is the 16/20px engagement rhythm.",
+      "description": "Gap — one spacing step for any primitive above, from the 4px ramp. Declared after the primitives so a modifier always wins.",
       "selectors": [
         ".suite"
       ],
       "source": {
         "file": "components.css",
-        "line": 714
+        "line": 809
       }
     },
     {
@@ -8021,7 +8332,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 731
+        "line": 826
       }
     },
     {
@@ -8037,7 +8348,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 727
+        "line": 822
       }
     },
     {
@@ -8053,7 +8364,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 728
+        "line": 823
       }
     },
     {
@@ -8069,7 +8380,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 729
+        "line": 824
       }
     },
     {
@@ -8085,7 +8396,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 720
+        "line": 815
       }
     },
     {
@@ -8101,7 +8412,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 721
+        "line": 816
       }
     },
     {
@@ -8117,7 +8428,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 730
+        "line": 825
       }
     },
     {
@@ -8436,7 +8747,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 760
+        "line": 855
       }
     },
     {
@@ -8452,7 +8763,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 763
+        "line": 858
       }
     },
     {
@@ -8468,7 +8779,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 765
+        "line": 860
       }
     },
     {
@@ -8484,7 +8795,7 @@
       ],
       "source": {
         "file": "components.css",
-        "line": 764
+        "line": 859
       }
     },
     {
@@ -8503,7 +8814,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 590
+        "line": 592
       }
     },
     {
@@ -8522,7 +8833,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 578
+        "line": 580
       }
     },
     {
@@ -8541,7 +8852,7 @@
       ],
       "source": {
         "file": "editorial.css",
-        "line": 585
+        "line": 587
       }
     }
   ]

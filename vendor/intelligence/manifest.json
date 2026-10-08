@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "pack": "bsp-design",
   "artifact": "bsp-design.json",
-  "artifactSha256": "aeabbc15be4cdf043e781946e243f5841f28ad54545eb3b278bf06109dfa0901",
+  "artifactSha256": "033b2d583b21765d0c070e1254367d58f8820a0cb33fd4e2e80a5e996aba3a11",
   "counts": {
     "tokens": 165,
-    "classes": 379
+    "classes": 400
   },
   "sources": {
-    "colors_and_type.css": "4efdd56174e18522da6726d23d90b5bbd9b3477442b862c572ccd4f104057cd4",
-    "components.css": "3ade5669b61fb1db155b650df86ed1ef0fb5c17486924ea353172d318236cf7e",
-    "editorial.css": "8b2e97aa74f8f81e48c3c72cd215dc91ba5728ebef02b01951f9b4c54a91ed7c"
+    "colors_and_type.css": "8c761e16fcad91082a6267854c3454dfb84133be3f13af54047948ad4a1021bf",
+    "components.css": "65f0c8afd9ef9dcafe8f0d9307ba12deb9c6c29c8f55699b946b5190179b0ae0",
+    "editorial.css": "ce4564cc650d038f34ad02a839a29074417474c85fca23c7b43be2d10dd36144"
   },
   "fluentIcons": {
     "artifact": "fluent-icons.json",
