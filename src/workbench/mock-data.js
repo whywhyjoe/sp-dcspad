@@ -1096,9 +1096,17 @@ const ALL_PROPERTIES = {
   dcspad_x005f_deployfolder: '/Dev/tools/dcspad',
 };
 
+// The date-format properties are what SPO answers for an en-US web; DateTime
+// writes refuse an answer missing any of them (web-dates.js).
 const REGIONAL_SETTINGS = {
   LocaleId: 1033,
   Time24: false,
+  DateFormat: 0,
+  DateSeparator: '/',
+  TimeSeparator: ':',
+  AM: 'AM',
+  PM: 'PM',
+  TimeMarkerPosition: 0,
   FirstDayOfWeek: 0,
   WorkDays: 62,
   AdjustHijriDays: 0,

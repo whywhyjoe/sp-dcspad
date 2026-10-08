@@ -2080,22 +2080,45 @@ await check('field-editor: DateTime is the web’s locale string on the web’s 
   page.evaluate(async () => {
     const { toFormValue } = await import('/src/workbench/field-editor.js');
     const dt = { TypeAsString: 'DateTime' };
-    const us = { order: 'mdy', sep: '/', timeSep: ':', time24: false, am: 'AM', pm: 'PM' };
+    const us = { order: 'mdy', sep: '/', timeSep: ':', time24: false, am: 'AM', pm: 'PM', markerFirst: false };
     const de = { order: 'dmy', sep: '.', timeSep: ':', time24: true };
-    const jp = { order: 'ymd', sep: '/', timeSep: ':', time24: false, am: '午前', pm: '午後' };
-    let refused = false;
-    try { toFormValue(dt, '2026-10-06T16:00:00Z'); } catch { refused = true; }
-    return toFormValue(dt, '2026-10-06T16:00:00Z', { webDate: { ...us, offsetMinutes: -420 } }) === '10/6/2026 9:00 AM'
-      && toFormValue(dt, '2026-10-06T16:00:00Z', { webDate: { ...de, offsetMinutes: 120 } }) === '6.10.2026 18:00'
-      && toFormValue(dt, '2026-10-06T20:05:00Z', { webDate: { ...jp, offsetMinutes: 0 } }) === '2026/10/6 8:05 午後'
+    const jp = { order: 'ymd', sep: '/', timeSep: ':', time24: false, am: '午前', pm: '午後', markerFirst: true };
+    const refuses = (fn) => { try { fn(); return false; } catch { return true; } };
+    const at = '2026-10-06T16:00:00Z';
+    return toFormValue(dt, at, { webDate: { ...us, offsetMinutes: -420 } }) === '10/6/2026 9:00 AM'
+      && toFormValue(dt, at, { webDate: { ...de, offsetMinutes: 120 } }) === '6.10.2026 18:00'
+      // TimeMarkerPosition 1 puts the marker before the time; 0 after it.
+      && toFormValue(dt, '2026-10-06T20:05:00Z', { webDate: { ...jp, offsetMinutes: 0 } }) === '2026/10/6 午後 8:05'
+      && toFormValue(dt, '2026-10-06T20:05:00Z', { webDate: { ...jp, markerFirst: false, offsetMinutes: 0 } }) === '2026/10/6 8:05 午後'
+      // Refused, never guessed: no webDate, a non-finite offset, an
+      // incomplete format, and the repeated fall-back hour.
+      && refuses(() => toFormValue(dt, at))
+      && refuses(() => toFormValue(dt, at, { webDate: { ...us, offsetMinutes: NaN } }))
+      && refuses(() => toFormValue(dt, at, { webDate: { ...us, offsetMinutes: undefined } }))
+      && refuses(() => toFormValue(dt, at, { webDate: { ...us, order: undefined, offsetMinutes: -420 } }))
+      && refuses(() => toFormValue(dt, at, { webDate: { ...us, pm: '', offsetMinutes: -420 } }))
+      && refuses(() => toFormValue(dt, at, { webDate: { ...us, markerFirst: undefined, offsetMinutes: -420 } }))
+      && refuses(() => toFormValue(dt, '2026-11-01T08:30:00Z', { webDate: { ...us, offsetMinutes: -420, ambiguous: true } }))
       // Midnight and noon on a 12-hour clock.
       && toFormValue(dt, '2026-01-02T05:00:00Z', { webDate: { ...us, offsetMinutes: -300 } }) === '1/2/2026 12:00 AM'
       && toFormValue(dt, '2026-01-02T17:00:00Z', { webDate: { ...us, offsetMinutes: -300 } }) === '1/2/2026 12:00 PM'
       // A date-only field keeps the picked calendar date: no zone shift.
       && toFormValue({ ...dt, DisplayFormat: 0 }, '2026-07-30T00:00', { webDate: { ...us, offsetMinutes: -720 } }) === '7/30/2026'
+      // A date-only write needs the format but not an offset.
+      && toFormValue({ ...dt, DisplayFormat: 0 }, '2026-07-30T00:00', { webDate: us }) === '7/30/2026'
       // Hand-typed text passes through for SharePoint to judge.
-      && toFormValue(dt, 'next tuesday') === 'next tuesday'
-      && refused;
+      && toFormValue(dt, 'next tuesday') === 'next tuesday';
+  }));
+
+// A date-only value is stored as midnight on the WEB's clock. Read on the
+// browser's clock, a browser west of the web shows the day before.
+await check('field-editor: a date-only value reads as the web’s calendar date, whatever the browser’s zone', async () =>
+  page.evaluate(async () => {
+    const { fromItemValue } = await import('/src/workbench/field-editor.js');
+    const dateOnly = { TypeAsString: 'DateTime', DisplayFormat: 0 };
+    return fromItemValue(dateOnly, '2026-07-30T04:00:00Z', { webOffsetMinutes: -240 }) === '2026-07-30T00:00'
+      && fromItemValue(dateOnly, '2026-07-29T14:00:00Z', { webOffsetMinutes: 600 }) === '2026-07-30T00:00'
+      && fromItemValue(dateOnly, '2026-07-30T00:00:00Z', { webOffsetMinutes: 0 }) === '2026-07-30T00:00';
   }));
 
 await check('web-dates: the resolver reads the web’s format once and its offset per instant, DST included', async () =>
@@ -2108,26 +2131,144 @@ await check('web-dates: the resolver reads the web’s format once and its offse
       const dst = t >= new Date('2026-03-08T10:00:00Z') && t < new Date('2026-11-01T09:00:00Z');
       return new Date(t.getTime() + (dst ? -7 : -8) * 3600000).toISOString().slice(0, 19);
     };
-    const calls = [];
-    const client = {
-      async get(path) {
-        calls.push(path);
-        if (path === 'web/RegionalSettings') {
-          return { DateFormat: 0, DateSeparator: '/', TimeSeparator: ':', Time24: false, AM: 'AM', PM: 'PM' };
-        }
-        const m = /utcToLocalTime\(@d\)\?@d='([^']+)'/.exec(path);
-        return m ? { value: pacific(m[1]) } : null;
-      },
+    const fullSettings = { DateFormat: 0, DateSeparator: '/', TimeSeparator: ':', Time24: false, AM: 'AM', PM: 'PM', TimeMarkerPosition: 0 };
+    const stubClient = ({ settings = fullSettings, local = pacific } = {}) => {
+      const calls = [];
+      return {
+        calls,
+        async get(path) {
+          calls.push(path);
+          if (path === 'web/RegionalSettings') return settings;
+          const m = /utcToLocalTime\(@d\)\?@d='([^']+)'/.exec(path);
+          return m ? { value: local(m[1]) } : null;
+        },
+      };
     };
+    const client = stubClient();
     const webDateFor = createWebDateResolver(client);
-    const oct = await webDateFor(new Date('2026-10-06T16:00:00Z'));
-    const jan = await webDateFor(new Date('2026-01-15T16:00:00Z'));
-    const beforeSwitch = await webDateFor(new Date('2026-11-01T08:30:00Z'));
-    const afterSwitch = await webDateFor(new Date('2026-11-01T09:30:00Z'));
-    return oct.offsetMinutes === -420 && oct.order === 'mdy' && oct.am === 'AM'
-      && jan.offsetMinutes === -480
-      && beforeSwitch.offsetMinutes === -420 && afterSwitch.offsetMinutes === -480
-      && calls.filter((c) => c === 'web/RegionalSettings').length === 1;
+    const on = (iso) => webDateFor(new Date(iso));
+    const oct = await on('2026-10-06T16:00:00Z');
+    const jan = await on('2026-01-15T16:00:00Z');
+    // Fall back, 2026-11-01 09:00Z: 1:00–1:59 AM happens twice on the web's
+    // clock, so both of its instants are ambiguous — and nothing either side.
+    const fallBack = await Promise.all([
+      '2026-11-01T07:59:00Z', '2026-11-01T08:00:00Z', '2026-11-01T08:30:00Z',
+      '2026-11-01T09:30:00Z', '2026-11-01T10:00:00Z',
+    ].map(on));
+    // Spring forward, 2026-03-08 10:00Z: a gap, never ambiguous.
+    const springForward = await Promise.all(['2026-03-08T09:30:00Z', '2026-03-08T10:30:00Z'].map(on));
+    const refuses = async (opts) => {
+      try { await createWebDateResolver(stubClient(opts))(new Date('2026-10-06T16:00:00Z')); return false; }
+      catch (err) { return /not written/.test(err.message); }
+    };
+    return oct.offsetMinutes === -420 && oct.order === 'mdy' && oct.am === 'AM' && !oct.ambiguous
+      && jan.offsetMinutes === -480 && !jan.ambiguous
+      && fallBack.map((w) => `${w.offsetMinutes}:${w.ambiguous}`).join(' ')
+        === '-420:false -420:true -420:true -480:true -480:false'
+      && springForward.every((w) => !w.ambiguous)
+      && client.calls.filter((c) => c === 'web/RegionalSettings').length === 1
+      // An incomplete RegionalSettings answer or a malformed time-zone answer
+      // is refused, never filled in with US defaults or a UTC offset.
+      && await refuses({ settings: { ...fullSettings, DateFormat: undefined } })
+      && await refuses({ settings: { ...fullSettings, DateSeparator: '' } })
+      && await refuses({ settings: { ...fullSettings, Time24: undefined } })
+      && await refuses({ settings: { ...fullSettings, PM: undefined } })
+      // A 12-hour web must say where its AM/PM marker goes; a 24-hour web
+      // shows none, so it needs no marker settings at all.
+      && await refuses({ settings: { ...fullSettings, TimeMarkerPosition: undefined } })
+      && await refuses({ settings: { ...fullSettings, TimeMarkerPosition: 2 } })
+      && (await createWebDateResolver(stubClient({ settings: {
+        DateFormat: 1, DateSeparator: '.', TimeSeparator: ':', Time24: true,
+      } }))(new Date('2026-10-06T16:00:00Z'))).order === 'dmy'
+      && await refuses({ local: () => 'garbage' })
+      && await refuses({ local: () => '' });
+  }));
+
+// The form end to end in a browser WEST of the web (Honolulu, UTC-10, against
+// an Eastern web): a date-only value shows on the web's calendar and is not
+// dirty; a changed one writes the calendar date; a time in the repeated
+// fall-back hour is refused on its own row with nothing posted.
+await check('field-editor form: date-only on the web’s calendar from a browser west of it; the repeated hour refused on its row', async () => {
+  const context = await browser.newContext({ timezoneId: 'Pacific/Honolulu' });
+  const west = await context.newPage();
+  await west.goto(WB_URL);
+  const result = await west.evaluate(async () => {
+    const { createFieldEditorForm } = await import('/src/workbench/field-editor.js');
+    const fmt = { order: 'mdy', sep: '/', timeSep: ':', time24: false, am: 'AM', pm: 'PM', markerFirst: false };
+    const posted = [];
+    const form = createFieldEditorForm({
+      fields: [
+        { InternalName: 'Due', Title: 'Due', TypeAsString: 'DateTime', DisplayFormat: 0 },
+        { InternalName: 'At', Title: 'At', TypeAsString: 'DateTime', DisplayFormat: 1 },
+      ],
+      item: { Due: '2026-07-30T04:00:00Z', At: '' },
+      // The Eastern web: EDT, with the fall-back hour flagged.
+      webDateFor: async (instant) => ({
+        ...fmt, offsetMinutes: -240, ambiguous: instant.toISOString() === '2026-11-01T05:30:00.000Z',
+      }),
+      onSave: async (formValues) => { posted.push(formValues); },
+    });
+    document.body.append(form.el);
+    await form.ready;
+    const due = form.el.querySelector('[data-internal="Due"] input');
+    const at = form.el.querySelector('[data-internal="At"] input');
+    const save = form.el.querySelector('.wb-editor-bar .btn');
+    const status = form.el.querySelector('.wb-editor-status');
+    const settle = () => new Promise((r) => setTimeout(r, 50));
+    const shown = due.value;
+    save.click(); await settle();
+    const cleanStatus = status.textContent;
+    // 2026-11-01T05:30Z is 1:30 AM on the web's clock, the first time round.
+    at.value = new Date('2026-11-01T05:30:00Z').toLocaleString('sv').slice(0, 16).replace(' ', 'T');
+    save.click(); await settle();
+    const atError = form.el.querySelector('[data-internal="At"] .wb-editor-error').textContent;
+    const postedAfterAmbiguous = posted.length;
+    at.value = '';
+    due.value = '2026-07-31T00:00';
+    save.click(); await settle();
+    form.el.remove();
+    return { shown, cleanStatus, atError, postedAfterAmbiguous, posted };
+  });
+  await context.close();
+  return result.shown === '2026-07-30T00:00'
+    && result.cleanStatus === 'No changes to save.'
+    && /twice/.test(result.atError) && result.postedAfterAmbiguous === 0
+    && result.posted.length === 1
+    && result.posted[0].length === 1
+    && result.posted[0][0].FieldName === 'Due' && result.posted[0][0].FieldValue === '7/31/2026';
+});
+
+// If the web's clock can't be read, the date-only value stays on the
+// browser's calendar, which can be a day off. A date-only write needs no
+// offset, so editing from it would save the wrong day: the input stays
+// disabled, and its warning survives a Save click (which clears row errors).
+await check('field-editor form: a failed web-calendar lookup leaves the date-only input disabled, and its warning survives Save', async () =>
+  page.evaluate(async () => {
+    const { createFieldEditorForm } = await import('/src/workbench/field-editor.js');
+    const form = createFieldEditorForm({
+      fields: [
+        { InternalName: 'Due', Title: 'Due', TypeAsString: 'DateTime', DisplayFormat: 0 },
+        { InternalName: 'Title', Title: 'Title', TypeAsString: 'Text' },
+      ],
+      item: { Due: '2026-07-30T04:00:00Z', Title: 'x' },
+      webDateFor: async () => { throw new Error('the site’s time zone could not be read'); },
+      onSave: async () => {},
+    });
+    document.body.append(form.el);
+    await form.ready;
+    const due = form.el.querySelector('[data-internal="Due"] input');
+    const warning = () => form.el.querySelector('[data-internal="Due"] .wb-editor-error');
+    const disabled = due.disabled;
+    const before = warning().textContent;
+    form.el.querySelector('.wb-editor-bar .btn').click();
+    await new Promise((r) => setTimeout(r, 50));
+    const after = warning();
+    const result = disabled && due.disabled
+      && /Not editable here/.test(before)
+      && after.textContent === before && !after.hidden
+      && form.el.querySelector('.wb-editor-status').textContent === 'No changes to save.';
+    form.el.remove();
+    return result;
   }));
 
 // getAll treats `top` as the PAGE size — the EEEU scan and the list-data

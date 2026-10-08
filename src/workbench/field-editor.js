@@ -16,9 +16,15 @@
 //                       12/31/8900" (verified live, 2026-10-06). toFormValue
 //                       therefore needs `webDate` (the web's RegionalSettings
 //                       format plus its UTC offset at that instant, from
-//                       web-dates.js) and throws without it. A date-only field
-//                       (DisplayFormat 0) writes the picked calendar date, with
-//                       no zone shift.
+//                       web-dates.js) and throws without it or with any part
+//                       missing (nothing is defaulted to US values). The AM/PM
+//                       marker goes before or after the time per the web's
+//                       TimeMarkerPosition. A time in the hour the web's clock
+//                       repeats when daylight saving ends is refused: the
+//                       string can't say which of the two instants it means.
+//                       A date-only field (DisplayFormat 0) is SHOWN and
+//                       written as a calendar date on the web's clock, never
+//                       shifted by the browser's zone.
 //        URL            'https://…, description' (comma-space separator)
 //      Not editable in v1 (display-only via FieldValuesAsText), formats
 //      documented for a later tier:
@@ -70,19 +76,22 @@ const pad2 = (n) => String(n).padStart(2, '0');
 export const isDateOnly = (field) =>
   field?.DisplayFormat === 0 || field?.DisplayFormat === 'DateOnly';
 
+const DATE_ORDERS = new Set(['mdy', 'dmy', 'ymd']);
+
 // Wall-clock parts ({ y, m, d, h, min }, m 1-based) → the web's own date
 // string, shaped like SharePoint's own display: '10/6/2026 9:00 AM',
-// '06.10.2026 16:00' and so on. `webDate`: { order: 'mdy'|'dmy'|'ymd', sep,
-// timeSep, time24, am, pm } (web-dates.js webDateFormatOf).
+// '06.10.2026 16:00', '2026/10/6 午後 8:05' and so on. `webDate`: { order:
+// 'mdy'|'dmy'|'ymd', sep, timeSep, time24, am, pm, markerFirst }
+// (web-dates.js webDateFormatOf, which refuses an incomplete format).
 export function formatWebDate(parts, webDate, { dateOnly = false } = {}) {
-  const f = webDate || {};
+  const f = webDate;
   const byKey = { y: String(parts.y), m: String(parts.m), d: String(parts.d) };
-  const date = String(f.order || 'mdy').split('').map((k) => byKey[k]).join(f.sep ?? '/');
+  const date = f.order.split('').map((k) => byKey[k]).join(f.sep);
   if (dateOnly) return date;
-  const timeSep = f.timeSep ?? ':';
-  if (f.time24) return `${date} ${pad2(parts.h)}${timeSep}${pad2(parts.min)}`;
-  const h12 = parts.h % 12 || 12;
-  return `${date} ${h12}${timeSep}${pad2(parts.min)} ${parts.h < 12 ? (f.am || 'AM') : (f.pm || 'PM')}`;
+  if (f.time24) return `${date} ${pad2(parts.h)}${f.timeSep}${pad2(parts.min)}`;
+  const time = `${parts.h % 12 || 12}${f.timeSep}${pad2(parts.min)}`;
+  const marker = parts.h < 12 ? f.am : f.pm;
+  return f.markerFirst ? `${date} ${marker} ${time}` : `${date} ${time} ${marker}`;
 }
 
 // The DateTime editor's value ('YYYY-MM-DDTHH:mm', browser-local) as an
@@ -94,10 +103,26 @@ export function dateTimeInstantOf(uiValue) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// A webDate this module will format from, or a thrown reason. Nothing is
+// defaulted: a guessed order, separator or offset writes a wrong date silently.
+function checkWebDate(webDate, { needsOffset }) {
+  const f = webDate || {};
+  const ok = DATE_ORDERS.has(f.order) && f.sep && f.timeSep
+    && typeof f.time24 === 'boolean'
+    && (f.time24 || (f.am && f.pm && typeof f.markerFirst === 'boolean'))
+    && (!needsOffset || Number.isFinite(f.offsetMinutes));
+  if (!ok) {
+    throw new Error('A date can only be written in the site’s own regional format and time zone, '
+      + 'and those were not available. SharePoint Online refuses ISO 8601 dates.');
+  }
+}
+
 // UI value -> the FieldValue string for ValidateUpdateListItem.
 // opts.webDate (DateTime only): { order, sep, timeSep, time24, am, pm,
-// offsetMinutes }, where offsetMinutes is the web's UTC offset at THIS value's
-// instant (createWebDateResolver in web-dates.js builds one per instant).
+// markerFirst, offsetMinutes, ambiguous }, where offsetMinutes is the web's
+// UTC offset at THIS value's instant and `ambiguous` marks an instant in the
+// hour the web's clock repeats when daylight saving ends
+// (createWebDateResolver in web-dates.js builds one per instant).
 export function toFormValue(field, uiValue, { webDate = null } = {}) {
   switch (String(field?.TypeAsString || '')) {
     case 'MultiChoice': {
@@ -117,11 +142,9 @@ export function toFormValue(field, uiValue, { webDate = null } = {}) {
       const d = dateTimeInstantOf(s);
       // Not a date: send it verbatim and let SharePoint's own error surface.
       if (!d) return s;
-      if (!webDate) {
-        throw new Error('A date can only be written in the site’s own regional format, '
-          + 'and that format was not available. SharePoint Online refuses ISO 8601 dates.');
-      }
-      if (isDateOnly(field)) {
+      const dateOnly = isDateOnly(field);
+      checkWebDate(webDate, { needsOffset: !dateOnly });
+      if (dateOnly) {
         // The calendar date as picked: no zone shift for a date-only field.
         const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
         const parts = m
@@ -129,8 +152,14 @@ export function toFormValue(field, uiValue, { webDate = null } = {}) {
           : { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
         return formatWebDate(parts, webDate, { dateOnly: true });
       }
+      // A wall-clock string carries no offset, so a time in the hour the web's
+      // clock repeats would name two instants and SharePoint picks one of them.
+      if (webDate.ambiguous) {
+        throw new Error('This time happens twice on the site’s clock (daylight saving ends then), '
+          + 'so it can’t be saved exactly. Choose a time outside that hour.');
+      }
       // The instant, moved onto the web's wall clock.
-      const wall = new Date(d.getTime() + (Number(webDate.offsetMinutes) || 0) * 60000);
+      const wall = new Date(d.getTime() + webDate.offsetMinutes * 60000);
       return formatWebDate({
         y: wall.getUTCFullYear(), m: wall.getUTCMonth() + 1, d: wall.getUTCDate(),
         h: wall.getUTCHours(), min: wall.getUTCMinutes(),
@@ -148,7 +177,12 @@ export function toFormValue(field, uiValue, { webDate = null } = {}) {
 }
 
 // REST item value -> the UI value the matching editor consumes.
-export function fromItemValue(field, itemValue) {
+// opts.webOffsetMinutes (date-only DateTime): the web's UTC offset at the
+// stored instant. SharePoint stores a date-only value as midnight on the
+// web's clock, so the calendar date is that instant on the WEB's clock. Read
+// on the browser's clock instead, a browser west of the web shows the day
+// before. Without it, the value shows on the browser's clock as before.
+export function fromItemValue(field, itemValue, { webOffsetMinutes = null } = {}) {
   switch (String(field?.TypeAsString || '')) {
     case 'MultiChoice': {
       if (Array.isArray(itemValue)) return itemValue;
@@ -166,6 +200,10 @@ export function fromItemValue(field, itemValue) {
       if (!s) return '';
       const d = new Date(s);
       if (Number.isNaN(d.getTime())) return s;
+      if (isDateOnly(field) && Number.isFinite(webOffsetMinutes)) {
+        const wall = new Date(d.getTime() + webOffsetMinutes * 60000);
+        return `${wall.getUTCFullYear()}-${pad2(wall.getUTCMonth() + 1)}-${pad2(wall.getUTCDate())}T00:00`;
+      }
       // datetime-local wants local 'YYYY-MM-DDTHH:mm'.
       return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
         + `T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -197,6 +235,7 @@ export function createFieldEditor(field, initialValue) {
   row.append(label, control, error);
 
   let getValue = () => '';
+  let dateInput = null;
 
   const textInput = (tag, value) => {
     const input = el(tag === 'textarea' ? 'textarea' : 'input');
@@ -276,6 +315,7 @@ export function createFieldEditor(field, initialValue) {
     case 'DateTime': {
       const input = textInput('datetime-local', initial);
       getValue = () => input.value;
+      dateInput = input;
       break;
     }
     case 'URL': {
@@ -302,6 +342,15 @@ export function createFieldEditor(field, initialValue) {
     getValue,
     isDirty: () => keyOf(getValue()) !== baseline,
     markClean() { baseline = keyOf(getValue()); },
+    // The DateTime input, for a form that corrects the shown value once the
+    // web's clock is known (date-only fields). Null for every other type.
+    dateInput,
+    // Replace the shown value AND the clean baseline: a correction of how a
+    // stored value is displayed is not an edit.
+    rebase(uiValue) {
+      if (dateInput) dateInput.value = uiValue ?? '';
+      baseline = keyOf(getValue());
+    },
     setError(message) {
       error.textContent = message || '';
       error.hidden = !message;
@@ -340,12 +389,42 @@ function readOnlyRow(field, displayText, hint = '') {
 // date format and UTC offset for a DateTime value. Pass
 // createWebDateResolver(client) from web-dates.js. Without it, saving a
 // changed date fails on that field instead of sending ISO, which SPO refuses.
+// It also puts a stored date-only value on the WEB's calendar (see
+// fromItemValue): the input stays disabled until that is known (for good, with
+// a row warning, if it can't be), and the returned `ready` settles once every
+// such value is settled.
 export function createFieldEditorForm({
   fields, item = {}, itemAsText = {}, onSave, layout = null, webDateFor = null,
 }) {
   const root = el('div', 'wb-editor-form');
   const rows = el('div', 'wb-editor-rows');
   const editors = [];
+  const settling = [];
+  // Row warnings that outlive a save attempt: a date-only value that could
+  // not be put on the web's calendar stays flagged until the form closes.
+  const standing = new Map();
+
+  // The input is enabled only once the web-calendar value is shown. If the
+  // lookup fails it STAYS disabled: the browser's calendar can be a day off,
+  // and a date-only write needs no offset, so an edit from that wrong day
+  // would save. Reopening the item retries.
+  function showOnWebCalendar(editor, stored) {
+    const instant = dateTimeInstantOf(stored);
+    if (!instant) return;
+    editor.dateInput.disabled = true;
+    settling.push(webDateFor(instant)
+      .then((webDate) => {
+        if (!Number.isFinite(webDate?.offsetMinutes)) throw new Error('the site’s time zone could not be read');
+        editor.rebase(fromItemValue(editor.field, stored, { webOffsetMinutes: webDate.offsetMinutes }));
+        editor.dateInput.disabled = false;
+      })
+      .catch((err) => {
+        const message = 'Not editable here: this date could not be shown on the site’s calendar '
+          + `(${err?.message || err}). Reopen the item to try again.`;
+        standing.set(editor, message);
+        editor.setError(message);
+      }));
+  }
 
   const entries = Array.isArray(layout)
     ? layout
@@ -365,6 +444,7 @@ export function createFieldEditorForm({
       const editor = createFieldEditor(field, item[internal]);
       editors.push(editor);
       rows.append(editor.el);
+      if (editor.dateInput && isDateOnly(field) && webDateFor) showOnWebCalendar(editor, item[internal]);
     } else {
       const text = itemAsText?.[internal];
       const raw = item[internal];
@@ -404,7 +484,7 @@ export function createFieldEditorForm({
   }
 
   save.addEventListener('click', async () => {
-    for (const editor of editors) editor.setError('');
+    for (const editor of editors) editor.setError(standing.get(editor) || '');
     if (!editors.some((e) => e.isDirty())) {
       status.textContent = 'No changes to save.';
       status.className = 'wb-editor-status';
@@ -436,5 +516,5 @@ export function createFieldEditorForm({
     }
   });
 
-  return { el: root, getDirtyFormValues: dirtyFormValues, editors };
+  return { el: root, getDirtyFormValues: dirtyFormValues, editors, ready: Promise.all(settling) };
 }
