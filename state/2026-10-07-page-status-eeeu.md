@@ -1,12 +1,12 @@
 # State — SP Workbench page status + EEEU audit
 
-Last touched: 2026-09-23
+Last touched: 2026-10-07
 Mode: Joe
-Branch: feature merged into `main` 2026-09-23 (PR #21, `ab5a0f9`); live-test fixes on
-  `claude/page-status-live-fixes` (PR open, not merged); rollback point: branch
-  `rollback/main-before-page-status-eeeu` (= `db95413`, Build #197)
-State: dev live-tenant checklist GREEN on the fix branch (Build #220); six defects found live and
-  fixed there; waiting on the fix PR's merge, then prod (bmo)
+Branch: `main` — feature PR #21 (`ab5a0f9`) and live-fix PR #22 (`fe2b202`) both merged;
+  rollback point is commit `db95413` (Build #197; its branch was deleted 2026-10-07 at Joe's
+  request — the commit is in `main`'s history)
+State: dev live-tenant checklist GREEN on the fix branch (Build #220), fixes now merged;
+  waiting on prod (bmo)
 
 ## What this is
 
@@ -38,14 +38,13 @@ decisions, the live-tenant checklist (ticked, with evidence) and the six live fi
 
 ## Next
 
-- [ ] Merge the `claude/page-status-live-fixes` PR into `main`. **The dev tenant currently runs
-      that branch's Build #220**, not `main` — after merging, redeploy `main` with
+- [ ] Unverified: whether the dev tenant still runs the fix branch's Build #220 rather than
+      `main`. The fix PR merged (#22, `fe2b202`); redeploy `main` with
       `deploy\Sync-Live.ps1` and confirm the served stamp before any further live testing.
 - [ ] Prod (bmo): repeat the Metadata-row and EEEU checks — the bmo site columns
       (`bmocContentCategory`, `FolderType`, `Pillar`, `Org`, `Contact`) exist only there; also a
       locked group for the EEEU Problems grid (not producible with a site-admin account on dev).
-- [ ] When prod passes: promote per the project-state rules, delete this file and the
-      `rollback/main-before-page-status-eeeu` branch.
+- [ ] When prod passes: promote per the project-state rules and delete this file.
 
 ## Open questions
 
@@ -62,9 +61,6 @@ For Joe:
 
 Found by the 2026-09-23 live test of Build #197; separate fix tasks were queued — check those
 haven't landed before touching them here.
-- `field-editor.js` `toFormValue` sends DateTime as ISO; live `ValidateUpdateListItem` accepts
-  only the site-locale form (`10/1/2026 9:30 AM`, site time zone), and one bad field fails the
-  whole save. `list-data-apply.js`'s date calibration is the likely reusable fix.
 - `canvas.js` `WEBPART_NAMES`: `1ef5ed11-…` is "Markdown", not "Code snippet".
 - `canvas.js`: `controlType: 14` (section background image) is reported as a parse error.
 - Pages grid lists folders (`SitePages/tools`) as pages, with MD/HTML export buttons; the Scan

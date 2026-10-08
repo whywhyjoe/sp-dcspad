@@ -788,10 +788,10 @@ export checks (recorded in memory), not a leftover to delete.
 
 ## SP Workbench: page status + EEEU audit (2026-09-23)
 
-Two features, merged to `main` 2026-09-23 (rollback point: branch
-`rollback/main-before-page-status-eeeu`, Build #197). Status
-(what is done, what is next) lives in `state/2026-09-23-page-status-eeeu.md`;
-this section is the design and the live-tenant checklist.
+Two features, merged to `main` 2026-09-23 (rollback point: commit
+`db95413`, Build #197). Status (what is done, what is next) lives in the
+`page-status-eeeu` thread file in `state/` (renamed to its last-touched date on
+every update); this section is the design and the live-tenant checklist.
 
 **Page status is a rebuild.** It was built once on the work (bmo) machine and
 lost; only Joe's original prompt and that session's plan survived. Decisions
